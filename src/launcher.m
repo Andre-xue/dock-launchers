@@ -587,6 +587,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.hintLabel = [NSTextField labelWithString:@"←→↑↓ 选择 · Enter 打开 · ⌫ 移除 · Esc 取消"];
   self.hintLabel.font = [NSFont systemFontOfSize:11];
   self.hintLabel.textColor = ThemeHint(gTheme);
+  self.windowTitleLabel.textColor = [NSColor whiteColor];
   self.hintLabel.alignment = NSTextAlignmentCenter;
   self.hintLabel.frame = NSMakeRect(96, 26, W-192, 18);
   [cv addSubview:self.hintLabel];
@@ -729,10 +730,19 @@ static NSString *ResolveAppPath(NSString *target) {
   if (!cv) return;
   CGFloat W = cv.bounds.size.width, H = cv.bounds.size.height;
   CGFloat btnSize = 30.0;
-  self.windowTitleLabel.frame = NSMakeRect(0, H-42, W, 30);
-  self.windowTitleLabel.textColor = ThemeText(gTheme);
-  self.addBtn.frame = NSMakeRect(16, H-88, btnSize, btnSize);
-  self.removeBtn.frame = NSMakeRect(W-16-btnSize, H-88, btnSize, btnSize);
+  NSFont *tf = [NSFont systemFontOfSize:20 weight:NSFontWeightSemibold];
+  NSDictionary *tattrs = @{NSFontAttributeName: tf};
+  CGFloat tw = [self.windowTitleLabel.stringValue sizeWithAttributes:tattrs].width + 44;
+  CGFloat th = 32;
+  self.windowTitleLabel.font = tf;
+  self.windowTitleLabel.textColor = [NSColor whiteColor];
+  self.windowTitleLabel.alignment = NSTextAlignmentCenter;
+  self.windowTitleLabel.wantsLayer = YES;
+  self.windowTitleLabel.layer.backgroundColor = [NSColor colorWithCalibratedRed:1.0 green:0.37 blue:0.34 alpha:1.0].CGColor;
+  self.windowTitleLabel.layer.cornerRadius = th/2.0;
+  self.windowTitleLabel.frame = NSMakeRect((W-tw)/2.0, H-48, tw, th);
+  self.removeBtn.frame = NSMakeRect(16, H-88, btnSize, btnSize);
+  self.addBtn.frame = NSMakeRect(W-16-btnSize, H-88, btnSize, btnSize);
   self.skinBtn.frame = NSMakeRect((W-btnSize)/2.0, H-88, btnSize, btnSize);
   CGFloat ly = H - 26;
   if (self.lightRed) self.lightRed.frame = NSMakeRect(20, ly, 12, 12);
@@ -1007,6 +1017,7 @@ static NSString *ResolveAppPath(NSString *target) {
   if (self.listContainer.layer) self.listContainer.layer.backgroundColor = [NSColor clearColor].CGColor;
 
   self.hintLabel.textColor = ThemeHint(gTheme);
+  self.windowTitleLabel.textColor = [NSColor whiteColor];
   for (RowView *r in self.rows) {
     r.selColor = ThemeSel(gTheme);
     r.label.textColor = ThemeText(gTheme);
