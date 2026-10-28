@@ -22,7 +22,7 @@
 
 ### 方式一：使用发布包（推荐）
 
-1. 下载 `DockLaunchers-便携包.zip`（Releases 页面）
+1. 下载 `DockLaunchers-portable.zip`（Releases 页面）
 2. 解压后双击 `install.command`
    - 提示「无法验证开发者」时：右键 → 打开 → 仍要打开
    - 或终端执行：`bash 路径/DockLaunchers/install.command`
