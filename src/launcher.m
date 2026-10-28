@@ -615,7 +615,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.skinBtn.layer.cornerRadius = 15;
   [cv addSubview:self.skinBtn];
 
-  self.searchBtn = [[CircleButton alloc] initWithFrame:NSMakeRect(W-20-12, H-26, 12, 12)];
+  self.searchBtn = [[CircleButton alloc] initWithFrame:NSMakeRect(W-16-30, H-35, 30, 30)];
   self.searchBtn.circleColor = [NSColor colorWithCalibratedRed:0.04 green:0.52 blue:1.0 alpha:1.0];
   self.searchBtn.glyph = @"search";
   self.searchBtn.bordered = NO;
@@ -845,7 +845,7 @@ static NSString *ResolveAppPath(NSString *target) {
   if (self.lightRed) self.lightRed.frame = NSMakeRect(20, ly, 12, 12);
   if (self.lightYellow) self.lightYellow.frame = NSMakeRect(40, ly, 12, 12);
   if (self.lightGreen) self.lightGreen.frame = NSMakeRect(60, ly, 12, 12);
-  if (self.searchBtn) self.searchBtn.frame = NSMakeRect(W-20-12, ly, 12, 12);
+  if (self.searchBtn) self.searchBtn.frame = NSMakeRect(W-16-30, H-35, 30, 30);
   if (self.backdrop) self.backdrop.frame = NSMakeRect(0,0,W,H);
   if (self.vibrancy) self.vibrancy.frame = NSMakeRect(0,0,W,H);
   self.scroll.frame = NSMakeRect(16, 76, W-32, MAX(40, H-100-76));
