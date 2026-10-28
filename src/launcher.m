@@ -57,6 +57,19 @@ static NSString *const kSkinPrefix = @"skin.";
   if ([self.glyph isEqualToString:@"+"]) {
     [g moveToPoint:NSMakePoint(c-arm, c)]; [g lineToPoint:NSMakePoint(c+arm, c)];
     [g moveToPoint:NSMakePoint(c, c-arm)]; [g lineToPoint:NSMakePoint(c, c+arm)];
+  } else if ([self.glyph isEqualToString:@"search"]) {
+    CGFloat r = d * 0.26;
+    NSBezierPath *mag = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(c - r - d*0.04, c - r + d*0.04, r*2, r*2)];
+    mag.lineWidth = MAX(1.2, d * 0.10);
+    [[NSColor whiteColor] setStroke];
+    [mag stroke];
+    NSBezierPath *h = [NSBezierPath bezierPath];
+    h.lineWidth = MAX(1.2, d * 0.10);
+    h.lineCapStyle = NSLineCapStyleRound;
+    [h moveToPoint:NSMakePoint(c + r*0.55, c - r*0.55 + d*0.04)];
+    [h lineToPoint:NSMakePoint(c + r*1.25, c - r*1.25 + d*0.04)];
+    [h stroke];
+    return;
   } else {
     [g moveToPoint:NSMakePoint(c-arm, c)]; [g lineToPoint:NSMakePoint(c+arm, c)];
   }
@@ -65,7 +78,7 @@ static NSString *const kSkinPrefix = @"skin.";
 - (BOOL)isFlipped { return NO; }
 @end
 
-@interface Controller : NSObject <NSWindowDelegate>
+@interface Controller : NSObject <NSWindowDelegate, NSTextFieldDelegate>
 @property (strong) NSWindow *window;
 @property (strong) NSView *listContainer;
 @property (strong) NSScrollView *scroll;
@@ -82,6 +95,10 @@ static NSString *const kSkinPrefix = @"skin.";
 @property (strong) PillButton *openBtn;
 @property (strong) TitlePillView *windowTitleLabel;
 @property (strong) NSTextField *hintLabel;
+@property (strong) NSTextField *searchField;
+@property (strong) CircleButton *searchBtn;
+@property (copy) NSString *searchQuery;
+@property BOOL searchActive;
 @property NSInteger userColumns;
 @property (copy) NSString *customIconPath;
 @property NSInteger forceColumns;
@@ -133,6 +150,10 @@ static NSString *const kSkinPrefix = @"skin.";
 - (void)applyCustomIconAtPath:(NSString *)path;
 - (NSImage *)composeIconWithImage:(NSImage *)img;
 - (NSString *)emojiForGroup;
+- (void)toggleSearch;
+- (void)closeSearch;
+- (void)applySearchQuery;
+- (void)searchTapped:(id)sender;
 - (void)moveSel:(NSInteger)delta;
 - (void)moveSelRow:(NSInteger)dir;
 - (NSInteger)effectiveColumns;
@@ -408,7 +429,9 @@ static NSColor *ThemeSel(NSInteger t) {
   NSString *chars = event.charactersIgnoringModifiers;
   unichar c = 0;
   if (chars.length) c = [chars characterAtIndex:0];
-  if (c == NSUpArrowFunctionKey) { [self.ctrl moveSelRow:-1]; }
+  if (event.keyCode == 118) { [self.ctrl toggleSearch]; }              // F4
+  else if ((event.modifierFlags & NSEventModifierFlagCommand) && c == ' ') { [self.ctrl toggleSearch]; } // ⌘Space
+  else if (c == NSUpArrowFunctionKey) { [self.ctrl moveSelRow:-1]; }
   else if (c == NSDownArrowFunctionKey) { [self.ctrl moveSelRow:1]; }
   else if (c == NSLeftArrowFunctionKey) { [self.ctrl moveSel:-1]; }
   else if (c == NSRightArrowFunctionKey) { [self.ctrl moveSel:1]; }
@@ -592,6 +615,29 @@ static NSString *ResolveAppPath(NSString *target) {
   self.skinBtn.layer.cornerRadius = 15;
   [cv addSubview:self.skinBtn];
 
+  self.searchBtn = [[CircleButton alloc] initWithFrame:NSMakeRect(84, H-26, 12, 12)];
+  self.searchBtn.circleColor = [NSColor colorWithCalibratedRed:0.04 green:0.52 blue:1.0 alpha:1.0];
+  self.searchBtn.glyph = @"search";
+  self.searchBtn.bordered = NO;
+  self.searchBtn.title = @"";
+  self.searchBtn.focusRingType = NSFocusRingTypeNone;
+  self.searchBtn.target = self;
+  self.searchBtn.action = @selector(searchTapped:);
+  self.searchBtn.toolTip = @"搜索本组应用（F4 或 ⌘Space）";
+  [cv addSubview:self.searchBtn];
+
+  self.searchField = [[NSTextField alloc] initWithFrame:NSMakeRect(W/2.0-170, H-50, 340, 30)];
+  self.searchField.placeholderString = @"搜索本组应用…";
+  self.searchField.font = [NSFont systemFontOfSize:14];
+  self.searchField.bezelStyle = NSTextFieldRoundedBezel;
+  self.searchField.delegate = self;
+  self.searchField.hidden = YES;
+  [cv addSubview:self.searchField];
+
+  [[self.window standardWindowButton:NSWindowCloseButton] setToolTip:@"关闭"];
+  [[self.window standardWindowButton:NSWindowMiniaturizeButton] setToolTip:@"最小化"];
+  [[self.window standardWindowButton:NSWindowZoomButton] setToolTip:@"放大（Option+点击 = 四列）"];
+
   [cv addSubview:add positioned:NSWindowAbove relativeTo:nil];
   [cv addSubview:remove positioned:NSWindowAbove relativeTo:nil];
 
@@ -651,7 +697,12 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)reload {
-  self.items = [[self loadItems] mutableCopy];
+  NSArray *allItems = [self loadItems];
+  if (self.searchQuery.length > 0) {
+    NSPredicate *p = [NSPredicate predicateWithFormat:@"label CONTAINS[cd] %@ OR target CONTAINS[cd] %@", self.searchQuery, self.searchQuery];
+    allItems = [allItems filteredArrayUsingPredicate:p];
+  }
+  self.items = [allItems mutableCopy];
   for (NSView *v in [self.listContainer.subviews copy]) [v removeFromSuperview];
   [self.rows removeAllObjects];
 
@@ -794,6 +845,7 @@ static NSString *ResolveAppPath(NSString *target) {
   if (self.lightRed) self.lightRed.frame = NSMakeRect(20, ly, 12, 12);
   if (self.lightYellow) self.lightYellow.frame = NSMakeRect(40, ly, 12, 12);
   if (self.lightGreen) self.lightGreen.frame = NSMakeRect(60, ly, 12, 12);
+  if (self.searchBtn) self.searchBtn.frame = NSMakeRect(84, ly, 12, 12);
   if (self.backdrop) self.backdrop.frame = NSMakeRect(0,0,W,H);
   if (self.vibrancy) self.vibrancy.frame = NSMakeRect(0,0,W,H);
   self.scroll.frame = NSMakeRect(16, 76, W-32, MAX(40, H-100-76));
@@ -891,6 +943,56 @@ static NSString *ResolveAppPath(NSString *target) {
   }
   [self reload];
   if (self.rows.count) [self selectRow:0];
+}
+
+- (void)setupTooltips {
+  self.addBtn.toolTip = @"添加应用到本组";
+  self.removeBtn.toolTip = @"移除选中应用（只从列表移除）";
+  self.skinBtn.toolTip = @"皮肤 / 布局 / 更换图标";
+  self.cancelBtn.toolTip = @"取消（Esc）";
+  self.openBtn.toolTip = @"打开选中应用（Enter）";
+  self.searchField.toolTip = @"输入关键字搜索本组应用，Esc 退出搜索";
+}
+
+- (void)searchTapped:(id)sender { [self toggleSearch]; }
+
+- (void)toggleSearch {
+  if (self.searchActive) { [self closeSearch]; return; }
+  self.searchActive = YES;
+  self.searchField.hidden = NO;
+  self.windowTitleLabel.hidden = YES;
+  [self.window makeFirstResponder:self.searchField];
+  [self applySearchQuery];
+}
+
+- (void)closeSearch {
+  self.searchActive = NO;
+  self.searchQuery = nil;
+  self.searchField.stringValue = @"";
+  self.searchField.hidden = YES;
+  self.windowTitleLabel.hidden = NO;
+  self.sel = 0;
+  [self reload];
+  [self.window makeFirstResponder:self.window.contentView];
+}
+
+- (void)applySearchQuery {
+  self.searchQuery = [self.searchField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  self.sel = 0;
+  [self reload];
+}
+
+- (void)controlTextDidChange:(NSNotification *)obj {
+  if (obj.object == self.searchField) [self applySearchQuery];
+}
+
+- (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)selector {
+  if (control != self.searchField) return NO;
+  if (selector == @selector(cancelOperation:)) { [self closeSearch]; return YES; }
+  if (selector == @selector(insertNewline:)) { if (self.rows.count) [self openSelected:nil]; return YES; }
+  if (selector == @selector(moveDown:)) { [self moveSelRow:1]; return YES; }
+  if (selector == @selector(moveUp:)) { [self moveSelRow:-1]; return YES; }
+  return NO;
 }
 
 - (void)setupTrafficLights {
@@ -1415,6 +1517,16 @@ int main(int argc, const char *argv[]) {
         if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS) {
           fprintf(stderr, "RSS=%.1fMB\n", info.resident_size / 1048576.0);
         }
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_SEARCH")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c toggleSearch];
+        c.searchField.stringValue = [NSString stringWithUTF8String:getenv("DOCKLAUNCHER_TEST_SEARCH")];
+        [c applySearchQuery];
+        fprintf(stderr, "MATCHED=%ld\n", (long)c.rows.count);
+        for (RowView *r in c.rows) fprintf(stderr, "  %s\n", [r.label.stringValue UTF8String]);
         exit(0);
       });
     }
