@@ -396,6 +396,36 @@ static NSColor *ThemeSel(NSInteger t) {
 }
 @end
 
+// ================= 快捷键 / 操作说明（唯一数据源） =================
+// 以后新增快捷键或按钮功能时，只需在这里加一行，底部提示会自动更新。
+static NSArray<NSDictionary *> *ShortcutTable(void) {
+  return @[
+    @{@"keys": @"←→↑↓", @"desc": @"选择"},
+    @{@"keys": @"Enter",  @"desc": @"打开"},
+    @{@"keys": @"⌫",      @"desc": @"移除"},
+    @{@"keys": @"Esc",    @"desc": @"取消"},
+    @{@"keys": @"双击",   @"desc": @"打开"},
+    @{@"keys": @"＋",     @"desc": @"添加"},
+    @{@"keys": @"−",      @"desc": @"移除"},
+    @{@"keys": @"🎨",     @"desc": @"皮肤/布局"},
+  ];
+}
+
+static NSString *ShortcutHintText(void) {
+  NSArray *table = ShortcutTable();
+  NSMutableArray *parts = [NSMutableArray array];
+  for (NSDictionary *it in table) {
+    [parts addObject:[NSString stringWithFormat:@"%@ %@", it[@"keys"], it[@"desc"]]];
+  }
+  // 两行显示，避免 480 宽窗口下溢出
+  NSUInteger half = (parts.count + 1) / 2;
+  NSString *line1 = [[parts subarrayWithRange:NSMakeRange(0, half)] componentsJoinedByString:@" · "];
+  NSString *line2 = half < parts.count
+      ? [[parts subarrayWithRange:NSMakeRange(half, parts.count - half)] componentsJoinedByString:@" · "]
+      : @"";
+  return line2.length ? [NSString stringWithFormat:@"%@\n%@", line1, line2] : line1;
+}
+
 static NSString *ResolveAppPath(NSString *target) {
   if ([target hasPrefix:@"/"]) {
     return [[NSFileManager defaultManager] fileExistsAtPath:target] ? target : nil;

@@ -49,6 +49,9 @@ bash install.command
 | 绿灯 | 点击放大（三列）/ Option+点击四列 |
 | ⌘Space 搜组名 | Spotlight 直接打开分组 |
 
+底部操作提示由 `ShortcutTable()` 单一数据源自动生成（`src/launcher.m`）。
+**新增快捷键/按钮功能时**：在 `ShortcutTable()` 里加一行，再在 `keyDown:` 里接一个分支，底部提示与 tooltip 会自动同步，无需改 UI 代码。
+
 分组内容文件：`~/Applications/DockLaunchers/lists/<组名>.txt`，格式 `显示名称|应用名称或完整路径`，`#` 开头为注释。
 
 ## 目录结构
