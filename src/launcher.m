@@ -18,6 +18,7 @@ static NSString *const kSkinPrefix = @"skin.";
 @class BackdropView;
 @class PillButton;
 @class LightButton;
+@class TitlePillView;
 
 @interface RowView : NSView
 @property (assign) NSInteger idx;
@@ -79,7 +80,7 @@ static NSString *const kSkinPrefix = @"skin.";
 @property (strong) NSButton *removeBtn;
 @property (strong) PillButton *cancelBtn;
 @property (strong) PillButton *openBtn;
-@property (strong) NSTextField *windowTitleLabel;
+@property (strong) TitlePillView *windowTitleLabel;
 @property (strong) NSTextField *hintLabel;
 @property NSInteger userColumns;
 @property (copy) NSString *customIconPath;
@@ -219,6 +220,28 @@ static NSColor *ThemeSel(NSInteger t) {
     NSPoint pt = NSMakePoint(NSMidX(self.bounds) - ts.width/2.0, NSMidY(self.bounds) - ts.height/2.0);
     [self.title drawAtPoint:pt withAttributes:attrs];
   }
+}
+@end
+
+@interface TitlePillView : NSView
+@property (copy) NSString *title;
+@property (strong) NSFont *titleFont;
+@end
+
+@implementation TitlePillView
+- (BOOL)isFlipped { return NO; }
+- (void)drawRect:(NSRect)dirtyRect {
+  CGFloat r = NSHeight(self.bounds) / 2.0;
+  NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:r yRadius:r];
+  [[NSColor colorWithCalibratedRed:1.0 green:0.37 blue:0.34 alpha:1.0] setFill];
+  [path fill];
+  if (self.title.length == 0) return;
+  NSFont *f = self.titleFont ?: [NSFont systemFontOfSize:20 weight:NSFontWeightSemibold];
+  NSDictionary *attrs = @{NSFontAttributeName: f, NSForegroundColorAttributeName: [NSColor whiteColor]};
+  NSSize ts = [self.title sizeWithAttributes:attrs];
+  NSPoint pt = NSMakePoint((NSWidth(self.bounds) - ts.width) / 2.0,
+                           (NSHeight(self.bounds) - ts.height) / 2.0);
+  [self.title drawAtPoint:pt withAttributes:attrs];
 }
 @end
 
@@ -528,10 +551,9 @@ static NSString *ResolveAppPath(NSString *target) {
 
   CGFloat W = 480, H = 600;
 
-  self.windowTitleLabel = [NSTextField labelWithString:gGroup];
-  self.windowTitleLabel.font = [NSFont systemFontOfSize:21 weight:NSFontWeightSemibold];
-  self.windowTitleLabel.alignment = NSTextAlignmentCenter;
-  self.windowTitleLabel.textColor = ThemeText(gTheme);
+  self.windowTitleLabel = [[TitlePillView alloc] initWithFrame:NSZeroRect];
+  self.windowTitleLabel.title = gGroup;
+  self.windowTitleLabel.titleFont = [NSFont systemFontOfSize:20 weight:NSFontWeightSemibold];
   [cv addSubview:self.windowTitleLabel];
 
 
@@ -617,7 +639,6 @@ static NSString *ResolveAppPath(NSString *target) {
   self.hintLabel = [NSTextField labelWithString:@"←→↑↓ 选择 · Enter 打开 · ⌫ 移除 · Esc 取消"];
   self.hintLabel.font = [NSFont systemFontOfSize:11];
   self.hintLabel.textColor = ThemeHint(gTheme);
-  self.windowTitleLabel.textColor = [NSColor whiteColor];
   self.hintLabel.alignment = NSTextAlignmentCenter;
   self.hintLabel.frame = NSMakeRect(96, 26, W-192, 18);
   [cv addSubview:self.hintLabel];
@@ -762,14 +783,9 @@ static NSString *ResolveAppPath(NSString *target) {
   CGFloat btnSize = 30.0;
   NSFont *tf = [NSFont systemFontOfSize:20 weight:NSFontWeightSemibold];
   NSDictionary *tattrs = @{NSFontAttributeName: tf};
-  CGFloat tw = [self.windowTitleLabel.stringValue sizeWithAttributes:tattrs].width + 44;
+  CGFloat tw = [self.windowTitleLabel.title sizeWithAttributes:tattrs].width + 44;
   CGFloat th = 32;
-  self.windowTitleLabel.font = tf;
-  self.windowTitleLabel.textColor = [NSColor whiteColor];
-  self.windowTitleLabel.alignment = NSTextAlignmentCenter;
-  self.windowTitleLabel.wantsLayer = YES;
-  self.windowTitleLabel.layer.backgroundColor = [NSColor colorWithCalibratedRed:1.0 green:0.37 blue:0.34 alpha:1.0].CGColor;
-  self.windowTitleLabel.layer.cornerRadius = th/2.0;
+  self.windowTitleLabel.titleFont = tf;
   self.windowTitleLabel.frame = NSMakeRect((W-tw)/2.0, H-48, tw, th);
   self.removeBtn.frame = NSMakeRect(16, H-88, btnSize, btnSize);
   self.addBtn.frame = NSMakeRect(W-16-btnSize, H-88, btnSize, btnSize);
@@ -1047,7 +1063,6 @@ static NSString *ResolveAppPath(NSString *target) {
   if (self.listContainer.layer) self.listContainer.layer.backgroundColor = [NSColor clearColor].CGColor;
 
   self.hintLabel.textColor = ThemeHint(gTheme);
-  self.windowTitleLabel.textColor = [NSColor whiteColor];
   for (RowView *r in self.rows) {
     r.selColor = ThemeSel(gTheme);
     r.label.textColor = ThemeText(gTheme);
