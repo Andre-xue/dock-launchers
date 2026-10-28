@@ -1,0 +1,14 @@
+QQ音乐|QQMusic
+网易云音乐|NeteaseMusic
+音乐|Music
+YT Music|/Users/andre/Applications/YT Music.app
+IINA|IINA
+VLC|VLC
+哔哩哔哩|/Users/andre/Applications/哔哩哔哩.app
+抖音|抖音
+汽水音乐|汽水音乐
+剪映专业版|VideoFusion-macOS
+小红书|/Users/andre/Applications/小红书.app
+微博|/Users/andre/Applications/微博 – 随时随地发现新鲜事.app
+迅雷|Thunder
+迅雷影音|XLPlayer

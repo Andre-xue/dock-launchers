@@ -1,0 +1,4 @@
+OrbStack|OrbStack
+无限画布|/Users/andre/Applications/无限画布.app
+Peach·蜜桃|/Users/andre/Applications/Peach · 蜜桃.app
+LibreTV|/Users/andre/Applications/LibreTV.app

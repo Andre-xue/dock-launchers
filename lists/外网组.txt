@@ -1,0 +1,12 @@
+FlClash|FlClash
+Clash|Clash
+Shadowrocket|Shadowrocket
+Clash Verge|Clash Verge
+X|/Users/andre/Applications/X.app
+TikTok|/Users/andre/Applications/TikTok.app
+YouTube|/Users/andre/Applications/YouTube.app
+Instagram|/Users/andre/Applications/Instagram.app
+Threads|/Users/andre/Applications/Threads.app
+YT Music|/Users/andre/Applications/YT Music.app
+ZIPO|/Users/andre/Applications/ZIP0.app
+AvPlay|AvPlay

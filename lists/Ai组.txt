@@ -1,0 +1,9 @@
+ChatGPT|ChatGPT
+Gemini|Gemini
+Claude|Claude
+DeepSeek Harness|DeepSeek Harness
+Kimi|Kimi
+MiniMax Design|MiniMax Design
+Manus Studio|Manus Studio
+AutoClaw|AutoClaw2
+千问|Qianwen

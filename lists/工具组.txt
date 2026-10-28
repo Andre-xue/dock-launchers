@@ -1,0 +1,14 @@
+Marvis|Marvis
+Vorssaint|Vorssaint
+ArcZip|ArcZip
+OneClip|OneClip
+Ghostty|Ghostty
+cobalt|/Users/andre/Applications/cobalt.app
+FluxDown|FluxDown
+MangoDisk|MangoDisk
+QuickRecord|QuickRecorder
+UU远程|UURemote
+Parabolic|Parabolic
+Epic Game's Launcher|Epic Games Launcher
+快捷指令|Shortcuts
+终端|Terminal
