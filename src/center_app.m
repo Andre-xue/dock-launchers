@@ -1159,6 +1159,10 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
     add([home stringByAppendingPathComponent:[@"Library/HTTPStorages" stringByAppendingPathComponent:bid]]);
     add([home stringByAppendingPathComponent:[@"Library/WebKit" stringByAppendingPathComponent:bid]]);
     add([home stringByAppendingPathComponent:[@"Library/Application Scripts" stringByAppendingPathComponent:bid]]);
+    NSString *byHost = [home stringByAppendingPathComponent:@"Library/Preferences/ByHost"];
+    for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:byHost error:NULL]) {
+      if ([f hasPrefix:bid] && [f hasSuffix:@".plist"]) add([byHost stringByAppendingPathComponent:f]);
+    }
   }
   if (name.length) {
     add([home stringByAppendingPathComponent:[@"Library/Application Support" stringByAppendingPathComponent:name]]);
@@ -1171,7 +1175,14 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
 - (void)confirmUninstallApps:(id)sender {
   NSMutableArray *sel = [NSMutableArray array];
   for (NSDictionary *d in self.uninstallData) if ([self.uninstallSelected containsObject:d[@"path"]]) [sel addObject:d];
-  if (!sel.count) return;
+  if (!sel.count) {
+    NSAlert *e = [[NSAlert alloc] init];
+    e.icon = [self characterImage:64];
+    e.messageText = @"未选择应用";
+    e.informativeText = @"请先勾选要卸载的应用。";
+    [e runModal];
+    return;
+  }
   NSAlert *c = [[NSAlert alloc] init];
   c.icon = [self characterImage:64];
   c.messageText = [NSString stringWithFormat:@"确认卸载 %ld 个应用？", (long)sel.count];
