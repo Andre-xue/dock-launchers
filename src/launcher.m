@@ -2103,6 +2103,38 @@ static NSString *ResolveAppPath(NSString *target) {
   return total;
 }
 
+
+- (NSArray<NSString *> *)relatedDataPathsForApp:(NSDictionary *)d {
+  NSString *bid = d[@"bid"] ?: @"";
+  NSString *appPath = d[@"path"] ?: @"";
+  NSString *appName = [[appPath lastPathComponent] stringByDeletingPathExtension];
+  NSString *home = NSHomeDirectory();
+  NSMutableArray *cands = [NSMutableArray array];
+  void (^addIfExists)(NSString *) = ^(NSString *p) {
+    if (p.length && [[NSFileManager defaultManager] fileExistsAtPath:p] && ![cands containsObject:p]) [cands addObject:p];
+  };
+  if (bid.length) {
+    addIfExists([home stringByAppendingPathComponent:[@"Library/Application Support" stringByAppendingPathComponent:bid]]);
+    addIfExists([home stringByAppendingPathComponent:[@"Library/Caches" stringByAppendingPathComponent:bid]]);
+    addIfExists([home stringByAppendingPathComponent:[@"Library/Preferences" stringByAppendingPathComponent:[bid stringByAppendingPathExtension:@"plist"]]]);
+    addIfExists([home stringByAppendingPathComponent:[@"Library/Saved Application State" stringByAppendingPathComponent:[bid stringByAppendingPathExtension:@"savedState"]]]);
+    addIfExists([home stringByAppendingPathComponent:[@"Library/Containers" stringByAppendingPathComponent:bid]]);
+    addIfExists([home stringByAppendingPathComponent:[@"Library/HTTPStorages" stringByAppendingPathComponent:bid]]);
+    addIfExists([home stringByAppendingPathComponent:[@"Library/WebKit" stringByAppendingPathComponent:bid]]);
+    addIfExists([home stringByAppendingPathComponent:[@"Library/Application Scripts" stringByAppendingPathComponent:bid]]);
+    NSString *byHost = [home stringByAppendingPathComponent:@"Library/Preferences/ByHost"];
+    for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:byHost error:NULL]) {
+      if ([f hasPrefix:bid] && [f hasSuffix:@".plist"]) addIfExists([byHost stringByAppendingPathComponent:f]);
+    }
+  }
+  if (appName.length) {
+    addIfExists([home stringByAppendingPathComponent:[@"Library/Application Support" stringByAppendingPathComponent:appName]]);
+    addIfExists([home stringByAppendingPathComponent:[@"Library/Caches" stringByAppendingPathComponent:appName]]);
+    addIfExists([home stringByAppendingPathComponent:[@"Library/Logs" stringByAppendingPathComponent:appName]]);
+  }
+  return cands;
+}
+
 - (void)loadUninstallData {
   NSMutableArray *arr = [NSMutableArray array];
   NSArray *running = [[NSWorkspace sharedWorkspace] runningApplications];
@@ -2162,7 +2194,7 @@ static NSString *ResolveAppPath(NSString *target) {
     if ([self.uninstallSelected containsObject:d[@"path"]]) selectedSize += [d[@"size"] unsignedLongLongValue];
   }
   self.uninstallHeader.stringValue = [NSString stringWithFormat:@"发现 %ld 个应用   估算总大小 %@", (long)self.uninstallData.count, [self formatBytes:total]];
-  self.uninstallFooter.stringValue = [NSString stringWithFormat:@"已选择应用 %ld    预计移除数据 %@", (long)self.uninstallSelected.count, [self formatBytes:selectedSize]];
+  self.uninstallFooter.stringValue = [NSString stringWithFormat:@"已选择应用 %ld    预计移除数据 %@    将同时清理应用本体与用户数据", (long)self.uninstallSelected.count, [self formatBytes:selectedSize]];
   self.uninstallGoBtn.enabled = (self.uninstallSelected.count > 0);
 }
 
@@ -2332,7 +2364,7 @@ static NSString *ResolveAppPath(NSString *target) {
   sv.documentView = self.uninstallTable;
   [cv addSubview:sv];
 
-  self.uninstallFooter = [NSTextField labelWithString:@""];
+  self.uninstallFooter = [NSTextField labelWithString:@"将同时清理应用本体与用户数据（配置/缓存/容器）"];
   self.uninstallFooter.font = [NSFont systemFontOfSize:12];
   self.uninstallFooter.textColor = [NSColor secondaryLabelColor];
   self.uninstallFooter.frame = NSMakeRect(20, 30, 380, 20);
@@ -2369,42 +2401,55 @@ static NSString *ResolveAppPath(NSString *target) {
     [e runModal];
     return;
   }
-  NSAlert *c = [[NSAlert alloc] init];
-  c.icon = [self currentGroupDockIcon];
-  c.messageText = [NSString stringWithFormat:@"确认卸载 %ld 个应用？", (long)selected.count];
-  c.informativeText = @"此操作将卸载应用本体并从分组删除，不可恢复。5 秒后可点击「是」继续；选择「否」将取消。";
-  [c addButtonWithTitle:@"是（5）"];
-  [c addButtonWithTitle:@"否"];
-  NSButton *yesBtn = c.buttons[0];
-  yesBtn.enabled = NO;
-  for (int sec = 5; sec >= 1; sec--) {
-    int remain = sec - 1;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((5 - sec + 1) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      if (remain > 0) yesBtn.title = [NSString stringWithFormat:@"是（%d）", remain];
-      else { yesBtn.title = @"是"; yesBtn.enabled = YES; }
-    });
+  if (getenv("DOCKLAUNCHER_TEST_UNINSTALL_APPS") == NULL) {
+    NSAlert *c = [[NSAlert alloc] init];
+    c.icon = [self currentGroupDockIcon];
+    c.messageText = [NSString stringWithFormat:@"确认卸载 %ld 个应用？", (long)selected.count];
+    c.informativeText = @"此操作将卸载应用本体并从分组删除，不可恢复。5 秒后可点击「是」继续；选择「否」将取消。";
+    [c addButtonWithTitle:@"是（5）"];
+    [c addButtonWithTitle:@"否"];
+    NSButton *yesBtn = c.buttons[0];
+    yesBtn.enabled = NO;
+    for (int sec = 5; sec >= 1; sec--) {
+      int remain = sec - 1;
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((5 - sec + 1) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (remain > 0) yesBtn.title = [NSString stringWithFormat:@"是（%d）", remain];
+        else { yesBtn.title = @"是"; yesBtn.enabled = YES; }
+      });
+    }
+    if ([c runModal] != NSAlertFirstButtonReturn) return;
   }
-  if ([c runModal] != NSAlertFirstButtonReturn) return;
+
+  NSMutableArray *removals = [NSMutableArray array];
+  NSInteger dataCount = 0;
+  for (NSDictionary *sel in selected) {
+    NSString *appPath = sel[@"path"];
+    if (![removals containsObject:appPath]) [removals addObject:appPath];
+    for (NSString *dp in [self relatedDataPathsForApp:sel]) {
+      if (![removals containsObject:dp]) { [removals addObject:dp]; dataCount++; }
+    }
+  }
 
   BOOL testMode = (getenv("DOCKLAUNCHER_TEST_UNINSTALL_APPS") != NULL);
   BOOL ok = NO;
   if (testMode) {
     NSString *staging = [NSString stringWithFormat:@"/tmp/DockLaunchers-apps-uninstall-%d", getpid()];
     [[NSFileManager defaultManager] createDirectoryAtPath:staging withIntermediateDirectories:YES attributes:nil error:NULL];
-    for (NSDictionary *sel in selected) {
-      NSString *path = sel[@"path"];
-      [[NSFileManager defaultManager] moveItemAtPath:path toPath:[staging stringByAppendingPathComponent:[path lastPathComponent]] error:NULL];
+    NSInteger idx = 0;
+    for (NSString *path in removals) {
+      NSString *dst = [staging stringByAppendingPathComponent:[NSString stringWithFormat:@"%ld-%@", (long)idx++, [path lastPathComponent]]];
+      [[NSFileManager defaultManager] moveItemAtPath:path toPath:dst error:NULL];
     }
     ok = YES;
-    fprintf(stderr, "UNINSTALL_APPS staging=%s count=%ld\n", [staging UTF8String], (long)selected.count);
+    fprintf(stderr, "UNINSTALL_APPS staging=%s apps=%ld data=%ld\n", [staging UTF8String], (long)selected.count, (long)dataCount);
   } else {
     NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\n"];
     NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
     NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
     [body appendFormat:@"mkdir -p \"%@\"\n", trash];
-    for (NSDictionary *sel in selected) {
-      NSString *path = sel[@"path"];
-      [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%@\"\n", path, path, trash, stamp, [path lastPathComponent]];
+    NSInteger idx = 0;
+    for (NSString *path in removals) {
+      [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%ld-%@\"\n", path, path, trash, stamp, (long)idx++, [path lastPathComponent]];
     }
     NSString *sp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-uninstall-apps.sh"];
     [body writeToFile:sp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
@@ -2434,11 +2479,23 @@ static NSString *ResolveAppPath(NSString *target) {
     [[keep componentsJoinedByString:@"\n"] writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
     [self reload];
     [self.uninstallPanel orderOut:nil];
+    // 验证是否全部清除
+    NSMutableArray *leftovers = [NSMutableArray array];
+    for (NSString *path in removals) {
+      if ([[NSFileManager defaultManager] fileExistsAtPath:path]) [leftovers addObject:path];
+    }
     if (!testMode) {
       NSAlert *d = [[NSAlert alloc] init];
-      d.messageText = @"卸载完成";
-      d.informativeText = [NSString stringWithFormat:@"已将 %ld 个应用移到废纸篓，并从分组列表中移除。", (long)selected.count];
+      d.icon = [self currentGroupDockIcon];
+      d.messageText = leftovers.count == 0 ? @"卸载并清理完成" : @"卸载完成，但有残留";
+      if (leftovers.count == 0) {
+        d.informativeText = [NSString stringWithFormat:@"已卸载 %ld 个应用，并清理 %ld 项应用数据（配置/缓存/容器等）；已验证全部清除。", (long)selected.count, (long)dataCount];
+      } else {
+        d.informativeText = [NSString stringWithFormat:@"已卸载 %ld 个应用、清理 %ld 项数据；检测到 %ld 项残留：\n%@", (long)selected.count, (long)dataCount, (long)leftovers.count, [leftovers componentsJoinedByString:@"\n"]];
+      }
       [d runModal];
+    } else {
+      fprintf(stderr, "UNINSTALL_VERIFY leftovers=%ld\n", (long)leftovers.count);
     }
   } else {
     NSAlert *d = [[NSAlert alloc] init];
@@ -4788,6 +4845,7 @@ int main(int argc, const char *argv[]) {
     if (getenv("DOCKLAUNCHER_TEST_UNINSTALL_CONFIRM_SHOW")) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [c showUninstallAppsPanel];
+        fprintf(stderr, "UNINSTALL_DEBUG data=%ld filtered=%ld first=%s\n", (long)c.uninstallData.count, (long)c.uninstallFiltered.count, c.uninstallFiltered.count ? [c.uninstallFiltered.firstObject[@"path"] UTF8String] : "-");
         if (c.uninstallFiltered.count) [c.uninstallSelected addObject:c.uninstallFiltered.firstObject[@"path"]];
         [c updateUninstallSummary];
         [c confirmUninstallApps:nil];
@@ -4797,6 +4855,7 @@ int main(int argc, const char *argv[]) {
     if (getenv("DOCKLAUNCHER_TEST_UNINSTALL_RUN")) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [c showUninstallAppsPanel];
+        fprintf(stderr, "UNINSTALL_DEBUG data=%ld filtered=%ld first=%s\n", (long)c.uninstallData.count, (long)c.uninstallFiltered.count, c.uninstallFiltered.count ? [c.uninstallFiltered.firstObject[@"path"] UTF8String] : "-");
         if (c.uninstallFiltered.count) [c.uninstallSelected addObject:c.uninstallFiltered.firstObject[@"path"]];
         [c updateUninstallSummary];
         [c confirmUninstallApps:nil];
