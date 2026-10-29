@@ -173,6 +173,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)repairDockMenuTapped:(id)sender;
 - (void)repairDockEntries;
 - (BOOL)dockHasEntryForPath:(NSString *)path;
+- (void)updateDockLabelForPath:(NSString *)path label:(NSString *)label;
 - (NSString *)currentBundlePathByID;
 - (BOOL)renameBundleAtPath:(NSString *)oldPath toBase:(NSString *)newBase display:(NSString *)display;
 - (void)writeInfoNamesInBundle:(NSString *)bundlePath base:(NSString *)base display:(NSString *)display;
@@ -1548,6 +1549,31 @@ static NSString *ResolveAppPath(NSString *target) {
   return bundlePath;
 }
 
+- (void)updateDockLabelForPath:(NSString *)path label:(NSString *)label {
+  @try {
+    NSString *norm = [path hasSuffix:@"/"] ? path : [path stringByAppendingString:@"/"];
+    NSString *enc = [norm stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
+    CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+    if (!raw) return;
+    NSArray *apps = CFBridgingRelease(raw);
+    NSMutableArray *out = [NSMutableArray array];
+    for (id item in apps) {
+      NSMutableDictionary *m = [item mutableCopy];
+      @try {
+        NSString *u = m[@"tile-data"][@"file-data"][@"_CFURLString"];
+        if (u && ([u containsString:enc] || [u containsString:[path lastPathComponent]])) {
+          NSMutableDictionary *td = [m[@"tile-data"] mutableCopy];
+          td[@"file-label"] = label;
+          m[@"tile-data"] = td;
+        }
+      } @catch (NSException *e) {}
+      [out addObject:m];
+    }
+    CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)out, CFSTR("com.apple.dock"));
+    CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+  } @catch (NSException *e) {}
+}
+
 - (BOOL)dockHasEntryForPath:(NSString *)path {
   @try {
     CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
@@ -1586,7 +1612,8 @@ static NSString *ResolveAppPath(NSString *target) {
     }
     for (NSString *p in wanted) {
       NSString *enc = [p stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
-      NSString *label = [[p lastPathComponent] stringByDeletingPathExtension];
+      NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]];
+      NSString *label = info[@"CFBundleDisplayName"] ?: [[p lastPathComponent] stringByDeletingPathExtension];
       [kept addObject:@{
         @"tile-data": @{@"file-data": @{@"_CFURLString": [NSString stringWithFormat:@"file://%@/", enc],
                                         @"_CFURLStringType": @0},
@@ -1616,6 +1643,7 @@ static NSString *ResolveAppPath(NSString *target) {
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   [d setObject:display forKey:@"displayNameOverride"];
   [d synchronize];
+  [self updateDockLabelForPath:curPath label:display];
   [self layoutContent];
 
   if (getenv("DOCKLAUNCHER_TEST_RENAME") || getenv("DOCKLAUNCHER_TEST_RENAME2")) return;
@@ -1626,7 +1654,7 @@ static NSString *ResolveAppPath(NSString *target) {
     @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
     NSTask *task = [[NSTask alloc] init];
     task.launchPath = @"/usr/bin/killall";
-    task.arguments = @[@"Dock"];
+    task.arguments = @[@"-KILL", @"Dock"];
     @try { [task launch]; } @catch (NSException *e) {}
   });
 }
@@ -1637,7 +1665,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [self reload];
   NSTask *task = [[NSTask alloc] init];
   task.launchPath = @"/usr/bin/killall";
-  task.arguments = @[@"Dock"];
+  task.arguments = @[@"-KILL", @"Dock"];
   @try { [task launch]; } @catch (NSException *e) {}
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"程序坞已修复";
@@ -1721,7 +1749,7 @@ static NSString *ResolveAppPath(NSString *target) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         NSTask *task = [[NSTask alloc] init];
         task.launchPath = @"/usr/bin/killall";
-        task.arguments = @[@"Dock"];
+        task.arguments = @[@"-KILL", @"Dock"];
         @try { [task launch]; } @catch (NSException *e) {}
       });
     }
