@@ -1590,7 +1590,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)repairDockEntries {
   @try {
-    NSString *parent = [self.currentBundlePathByID stringByDeletingLastPathComponent];
+    NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
     NSMutableArray *wanted = [NSMutableArray array];
     NSArray *order = @[@"工作", @"聊天", @"外网", @"影音", @"Ai", @"Docker", @"工具"];
     for (NSString *n in order) {
@@ -1601,29 +1601,75 @@ static NSString *ResolveAppPath(NSString *target) {
       NSArray *items = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:parent error:NULL];
       for (NSString *n in items) if ([n hasSuffix:@".app"]) [wanted addObject:[parent stringByAppendingPathComponent:n]];
     }
+
     CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
-    NSArray *apps = raw ? CFBridgingRelease(raw) : @[];
-    NSMutableArray *kept = [NSMutableArray array];
-    for (id item in apps) {
+    NSMutableArray *apps = raw ? [CFBridgingRelease(raw) mutableCopy] : [NSMutableArray array];
+    BOOL changed = NO;
+
+    // 1) 先清掉指向不存在路径的 DockLaunchers 条目
+    for (NSInteger i = (NSInteger)apps.count - 1; i >= 0; i--) {
+      NSDictionary *item = apps[i];
       NSString *u = nil;
       @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
-      if (u && [u containsString:@"DockLaunchers"]) continue;
-      [kept addObject:item];
+      if (!u || !([u containsString:@"/DockLaunchers/"] || [u containsString:@"DockLaunchers%2F"])) continue;
+      NSString *decoded = [[u stringByRemovingPercentEncoding] stringByReplacingOccurrencesOfString:@"file://" withString:@""];
+      decoded = [decoded stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
+      if (![[NSFileManager defaultManager] fileExistsAtPath:decoded]) { [apps removeObjectAtIndex:i]; changed = YES; }
     }
+
+    // 2) 已有条目只更新标签/补齐字段；缺失的才追加
     for (NSString *p in wanted) {
-      NSString *enc = [p stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
       NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]];
       NSString *label = info[@"CFBundleDisplayName"] ?: [[p lastPathComponent] stringByDeletingPathExtension];
-      [kept addObject:@{
-        @"tile-data": @{@"file-data": @{@"_CFURLString": [NSString stringWithFormat:@"file://%@/", enc],
-                                        @"_CFURLStringType": @0},
-                        @"file-label": label,
-                        @"file-type": @41},
-        @"tile-type": @"file-tile"
-      }];
+      NSString *base = [p lastPathComponent];
+      NSInteger found = -1;
+      for (NSInteger i = 0; i < (NSInteger)apps.count; i++) {
+        NSString *u = nil;
+        @try { u = apps[i][@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
+        if (u && [[[u stringByRemovingPercentEncoding] lastPathComponent] stringByDeletingPathExtension].length &&
+            [[[[u stringByRemovingPercentEncoding] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]] lastPathComponent] isEqualToString:base]) {
+          found = i; break;
+        }
+      }
+      if (found >= 0) {
+        NSMutableDictionary *m = [apps[found] mutableCopy];
+        NSMutableDictionary *td = [m[@"tile-data"] mutableCopy];
+        if (![td[@"file-label"] isEqualToString:label] || !td[@"file-type"]) {
+          td[@"file-label"] = label;
+          td[@"file-type"] = @41;
+          m[@"tile-data"] = td;
+          apps[found] = m;
+          changed = YES;
+        }
+      } else {
+        NSString *url = [NSString stringWithFormat:@"file://%@/", [p stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]]];
+        [apps addObject:@{@"tile-data": @{@"file-data": @{@"_CFURLString": url, @"_CFURLStringType": @0},
+                                          @"file-label": label, @"file-type": @41},
+                          @"tile-type": @"file-tile"}];
+        changed = YES;
+      }
     }
-    CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)kept, CFSTR("com.apple.dock"));
+
+    if (!changed) return;
+
+    // 备份当前 Dock 配置
+    @try {
+      NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+      [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+      NSData *bak = [NSPropertyListSerialization dataWithPropertyList:apps format:NSPropertyListXMLFormat_v1_0 options:0 error:NULL];
+      [bak writeToFile:[dir stringByAppendingPathComponent:@"dock-persistent-apps-backup.plist"] atomically:YES];
+    } @catch (NSException *e) {}
+
+    CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)apps, CFSTR("com.apple.dock"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+
+    // 强杀 Dock，避免它退出时回写旧状态
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      NSTask *task = [[NSTask alloc] init];
+      task.launchPath = @"/usr/bin/killall";
+      task.arguments = @[@"-KILL", @"Dock"];
+      @try { [task launch]; } @catch (NSException *e) {}
+    });
   } @catch (NSException *e) {}
 }
 
@@ -1663,13 +1709,9 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)repairDockMenuTapped:(id)sender {
   [self repairDockEntries];
   [self reload];
-  NSTask *task = [[NSTask alloc] init];
-  task.launchPath = @"/usr/bin/killall";
-  task.arguments = @[@"-KILL", @"Dock"];
-  @try { [task launch]; } @catch (NSException *e) {}
   NSAlert *a = [[NSAlert alloc] init];
-  a.messageText = @"程序坞已修复";
-  a.informativeText = @"已重新写入 7 个分组图标并重启 Dock。";
+  a.messageText = @"程序坞已检查";
+  a.informativeText = @"只补齐缺失/无效条目并同步标签；原有正常图标不做改动。如无异常不会重启 Dock。";
   [a runModal];
 }
 
