@@ -324,6 +324,7 @@ static NSColor *ThemeSel(NSInteger t) {
 @property (copy) NSString *actionId;
 @property (copy) NSString *nameText;
 @property (copy) NSString *sigText;
+@property (copy) NSString *statusText;
 @property BOOL selected;
 @property BOOL hovered;
 @property (copy) void (^onActivate)(void);
@@ -343,10 +344,13 @@ static NSColor *ThemeSel(NSInteger t) {
 }
 - (void)mouseEntered:(NSEvent *)e { self.hovered = YES; if (self.onHover) self.onHover(YES); [self setNeedsDisplay:YES]; }
 - (void)mouseExited:(NSEvent *)e { self.hovered = NO; if (self.onHover) self.onHover(NO); [self setNeedsDisplay:YES]; }
+- (BOOL)acceptsFirstMouse:(NSEvent *)e { return YES; }
 - (void)mouseDown:(NSEvent *)e {
+  if (e.clickCount >= 1) {
+    dispatch_async(dispatch_get_main_queue(), ^{ if (self.onActivate) self.onActivate(); });
+  }
   NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
   if (p.x > NSWidth(self.bounds) - 52) { if (self.onReset) self.onReset(); return; }
-  if (self.onActivate) self.onActivate();
 }
 - (void)drawRect:(NSRect)dirtyRect {
   NSRect r = NSInsetRect(self.bounds, 2, 4);
@@ -360,10 +364,11 @@ static NSColor *ThemeSel(NSInteger t) {
   NSDictionary *nattrs = @{NSFontAttributeName: nf, NSForegroundColorAttributeName: [NSColor blackColor]};
   [self.nameText drawAtPoint:NSMakePoint(14, NSMidY(self.bounds) - 9) withAttributes:nattrs];
 
-  NSString *shown = self.sigText.length ? DisplayForSignature(self.sigText) : @"未设置";
+  NSString *shown = self.statusText.length ? self.statusText
+                 : (self.sigText.length ? DisplayForSignature(self.sigText) : @"未设置");
   NSFont *sf = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
   NSDictionary *sattrs = @{NSFontAttributeName: sf,
-                           NSForegroundColorAttributeName: (self.sigText.length ? [NSColor blackColor] : [NSColor grayColor])};
+                           NSForegroundColorAttributeName: ((self.sigText.length || self.statusText.length) ? [NSColor blackColor] : [NSColor grayColor])};
   NSSize ts = [shown sizeWithAttributes:sattrs];
   [shown drawAtPoint:NSMakePoint(NSWidth(self.bounds) - 66 - ts.width, NSMidY(self.bounds) - ts.height/2.0) withAttributes:sattrs];
 
@@ -599,13 +604,13 @@ static NSString *DisplayForSignature(NSString *sig) {
 
 static BOOL SignatureIsAllowed(NSString *sig) {
   if (sig.length == 0) return NO;
-  if ([sig hasPrefix:@"f"] && sig.length <= 3) return YES; // F 键
-  if ([sig containsString:@"cmd+"] || [sig containsString:@"ctrl+"] ||
-      [sig containsString:@"opt+"] || [sig containsString:@"shift+"]) {
-    // 必须有修饰键 + 至少一个普通键
-    return [sig componentsSeparatedByString:@"+"].lastObject.length > 0;
-  }
-  return NO;
+  return [sig componentsSeparatedByString:@"+"].lastObject.length > 0;
+}
+
+static BOOL SignatureHasModifier(NSString *sig) {
+  if ([sig hasPrefix:@"f"] && sig.length <= 3) return YES;
+  return ([sig containsString:@"cmd+"] || [sig containsString:@"ctrl+"] ||
+          [sig containsString:@"opt+"] || [sig containsString:@"shift+"]);
 }
 
 // ================= 快捷键 / 操作说明（唯一数据源） =================
@@ -1545,6 +1550,7 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
   NSInteger idx = 0;
   for (ShortcutRowView *r in self.shortcutRows) {
     r.sigText = self.customShortcuts[r.actionId];
+    r.statusText = [r.actionId isEqualToString:(self.recordingAction ?: @"")] ? @"请按下按键…" : nil;
     r.selected = (idx == hl);
     [r setNeedsDisplay:YES];
     idx++;
@@ -1570,7 +1576,11 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
 - (void)startRecordingForAction:(NSString *)actionId {
   self.recordingAction = actionId;
   self.hoverRow = -1;
-  for (ShortcutRowView *r in self.shortcutRows) { r.selected = NO; r.hovered = NO; [r setNeedsDisplay:YES]; }
+  for (ShortcutRowView *r in self.shortcutRows) {
+    r.selected = NO; r.hovered = NO;
+    r.statusText = [r.actionId isEqualToString:actionId] ? @"请按下按键…" : nil;
+    [r setNeedsDisplay:YES];
+  }
   if (self.recordingMonitor) { [NSEvent removeMonitor:self.recordingMonitor]; self.recordingMonitor = nil; }
   __weak Controller *weakSelf = self;
   self.recordingMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
@@ -1637,9 +1647,12 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
 - (BOOL)handleCustomShortcut:(NSEvent *)event {
   if (self.recordingAction) return NO;
   NSString *sig = SignatureForEvent(event);
+  BOOL hasMod = SignatureHasModifier(sig);
+  BOOL editing = [self.window.firstResponder isKindOfClass:[NSTextView class]];
   for (NSDictionary *a in ShortcutActions()) {
     NSString *stored = self.customShortcuts[a[@"id"]];
     if (stored.length && [stored isEqualToString:sig]) {
+      if (!hasMod && editing) return NO; // 正在输入文字时，单键快捷键不触发
       [self performShortcutAction:a[@"id"]];
       return YES;
     }
@@ -1941,6 +1954,16 @@ int main(int argc, const char *argv[]) {
           fprintf(stderr, "RSS=%.1fMB\n", info.resident_size / 1048576.0);
         }
         exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_RECORD")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c showShortcutSettings:nil];
+        [c startRecordingForAction:@"add"];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+          fprintf(stderr, "RECORDED=%s\n", [[c.customShortcuts description] UTF8String]);
+          exit(0);
+        });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_SHORTCUT_DUMP")) {
