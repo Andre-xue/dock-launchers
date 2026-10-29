@@ -29,21 +29,30 @@ static NSString *SignatureForEvent(NSEvent *e);
 @interface AppIconView : NSView
 @property (strong) NSImage *image;
 @property CGFloat cornerRatio;
+@property BOOL selected;
+@property (strong) NSColor *selColor;
+@property BOOL hugHighlight;
 @end
 
 @implementation AppIconView
 - (BOOL)isFlipped { return NO; }
 - (void)setImage:(NSImage *)image { _image = image; [self setNeedsDisplay:YES]; }
 - (void)setCornerRatio:(CGFloat)cornerRatio { _cornerRatio = cornerRatio; [self setNeedsDisplay:YES]; }
+- (void)setSelected:(BOOL)selected { _selected = selected; [self setNeedsDisplay:YES]; }
 - (void)drawRect:(NSRect)dirtyRect {
+  NSRect iconRect = NSInsetRect(self.bounds, 0.6, 0.6);
+  CGFloat r = self.cornerRatio * MIN(iconRect.size.width, iconRect.size.height);
+  if (self.hugHighlight && self.selected) {
+    NSColor *c = self.selColor ?: [NSColor colorWithCalibratedRed:0.86 green:0.93 blue:0.99 alpha:1.0];
+    [c setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:r + 0.6 yRadius:r + 0.6] fill];
+  }
   if (!self.image) return;
-  CGFloat r = self.cornerRatio * MIN(self.bounds.size.width, self.bounds.size.height);
-  NSBezierPath *clip = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:r yRadius:r];
+  NSBezierPath *clip = [NSBezierPath bezierPathWithRoundedRect:iconRect xRadius:r yRadius:r];
   [clip addClip];
-  // 形状变化时轻微放大图像，裁掉图标自带透明边距，让圆角/圆形效果可见
   CGFloat zoom = 1.0 + self.cornerRatio * 0.35;
-  CGFloat inset = -(zoom - 1.0) * MIN(self.bounds.size.width, self.bounds.size.height) / 2.0;
-  NSRect drawRect = NSInsetRect(self.bounds, inset, inset);
+  CGFloat inset = -(zoom - 1.0) * MIN(iconRect.size.width, iconRect.size.height) / 2.0;
+  NSRect drawRect = NSInsetRect(iconRect, inset, inset);
   [self.image drawInRect:drawRect fromRect:NSZeroRect
                operation:NSCompositingOperationSourceOver fraction:1.0];
 }
@@ -56,6 +65,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (assign) BOOL selected;
 @property (weak) Controller *ctrl;
 @property (strong) NSColor *selColor;
+@property BOOL iconMode;
+@property NSRect iconRect;
+@property CGFloat iconCorner;
 @end
 
 @interface ContentView : NSView
@@ -301,11 +313,10 @@ static NSColor *ThemeSel(NSInteger t) {
 
 @implementation RowView
 - (void)drawRect:(NSRect)dirtyRect {
-  if (self.selected) {
-    [(self.selColor ?: ThemeSel(gTheme)) setFill];
-    NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 2) xRadius:10 yRadius:10];
-    [p fill];
-  }
+  if (!self.selected || self.iconMode) return;
+  [(self.selColor ?: ThemeSel(gTheme)) setFill];
+  NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 2) xRadius:10 yRadius:10];
+  [p fill];
 }
 - (void)mouseDown:(NSEvent *)event {
   [self.ctrl selectRow:self.idx];
@@ -1037,14 +1048,21 @@ static NSString *ResolveAppPath(NSString *target) {
     NSString *path = ResolveAppPath(target);
     NSImage *icon = nil;
     if (path) icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
-    NSDictionary *cfg = target ? gAppIconSettings[target] : nil;
+    NSDictionary *cfg = (icons && target) ? gAppIconSettings[target] : nil;
     CGFloat customSz = cfg[@"size"] ? [cfg[@"size"] doubleValue] : 0;
     CGFloat customCorner = cfg[@"corner"] ? [cfg[@"corner"] doubleValue] : 0;
     if (icons) {
       CGFloat sz = customSz > 0 ? customSz : MIN(cell.size.width * 0.62, MIN(cell.size.height * 0.72, 64.0));
       sz = MAX(24.0, sz);
-      AppIconView *iv = [[AppIconView alloc] initWithFrame:NSMakeRect((cell.size.width - sz)/2.0, (cell.size.height - sz)/2.0, sz, sz)];
+      NSRect iconFrame = NSMakeRect((cell.size.width - sz)/2.0 - 0.6, (cell.size.height - sz)/2.0 - 0.6, sz + 1.2, sz + 1.2);
+      AppIconView *iv = [[AppIconView alloc] initWithFrame:iconFrame];
       iv.cornerRatio = customCorner;
+      iv.hugHighlight = YES;
+      iv.selected = row.selected;
+      iv.selColor = row.selColor;
+      row.iconMode = YES;
+      row.iconRect = iconFrame;
+      row.iconCorner = customCorner;
       [row addSubview:iv];
       row.iconView = iv;
       row.label = nil;
@@ -1085,7 +1103,7 @@ static NSString *ResolveAppPath(NSString *target) {
   for (NSInteger i = start; i < end; i++) {
     NSDictionary *it = self.items[i];
     NSString *target = it[@"target"];
-    NSDictionary *cfg = gAppIconSettings[target];
+    NSDictionary *cfg = gIconMode ? gAppIconSettings[target] : nil;
     NSImage *img = nil;
     if (cfg[@"image"]) img = [[NSImage alloc] initWithContentsOfFile:cfg[@"image"]];
     if (!img) {
@@ -1105,7 +1123,12 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)selectRow:(NSInteger)idx {
   if (idx < 0 || idx >= (NSInteger)self.rows.count) return;
   self.sel = idx;
-  for (RowView *r in self.rows) r.selected = (r.idx == idx);
+  for (RowView *r in self.rows) {
+    r.selected = (r.idx == idx);
+    r.iconView.selected = (r.idx == idx);
+    r.iconView.selColor = r.selColor;
+    [r.iconView setNeedsDisplay:YES];
+  }
   for (RowView *r in self.rows) [r setNeedsDisplay:YES];
   NSRect r = self.rows[idx].frame;
   [self.listContainer scrollRectToVisible:r];
@@ -2282,6 +2305,13 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)showAppIconPanel:(id)sender {
   if (self.sel < 0 || self.sel >= (NSInteger)self.items.count) { NSBeep(); return; }
+  if (!gIconMode) {
+    NSAlert *e = [[NSAlert alloc] init];
+    e.messageText = @"仅图标显示模式可用";
+    e.informativeText = @"请先在 🎨 →「排列方式」中切换到「图标显示」，再自定义应用图标。";
+    [e runModal];
+    return;
+  }
   NSDictionary *it = self.items[self.sel];
   self.appIconEditTarget = it[@"target"];
   NSString *name = it[@"label"] ?: @"";
@@ -2364,7 +2394,9 @@ static NSString *ResolveAppPath(NSString *target) {
   if (grid) {
     CGFloat sz = customSz > 0 ? customSz : MIN(cellW * 0.62, MIN(cellH * 0.72, 64.0));
     sz = MAX(24.0, MIN(sz, MIN(cellW, cellH) - 4));
-    iv.frame = NSMakeRect((cellW - sz)/2.0, (cellH - sz)/2.0, sz, sz);
+    iv.frame = NSMakeRect((cellW - sz)/2.0 - 0.6, (cellH - sz)/2.0 - 0.6, sz + 1.2, sz + 1.2);
+    row.iconRect = iv.frame;
+    row.iconCorner = cfg[@"corner"] ? [cfg[@"corner"] doubleValue] : 0;
   } else {
     BOOL narrow = (cellW < 250);
     CGFloat base = narrow ? 34 : 40;
@@ -2378,6 +2410,10 @@ static NSString *ResolveAppPath(NSString *target) {
   }
   iv.cornerRatio = corner;
   iv.image = img;
+  iv.selected = YES;
+  iv.selColor = row.selColor;
+  if (grid) { row.iconRect = iv.frame; row.iconCorner = corner; }
+  [row setNeedsDisplay:YES];
   [iv setNeedsDisplay:YES];
 }
 
@@ -3105,6 +3141,20 @@ int main(int argc, const char *argv[]) {
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
         exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_ICONHUG_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gIconMode = YES;
+        [c reload];
+        if (c.items.count) {
+          c.sel = 0;
+          [c selectRow:0];
+          c.appIconEditTarget = c.items[0][@"target"];
+          gAppIconSettings[c.appIconEditTarget] = [@{@"size": @64, @"corner": @0.5} mutableCopy];
+          [c updateSelectedIconAppearance];
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_ICONLIVE_SHOW")) {
