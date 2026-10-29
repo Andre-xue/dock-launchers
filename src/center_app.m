@@ -95,6 +95,7 @@ static NSString *ResolveAppPath(NSString *target) {
 @property (strong) NSSearchField *uninstallSearch;
 @property (strong) NSTextField *uninstallFooter;
 @property (strong) NSSegmentedControl *uninstallScopeCtl;
+@property (strong) NSPopUpButton *uninstallGroupPopup;
 @property NSInteger uninstallScope;
 @property (strong) NSButton *uninstallGo;
 - (void)unloadLoginAgent;
@@ -148,6 +149,15 @@ static NSString *ResolveAppPath(NSString *target) {
   [self showWindow:nil];
   if (getenv("DOCKLAUNCHERS_CENTER_SECTION")) {
     [self showSection:atoi(getenv("DOCKLAUNCHERS_CENTER_SECTION"))];
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_GROUP")) {
+    [self showSection:2];
+    self.uninstallScope = 1;
+    self.uninstallScopeCtl.selectedSegment = 1;
+    [self refreshUninstallGroupPopup];
+    NSString *g = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_GROUP")];
+    if ([self.uninstallGroupPopup itemWithTitle:g]) [self.uninstallGroupPopup selectItemWithTitle:g];
+    [self reloadUninstallData];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_POPOVER")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -517,7 +527,7 @@ static NSString *ResolveAppPath(NSString *target) {
   NSTextField *sub = [self label:@"扫描本机应用（全部应用）或仅分组内；已排除本程序自身的 Dock 分组应用" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 550, 18); [v addSubview:sub];
 
-  self.uninstallScopeCtl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(24, 540, 220, 28)];
+  self.uninstallScopeCtl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(24, 540, 180, 28)];
   [self.uninstallScopeCtl setSegmentCount:2];
   [self.uninstallScopeCtl setLabel:@"全部应用" forSegment:0];
   [self.uninstallScopeCtl setLabel:@"仅分组内" forSegment:1];
@@ -525,18 +535,22 @@ static NSString *ResolveAppPath(NSString *target) {
   self.uninstallScopeCtl.target = self;
   self.uninstallScopeCtl.action = @selector(uninstallScopeChanged:);
   [v addSubview:self.uninstallScopeCtl];
-  self.uninstallSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(252, 540, 260, 28)];
+  self.uninstallGroupPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(210, 540, 122, 28) pullsDown:NO];
+  self.uninstallGroupPopup.target = self;
+  self.uninstallGroupPopup.action = @selector(uninstallGroupChanged:);
+  [v addSubview:self.uninstallGroupPopup];
+  self.uninstallSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(340, 540, 196, 28)];
   self.uninstallSearch.placeholderString = @"搜索应用、Bundle ID 或路径";
   self.uninstallSearch.target = self;
   self.uninstallSearch.action = @selector(uninstallFilterChanged:);
   [self.uninstallSearch setContinuous:YES];
   [v addSubview:self.uninstallSearch];
   NSButton *all = [NSButton buttonWithTitle:@"全选" target:self action:@selector(uninstallSelectAll:)];
-  all.frame = NSMakeRect(522, 540, 60, 30); all.bezelStyle = NSBezelStyleRounded; [v addSubview:all];
+  all.frame = NSMakeRect(544, 540, 50, 30); all.bezelStyle = NSBezelStyleRounded; [v addSubview:all];
   NSButton *none = [NSButton buttonWithTitle:@"全不选" target:self action:@selector(uninstallSelectNone:)];
-  none.frame = NSMakeRect(586, 540, 68, 30); none.bezelStyle = NSBezelStyleRounded; [v addSubview:none];
+  none.frame = NSMakeRect(596, 540, 56, 30); none.bezelStyle = NSBezelStyleRounded; [v addSubview:none];
   NSButton *refresh = [NSButton buttonWithTitle:@"刷新" target:self action:@selector(reloadUninstallData)];
-  refresh.frame = NSMakeRect(658, 540, 58, 30); refresh.bezelStyle = NSBezelStyleRounded; [v addSubview:refresh];
+  refresh.frame = NSMakeRect(656, 540, 56, 30); refresh.bezelStyle = NSBezelStyleRounded; [v addSubview:refresh];
 
   NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 76, 710, 450)];
   sv.hasVerticalScroller = YES;
@@ -546,7 +560,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.uninstallTable.delegate = self;
   self.uninstallTable.rowHeight = 52;
   self.uninstallTable.usesAlternatingRowBackgroundColors = YES;
-  NSArray *cols = @[@[@"app", @"应用", @(330)], @[@"group", @"来源分组", @(110)],
+  NSArray *cols = @[@[@"app", @"应用", @(330)], @[@"group", @"来源", @(120)],
                     @[@"size", @"大小", @(90)], @[@"installed", @"安装日期", @(100)]];
   for (NSArray *c in cols) {
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
@@ -562,6 +576,24 @@ static NSString *ResolveAppPath(NSString *target) {
   self.uninstallGo = [NSButton buttonWithTitle:@"卸载所选应用" target:self action:@selector(confirmUninstallApps:)];
   self.uninstallGo.frame = NSMakeRect(580, 26, 120, 32); self.uninstallGo.bezelStyle = NSBezelStyleRounded; [v addSubview:self.uninstallGo];
   self.uninstallView = v;
+}
+
+- (void)refreshUninstallGroupPopup {
+  NSString *prev = self.uninstallGroupPopup.titleOfSelectedItem;
+  [self.uninstallGroupPopup removeAllItems];
+  [self.uninstallGroupPopup addItemWithTitle:@"全部分组"];
+  NSArray *items = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:GroupDir() error:NULL];
+  for (NSString *f in items) {
+    if (![f hasSuffix:@".app"]) continue;
+    [self.uninstallGroupPopup addItemWithTitle:[f stringByDeletingPathExtension]];
+  }
+  if (prev.length && [self.uninstallGroupPopup itemWithTitle:prev]) [self.uninstallGroupPopup selectItemWithTitle:prev];
+  self.uninstallGroupPopup.enabled = (self.uninstallScope == 1);
+  self.uninstallGroupPopup.alphaValue = (self.uninstallScope == 1) ? 1.0 : 0.45;
+}
+
+- (void)uninstallGroupChanged:(id)sender {
+  [self reloadUninstallData];
 }
 
 - (unsigned long long)duSizeAtPath:(NSString *)path {
@@ -581,10 +613,13 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)uninstallScopeChanged:(id)sender {
   self.uninstallScope = self.uninstallScopeCtl.selectedSegment;
+  self.uninstallGroupPopup.enabled = (self.uninstallScope == 1);
+  self.uninstallGroupPopup.alphaValue = (self.uninstallScope == 1) ? 1.0 : 0.45;
   [self reloadUninstallData];
 }
 
 - (void)reloadUninstallData {
+  [self refreshUninstallGroupPopup];
   NSFileManager *fm = [NSFileManager defaultManager];
   // 收集分组内的 target -> 分组名
   NSMutableDictionary *targetGroup = [NSMutableDictionary dictionary];
@@ -618,7 +653,10 @@ static NSString *ResolveAppPath(NSString *target) {
   };
 
   if (self.uninstallScope == 1) {
-    for (NSString *p in targetGroup) addApp(p);
+    NSString *selG = self.uninstallGroupPopup.titleOfSelectedItem ?: @"全部分组";
+    for (NSString *p in targetGroup) {
+      if ([selG isEqualToString:@"全部分组"] || [targetGroup[p] isEqualToString:selG]) addApp(p);
+    }
   } else {
     NSArray *roots = @[@"/Applications", [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"]];
     for (NSString *root in roots) {
@@ -647,7 +685,8 @@ static NSString *ResolveAppPath(NSString *target) {
     NSString *label = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [[p lastPathComponent] stringByDeletingPathExtension];
     BOOL isRunning = NO;
     for (NSRunningApplication *ra in running) if (ra.bundleURL && [[ra.bundleURL path] isEqualToString:p]) { isRunning = YES; break; }
-    NSString *group = targetGroup[p] ?: @"—";
+    NSString *group = targetGroup[p];
+    if (!group.length) group = @"未加入分组";
     NSDictionary *attr = [fm attributesOfItemAtPath:p error:NULL] ?: @{};
     NSMutableDictionary *d = [@{@"label": label, @"name": [[p lastPathComponent] stringByDeletingPathExtension],
                                 @"path": p, @"group": group,
