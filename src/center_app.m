@@ -97,6 +97,7 @@ static NSString *ResolveAppPath(NSString *target) {
 @property (strong) NSSegmentedControl *uninstallScopeCtl;
 @property NSInteger uninstallScope;
 @property (strong) NSButton *uninstallGo;
+- (void)unloadLoginAgent;
 @property (strong) NSPopover *popover;
 @property (strong) NSView *quickGroups;
 @property (strong) NSTextField *quickCPU, *quickMem, *quickBat;
@@ -910,6 +911,14 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (NSString *)loginPlistPath { return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/LaunchAgents/com.docklaunchers.center.plist"]; }
 
+- (void)unloadLoginAgent {
+  NSString *p = [self loginPlistPath];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/bin/launchctl";
+  t.arguments = @[@"unload", p];
+  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+}
+
 - (void)toggleLoginItem:(id)sender {
   NSString *path = [self loginPlistPath];
   if (self.loginCheck.state == NSControlStateValueOn) {
@@ -918,7 +927,7 @@ static NSString *ResolveAppPath(NSString *target) {
     NSDictionary *pl = @{@"Label": @"com.docklaunchers.center",
                          @"ProgramArguments": @[exe],
                          @"RunAtLoad": @YES,
-                         @"KeepAlive": @NO};
+                         @"KeepAlive": @YES};
     [pl writeToFile:path atomically:YES];
     NSTask *t = [[NSTask alloc] init];
     t.launchPath = @"/bin/launchctl";
@@ -933,7 +942,7 @@ static NSString *ResolveAppPath(NSString *target) {
   }
 }
 
-- (void)quitApp:(id)sender { [NSApp terminate:nil]; }
+- (void)quitApp:(id)sender { [self unloadLoginAgent]; [NSApp terminate:nil]; }
 
 - (void)buildPopover {
   NSPopover *pop = [[NSPopover alloc] init];
@@ -1008,7 +1017,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [self showWindow:nil];
 }
 
-- (void)quitFromPopover:(id)sender { [NSApp terminate:nil]; }
+- (void)quitFromPopover:(id)sender { [self unloadLoginAgent]; [NSApp terminate:nil]; }
 
 - (NSString *)batteryText {
   CFTypeRef blob = IOPSCopyPowerSourcesInfo();
