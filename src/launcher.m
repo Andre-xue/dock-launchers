@@ -161,6 +161,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)refreshListAndCaches:(id)sender;
 - (void)createGroupTapped:(id)sender;
 - (void)renameSelectedItem:(id)sender;
+- (BOOL)updateLabel:(NSString *)newLabel forTarget:(NSString *)target;
 - (BOOL)createGroupNamed:(NSString *)name;
 - (void)deleteCurrentGroup:(id)sender;
 - (void)addDockEntryForPath:(NSString *)path label:(NSString *)label;
@@ -721,7 +722,7 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"恢复默认图标" action:@selector(dockResetIcon:) keyEquivalent:@""];
   it.target = self;
   [m addItem:[NSMenuItem separatorItem]];
-  it = [m addItemWithTitle:@"打开启动器" action:@selector(dockOpen:) keyEquivalent:@""];
+  it = [m addItemWithTitle:@"显示分组窗口" action:@selector(dockOpen:) keyEquivalent:@""];
   it.target = self;
   return m;
 }
@@ -852,7 +853,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [cv addSubview:self.searchBtn];
 
   self.pinBtn = [NSButton buttonWithTitle:@"" target:self action:@selector(togglePin:)];
-  self.pinBtn.frame = NSMakeRect(W-44, H-50, 28, 28);
+  self.pinBtn.frame = NSMakeRect(W-44, H-34, 28, 28);
   self.pinBtn.bordered = NO;
   self.pinBtn.focusRingType = NSFocusRingTypeNone;
   self.pinBtn.toolTip = @"钉住：禁止自动退出与关闭窗口（再点取消）";
@@ -1121,7 +1122,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.windowTitleLabel.titleFont = tf;
   self.windowTitleLabel.frame = NSMakeRect(ox + (rw - tw)/2.0, oy + rh - 48, tw, th);
 
-  if (self.pinBtn) self.pinBtn.frame = NSMakeRect(ox + rw - 14 - 28, oy + rh - 52, 28, 28);
+  if (self.pinBtn) self.pinBtn.frame = NSMakeRect(ox + rw - 14 - 28, oy + rh - 34, 28, 28);
 
   // 第二行四个控件各占 1/4
   CGFloat btnSize = 30.0;
@@ -1254,11 +1255,13 @@ static NSString *ResolveAppPath(NSString *target) {
   panel.message = [NSString stringWithFormat:@"选择要加入「%@」的应用", gGroup];
   if ([panel runModal] != NSModalResponseOK) return;
   NSMutableString *add = [NSMutableString string];
+  NSMutableArray *added = [NSMutableArray array];
   for (NSURL *u in panel.URLs) {
     NSString *display = [[NSFileManager defaultManager] displayNameAtPath:[u path]];
     if (display.length == 0) display = [[u lastPathComponent] stringByDeletingPathExtension];
     if ([display hasSuffix:@".app"]) display = [display substringToIndex:display.length - 4];
     [add appendFormat:@"\n%@|%@", display, [u path]];
+    [added addObject:@{@"label": display, @"target": [u path]}];
   }
   if (add.length) {
     NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL];
@@ -1267,6 +1270,31 @@ static NSString *ResolveAppPath(NSString *target) {
     [new writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
   }
   [self reload];
+
+  if (added.count > 0) {
+    NSAlert *ask = [[NSAlert alloc] init];
+    ask.messageText = [NSString stringWithFormat:@"已添加 %ld 个应用", (long)added.count];
+    ask.informativeText = @"要现在自定义它们的显示名称吗？";
+    [ask addButtonWithTitle:@"自定义名称…"];
+    [ask addButtonWithTitle:@"保持默认"];
+    if ([ask runModal] == NSAlertFirstButtonReturn) {
+      for (NSDictionary *item in added) {
+        NSAlert *r = [[NSAlert alloc] init];
+        r.messageText = @"自定义显示名称";
+        r.informativeText = @"只改列表里的名字，不影响应用本身。";
+        NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,240,24)];
+        tf.stringValue = item[@"label"];
+        r.accessoryView = tf;
+        [r addButtonWithTitle:@"保存"];
+        [r addButtonWithTitle:@"跳过"];
+        if ([r runModal] == NSAlertFirstButtonReturn) {
+          NSString *nm = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+          if (nm.length > 0) [self updateLabel:nm forTarget:item[@"target"]];
+        }
+      }
+      [self reload];
+    }
+  }
   if (self.rows.count) [self selectRow:0];
 }
 
@@ -2047,6 +2075,29 @@ static NSString *ResolveAppPath(NSString *target) {
   return YES;
 }
 
+- (BOOL)updateLabel:(NSString *)newLabel forTarget:(NSString *)target {
+  if (newLabel.length == 0 || target.length == 0) return NO;
+  if ([newLabel containsString:@"|"]) newLabel = [newLabel stringByReplacingOccurrencesOfString:@"|" withString:@" "];
+  NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL];
+  if (!content) return NO;
+  NSMutableArray *lines = [[content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
+  for (NSInteger i = 0; i < (NSInteger)lines.count; i++) {
+    NSString *line = lines[i];
+    NSString *trim = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (trim.length == 0 || [trim hasPrefix:@"#"]) continue;
+    NSString *t = trim;
+    NSRange r = [trim rangeOfString:@"|"];
+    if (r.location != NSNotFound) t = [[trim substringFromIndex:r.location+1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if ([t isEqualToString:target]) {
+      lines[i] = [NSString stringWithFormat:@"%@|%@", newLabel, target];
+      NSString *out = [lines componentsJoinedByString:@"\n"];
+      [out writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+      return YES;
+    }
+  }
+  return NO;
+}
+
 - (void)renameSelectedItem:(id)sender {
   if (self.sel < 0 || self.sel >= (NSInteger)self.items.count) return;
   NSDictionary *it = self.items[self.sel];
@@ -2061,29 +2112,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [a addButtonWithTitle:@"取消"];
   if ([a runModal] != NSAlertFirstButtonReturn) return;
   NSString *newLabel = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-  if (newLabel.length == 0) return;
-  if ([newLabel containsString:@"|"]) newLabel = [newLabel stringByReplacingOccurrencesOfString:@"|" withString:@" "];
-
-  NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL];
-  if (!content) return;
-  NSMutableArray *lines = [[content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
-  BOOL changed = NO;
-  for (NSInteger i = 0; i < (NSInteger)lines.count; i++) {
-    NSString *line = lines[i];
-    NSString *trim = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    if (trim.length == 0 || [trim hasPrefix:@"#"]) continue;
-    NSString *t = trim;
-    NSRange r = [trim rangeOfString:@"|"];
-    if (r.location != NSNotFound) t = [[trim substringFromIndex:r.location+1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    if ([t isEqualToString:target]) {
-      lines[i] = [NSString stringWithFormat:@"%@|%@", newLabel, target];
-      changed = YES;
-      break;
-    }
-  }
-  if (!changed) return;
-  NSString *out = [lines componentsJoinedByString:@"\n"];
-  [out writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  if (![self updateLabel:newLabel forTarget:target]) return;
   NSInteger keep = self.sel;
   [self reload];
   if (self.rows.count) [self selectRow:MIN(keep, (NSInteger)self.rows.count - 1)];
