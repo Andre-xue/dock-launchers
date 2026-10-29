@@ -307,6 +307,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)setShapeCircle:(id)sender;
 - (void)resetAllAppIcons:(id)sender;
 - (void)resetAllDefaults:(id)sender;
+- (void)resetListMode:(id)sender;
+- (void)resetSingleLayout:(id)sender;
 - (void)skinWhite:(id)sender;
 - (void)skinBlack:(id)sender;
 - (void)skinGlass:(id)sender;
@@ -1860,12 +1862,12 @@ static NSString *ResolveAppPath(NSString *target) {
     @{@"title":@"应用排列", @"children":@[
       @{@"title":@"列表显示（默认）", @"sel":@"setDisplayListMode:"},
       @{@"title":@"图标显示", @"sel":@"setDisplayIconMode:"},
-      @{@"title":@"一键恢复（列表）", @"sel":@"setDisplayListMode:"}]},
+      @{@"title":@"一键恢复（列表）", @"sel":@"resetListMode:"}]},
     @{@"title":@"应用布局", @"children":@[
       @{@"title":@"单列布局（默认）", @"sel":@"layoutSingle:"},
       @{@"title":@"三列布局", @"sel":@"layoutThree:"},
       @{@"title":@"四列布局", @"sel":@"layoutFour:"},
-      @{@"title":@"一键恢复（单列）", @"sel":@"layoutSingle:"}]},
+      @{@"title":@"一键恢复（单列）", @"sel":@"resetSingleLayout:"}]},
     @{@"title":@"图标风格", @"children":@[
       @{@"title":@"图标自定义", @"children":@[@{@"title":@"图标大小 / 形状 / 重命名…", @"sel":@"showAppIconPanel:"}]},
       @{@"title":@"一键恢复默认", @"sel":@"resetAllAppIcons:"}]},
@@ -2164,6 +2166,31 @@ static NSString *ResolveAppPath(NSString *target) {
   [self reload];
 }
 
+- (void)resetListMode:(id)sender {
+  gIconMode = NO;
+  [self saveTheme];
+  [self reload];
+  [self layoutContent];
+}
+
+- (void)resetSingleLayout:(id)sender {
+  // 一键恢复单列：同时恢复列表模式，确保一定是单列列表
+  gIconMode = NO;
+  BOOL big = (self.window.contentView.bounds.size.width >= 560);
+  if (big || self.window.isZoomed) {
+    NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
+    NSRect vf = screen.visibleFrame;
+    NSRect normal = NSMakeRect(vf.origin.x + (vf.size.width - 480)/2.0,
+                               vf.origin.y + (vf.size.height - 600)/2.0, 480, 600);
+    [self.window setFrame:normal display:YES animate:NO];
+  }
+  self.forceColumns = 0;
+  self.userColumns = 1;
+  [self saveTheme];
+  [self reload];
+  [self layoutContent];
+}
+
 - (void)resetAllDefaults:(id)sender {
   // 恢复为该分组"刚打开时"的初始状态
   gTheme = 0;
@@ -2213,16 +2240,16 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)applyLayoutColumns:(NSInteger)cols {
   if (cols <= 1) {
     // 恢复单列：清掉强制列数，窗口若已放大则收回默认尺寸
-    self.userColumns = 1;
-    self.forceColumns = 0;
     BOOL big = (self.window.contentView.bounds.size.width >= 560);
     if (big || self.window.isZoomed) {
       NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
       NSRect vf = screen.visibleFrame;
       NSRect normal = NSMakeRect(vf.origin.x + (vf.size.width - 480)/2.0,
                                  vf.origin.y + (vf.size.height - 600)/2.0, 480, 600);
-      [self.window setFrame:normal display:YES animate:YES];
+      [self.window setFrame:normal display:YES animate:NO];
     }
+    self.userColumns = 1;
+    self.forceColumns = 0;
     [self reload];
     [self layoutContent];
     return;
@@ -4137,6 +4164,16 @@ int main(int argc, const char *argv[]) {
         [c resetIdleTimer];
         fprintf(stderr, "CD hidden=%d frame=%.0f,%.0f,%.0fx%.0f text='%s'\n", c.countdownLabel.hidden, c.countdownLabel.frame.origin.x, c.countdownLabel.frame.origin.y, c.countdownLabel.frame.size.width, c.countdownLabel.frame.size.height, [c.countdownLabel.stringValue UTF8String]);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_RESET_SINGLE")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gIconMode = YES; c.userColumns = 4;
+        [c reload];
+        fprintf(stderr, "RS before icon=%d cols=%ld\n", gIconMode, (long)[c effectiveColumns]);
+        [c resetSingleLayout:nil];
+        fprintf(stderr, "RS after icon=%d cols=%ld width=%.0f user=%ld force=%ld\n", gIconMode, (long)[c effectiveColumns], c.window.contentView.bounds.size.width, (long)c.userColumns, (long)c.forceColumns);
+        exit(0);
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_LAYOUT_SINGLE")) {
