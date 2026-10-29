@@ -43,6 +43,27 @@ static NSString *ResolveAppPath(NSString *target) {
   return nil;
 }
 
+
+static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
+  NSArray *langs = @[@"zh-Hans", @"zh_CN", @"zh-Hant", @"Base", @"en"];
+  NSString *res = path;
+  for (NSString *lang in langs) {
+    NSString *f = [path stringByAppendingPathComponent:[NSString stringWithFormat:@"Contents/Resources/%@.lproj/InfoPlist.strings", lang]];
+    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:f];
+    if (![d isKindOfClass:[NSDictionary class]]) continue;
+    NSString *v = d[@"CFBundleDisplayName"];
+    if (![v isKindOfClass:[NSString class]] || !v.length) v = d[@"CFBundleName"];
+    if ([v isKindOfClass:[NSString class]] && v.length) { res = v; break; }
+  }
+  if ([res isEqualToString:path]) {
+    NSString *v = info[@"CFBundleDisplayName"];
+    if (![v isKindOfClass:[NSString class]] || !v.length) v = info[@"CFBundleName"];
+    if ([v isKindOfClass:[NSString class]] && v.length) res = v;
+  }
+  if ([res isEqualToString:path]) res = [[path lastPathComponent] stringByDeletingPathExtension];
+  return res;
+}
+
 @interface Sparkline : NSView
 @property (strong) NSMutableArray<NSNumber *> *values;
 @property (strong) NSColor *lineColor;
@@ -704,7 +725,7 @@ static NSString *ResolveAppPath(NSString *target) {
     // 排除本程序自身创建的 Dock 分组 / 恢复工具 / 控制台
     if ([bid hasPrefix:@"com.docklaunchers."]) continue;
     if ([p hasPrefix:GroupDir()]) continue;
-    NSString *label = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [[p lastPathComponent] stringByDeletingPathExtension];
+    NSString *label = LocalizedAppName(p, info);
     BOOL isRunning = NO;
     for (NSRunningApplication *ra in running) if (ra.bundleURL && [[ra.bundleURL path] isEqualToString:p]) { isRunning = YES; break; }
     NSString *group = targetGroup[p];
