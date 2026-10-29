@@ -162,6 +162,7 @@ static NSString *const kSkinPrefix = @"skin.";
 - (void)loadCustomShortcuts;
 - (void)saveCustomShortcuts;
 - (void)showShortcutSettings:(id)sender;
+- (void)closeShortcutPanel:(id)sender;
 - (void)beginRecordingShortcut:(id)sender;
 - (void)finishRecordingWithEvent:(NSEvent *)event;
 - (BOOL)handleCustomShortcut:(NSEvent *)event;
@@ -1387,6 +1388,10 @@ static NSString *ResolveAppPath(NSString *target) {
       [cv addSubview:b];
       y -= 38;
     }
+    NSButton *done = [NSButton buttonWithTitle:@"关闭" target:self action:@selector(closeShortcutPanel:)];
+    done.bezelStyle = NSBezelStyleRounded;
+    done.frame = NSMakeRect(350, 16, 100, 32);
+    [cv addSubview:done];
   }
   for (NSView *v in self.shortcutPanel.contentView.subviews) {
     if ([v isKindOfClass:[NSButton class]] && [(NSButton *)v identifier]) {
@@ -1395,8 +1400,20 @@ static NSString *ResolveAppPath(NSString *target) {
       [(NSButton *)v setTitle:(sig.length ? DisplayForSignature(sig) : @"点击设置")];
     }
   }
-  [self.shortcutPanel center];
-  [self.shortcutPanel makeKeyAndOrderFront:nil];
+  if (self.shortcutPanel.sheetParent) {
+    [self.shortcutPanel makeKeyAndOrderFront:nil];
+    return;
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.window beginSheet:self.shortcutPanel completionHandler:nil];
+}
+
+- (void)closeShortcutPanel:(id)sender {
+  if (self.shortcutPanel.sheetParent) {
+    [self.shortcutPanel.sheetParent endSheet:self.shortcutPanel];
+  } else {
+    [self.shortcutPanel orderOut:nil];
+  }
 }
 
 - (void)recordButtonTapped:(NSButton *)sender {
@@ -1741,8 +1758,11 @@ int main(int argc, const char *argv[]) {
                                    characters:@"f" charactersIgnoringModifiers:@"f"
                                      isARepeat:NO keyCode:3];
         BOOL handled = [c handleCustomShortcut:ev];
-        [c showShortcutSettings:nil];
-        fprintf(stderr, "HANDLED=%d SEARCH_ACTIVE=%d PANEL_VIEWS=%ld\n", handled, c.searchActive, (long)c.shortcutPanel.contentView.subviews.count);
+        [NSApp sendAction:@selector(showShortcutSettings:) to:c from:nil];
+        fprintf(stderr, "HANDLED=%d SEARCH_ACTIVE=%d VISIBLE=%d FRAME=%.0f,%.0f,%.0fx%.0f\n",
+                handled, c.searchActive, c.shortcutPanel.isVisible,
+                c.shortcutPanel.frame.origin.x, c.shortcutPanel.frame.origin.y,
+                c.shortcutPanel.frame.size.width, c.shortcutPanel.frame.size.height);
         exit(0);
       });
     }
