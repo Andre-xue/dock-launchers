@@ -297,6 +297,7 @@ static NSColor *ThemeSel(NSInteger t) {
 @interface LightButton : NSButton
 @property (strong) NSColor *dotColor;
 @property (copy) void (^onHover)(BOOL inside);
+@property (copy) void (^onRecord)(void);
 @end
 
 @implementation LightButton
@@ -330,6 +331,7 @@ static NSColor *ThemeSel(NSInteger t) {
 @property (copy) void (^onActivate)(void);
 @property (copy) void (^onReset)(void);
 @property (copy) void (^onHover)(BOOL inside);
+@property (copy) void (^onRecord)(void);
 @end
 
 @implementation ShortcutRowView
@@ -346,9 +348,11 @@ static NSColor *ThemeSel(NSInteger t) {
 - (void)mouseExited:(NSEvent *)e { self.hovered = NO; if (self.onHover) self.onHover(NO); [self setNeedsDisplay:YES]; }
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { return YES; }
 - (void)mouseDown:(NSEvent *)e {
-  if (e.clickCount >= 1) {
-    dispatch_async(dispatch_get_main_queue(), ^{ if (self.onActivate) self.onActivate(); });
-  }
+  BOOL dbl = (e.clickCount >= 2);
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (dbl) { if (self.onRecord) self.onRecord(); }
+    else { if (self.onActivate) self.onActivate(); }
+  });
   NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
   if (p.x > NSWidth(self.bounds) - 52) { if (self.onReset) self.onReset(); return; }
 }
@@ -1487,7 +1491,7 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
     self.shortcutPanel.level = NSFloatingWindowLevel;
     self.shortcutPanel.contentView = pv;
 
-    NSTextField *tip = [NSTextField labelWithString:@"↑↓ 选择 · Enter/空格 录制 · Esc 取消 · 右侧 ↺ 重置。⌘Space 被系统占用，建议用 ⌘F。"];
+    NSTextField *tip = [NSTextField labelWithString:@"点击行选中 · ↑↓ 换行 · Enter/空格/双击 录制 · Esc 取消 · 右侧 ↺ 重置。⌘Space 被系统占用，建议用 ⌘F。"];
     tip.font = [NSFont systemFontOfSize:11];
     tip.textColor = [NSColor secondaryLabelColor];
     tip.frame = NSMakeRect(20, h - 34, 460, 16);
@@ -1511,7 +1515,12 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
       r.onActivate = ^{
         Controller *ss = weakSelf; if (!ss) return;
         ss.shortcutSel = [ss.shortcutRows indexOfObject:r];
+        ss.hoverRow = -1;
         [ss refreshShortcutRows];
+        [ss.shortcutPanel makeFirstResponder:ss.shortcutPanel.contentView];
+      };
+      r.onRecord = ^{
+        Controller *ss = weakSelf; if (!ss) return;
         [ss startRecordingForAction:aid];
       };
       r.onReset = ^{
@@ -1612,6 +1621,12 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
   [self.shortcutPanel makeFirstResponder:self.shortcutPanel.contentView];
   if (!action) return;
   if (event.keyCode == 53) return; // Esc 取消
+  if (event.keyCode == 123 || event.keyCode == 124 || event.keyCode == 125 ||
+      event.keyCode == 126 || event.keyCode == 48) {   // ←→↓↑ / Tab 不能作快捷键
+    NSBeep();
+    [self refreshShortcutRows];
+    return;
+  }
   NSString *sig = SignatureForEvent(event);
   if (!SignatureIsAllowed(sig)) { NSBeep(); return; }
 
