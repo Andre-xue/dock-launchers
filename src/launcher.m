@@ -1080,6 +1080,8 @@ static NSString *ResolveAppPath(NSString *target) {
   self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
     Controller *ss = weakSelf; if (!ss) return e;
     [ss resetIdleTimer];
+    if ([NSApp modalWindow]) return e;
+    if (ss.appIconPanel && ss.appIconPanel.isVisible) return e;
     if ([ss handleCustomShortcut:e]) return nil;
     return e;
   }];
@@ -2104,11 +2106,13 @@ static NSString *ResolveAppPath(NSString *target) {
 
 
 - (void)repairDockMenuTapped:(id)sender {
+  // 顺带清除可能残留的自定义分组图标（旧版本「更换图标」写入的图片）
+  [self resetCustomIcon:nil];
   [self repairDockEntries];
   [self reload];
   NSAlert *a = [[NSAlert alloc] init];
-  a.messageText = @"程序坞已检查";
-  a.informativeText = @"只补齐缺失/无效条目并同步标签；原有正常图标不做改动。如无异常不会重启 Dock。";
+  a.messageText = @"程序坞已修复";
+  a.informativeText = @"已补齐缺失/无效条目、同步标签，并清除残留的自定义分组图标，Dock 会自动重启刷新。";
   [a runModal];
 }
 
@@ -2712,6 +2716,7 @@ static NSString *ResolveAppPath(NSString *target) {
     if ([self.items[i][@"target"] isEqualToString:self.appIconEditTarget]) { curName = self.items[i][@"label"] ?: @""; idx = i; break; }
   }
   NSAlert *a = [[NSAlert alloc] init];
+  a.icon = [[NSImage alloc] initWithSize:NSMakeSize(1, 1)];
   a.messageText = @"重命名应用";
   a.informativeText = @"只修改列表中的显示名，不改变应用本身；列表显示和图标显示都会同步。";
   NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,240,24)];
@@ -3150,13 +3155,24 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
 }
 
 - (void)resetCustomIcon:(id)sender {
+  NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
   [NSApp setApplicationIconImage:nil];
-  [[NSWorkspace sharedWorkspace] setIcon:nil forFile:[[NSBundle mainBundle] bundlePath] options:0];
+  [[NSWorkspace sharedWorkspace] setIcon:nil forFile:bundlePath options:0];
   self.customIconPath = nil;
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   [d removeObjectForKey:@"customIconPath"];
   [d removeObjectForKey:@"customIconApplied"];
   [d synchronize];
+  NSTask *md = [[NSTask alloc] init];
+  md.launchPath = @"/usr/bin/mdimport";
+  md.arguments = @[bundlePath];
+  @try { [md launch]; } @catch (NSException *e) {}
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/bin/killall";
+    t.arguments = @[@"-KILL", @"Dock"];
+    @try { [t launch]; } @catch (NSException *e) {}
+  });
 }
 
 - (void)promptIconChange {
@@ -3437,6 +3453,15 @@ int main(int argc, const char *argv[]) {
         [c layoutContent];
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_RENAME_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gIconMode = YES; [c reload];
+        c.sel = 0; [c selectRow:0];
+        [c showAppIconPanel:nil];
+        [c renameCurrentApp:nil];
         exit(0);
       });
     }
