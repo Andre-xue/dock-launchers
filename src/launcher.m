@@ -202,7 +202,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (BOOL)isFlipped { return NO; }
 @end
 
-@interface Controller : NSObject <NSWindowDelegate, NSTextFieldDelegate>
+@interface Controller : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate, NSTextFieldDelegate>
 @property (strong) NSWindow *window;
 @property (strong) NSView *listContainer;
 @property (strong) NSScrollView *scroll;
@@ -265,6 +265,15 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (copy) NSString *settingsFocusPath;
 @property (strong) NSPanel *uninstallPanel;
 @property (strong) NSMutableArray *uninstallChecks;
+@property (strong) NSArray *uninstallData;
+@property (strong) NSArray *uninstallFiltered;
+@property (strong) NSMutableSet *uninstallSelected;
+@property (strong) NSTableView *uninstallTable;
+@property (strong) NSTextField *uninstallHeader;
+@property (strong) NSTextField *uninstallFooter;
+@property (strong) NSButton *uninstallGoBtn;
+@property (strong) NSSearchField *uninstallSearchField;
+@property (strong) NSSegmentedControl *uninstallSegmented;
 @property (strong) NSPanel *idlePanel;
 @property (strong) NSButton *idleCheck;
 @property (strong) NSDatePicker *idleDatePicker;
@@ -2073,81 +2082,275 @@ static NSString *ResolveAppPath(NSString *target) {
   }
 }
 
-- (void)showUninstallAppsPanel {
-  if (!self.uninstallChecks) self.uninstallChecks = [NSMutableArray array];
-  [self.uninstallChecks removeAllObjects];
-  NSMutableArray *valid = [NSMutableArray array];
-  NSInteger systemSkipped = 0;
+- (NSString *)formatBytes:(unsigned long long)bytes {
+  if (bytes < 1024) return [NSString stringWithFormat:@"%llu B", bytes];
+  double v = bytes;
+  NSArray *units = @[@"KB", @"MB", @"GB", @"TB"];
+  NSInteger i = -1;
+  do { v /= 1024.0; i++; } while (v >= 1024.0 && i < (NSInteger)units.count - 1);
+  return [NSString stringWithFormat:@"%.2f %@", v, units[i]];
+}
+
+- (unsigned long long)folderSizeAtPath:(NSString *)path {
+  unsigned long long total = 0;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSDirectoryEnumerator *en = [fm enumeratorAtPath:path];
+  for (NSString *rel in en) {
+    NSDictionary *attr = [fm attributesOfItemAtPath:[path stringByAppendingPathComponent:rel] error:NULL];
+    if (!attr) continue;
+    total += [attr fileSize];
+  }
+  return total;
+}
+
+- (void)loadUninstallData {
+  NSMutableArray *arr = [NSMutableArray array];
+  NSArray *running = [[NSWorkspace sharedWorkspace] runningApplications];
   for (NSDictionary *it in self.items) {
     NSString *p = ResolveAppPath(it[@"target"]);
     if (!p.length) continue;
     NSString *real = [p stringByResolvingSymlinksInPath];
-    if ([real hasPrefix:@"/System/"] || [p hasPrefix:@"/System/"]) {
-      systemSkipped++;   // macOS 自带应用不支持卸载
-      continue;
+    if ([real hasPrefix:@"/System/"] || [p hasPrefix:@"/System/"]) continue;
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+    NSString *bid = info[@"CFBundleIdentifier"] ?: @"";
+    NSString *ver = info[@"CFBundleShortVersionString"] ?: info[@"CFBundleVersion"] ?: @"";
+    BOOL isRunning = NO;
+    for (NSRunningApplication *ra in running) {
+      if (ra.bundleURL && [[ra.bundleURL path] isEqualToString:p]) { isRunning = YES; break; }
     }
-    [valid addObject:@{@"label": it[@"label"] ?: @"", @"path": p, @"target": it[@"target"]}];
+    NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:p error:NULL] ?: @{};
+    NSDate *installed = attr[NSFileCreationDate] ?: attr[NSFileModificationDate];
+    NSURL *u = [NSURL fileURLWithPath:p];
+    id accObj = nil;
+    [u getResourceValue:&accObj forKey:NSURLContentAccessDateKey error:NULL];
+    NSDate *lastUsed = [accObj isKindOfClass:[NSDate class]] ? accObj : nil;
+    [arr addObject:@{@"label": it[@"label"] ?: p.lastPathComponent.stringByDeletingPathExtension,
+                     @"path": p, @"bid": bid, @"version": ver,
+                     @"size": @([self folderSizeAtPath:p]),
+                     @"installed": installed ?: [NSDate date],
+                     @"lastUsed": lastUsed ?: [NSNull null],
+                     @"running": @(isRunning),
+                     @"target": it[@"target"]}];
   }
-  if (valid.count == 0) {
-    NSAlert *e = [[NSAlert alloc] init];
-    e.messageText = @"没有可卸载的应用";
-    e.informativeText = systemSkipped > 0 ? @"当前分组里只有 macOS 自带应用，系统应用不支持卸载。" : @"当前分组里没有解析到有效的应用路径。";
-    [e runModal];
-    return;
-  }
-  [self.uninstallPanel orderOut:nil];
-  NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,520,560)
-                                          styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
-                                            backing:NSBackingStoreBuffered defer:NO];
-  p.title = @"选择要卸载的应用（卸载本体）";
-  p.level = NSFloatingWindowLevel;
-  self.uninstallPanel = p;
-  NSView *cv = p.contentView;
-  if (systemSkipped > 0) {
-    NSTextField *tip = [NSTextField labelWithString:[NSString stringWithFormat:@"macOS 自带应用不支持卸载，已隐藏 %ld 个", (long)systemSkipped]];
-    tip.font = [NSFont systemFontOfSize:11];
-    tip.textColor = [NSColor secondaryLabelColor];
-    tip.frame = NSMakeRect(16, 530, 480, 18);
-    [cv addSubview:tip];
-  }
-
-  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 488, systemSkipped > 0 ? 448 : 456)];
-  sv.hasVerticalScroller = YES;
-  sv.drawsBackground = NO;
-  [cv addSubview:sv];
-  CGFloat totalH = valid.count * 34 + 10;
-  NSView *content = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,470,totalH)];
-  CGFloat y = 6;
-  for (NSDictionary *v in valid) {
-    NSButton *cb = [NSButton checkboxWithTitle:[NSString stringWithFormat:@"%@    %@", v[@"label"], v[@"path"]] target:nil action:nil];
-    cb.font = [NSFont systemFontOfSize:12.5];
-    cb.frame = NSMakeRect(8, y, 450, 26);
-    [content addSubview:cb];
-    [self.uninstallChecks addObject:cb];
-    y += 34;
-  }
-  [sv setDocumentView:content];
-  [sv.contentView scrollPoint:NSMakePoint(0, 0)];
-
-  NSButton *all = [NSButton buttonWithTitle:@"全选" target:self action:@selector(uninstallSelectAll:)];
-  all.frame = NSMakeRect(16, 30, 70, 32); all.bezelStyle = NSBezelStyleRounded; [cv addSubview:all];
-  NSButton *none = [NSButton buttonWithTitle:@"全不选" target:self action:@selector(uninstallSelectNone:)];
-  none.frame = NSMakeRect(92, 30, 80, 32); none.bezelStyle = NSBezelStyleRounded; [cv addSubview:none];
-  NSButton *cancel = [NSButton buttonWithTitle:@"取消" target:self action:@selector(closeUninstallPanel:)];
-  cancel.frame = NSMakeRect(320, 30, 80, 32); cancel.bezelStyle = NSBezelStyleRounded; [cv addSubview:cancel];
-  NSButton *go = [NSButton buttonWithTitle:@"卸载所选" target:self action:@selector(confirmUninstallApps:)];
-  go.frame = NSMakeRect(408, 30, 96, 32); go.bezelStyle = NSBezelStyleRounded; [cv addSubview:go];
-  [p center];
-  [NSApp activateIgnoringOtherApps:YES];
-  [p makeKeyAndOrderFront:nil];
+  self.uninstallData = arr;
 }
 
+- (void)applyUninstallFilter {
+  NSString *q = [self.uninstallSearchField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  NSInteger filter = self.uninstallSegmented.selectedSegment;
+  NSMutableArray *filtered = [NSMutableArray array];
+  for (NSDictionary *d in self.uninstallData) {
+    if (filter == 1 && ![d[@"running"] boolValue]) { /* 可卸载 = 未运行 */ }
+    else if (filter == 2 && ![d[@"running"] boolValue]) continue;
+    if (filter == 1 && [d[@"running"] boolValue]) continue;
+    if (filter == 3) continue; // 系统应用已全部排除
+    if (q.length > 0) {
+      NSString *hay = [NSString stringWithFormat:@"%@ %@ %@", d[@"label"], d[@"bid"], d[@"path"]];
+      if ([hay rangeOfString:q options:NSCaseInsensitiveSearch].location == NSNotFound) continue;
+    }
+    [filtered addObject:d];
+  }
+  self.uninstallFiltered = filtered;
+  [self.uninstallTable reloadData];
+  [self updateUninstallSummary];
+}
+
+- (void)updateUninstallSummary {
+  unsigned long long total = 0, selectedSize = 0;
+  for (NSDictionary *d in self.uninstallData) total += [d[@"size"] unsignedLongLongValue];
+  for (NSDictionary *d in self.uninstallData) {
+    if ([self.uninstallSelected containsObject:d[@"path"]]) selectedSize += [d[@"size"] unsignedLongLongValue];
+  }
+  self.uninstallHeader.stringValue = [NSString stringWithFormat:@"发现 %ld 个应用   估算总大小 %@", (long)self.uninstallData.count, [self formatBytes:total]];
+  self.uninstallFooter.stringValue = [NSString stringWithFormat:@"已选择应用 %ld    预计移除数据 %@", (long)self.uninstallSelected.count, [self formatBytes:selectedSize]];
+  self.uninstallGoBtn.enabled = (self.uninstallSelected.count > 0);
+}
+
+- (void)uninstallSelectionChanged:(id)sender {
+  NSInteger row = [sender tag];
+  if (row < 0 || row >= (NSInteger)self.uninstallFiltered.count) return;
+  NSDictionary *d = self.uninstallFiltered[row];
+  if ([self.uninstallSelected containsObject:d[@"path"]]) {
+    [self.uninstallSelected removeObject:d[@"path"]];
+    [sender setState:NSControlStateValueOff];
+  } else {
+    [self.uninstallSelected addObject:d[@"path"]];
+    [sender setState:NSControlStateValueOn];
+  }
+  [self updateUninstallSummary];
+}
+
+- (void)uninstallFilterChanged:(id)sender { [self applyUninstallFilter]; }
+- (void)uninstallSearchChanged:(id)sender { [self applyUninstallFilter]; }
+
 - (void)uninstallSelectAll:(id)sender {
-  for (NSButton *b in self.uninstallChecks) b.state = NSControlStateValueOn;
+  for (NSDictionary *d in self.uninstallFiltered) [self.uninstallSelected addObject:d[@"path"]];
+  [self.uninstallTable reloadData];
+  [self updateUninstallSummary];
 }
 
 - (void)uninstallSelectNone:(id)sender {
-  for (NSButton *b in self.uninstallChecks) b.state = NSControlStateValueOff;
+  [self.uninstallSelected removeAllObjects];
+  [self.uninstallTable reloadData];
+  [self updateUninstallSummary];
+}
+
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  return (NSInteger)self.uninstallFiltered.count;
+}
+
+- (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)row {
+  if (row < 0 || row >= (NSInteger)self.uninstallFiltered.count) return nil;
+  NSDictionary *d = self.uninstallFiltered[row];
+  NSString *ident = tableColumn.identifier;
+  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,tableColumn.width,56)];
+  if ([ident isEqualToString:@"app"]) {
+    NSButton *cb = [NSButton checkboxWithTitle:@"" target:self action:@selector(uninstallSelectionChanged:)];
+    cb.frame = NSMakeRect(4, 18, 18, 18);
+    cb.tag = row;
+    cb.state = [self.uninstallSelected containsObject:d[@"path"]] ? NSControlStateValueOn : NSControlStateValueOff;
+    [v addSubview:cb];
+    NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:d[@"path"]];
+    NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(28, 12, 32, 32)];
+    iv.image = icon;
+    iv.imageScaling = NSImageScaleProportionallyUpOrDown;
+    [v addSubview:iv];
+    NSTextField *name = [NSTextField labelWithString:d[@"label"]];
+    name.font = [NSFont systemFontOfSize:13.5 weight:NSFontWeightSemibold];
+    name.frame = NSMakeRect(70, 26, 330, 18);
+    [v addSubview:name];
+    NSString *sub = d[@"bid"];
+    if ([d[@"version"] length]) sub = [NSString stringWithFormat:@"%@ · 版本 %@", sub, d[@"version"]];
+    NSTextField *bidLab = [NSTextField labelWithString:sub];
+    bidLab.font = [NSFont systemFontOfSize:10.5];
+    bidLab.textColor = [NSColor secondaryLabelColor];
+    bidLab.frame = NSMakeRect(70, 8, 360, 16);
+    [v addSubview:bidLab];
+  } else if ([ident isEqualToString:@"status"]) {
+    NSTextField *lab = [NSTextField labelWithString:[d[@"running"] boolValue] ? @"正在运行" : @"可卸载"];
+    lab.font = [NSFont systemFontOfSize:12];
+    lab.textColor = [d[@"running"] boolValue] ? [NSColor systemOrangeColor] : [NSColor secondaryLabelColor];
+    lab.frame = NSMakeRect(4, 18, tableColumn.width - 8, 20);
+    [v addSubview:lab];
+  } else if ([ident isEqualToString:@"size"]) {
+    NSTextField *lab = [NSTextField labelWithString:[self formatBytes:[d[@"size"] unsignedLongLongValue]]];
+    lab.font = [NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
+    lab.alignment = NSTextAlignmentRight;
+    lab.frame = NSMakeRect(4, 18, tableColumn.width - 12, 20);
+    [v addSubview:lab];
+  } else if ([ident isEqualToString:@"used"]) {
+    id lu = d[@"lastUsed"];
+    NSDate *dt = [lu isKindOfClass:[NSDate class]] ? lu : nil;
+    NSDateFormatter *df = [[NSDateFormatter alloc] init];
+    df.dateFormat = @"yyyy/MM/dd";
+    NSTextField *lab = [NSTextField labelWithString:dt ? [df stringFromDate:dt] : @"暂无记录"];
+    lab.font = [NSFont systemFontOfSize:11.5];
+    lab.textColor = [NSColor secondaryLabelColor];
+    lab.frame = NSMakeRect(4, 18, tableColumn.width - 8, 20);
+    [v addSubview:lab];
+  } else if ([ident isEqualToString:@"installed"]) {
+    NSDate *dt = d[@"installed"];
+    NSDateFormatter *df = [[NSDateFormatter alloc] init];
+    df.dateFormat = @"yyyy/MM/dd";
+    NSTextField *lab = [NSTextField labelWithString:dt ? [df stringFromDate:dt] : @"未知"];
+    lab.font = [NSFont systemFontOfSize:11.5];
+    lab.textColor = [NSColor secondaryLabelColor];
+    lab.frame = NSMakeRect(4, 18, tableColumn.width - 8, 20);
+    [v addSubview:lab];
+  }
+  return v;
+}
+
+- (void)showUninstallAppsPanel {
+  [self loadUninstallData];
+  if (self.uninstallData.count == 0) {
+    NSAlert *e = [[NSAlert alloc] init];
+    e.messageText = @"没有可卸载的应用";
+    e.informativeText = @"当前分组里没有可卸载的用户应用（系统自带应用不支持卸载）。";
+    [e runModal];
+    return;
+  }
+  if (!self.uninstallSelected) self.uninstallSelected = [NSMutableSet set];
+  [self.uninstallSelected removeAllObjects];
+
+  [self.uninstallPanel orderOut:nil];
+  NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,900,620)
+                                          styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable)
+                                            backing:NSBackingStoreBuffered defer:NO];
+  p.title = @"应用卸载";
+  p.level = NSFloatingWindowLevel;
+  self.uninstallPanel = p;
+  NSView *cv = p.contentView;
+
+  self.uninstallHeader = [NSTextField labelWithString:@""];
+  self.uninstallHeader.font = [NSFont systemFontOfSize:17 weight:NSFontWeightSemibold];
+  self.uninstallHeader.frame = NSMakeRect(20, 566, 600, 24);
+  [cv addSubview:self.uninstallHeader];
+
+  self.uninstallSegmented = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(20, 528, 300, 28)];
+  [self.uninstallSegmented setSegmentCount:4];
+  [self.uninstallSegmented setLabel:@"全部" forSegment:0];
+  [self.uninstallSegmented setLabel:@"可卸载" forSegment:1];
+  [self.uninstallSegmented setLabel:@"正在运行" forSegment:2];
+  [self.uninstallSegmented setLabel:@"不可卸载" forSegment:3];
+  self.uninstallSegmented.selectedSegment = 0;
+  self.uninstallSegmented.target = self;
+  self.uninstallSegmented.action = @selector(uninstallFilterChanged:);
+  [cv addSubview:self.uninstallSegmented];
+
+  self.uninstallSearchField = [NSSearchField alloc];
+  self.uninstallSearchField = [self.uninstallSearchField initWithFrame:NSMakeRect(600, 528, 280, 28)];
+  self.uninstallSearchField.placeholderString = @"搜索应用、Bundle ID 或路径";
+  self.uninstallSearchField.target = self;
+  self.uninstallSearchField.action = @selector(uninstallSearchChanged:);
+  [self.uninstallSearchField setContinuous:YES];
+  [cv addSubview:self.uninstallSearchField];
+
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 86, 868, 430)];
+  sv.hasVerticalScroller = YES;
+  sv.drawsBackground = NO;
+  sv.borderType = NSNoBorder;
+  self.uninstallTable = [[NSTableView alloc] initWithFrame:NSMakeRect(0,0,868,430)];
+  self.uninstallTable.dataSource = self;
+  self.uninstallTable.delegate = self;
+  self.uninstallTable.rowHeight = 56;
+  self.uninstallTable.usesAlternatingRowBackgroundColors = YES;
+  self.uninstallTable.headerView = [[NSTableHeaderView alloc] init];
+  NSArray *cols = @[
+    @[@"app", @"应用名称", @(430)],
+    @[@"status", @"状态", @(76)],
+    @[@"size", @"估算大小", @(96)],
+    @[@"used", @"上次使用", @(110)],
+    @[@"installed", @"安装日期", @(120)]
+  ];
+  for (NSArray *c in cols) {
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+    col.title = c[1];
+    col.width = [c[2] doubleValue];
+    [self.uninstallTable addTableColumn:col];
+  }
+  sv.documentView = self.uninstallTable;
+  [cv addSubview:sv];
+
+  self.uninstallFooter = [NSTextField labelWithString:@""];
+  self.uninstallFooter.font = [NSFont systemFontOfSize:12];
+  self.uninstallFooter.textColor = [NSColor secondaryLabelColor];
+  self.uninstallFooter.frame = NSMakeRect(20, 30, 380, 20);
+  [cv addSubview:self.uninstallFooter];
+
+  NSButton *all = [NSButton buttonWithTitle:@"全选" target:self action:@selector(uninstallSelectAll:)];
+  all.frame = NSMakeRect(430, 24, 64, 30); all.bezelStyle = NSBezelStyleRounded; [cv addSubview:all];
+  NSButton *none = [NSButton buttonWithTitle:@"全不选" target:self action:@selector(uninstallSelectNone:)];
+  none.frame = NSMakeRect(498, 24, 72, 30); none.bezelStyle = NSBezelStyleRounded; [cv addSubview:none];
+  NSButton *cancel = [NSButton buttonWithTitle:@"取消" target:self action:@selector(closeUninstallPanel:)];
+  cancel.frame = NSMakeRect(700, 24, 76, 30); cancel.bezelStyle = NSBezelStyleRounded; [cv addSubview:cancel];
+  self.uninstallGoBtn = [NSButton buttonWithTitle:@"卸载所选应用" target:self action:@selector(confirmUninstallApps:)];
+  self.uninstallGoBtn.frame = NSMakeRect(780, 24, 110, 30); self.uninstallGoBtn.bezelStyle = NSBezelStyleRounded; [cv addSubview:self.uninstallGoBtn];
+
+  [p center];
+  [NSApp activateIgnoringOtherApps:YES];
+  [p makeKeyAndOrderFront:nil];
+  [self applyUninstallFilter];
 }
 
 - (void)closeUninstallPanel:(id)sender {
@@ -2156,21 +2359,13 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)confirmUninstallApps:(id)sender {
   NSMutableArray *selected = [NSMutableArray array];
-  NSInteger i = 0;
-  for (NSDictionary *it in self.items) {
-    NSString *path = ResolveAppPath(it[@"target"]);
-    if (!path.length) continue;
-    NSString *real = [path stringByResolvingSymlinksInPath];
-    if ([real hasPrefix:@"/System/"] || [path hasPrefix:@"/System/"]) continue;
-    if (i < (NSInteger)self.uninstallChecks.count && [self.uninstallChecks[i] state] == NSControlStateValueOn) {
-      [selected addObject:@{@"label": it[@"label"] ?: @"", @"path": path, @"target": it[@"target"]}];
-    }
-    i++;
+  for (NSDictionary *d in self.uninstallData) {
+    if ([self.uninstallSelected containsObject:d[@"path"]]) [selected addObject:d];
   }
   if (selected.count == 0) {
     NSAlert *e = [[NSAlert alloc] init];
     e.messageText = @"未选择应用";
-    e.informativeText = @"请勾选要卸载的应用。";
+    e.informativeText = @"请先勾选要卸载的应用。";
     [e runModal];
     return;
   }
@@ -2182,15 +2377,6 @@ static NSString *ResolveAppPath(NSString *target) {
   [c addButtonWithTitle:@"取消"];
   if ([c runModal] != NSAlertFirstButtonReturn) return;
 
-  // 管理员脚本：移动到废纸篓
-  NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\n"];
-  NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
-  NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
-  [body appendFormat:@"mkdir -p \"%@\"\n", trash];
-  for (NSDictionary *sel in selected) {
-    NSString *path = sel[@"path"];
-    [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%@\"\n", path, path, trash, stamp, [path lastPathComponent]];
-  }
   BOOL testMode = (getenv("DOCKLAUNCHER_TEST_UNINSTALL_APPS") != NULL);
   BOOL ok = NO;
   if (testMode) {
@@ -2203,6 +2389,14 @@ static NSString *ResolveAppPath(NSString *target) {
     ok = YES;
     fprintf(stderr, "UNINSTALL_APPS staging=%s count=%ld\n", [staging UTF8String], (long)selected.count);
   } else {
+    NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\n"];
+    NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
+    NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
+    [body appendFormat:@"mkdir -p \"%@\"\n", trash];
+    for (NSDictionary *sel in selected) {
+      NSString *path = sel[@"path"];
+      [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%@\"\n", path, path, trash, stamp, [path lastPathComponent]];
+    }
     NSString *sp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-uninstall-apps.sh"];
     [body writeToFile:sp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
     [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions: @0755} ofItemAtPath:sp error:NULL];
@@ -2215,7 +2409,6 @@ static NSString *ResolveAppPath(NSString *target) {
   }
 
   if (ok) {
-    // 从列表文件删除对应行
     NSMutableSet *targets = [NSMutableSet set];
     for (NSDictionary *sel in selected) [targets addObject:sel[@"target"]];
     NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL] ?: @"";
@@ -4586,7 +4779,8 @@ int main(int argc, const char *argv[]) {
     if (getenv("DOCKLAUNCHER_TEST_UNINSTALL_RUN")) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [c showUninstallAppsPanel];
-        if (c.uninstallChecks.count) [(NSButton *)c.uninstallChecks.firstObject setState:NSControlStateValueOn];
+        if (c.uninstallFiltered.count) [c.uninstallSelected addObject:c.uninstallFiltered.firstObject[@"path"]];
+        [c updateUninstallSummary];
         [c confirmUninstallApps:nil];
         NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL];
         fprintf(stderr, "UNINSTALL_RUN list='%s'\n", [content UTF8String]);
