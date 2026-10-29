@@ -257,6 +257,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSButton *idleCheck;
 @property (strong) NSDatePicker *idleDatePicker;
 @property (strong) NSDatePicker *idleTimePicker;
+@property (strong) NSTextField *countdownLabel;
+@property (strong) NSTimer *countdownTimer;
 @property NSInteger userColumns;
 @property (copy) NSString *customIconPath;
 @property NSInteger forceColumns;
@@ -298,6 +300,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)closeIdlePanel:(id)sender;
 - (void)resetIdleTimer;
 - (void)idleExitFired:(NSTimer *)t;
+- (void)updateCountdown;
+- (void)hideCountdown;
 - (void)refreshListAndCaches:(id)sender;
 - (void)createGroupTapped:(id)sender;
 - (void)renameSelectedItem:(id)sender;
@@ -1117,11 +1121,22 @@ static NSString *ResolveAppPath(NSString *target) {
   self.hintLabel.frame = NSMakeRect(96, 10, W-192, 34);
   [cv addSubview:self.hintLabel];
 
+  self.countdownLabel = [NSTextField labelWithString:@""];
+  self.countdownLabel.font = [NSFont monospacedDigitSystemFontOfSize:10.5 weight:NSFontWeightMedium];
+  self.countdownLabel.textColor = [NSColor labelColor];
+  self.countdownLabel.alignment = NSTextAlignmentCenter;
+  self.countdownLabel.hidden = YES;
+  self.countdownLabel.wantsLayer = YES;
+  self.countdownLabel.layer.cornerRadius = 6;
+  self.countdownLabel.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.93 alpha:0.95].CGColor;
+  [cv addSubview:self.countdownLabel];
+
   self.rows = [NSMutableArray array];
   [self reload];
   [self applyTheme];
   [self layoutContent];
   [self updatePinAppearance];
+  [self resetIdleTimer];
   [self.window makeFirstResponder:cv];
 }
 
@@ -1333,6 +1348,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.windowTitleLabel.frame = NSMakeRect(ox + (rw - tw)/2.0, oy + rh - 48, tw, th);
 
   if (self.pinBtn) self.pinBtn.frame = NSMakeRect(ox + rw - 14 - 28, oy + rh - 34, 28, 28);
+  if (self.countdownLabel) self.countdownLabel.frame = NSMakeRect(ox + rw - 14 - 28 - 8 - 96, oy + rh - 34 + 4, 96, 20);
 
   // 第二行四个控件各占 1/4
   CGFloat btnSize = 30.0;
@@ -3016,7 +3032,13 @@ static NSString *ResolveAppPath(NSString *target) {
   }
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   double ts = [d doubleForKey:@"autoCloseDate"];
-  NSDate *when = (ts > [[NSDate date] timeIntervalSince1970]) ? [NSDate dateWithTimeIntervalSince1970:ts] : [NSDate dateWithTimeIntervalSinceNow:180];
+  NSDate *when;
+  if (ts > [[NSDate date] timeIntervalSince1970]) when = [NSDate dateWithTimeIntervalSince1970:ts];
+  else {
+    NSDateComponents *c = [[NSCalendar currentCalendar] components:(NSCalendarUnitYear|NSCalendarUnitMonth|NSCalendarUnitDay) fromDate:[NSDate date]];
+    c.hour = 0; c.minute = 0; c.second = 0;
+    when = [[NSCalendar currentCalendar] dateFromComponents:c] ?: [NSDate date];
+  }
   self.idleCheck.state = (ts > [[NSDate date] timeIntervalSince1970]) ? NSControlStateValueOn : NSControlStateValueOff;
   self.idleTimePicker.dateValue = when;
   [self.idlePanel makeKeyAndOrderFront:nil];
@@ -3027,6 +3049,7 @@ static NSString *ResolveAppPath(NSString *target) {
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"autoCloseDate"];
     [[NSUserDefaults standardUserDefaults] synchronize];
     [self.idleExitTimer invalidate]; self.idleExitTimer = nil;
+    [self hideCountdown];
     [self.idlePanel orderOut:nil];
     return;
   }
@@ -3047,21 +3070,53 @@ static NSString *ResolveAppPath(NSString *target) {
   [self.idlePanel orderOut:nil];
 }
 
+- (void)hideCountdown {
+  self.countdownLabel.hidden = YES;
+  self.countdownLabel.stringValue = @"";
+  [self.countdownTimer invalidate];
+  self.countdownTimer = nil;
+}
+
+- (void)updateCountdown {
+  double ts = [[NSUserDefaults standardUserDefaults] doubleForKey:@"autoCloseDate"];
+  NSTimeInterval left = ts - [[NSDate date] timeIntervalSince1970];
+  if (ts <= 0 || left <= 0) {
+    if (left <= 0 && ts > 0) { [self idleExitFired:nil]; return; }
+    [self hideCountdown];
+    return;
+  }
+  NSInteger total = (NSInteger)left;
+  NSInteger h = total / 3600, m = (total % 3600) / 60, sec = total % 60;
+  NSString *txt;
+  if (h >= 24) txt = [NSString stringWithFormat:@"距关闭 %ld天%02ld:%02ld", (long)(h/24), (long)(h%24), (long)m];
+  else txt = [NSString stringWithFormat:@"距关闭 %02ld:%02ld:%02ld", (long)h, (long)m, (long)sec];
+  self.countdownLabel.stringValue = txt;
+  self.countdownLabel.hidden = NO;
+}
+
 - (void)resetIdleTimer {
   [self.idleExitTimer invalidate];
   self.idleExitTimer = nil;
-  if (self.pinned) return;
+  if (self.pinned) { [self hideCountdown]; return; }
   double ts = [[NSUserDefaults standardUserDefaults] doubleForKey:@"autoCloseDate"];
-  if (ts <= 0) return;
+  if (ts <= 0) { [self hideCountdown]; return; }
   NSTimeInterval interval = ts - [[NSDate date] timeIntervalSince1970];
   if (interval <= 0) interval = 1.0;
   self.idleExitTimer = [NSTimer timerWithTimeInterval:interval target:self selector:@selector(idleExitFired:) userInfo:nil repeats:NO];
   [[NSRunLoop mainRunLoop] addTimer:self.idleExitTimer forMode:NSRunLoopCommonModes];
+  if (!self.countdownTimer) {
+    self.countdownTimer = [NSTimer timerWithTimeInterval:1.0 target:self selector:@selector(updateCountdown) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:self.countdownTimer forMode:NSRunLoopCommonModes];
+  }
+  [self updateCountdown];
 }
 
 - (void)idleExitFired:(NSTimer *)t {
   self.idleExitTimer = nil;
   if (self.pinned) return;
+  [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"autoCloseDate"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self hideCountdown];
   [NSApp terminate:nil];
 }
 
@@ -3695,6 +3750,15 @@ int main(int argc, const char *argv[]) {
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
         exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_COUNTDOWN_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [[NSUserDefaults standardUserDefaults] setDouble:([[NSDate date] timeIntervalSince1970] + 3725) forKey:@"autoCloseDate"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+        [c resetIdleTimer];
+        fprintf(stderr, "CD hidden=%d frame=%.0f,%.0f,%.0fx%.0f text='%s'\n", c.countdownLabel.hidden, c.countdownLabel.frame.origin.x, c.countdownLabel.frame.origin.y, c.countdownLabel.frame.size.width, c.countdownLabel.frame.size.height, [c.countdownLabel.stringValue UTF8String]);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_IDLE_SHOW")) {
