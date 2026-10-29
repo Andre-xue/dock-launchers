@@ -14,6 +14,7 @@ static CGFloat gImgDX = 0.0, gImgDY = 0.0;
 static NSString *gImgPath = nil;
 static NSString *const kSkinPrefix = @"skin.";
 static CGFloat gCornerRatio = 0.0;   // 0 = 矩形，0.5 = 圆形
+static BOOL gIconMode = NO;          // YES = 图标网格模式
 
 @class Controller;
 @class BackdropView;
@@ -229,6 +230,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)moveSel:(NSInteger)delta;
 - (void)moveSelRow:(NSInteger)dir;
 - (NSInteger)effectiveColumns;
+- (NSInteger)displayColumns;
+- (void)setDisplayListMode:(id)sender;
+- (void)setDisplayIconMode:(id)sender;
 @end
 
 static NSColor *ThemeBG(NSInteger t) {
@@ -971,10 +975,11 @@ static NSString *ResolveAppPath(NSString *target) {
   for (NSView *v in [self.listContainer.subviews copy]) [v removeFromSuperview];
   [self.rows removeAllObjects];
 
-  NSInteger cols = [self effectiveColumns];
+  BOOL icons = gIconMode;
+  NSInteger cols = [self displayColumns];
   CGFloat W = self.scroll ? MAX(200, self.scroll.contentSize.width) : (480 - 32);
-  CGFloat rowH = 56.0;
   CGFloat cellW = floor(W / cols);
+  CGFloat rowH = icons ? MAX(72.0, MIN(cellW, 96.0)) : 56.0;
   NSInteger rowCount = (self.items.count + cols - 1) / (cols > 0 ? cols : 1);
   self.listContainer.frame = NSMakeRect(0, 0, W, MAX(rowCount * rowH, 10));
 
@@ -983,7 +988,8 @@ static NSString *ResolveAppPath(NSString *target) {
   NSInteger i = 0;
   for (NSDictionary *it in self.items) {
     NSInteger col = i % cols, gridRow = i / cols;
-    NSRect cell = NSMakeRect(col * cellW + 3, gridRow * rowH, cellW - 6, rowH);
+    NSRect cell = icons ? NSMakeRect(col * cellW + 4, gridRow * rowH + 4, cellW - 8, rowH - 8)
+                        : NSMakeRect(col * cellW + 3, gridRow * rowH, cellW - 6, rowH);
     RowView *row = [[RowView alloc] initWithFrame:cell];
     row.idx = i;
     row.ctrl = self;
@@ -994,6 +1000,21 @@ static NSString *ResolveAppPath(NSString *target) {
     NSString *path = ResolveAppPath(target);
     NSImage *icon = nil;
     if (path) icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
+    if (icons) {
+      CGFloat sz = MIN(cell.size.width * 0.62, MIN(cell.size.height * 0.72, 64.0));
+      sz = MAX(36.0, sz);
+      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect((cell.size.width - sz)/2.0, (cell.size.height - sz)/2.0, sz, sz)];
+      iv.image = nil;
+      iv.imageScaling = NSImageScaleProportionallyUpOrDown;
+      [row addSubview:iv];
+      row.iconView = iv;
+      row.label = nil;
+      row.toolTip = it[@"label"];
+      [self.listContainer addSubview:row];
+      [self.rows addObject:row];
+      i++;
+      continue;
+    }
     CGFloat iconSize = narrow ? 34 : 40;
     CGFloat iconX = narrow ? 12 : 20;
     CGFloat textX = narrow ? 54 : 78;
@@ -1053,11 +1074,20 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)moveSelRow:(NSInteger)dir {
-  NSInteger cols = MAX(1, [self effectiveColumns]);
+  NSInteger cols = MAX(1, [self displayColumns]);
   NSInteger idx = self.sel + dir * cols;
   if (idx < 0 || idx >= (NSInteger)self.rows.count) { [self moveSel:dir]; return; }
   [self selectRow:idx];
 }
+
+- (NSInteger)displayColumns {
+  NSInteger base = [self effectiveColumns];
+  if (!gIconMode) return base;
+  return (base <= 1) ? 2 : base * 2;
+}
+
+- (void)setDisplayListMode:(id)sender { gIconMode = NO; [self saveTheme]; [self reload]; }
+- (void)setDisplayIconMode:(id)sender { gIconMode = YES; [self saveTheme]; [self reload]; }
 
 - (NSInteger)effectiveColumns {
   NSInteger cols = self.userColumns;
@@ -1486,6 +1516,7 @@ static NSString *ResolveAppPath(NSString *target) {
   if ([d objectForKey:@"skinImgDY"]) gImgDY = [d doubleForKey:@"skinImgDY"];
   gImgPath = [d stringForKey:@"skinImgPath"];
   if ([d objectForKey:@"cornerRatio"]) gCornerRatio = [d doubleForKey:@"cornerRatio"];
+  gIconMode = [d boolForKey:@"iconMode"];
   [self loadCustomShortcuts];
   if (gTheme == 3 && gImgPath.length == 0) gTheme = 0;
   if (gGlassAlpha < 0.3) gGlassAlpha = 0.82;
@@ -1500,6 +1531,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [d setDouble:gImgDX forKey:@"skinImgDX"];
   [d setDouble:gImgDY forKey:@"skinImgDY"];
   [d setDouble:gCornerRatio forKey:@"cornerRatio"];
+  [d setBool:gIconMode forKey:@"iconMode"];
   [d setObject:(gImgPath ?: @"") forKey:@"skinImgPath"];
   [d synchronize];
 }
@@ -1589,6 +1621,11 @@ static NSString *ResolveAppPath(NSString *target) {
   it.target = self;
   it.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"idleExitEnabled"] ? NSControlStateValueOn : NSControlStateValueOff;
   it = [m addItemWithTitle:@"选择自定义图片…" action:@selector(customPick:) keyEquivalent:@""]; it.target = self; it.state = (gTheme == 3);
+  [m addItem:[NSMenuItem separatorItem]];
+  NSMenuItem *modeHdr = [m addItemWithTitle:@"排列方式" action:nil keyEquivalent:@""];
+  modeHdr.enabled = NO;
+  it = [m addItemWithTitle:@"列表显示" action:@selector(setDisplayListMode:) keyEquivalent:@""]; it.target = self; it.state = (gIconMode ? NSControlStateValueOff : NSControlStateValueOn);
+  it = [m addItemWithTitle:@"图标显示" action:@selector(setDisplayIconMode:) keyEquivalent:@""]; it.target = self; it.state = (gIconMode ? NSControlStateValueOn : NSControlStateValueOff);
   [m addItem:[NSMenuItem separatorItem]];
   NSMenuItem *hdr = [m addItemWithTitle:@"布局" action:nil keyEquivalent:@""];
   hdr.enabled = NO;
@@ -2866,6 +2903,17 @@ int main(int argc, const char *argv[]) {
         [c layoutContent];
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_ICONMODE")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gIconMode = YES;
+        [c reload];
+        RowView *r0 = c.rows.firstObject;
+        fprintf(stderr, "ICONMODE cols=%ld rows=%ld cell=%.0fx%.0f icon=%.0f tooltip=%s\n",
+                (long)[c displayColumns], (long)c.rows.count, r0.frame.size.width, r0.frame.size.height,
+                r0.iconView.frame.size.width, [r0.toolTip UTF8String]);
         exit(0);
       });
     }
