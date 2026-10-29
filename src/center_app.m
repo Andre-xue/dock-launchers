@@ -94,6 +94,8 @@ static NSString *ResolveAppPath(NSString *target) {
 @property (strong) NSTableView *uninstallTable;
 @property (strong) NSSearchField *uninstallSearch;
 @property (strong) NSTextField *uninstallFooter;
+@property (strong) NSSegmentedControl *uninstallScopeCtl;
+@property NSInteger uninstallScope;
 @property (strong) NSButton *uninstallGo;
 @property (strong) NSPopover *popover;
 @property (strong) NSView *quickGroups;
@@ -511,21 +513,29 @@ static NSString *ResolveAppPath(NSString *target) {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"应用卸载" size:22 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
-  NSTextField *sub = [self label:@"扫描所有分组中的应用；卸载会同时清理应用数据" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *sub = [self label:@"扫描本机应用（全部应用）或仅分组内；卸载会同时清理应用数据" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 550, 18); [v addSubview:sub];
 
-  self.uninstallSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(24, 540, 300, 28)];
+  self.uninstallScopeCtl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(24, 540, 220, 28)];
+  [self.uninstallScopeCtl setSegmentCount:2];
+  [self.uninstallScopeCtl setLabel:@"全部应用" forSegment:0];
+  [self.uninstallScopeCtl setLabel:@"仅分组内" forSegment:1];
+  self.uninstallScopeCtl.selectedSegment = 0;
+  self.uninstallScopeCtl.target = self;
+  self.uninstallScopeCtl.action = @selector(uninstallScopeChanged:);
+  [v addSubview:self.uninstallScopeCtl];
+  self.uninstallSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(252, 540, 260, 28)];
   self.uninstallSearch.placeholderString = @"搜索应用、Bundle ID 或路径";
   self.uninstallSearch.target = self;
   self.uninstallSearch.action = @selector(uninstallFilterChanged:);
   [self.uninstallSearch setContinuous:YES];
   [v addSubview:self.uninstallSearch];
   NSButton *all = [NSButton buttonWithTitle:@"全选" target:self action:@selector(uninstallSelectAll:)];
-  all.frame = NSMakeRect(500, 540, 64, 30); all.bezelStyle = NSBezelStyleRounded; [v addSubview:all];
+  all.frame = NSMakeRect(522, 540, 60, 30); all.bezelStyle = NSBezelStyleRounded; [v addSubview:all];
   NSButton *none = [NSButton buttonWithTitle:@"全不选" target:self action:@selector(uninstallSelectNone:)];
-  none.frame = NSMakeRect(568, 540, 72, 30); none.bezelStyle = NSBezelStyleRounded; [v addSubview:none];
+  none.frame = NSMakeRect(586, 540, 68, 30); none.bezelStyle = NSBezelStyleRounded; [v addSubview:none];
   NSButton *refresh = [NSButton buttonWithTitle:@"刷新" target:self action:@selector(reloadUninstallData)];
-  refresh.frame = NSMakeRect(646, 540, 64, 30); refresh.bezelStyle = NSBezelStyleRounded; [v addSubview:refresh];
+  refresh.frame = NSMakeRect(658, 540, 58, 30); refresh.bezelStyle = NSBezelStyleRounded; [v addSubview:refresh];
 
   NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 76, 710, 450)];
   sv.hasVerticalScroller = YES;
@@ -553,13 +563,32 @@ static NSString *ResolveAppPath(NSString *target) {
   self.uninstallView = v;
 }
 
+- (unsigned long long)duSizeAtPath:(NSString *)path {
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/du";
+  t.arguments = @[@"-sk", path];
+  NSPipe *pipe = [NSPipe pipe];
+  t.standardOutput = pipe;
+  t.standardError = [NSPipe pipe];
+  @try { [t launch]; } @catch (NSException *e) { return 0; }
+  NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
+  [t waitUntilExit];
+  NSString *out = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+  NSInteger kb = [[out componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] firstObject].integerValue;
+  return (unsigned long long)MAX(kb, 0) * 1024ULL;
+}
+
+- (void)uninstallScopeChanged:(id)sender {
+  self.uninstallScope = self.uninstallScopeCtl.selectedSegment;
+  [self reloadUninstallData];
+}
+
 - (void)reloadUninstallData {
   NSFileManager *fm = [NSFileManager defaultManager];
-  NSMutableArray *arr = [NSMutableArray array];
-  NSMutableSet *seen = [NSMutableSet set];
-  NSArray *items = [fm contentsOfDirectoryAtPath:GroupDir() error:NULL];
-  NSArray *running = [[NSWorkspace sharedWorkspace] runningApplications];
-  for (NSString *f in items) {
+  // 收集分组内的 target -> 分组名
+  NSMutableDictionary *targetGroup = [NSMutableDictionary dictionary];
+  NSArray *groupItems = [fm contentsOfDirectoryAtPath:GroupDir() error:NULL];
+  for (NSString *f in groupItems) {
     if (![f hasSuffix:@".app"]) continue;
     NSString *base = [f stringByDeletingPathExtension];
     NSString *listFile = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[base stringByAppendingPathExtension:@"txt"]];
@@ -567,38 +596,88 @@ static NSString *ResolveAppPath(NSString *target) {
     for (NSString *raw in [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
       NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
       if (!line.length || [line hasPrefix:@"#"]) continue;
-      NSString *label = line, *target = line;
+      NSString *target = line;
       NSRange r = [line rangeOfString:@"|"];
-      if (r.location != NSNotFound) {
-        label = [[line substringToIndex:r.location] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-        target = [[line substringFromIndex:r.location+1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-      }
+      if (r.location != NSNotFound) target = [[line substringFromIndex:r.location+1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
       NSString *p = ResolveAppPath(target);
-      if (!p || [seen containsObject:p]) continue;
-      NSString *real = [p stringByResolvingSymlinksInPath];
-      if ([real hasPrefix:@"/System/"] || [p hasPrefix:@"/System/"]) continue;
-      [seen addObject:p];
-      NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
-      unsigned long long size = 0;
-      NSDirectoryEnumerator *en = [fm enumeratorAtPath:p];
-      for (NSString *rel in en) size += [[fm attributesOfItemAtPath:[p stringByAppendingPathComponent:rel] error:NULL][NSFileSize] unsignedLongLongValue];
-      NSDictionary *attr = [fm attributesOfItemAtPath:p error:NULL] ?: @{};
-      BOOL isRunning = NO;
-      for (NSRunningApplication *ra in running) if (ra.bundleURL && [[ra.bundleURL path] isEqualToString:p]) { isRunning = YES; break; }
-      [arr addObject:@{@"label": label.length ? label : [p.lastPathComponent stringByDeletingPathExtension],
-                       @"name": [p.lastPathComponent stringByDeletingPathExtension],
-                       @"path": p, @"group": base,
-                       @"bid": info[@"CFBundleIdentifier"] ?: @"",
-                       @"size": @(size),
-                       @"installed": attr[NSFileCreationDate] ?: [NSDate date],
-                       @"running": @(isRunning),
-                       @"target": target}];
+      if (p) targetGroup[p] = base;
     }
+  }
+
+  NSMutableArray *paths = [NSMutableArray array];
+  NSMutableSet *seen = [NSMutableSet set];
+  void (^addApp)(NSString *) = ^(NSString *p) {
+    if (![p hasSuffix:@".app"]) return;
+    NSString *real = [p stringByResolvingSymlinksInPath];
+    if ([real hasPrefix:@"/System/"] || [p hasPrefix:@"/System/"]) return;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:p]) return;
+    if ([seen containsObject:p]) return;
+    [seen addObject:p];
+    [paths addObject:p];
+  };
+
+  if (self.uninstallScope == 1) {
+    for (NSString *p in targetGroup) addApp(p);
+  } else {
+    NSArray *roots = @[@"/Applications", [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"]];
+    for (NSString *root in roots) {
+      NSArray *items = [fm contentsOfDirectoryAtPath:root error:NULL];
+      for (NSString *f in items) {
+        NSString *full = [root stringByAppendingPathComponent:f];
+        BOOL isDir = NO;
+        if (![fm fileExistsAtPath:full isDirectory:&isDir] || !isDir) continue;
+        if ([f hasSuffix:@".app"]) addApp(full);
+        else if ([f isEqualToString:@"Utilities"] || [f isEqualToString:@"DockLaunchers"]) {
+          for (NSString *sub in [fm contentsOfDirectoryAtPath:full error:NULL]) addApp([full stringByAppendingPathComponent:sub]);
+        }
+      }
+    }
+    for (NSString *p in targetGroup) addApp(p);
+  }
+
+  NSArray *running = [[NSWorkspace sharedWorkspace] runningApplications];
+  NSMutableArray *arr = [NSMutableArray array];
+  for (NSString *p in paths) {
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+    NSString *label = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [[p lastPathComponent] stringByDeletingPathExtension];
+    BOOL isRunning = NO;
+    for (NSRunningApplication *ra in running) if (ra.bundleURL && [[ra.bundleURL path] isEqualToString:p]) { isRunning = YES; break; }
+    NSString *group = targetGroup[p] ?: @"—";
+    NSDictionary *attr = [fm attributesOfItemAtPath:p error:NULL] ?: @{};
+    NSMutableDictionary *d = [@{@"label": label, @"name": [[p lastPathComponent] stringByDeletingPathExtension],
+                                @"path": p, @"group": group,
+                                @"bid": info[@"CFBundleIdentifier"] ?: @"",
+                                @"size": @0,
+                                @"installed": attr[NSFileCreationDate] ?: [NSDate date],
+                                @"running": @(isRunning),
+                                @"target": (targetGroup[p] ? p : p)} mutableCopy];
+    [arr addObject:d];
   }
   self.uninstallData = arr;
   if (!self.uninstallSelected) self.uninstallSelected = [NSMutableSet set];
   [self.uninstallSelected removeAllObjects];
   [self applyUninstallFilter];
+
+  // 后台计算大小，完成后刷新
+  NSArray *snapshot = [arr copy];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    NSInteger done = 0;
+    for (NSMutableDictionary *d in snapshot) {
+      d[@"size"] = @([self duSizeAtPath:d[@"path"]]);
+      done++;
+      if (done % 6 == 0) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if (self.uninstallData == arr) [self.uninstallTable reloadData];
+        });
+      }
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (self.uninstallData == arr) {
+        [self.uninstallTable reloadData];
+        [self updateUninstallFooter];
+      }
+    });
+  });
 }
 
 - (void)applyUninstallFilter {
@@ -621,7 +700,7 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)updateUninstallFooter {
   unsigned long long sel = 0;
   for (NSDictionary *d in self.uninstallData) if ([self.uninstallSelected containsObject:d[@"path"]]) sel += [d[@"size"] unsignedLongLongValue];
-  self.uninstallFooter.stringValue = [NSString stringWithFormat:@"已选择 %ld 个应用 · 预计释放 %@", (long)self.uninstallSelected.count, [self fmtSize:sel]];
+  self.uninstallFooter.stringValue = [NSString stringWithFormat:@"共 %ld 个应用 · 已选择 %ld 个 · 预计释放 %@", (long)self.uninstallData.count, (long)self.uninstallSelected.count, [self fmtSize:sel]];
   self.uninstallGo.enabled = (self.uninstallSelected.count > 0);
 }
 
