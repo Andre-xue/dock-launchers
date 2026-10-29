@@ -13,6 +13,7 @@ static CGFloat gImgScale = 1.0;
 static CGFloat gImgDX = 0.0, gImgDY = 0.0;
 static NSString *gImgPath = nil;
 static NSString *const kSkinPrefix = @"skin.";
+static CGFloat gCornerRatio = 0.0;   // 0 = 矩形，0.5 = 圆形
 
 @class Controller;
 @class BackdropView;
@@ -121,6 +122,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSTimer *zoomHideTimer;
 @property (strong) NSTimer *hoverOpenTimer;
 @property (strong) NSPanel *glassPanel;
+@property (strong) NSPanel *shapePanel;
+@property (strong) NSSlider *shapeSlider;
+@property (strong) NSTextField *shapeValueLabel;
 @property (strong) NSSlider *glassSlider;
 @property (strong) NSTextField *glassValueLabel;
 @end
@@ -140,6 +144,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)showGlassPanel:(id)sender;
 - (void)glassSliderChanged:(id)sender;
 - (void)closeGlassPanel:(id)sender;
+- (void)showShapePanel:(id)sender;
+- (void)shapeSliderChanged:(id)sender;
+- (void)closeShapePanel:(id)sender;
 - (void)setupTrafficLights;
 - (void)greenLightTapped:(id)sender;
 - (void)redLightTapped:(id)sender;
@@ -1033,31 +1040,49 @@ static NSString *ResolveAppPath(NSString *target) {
   NSView *cv = self.window.contentView;
   if (!cv) return;
   CGFloat W = cv.bounds.size.width, H = cv.bounds.size.height;
-  CGFloat btnSize = 30.0;
+  CGFloat radius = gCornerRatio * MIN(W, H);
+  CGFloat inset = radius * (1.0 - 1.0 / sqrt(2.0)); // 保证内容落在圆角内
+  CGFloat rw = W - 2*inset, rh = H - 2*inset;
+  if (gCornerRatio > 0.01) {
+    CGFloat side = MIN(rw, rh);
+    rw = side; rh = side;
+  }
+  CGFloat ox = (W - rw)/2.0, oy = (H - rh)/2.0;
+
+  cv.wantsLayer = YES;
+  cv.layer.cornerRadius = radius;
+  cv.layer.masksToBounds = (radius > 0.5);
+
+  // 标题胶囊（随可用宽度收窄）
   NSFont *tf = [NSFont systemFontOfSize:20 weight:NSFontWeightSemibold];
   NSDictionary *tattrs = @{NSFontAttributeName: tf};
   CGFloat tw = [self.windowTitleLabel.title sizeWithAttributes:tattrs].width + 44;
+  tw = MIN(tw, MAX(80, rw - 24));
   CGFloat th = 32;
   self.windowTitleLabel.titleFont = tf;
-  self.windowTitleLabel.frame = NSMakeRect((W-tw)/2.0, H-48, tw, th);
-  // 第二行四个控件各占 1/4 列宽，水平居中：−  |  🎨  |  🔍  |  ＋
-  CGFloat cw = W / 4.0;
-  self.removeBtn.frame = NSMakeRect(cw*0.5 - btnSize/2.0, H-88, btnSize, btnSize);
-  self.skinBtn.frame   = NSMakeRect(cw*1.5 - btnSize/2.0, H-88, btnSize, btnSize);
-  if (self.searchBtn) self.searchBtn.frame = NSMakeRect(cw*2.5 - 15.0, H-88, 30, 30);
-  self.addBtn.frame    = NSMakeRect(cw*3.5 - btnSize/2.0, H-88, btnSize, btnSize);
-  CGFloat ly = H - 26;
-  if (self.lightRed) self.lightRed.frame = NSMakeRect(20, ly, 12, 12);
-  if (self.lightYellow) self.lightYellow.frame = NSMakeRect(40, ly, 12, 12);
-  if (self.lightGreen) self.lightGreen.frame = NSMakeRect(60, ly, 12, 12);
+  self.windowTitleLabel.frame = NSMakeRect(ox + (rw - tw)/2.0, oy + rh - 48, tw, th);
+
+  // 第二行四个控件各占 1/4
+  CGFloat btnSize = 30.0;
+  CGFloat cw = rw / 4.0;
+  self.removeBtn.frame = NSMakeRect(ox + cw*0.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
+  self.skinBtn.frame   = NSMakeRect(ox + cw*1.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
+  if (self.searchBtn) self.searchBtn.frame = NSMakeRect(ox + cw*2.5 - 15.0, oy + rh - 88, 30, 30);
+  self.addBtn.frame    = NSMakeRect(ox + cw*3.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
+
+  CGFloat ly = oy + rh - 26;
+  if (self.lightRed) self.lightRed.frame = NSMakeRect(ox + 20, ly, 12, 12);
+  if (self.lightYellow) self.lightYellow.frame = NSMakeRect(ox + 40, ly, 12, 12);
+  if (self.lightGreen) self.lightGreen.frame = NSMakeRect(ox + 60, ly, 12, 12);
+
   if (self.backdrop) self.backdrop.frame = NSMakeRect(0,0,W,H);
   if (self.vibrancy) self.vibrancy.frame = NSMakeRect(0,0,W,H);
-  self.scroll.frame = NSMakeRect(16, 76, W-32, MAX(40, H-100-76));
+  self.scroll.frame = NSMakeRect(ox + 16, oy + 76, rw - 32, MAX(40, rh - 100 - 76));
   [self.scroll layoutSubtreeIfNeeded];
-  self.cancelBtn.frame = NSMakeRect(16, 10, 56, 56);
-  self.openBtn.frame = NSMakeRect(W-16-56, 10, 56, 56);
-  self.hintLabel.frame = NSMakeRect(96, 10, W-192, 34);
-  [self.listContainer setFrameSize:NSMakeSize(W-32, self.listContainer.frame.size.height)];
+  self.cancelBtn.frame = NSMakeRect(ox + 16, oy + 10, 56, 56);
+  self.openBtn.frame = NSMakeRect(ox + rw - 16 - 56, oy + 10, 56, 56);
+  self.hintLabel.frame = NSMakeRect(ox + 96, oy + 10, MAX(40, rw - 192), 34);
+  [self.listContainer setFrameSize:NSMakeSize(rw - 32, self.listContainer.frame.size.height)];
 }
 
 - (void)sendBackgroundToBack {
@@ -1336,6 +1361,7 @@ static NSString *ResolveAppPath(NSString *target) {
   if ([d objectForKey:@"skinImgDX"]) gImgDX = [d doubleForKey:@"skinImgDX"];
   if ([d objectForKey:@"skinImgDY"]) gImgDY = [d doubleForKey:@"skinImgDY"];
   gImgPath = [d stringForKey:@"skinImgPath"];
+  if ([d objectForKey:@"cornerRatio"]) gCornerRatio = [d doubleForKey:@"cornerRatio"];
   [self loadCustomShortcuts];
   if (gTheme == 3 && gImgPath.length == 0) gTheme = 0;
   if (gGlassAlpha < 0.3) gGlassAlpha = 0.82;
@@ -1349,6 +1375,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [d setDouble:gImgScale forKey:@"skinImgScale"];
   [d setDouble:gImgDX forKey:@"skinImgDX"];
   [d setDouble:gImgDY forKey:@"skinImgDY"];
+  [d setDouble:gCornerRatio forKey:@"cornerRatio"];
   [d setObject:(gImgPath ?: @"") forKey:@"skinImgPath"];
   [d synchronize];
 }
@@ -1387,6 +1414,19 @@ static NSString *ResolveAppPath(NSString *target) {
     }
   }
 
+  // 窗口变形：圆角/圆形
+  CGFloat radius = gCornerRatio * MIN(cv.bounds.size.width, cv.bounds.size.height);
+  cv.wantsLayer = YES;
+  cv.layer.cornerRadius = radius;
+  cv.layer.masksToBounds = (radius > 0.5);
+  if (radius > 0.5) {
+    w.opaque = NO;
+    w.backgroundColor = [NSColor clearColor];
+    w.hasShadow = NO;
+  } else {
+    w.hasShadow = YES;
+  }
+
   BOOL solid = (gTheme == 0 || gTheme == 1);
   self.scroll.drawsBackground = solid;
   self.scroll.backgroundColor = solid ? ThemeBG(gTheme) : [NSColor clearColor];
@@ -1418,6 +1458,7 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"质感玻璃" action:@selector(skinGlass:) keyEquivalent:@""]; it.target = self; it.state = (gTheme == 2);
   [m addItem:[NSMenuItem separatorItem]];
   it = [m addItemWithTitle:@"玻璃透明度…" action:@selector(showGlassPanel:) keyEquivalent:@""]; it.target = self; it.enabled = (gTheme == 2);
+  it = [m addItemWithTitle:@"窗口变形（矩形→圆形）…" action:@selector(showShapePanel:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"选择自定义图片…" action:@selector(customPick:) keyEquivalent:@""]; it.target = self; it.state = (gTheme == 3);
   [m addItem:[NSMenuItem separatorItem]];
   NSMenuItem *hdr = [m addItemWithTitle:@"布局" action:nil keyEquivalent:@""];
@@ -2195,6 +2236,54 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
   [self.glassPanel orderOut:nil];
 }
 
+- (void)showShapePanel:(id)sender {
+  if (!self.shapePanel) {
+    self.shapePanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,380,150)
+                                                 styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
+                                                   backing:NSBackingStoreBuffered defer:NO];
+    self.shapePanel.title = @"窗口变形（实时预览）";
+    self.shapePanel.level = NSFloatingWindowLevel;
+    NSView *cv = self.shapePanel.contentView;
+
+    NSTextField *lab = [NSTextField labelWithString:@"圆角"];
+    lab.font = [NSFont systemFontOfSize:13];
+    lab.frame = NSMakeRect(20, 96, 80, 20);
+    [cv addSubview:lab];
+
+    self.shapeValueLabel = [NSTextField labelWithString:@"0%"];
+    self.shapeValueLabel.font = [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightRegular];
+    self.shapeValueLabel.alignment = NSTextAlignmentRight;
+    self.shapeValueLabel.frame = NSMakeRect(290, 96, 70, 20);
+    [cv addSubview:self.shapeValueLabel];
+
+    self.shapeSlider = [NSSlider sliderWithValue:gCornerRatio*100.0 minValue:0 maxValue:50 target:self action:@selector(shapeSliderChanged:)];
+    self.shapeSlider.frame = NSMakeRect(20, 64, 340, 24);
+    self.shapeSlider.continuous = YES;
+    [cv addSubview:self.shapeSlider];
+
+    NSButton *done = [NSButton buttonWithTitle:@"完成" target:self action:@selector(closeShapePanel:)];
+    done.frame = NSMakeRect(260, 16, 100, 32);
+    done.bezelStyle = NSBezelStyleRounded;
+    [cv addSubview:done];
+    [self.shapePanel center];
+  }
+  [self.shapeSlider setDoubleValue:gCornerRatio*100.0];
+  self.shapeValueLabel.stringValue = [NSString stringWithFormat:@"%.0f%%", gCornerRatio*100.0];
+  [self.shapePanel makeKeyAndOrderFront:nil];
+}
+
+- (void)shapeSliderChanged:(id)sender {
+  gCornerRatio = self.shapeSlider.doubleValue / 100.0;
+  self.shapeValueLabel.stringValue = [NSString stringWithFormat:@"%.0f%%", gCornerRatio*100.0];
+  [self applyTheme];
+  [self layoutContent];
+  [self saveTheme];
+}
+
+- (void)closeShapePanel:(id)sender {
+  [self.shapePanel orderOut:nil];
+}
+
 - (void)customPick:(id)sender {
   NSOpenPanel *pn = [NSOpenPanel openPanel];
   pn.allowsMultipleSelection = NO;
@@ -2332,6 +2421,20 @@ int main(int argc, const char *argv[]) {
         if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS) {
           fprintf(stderr, "RSS=%.1fMB\n", info.resident_size / 1048576.0);
         }
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_SHAPE")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gCornerRatio = 0.5;
+        [c applyTheme];
+        [c layoutContent];
+        CGFloat r = c.window.contentView.layer.cornerRadius;
+        fprintf(stderr, "SHAPE radius=%.1f opaque=%d scroll=%.0fx%.0f@%.0f,%.0f title=%.0f,%.0f\n",
+                r, c.window.isOpaque,
+                c.scroll.frame.size.width, c.scroll.frame.size.height,
+                c.scroll.frame.origin.x, c.scroll.frame.origin.y,
+                c.windowTitleLabel.frame.origin.x, c.windowTitleLabel.frame.origin.y);
         exit(0);
       });
     }
