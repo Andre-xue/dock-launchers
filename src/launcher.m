@@ -40,7 +40,11 @@ static NSString *SignatureForEvent(NSEvent *e);
   CGFloat r = self.cornerRatio * MIN(self.bounds.size.width, self.bounds.size.height);
   NSBezierPath *clip = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:r yRadius:r];
   [clip addClip];
-  [self.image drawInRect:self.bounds fromRect:NSZeroRect
+  // 形状变化时轻微放大图像，裁掉图标自带透明边距，让圆角/圆形效果可见
+  CGFloat zoom = 1.0 + self.cornerRatio * 0.35;
+  CGFloat inset = -(zoom - 1.0) * MIN(self.bounds.size.width, self.bounds.size.height) / 2.0;
+  NSRect drawRect = NSInsetRect(self.bounds, inset, inset);
+  [self.image drawInRect:drawRect fromRect:NSZeroRect
                operation:NSCompositingOperationSourceOver fraction:1.0];
 }
 @end
@@ -3101,6 +3105,20 @@ int main(int argc, const char *argv[]) {
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
         exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_ICONLIVE_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (c.items.count) {
+          c.sel = 0;
+          [c selectRow:0];
+          c.appIconEditTarget = c.items[0][@"target"];
+          gAppIconSettings[c.appIconEditTarget] = [@{@"size": @64, @"corner": @0.5} mutableCopy];
+          [c updateSelectedIconAppearance];
+          RowView *r = c.rows.firstObject;
+          fprintf(stderr, "LIVE corner=%.2f frame=%.0fx%.0f\n", r.iconView.cornerRatio, r.iconView.frame.size.width, r.iconView.frame.size.height);
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_APPICON_SHOW")) {
