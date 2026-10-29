@@ -1097,9 +1097,10 @@ static NSString *ResolveAppPath(NSString *target) {
   self.addBtn.frame    = NSMakeRect(ox + cw*3.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
 
   BOOL morph = (gCornerRatio > 0.05);
+  // 保持 Resizable：这样系统绿灯的 Move & Resize 悬停菜单在变形状态下也能用
   NSWindowStyleMask wantMask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                               NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskFullSizeContentView;
-  if (!morph) wantMask |= NSWindowStyleMaskResizable;
+                               NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable |
+                               NSWindowStyleMaskFullSizeContentView;
   if (self.window.styleMask != wantMask) self.window.styleMask = wantMask;
   for (NSWindowButton b = NSWindowCloseButton; b <= NSWindowZoomButton; b++) {
     NSButton *btn = [self.window standardWindowButton:b];
@@ -1123,10 +1124,12 @@ static NSString *ResolveAppPath(NSString *target) {
   if (self.backdrop) self.backdrop.frame = NSMakeRect(0,0,W,H);
   if (self.vibrancy) self.vibrancy.frame = NSMakeRect(0,0,W,H);
   if (morph) {
-    self.scroll.frame = NSMakeRect(ox + 16, oy + 92, rw - 32, MAX(40, rh - 110 - 92));
-    self.hintLabel.frame = NSMakeRect(ox + 60, oy + 70, MAX(40, rw - 120), 18);
+    self.scroll.frame = NSMakeRect(ox + 16, oy + 104, rw - 32, MAX(40, rh - 110 - 104));
+    self.hintLabel.font = [NSFont systemFontOfSize:9.0];
+    self.hintLabel.frame = NSMakeRect(ox + 12, oy + 72, MAX(40, rw - 24), 20);
     self.hintLabel.maximumNumberOfLines = 1;
   } else {
+    self.hintLabel.font = [NSFont systemFontOfSize:10.5];
     self.scroll.frame = NSMakeRect(ox + 16, oy + 76, rw - 32, MAX(40, rh - 100 - 76));
     self.hintLabel.frame = NSMakeRect(ox + 96, oy + 10, MAX(40, rw - 192), 34);
     self.hintLabel.maximumNumberOfLines = 2;
