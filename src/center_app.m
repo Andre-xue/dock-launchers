@@ -186,6 +186,16 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
   self.statusItem.button.action = @selector(togglePopover:);
   [self buildWindow];
   [self buildPopover];
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
+    [self deleteGroupNames:@[[NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")]]];
+    exit(0);
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_PROMPT")) {
+    [self showSection:1];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self deleteGroupsClicked:nil];
+    });
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_BACKUP")) {
     NSString *n = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_BACKUP")];
     [self backupGroupNames:@[n]];
@@ -492,14 +502,17 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
 }
 
 - (void)deleteGroupNames:(NSArray<NSString *> *)names {
-  NSAlert *bk = [[NSAlert alloc] init];
-  bk.icon = [self characterImage:64];
-  bk.messageText = @"删除前必须先备份";
-  bk.informativeText = [NSString stringWithFormat:@"将先备份 %ld 个分组，然后再执行删除。是否继续？", (long)names.count];
-  [bk addButtonWithTitle:@"备份并删除"];
-  [bk addButtonWithTitle:@"取消"];
-  if ([bk runModal] != NSAlertFirstButtonReturn) return;
+  if (!getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
+    NSAlert *bk = [[NSAlert alloc] init];
+    bk.icon = [self characterImage:64];
+    bk.messageText = @"删除前必须先备份";
+    bk.informativeText = [NSString stringWithFormat:@"将先备份 %ld 个分组，然后再执行删除。是否继续？", (long)names.count];
+    [bk addButtonWithTitle:@"备份并删除"];
+    [bk addButtonWithTitle:@"取消"];
+    if ([bk runModal] != NSAlertFirstButtonReturn) return;
+  }
   for (NSString *n in names) [self backupGroupNamed:n];
+  if (!getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
   NSAlert *c = [[NSAlert alloc] init];
   c.icon = [self characterImage:64];
   c.messageText = [NSString stringWithFormat:@"确认删除 %ld 个分组？", (long)names.count];
@@ -515,23 +528,47 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
     });
   }
   if ([c runModal] != NSAlertFirstButtonReturn) return;
+  }
 
   NSMutableArray *trashPaths = [NSMutableArray array];
-  NSMutableArray *deleted = [self deletedGroupNames];
   NSFileManager *fm = [NSFileManager defaultManager];
+  NSMutableArray *apps = [NSMutableArray array];
   for (NSString *n in names) {
     NSString *app = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
     NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"txt"]];
-    [self removeDockEntry:app];
-    if ([fm fileExistsAtPath:app]) [trashPaths addObject:app];
+    if ([fm fileExistsAtPath:app]) { [apps addObject:app]; [trashPaths addObject:app]; }
     if ([fm fileExistsAtPath:list]) [trashPaths addObject:list];
+    [self removeDockEntry:app];
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
+    for (NSString *n in names) {
+      NSString *app = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
+      NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"txt"]];
+      [fm trashItemAtURL:[NSURL fileURLWithPath:app] resultingItemURL:nil error:NULL];
+      if ([fm fileExistsAtPath:list]) [fm trashItemAtURL:[NSURL fileURLWithPath:list] resultingItemURL:nil error:NULL];
+    }
+  } else {
+    [self runAdminTrashPaths:trashPaths];
+  }
+  NSMutableArray *deleted = [self deletedGroupNames];
+  NSMutableArray *failed = [NSMutableArray array];
+  for (NSString *n in names) {
+    NSString *app = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
+    if ([fm fileExistsAtPath:app]) { [failed addObject:n]; continue; }
     if (![deleted containsObject:n]) [deleted addObject:n];
   }
   [self saveDeletedGroupNames:deleted];
-  [self runAdminTrashPaths:trashPaths];
   [self killDock];
   [self refreshGroups];
   if (self.popover.isShown) [self rebuildQuickGroups];
+  if (failed.count && !getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
+    NSAlert *f = [[NSAlert alloc] init];
+    f.icon = [self characterImage:64];
+    f.messageText = @"部分分组未删除";
+    f.informativeText = [NSString stringWithFormat:@"%@ 删除失败（可能取消了管理员授权），未删除的分组不会进入恢复列表。", [failed componentsJoinedByString:@"、"]];
+    [f runModal];
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) fprintf(stderr, "DELETE_TEST remaining=%ld\n", (long)failed.count);
 }
 
 - (void)restoreGroupsClicked:(id)sender {
