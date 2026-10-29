@@ -16,16 +16,29 @@ static NSString *GroupDir(void) { return [NSHomeDirectory() stringByAppendingPat
 
 static NSString *ResolveAppPath(NSString *target) {
   if (!target.length) return nil;
-  if ([target hasPrefix:@"/"]) return [[NSFileManager defaultManager] fileExistsAtPath:target] ? target : nil;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  if ([target hasPrefix:@"/"]) return [fm fileExistsAtPath:target] ? target : nil;
   if ([target hasPrefix:@"file://"]) {
     NSString *p = [[NSURL URLWithString:target] path];
-    return (p && [[NSFileManager defaultManager] fileExistsAtPath:p]) ? p : nil;
+    return (p && [fm fileExistsAtPath:p]) ? p : nil;
   }
-  if ([target rangeOfString:@".app"].location != NSNotFound) {
-    NSString *p = [@"/Applications" stringByAppendingPathComponent:target];
-    if ([[NSFileManager defaultManager] fileExistsAtPath:p]) return p;
-    p = [@"/System/Applications" stringByAppendingPathComponent:target];
-    if ([[NSFileManager defaultManager] fileExistsAtPath:p]) return p;
+  NSArray *dirs = @[@"/Applications", [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"], @"/System/Applications", @"/Applications/Utilities"];
+  // 带完整文件名（如 WeChat.app）
+  for (NSString *d in dirs) {
+    NSString *p = [d stringByAppendingPathComponent:target];
+    if ([fm fileExistsAtPath:p]) return p;
+    if (![target hasSuffix:@".app"]) {
+      p = [d stringByAppendingPathComponent:[target stringByAppendingPathExtension:@"app"]];
+      if ([fm fileExistsAtPath:p]) return p;
+    }
+  }
+  // 纯名称，遍历目录匹配
+  for (NSString *d in dirs) {
+    NSArray *items = [fm contentsOfDirectoryAtPath:d error:NULL];
+    for (NSString *f in items) {
+      if (![f hasSuffix:@".app"]) continue;
+      if ([[f stringByDeletingPathExtension] isEqualToString:target]) return [d stringByAppendingPathComponent:f];
+    }
   }
   return nil;
 }
@@ -149,6 +162,11 @@ static NSString *ResolveAppPath(NSString *target) {
   [self showWindow:nil];
   if (getenv("DOCKLAUNCHERS_CENTER_SECTION")) {
     [self showSection:atoi(getenv("DOCKLAUNCHERS_CENTER_SECTION"))];
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_SEARCH")) {
+    [self showSection:2];
+    self.uninstallSearch.stringValue = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_SEARCH")];
+    [self reloadUninstallData];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_GROUP")) {
     [self showSection:2];
@@ -659,16 +677,20 @@ static NSString *ResolveAppPath(NSString *target) {
     }
   } else {
     NSArray *roots = @[@"/Applications", [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"]];
-    for (NSString *root in roots) {
-      NSArray *items = [fm contentsOfDirectoryAtPath:root error:NULL];
-      for (NSString *f in items) {
-        NSString *full = [root stringByAppendingPathComponent:f];
+    // 递归扫描（最多 2 层子目录），覆盖 Adobe、Setapp 等子文件夹
+    NSMutableArray *queue = [NSMutableArray array];
+    for (NSString *r in roots) [queue addObject:@{@"dir": r, @"depth": @0}];
+    while (queue.count) {
+      NSDictionary *item = queue.firstObject;
+      [queue removeObjectAtIndex:0];
+      NSString *dir = item[@"dir"];
+      NSInteger depth = [item[@"depth"] integerValue];
+      for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:NULL]) {
+        NSString *full = [dir stringByAppendingPathComponent:f];
         BOOL isDir = NO;
         if (![fm fileExistsAtPath:full isDirectory:&isDir] || !isDir) continue;
-        if ([f hasSuffix:@".app"]) addApp(full);
-        else if ([f isEqualToString:@"Utilities"] || [f isEqualToString:@"DockLaunchers"]) {
-          for (NSString *sub in [fm contentsOfDirectoryAtPath:full error:NULL]) addApp([full stringByAppendingPathComponent:sub]);
-        }
+        if ([f hasSuffix:@".app"]) { addApp(full); continue; }
+        if (depth < 2) [queue addObject:@{@"dir": full, @"depth": @(depth + 1)}];
       }
     }
     for (NSString *p in targetGroup) addApp(p);
@@ -698,6 +720,10 @@ static NSString *ResolveAppPath(NSString *target) {
     [arr addObject:d];
   }
   self.uninstallData = arr;
+  if (getenv("DOCKLAUNCHERS_CENTER_DUMP")) {
+    for (NSDictionary *d in arr) fprintf(stderr, "APP: %s\n", [d[@"path"] UTF8String]);
+    exit(0);
+  }
   if (!self.uninstallSelected) self.uninstallSelected = [NSMutableSet set];
   [self.uninstallSelected removeAllObjects];
   [self applyUninstallFilter];
