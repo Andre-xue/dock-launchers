@@ -1598,51 +1598,14 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)performFullRename:(NSString *)typed {
-  BOOL hadSuffix = [typed hasSuffix:@"组"];
-  NSString *display = hadSuffix ? [typed substringToIndex:typed.length - 1] : typed;
-  NSString *newBase = display;   // Dock 标签取包名，所以包名直接用显示名（不再带“组”）
+  NSString *display = typed;
+  while ([display hasSuffix:@"组"] && display.length > 1) display = [display substringToIndex:display.length - 1];
+  display = [display stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
   if (display.length == 0) return;
 
-  NSString *oldPath = [self currentBundlePathByID];
-  NSString *parent = [oldPath stringByDeletingLastPathComponent];
-  NSString *oldBase = [[oldPath lastPathComponent] stringByDeletingPathExtension];
-  NSString *newPath = [parent stringByAppendingPathComponent:[newBase stringByAppendingPathExtension:@"app"]];
-  NSFileManager *fm = [NSFileManager defaultManager];
-
-  if (![newBase isEqualToString:oldBase]) {
-    if ([fm fileExistsAtPath:newPath]) {
-      NSAlert *e = [[NSAlert alloc] init];
-      e.messageText = @"名称已存在";
-      e.informativeText = [NSString stringWithFormat:@"%@ 已经存在，请换一个名字。", [newBase stringByAppendingPathExtension:@"app"]];
-      [e runModal];
-      return;
-    }
-    // 1. 重命名列表文件
-    NSString *listsDir = [parent stringByAppendingPathComponent:@"lists"];
-    NSString *oldList = [listsDir stringByAppendingPathComponent:[oldBase stringByAppendingPathExtension:@"txt"]];
-    NSString *newList = [listsDir stringByAppendingPathComponent:[newBase stringByAppendingPathExtension:@"txt"]];
-    BOOL hadList = [fm fileExistsAtPath:oldList];
-    if (hadList) {
-      NSError *err = nil;
-      [fm moveItemAtPath:oldList toPath:newList error:&err];
-      if (err) { NSAlert *a = [[NSAlert alloc] init]; a.messageText = @"重命名列表失败"; a.informativeText = err.localizedDescription; [a runModal]; return; }
-    }
-    // 2. 先写 Info.plist，再移动 App 包
-    [self writeInfoNamesInBundle:oldPath base:newBase display:display];
-    NSError *moveErr = nil;
-    [fm moveItemAtPath:oldPath toPath:newPath error:&moveErr];
-    if (moveErr) {
-      if (hadList) [fm moveItemAtPath:newList toPath:oldList error:nil];
-      NSAlert *a = [[NSAlert alloc] init];
-      a.messageText = @"重命名 App 失败";
-      a.informativeText = moveErr.localizedDescription;
-      [a runModal];
-      return;
-    }
-    gListKey = newBase;
-    gListFile = newList;
-    [self updateDockPathFrom:oldPath to:newPath];
-  }
+  // 只改显示名，不动 App 包和列表文件名 —— 避免 Dock 路径变化导致图标变文件夹
+  NSString *curPath = [self currentBundlePathByID];
+  [self writeInfoNamesInBundle:curPath base:display display:display];
 
   gGroup = display;
   self.windowTitleLabel.title = display;
@@ -1650,19 +1613,14 @@ static NSString *ResolveAppPath(NSString *target) {
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   [d setObject:display forKey:@"displayNameOverride"];
   [d synchronize];
-
-  // 同名情况下也刷新 Info（显示名）
-  NSString *curPath = [fm fileExistsAtPath:newPath] ? newPath : oldPath;
-  [self writeInfoNamesInBundle:curPath base:newBase display:display];
   [self layoutContent];
 
-  // 立即重建 Dock 条目并重启 Dock，标签/图标马上生效
-  if (!getenv("DOCKLAUNCHER_TEST_RENAME") && !getenv("DOCKLAUNCHER_TEST_RENAME2")) {
-    if (![self dockHasEntryForPath:curPath]) [self repairDockEntries];
-  }
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    if (getenv("DOCKLAUNCHER_TEST_RENAME") || getenv("DOCKLAUNCHER_TEST_RENAME2")) return;
-    [[NSWorkspace sharedWorkspace] setIcon:[[NSWorkspace sharedWorkspace] iconForFile:curPath] forFile:curPath options:0];
+  if (getenv("DOCKLAUNCHER_TEST_RENAME") || getenv("DOCKLAUNCHER_TEST_RENAME2")) return;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    NSTask *reg = [[NSTask alloc] init];
+    reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+    reg.arguments = @[@"-f", curPath];
+    @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
     NSTask *task = [[NSTask alloc] init];
     task.launchPath = @"/usr/bin/killall";
     task.arguments = @[@"Dock"];
@@ -1670,7 +1628,6 @@ static NSString *ResolveAppPath(NSString *target) {
   });
 }
 
-- (void)updateGroupDisplayName:(NSString *)name { [self performFullRename:name]; }
 
 - (void)repairDockMenuTapped:(id)sender {
   [self repairDockEntries];
