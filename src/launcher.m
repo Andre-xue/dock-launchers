@@ -160,6 +160,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)idleExitFired:(NSTimer *)t;
 - (void)refreshListAndCaches:(id)sender;
 - (void)createGroupTapped:(id)sender;
+- (void)renameSelectedItem:(id)sender;
 - (BOOL)createGroupNamed:(NSString *)name;
 - (void)deleteCurrentGroup:(id)sender;
 - (void)addDockEntryForPath:(NSString *)path label:(NSString *)label;
@@ -1254,8 +1255,10 @@ static NSString *ResolveAppPath(NSString *target) {
   if ([panel runModal] != NSModalResponseOK) return;
   NSMutableString *add = [NSMutableString string];
   for (NSURL *u in panel.URLs) {
-    NSString *name = [[u lastPathComponent] stringByDeletingPathExtension];
-    [add appendFormat:@"\n%@|%@", name, [u path]];
+    NSString *display = [[NSFileManager defaultManager] displayNameAtPath:[u path]];
+    if (display.length == 0) display = [[u lastPathComponent] stringByDeletingPathExtension];
+    if ([display hasSuffix:@".app"]) display = [display substringToIndex:display.length - 4];
+    [add appendFormat:@"\n%@|%@", display, [u path]];
   }
   if (add.length) {
     NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL];
@@ -1566,6 +1569,7 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"三列" action:@selector(layoutThree:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 3);
   it = [m addItemWithTitle:@"四列" action:@selector(layoutFour:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 4);
   [m addItem:[NSMenuItem separatorItem]];
+  it = [m addItemWithTitle:@"重命名选中项…" action:@selector(renameSelectedItem:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"新建分组…" action:@selector(createGroupTapped:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"删除当前分组…" action:@selector(deleteCurrentGroup:) keyEquivalent:@""]; it.target = self;
   [m addItem:[NSMenuItem separatorItem]];
@@ -2041,6 +2045,48 @@ static NSString *ResolveAppPath(NSString *target) {
   if (![[NSFileManager defaultManager] fileExistsAtPath:exe]) { [fm removeItemAtPath:newPath error:NULL]; return NO; }
   if (![[NSFileManager defaultManager] fileExistsAtPath:plistPath]) { return NO; }
   return YES;
+}
+
+- (void)renameSelectedItem:(id)sender {
+  if (self.sel < 0 || self.sel >= (NSInteger)self.items.count) return;
+  NSDictionary *it = self.items[self.sel];
+  NSString *target = it[@"target"];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"重命名选中项";
+  a.informativeText = @"只修改列表中显示的名字，不会改动应用本身。";
+  NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,240,24)];
+  tf.stringValue = it[@"label"] ?: @"";
+  a.accessoryView = tf;
+  [a addButtonWithTitle:@"确定"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSString *newLabel = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  if (newLabel.length == 0) return;
+  if ([newLabel containsString:@"|"]) newLabel = [newLabel stringByReplacingOccurrencesOfString:@"|" withString:@" "];
+
+  NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL];
+  if (!content) return;
+  NSMutableArray *lines = [[content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
+  BOOL changed = NO;
+  for (NSInteger i = 0; i < (NSInteger)lines.count; i++) {
+    NSString *line = lines[i];
+    NSString *trim = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (trim.length == 0 || [trim hasPrefix:@"#"]) continue;
+    NSString *t = trim;
+    NSRange r = [trim rangeOfString:@"|"];
+    if (r.location != NSNotFound) t = [[trim substringFromIndex:r.location+1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if ([t isEqualToString:target]) {
+      lines[i] = [NSString stringWithFormat:@"%@|%@", newLabel, target];
+      changed = YES;
+      break;
+    }
+  }
+  if (!changed) return;
+  NSString *out = [lines componentsJoinedByString:@"\n"];
+  [out writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  NSInteger keep = self.sel;
+  [self reload];
+  if (self.rows.count) [self selectRow:MIN(keep, (NSInteger)self.rows.count - 1)];
 }
 
 - (void)createGroupTapped:(id)sender {
