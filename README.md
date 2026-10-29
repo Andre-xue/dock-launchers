@@ -108,6 +108,23 @@ export GH_CONFIG_DIR=/Users/andre/deepseek/tools/gh/config
 
 反向删除：`build.sh` 对应行、`resources/icons/xxx.icns`、`lists/xxx.txt`、`install.command` 的 URL、`launcher.m` 里 `order` 与 emoji 映射、README 数量，然后同样 `build.sh` + `sync-github.sh` + 发版。
 
+## 本机备份与离线一键恢复
+
+运行 `install.command` 后会自动：
+
+- 备份 7 个分组 App 与列表到
+  `~/Library/Application Support/DockLaunchers/backup/DockLaunchers/`
+- 在桌面生成 `恢复Dock分组.command`
+
+如果误删了 Dock 上全部分组、并清空了废纸篓、且没有网络：
+
+1. 双击桌面上的 `恢复Dock分组.command`
+2. 会自动从本机备份复制 App 回 `~/Applications/DockLaunchers`
+3. 重新签名、注册，并恢复 7 个 Dock 图标
+4. Dock 自动重启，全部恢复
+
+平时在 🎨 →「Dock 栏」→「备份到本机（一键恢复用）」可随时刷新备份（例如新增分组后）。
+
 ## 目录结构
 
 ```

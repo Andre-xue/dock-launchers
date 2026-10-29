@@ -1,10 +1,11 @@
 #!/bin/bash
-# 安装到 ~/Applications/DockLaunchers 并加入程序坞
+# 安装到 ~/Applications/DockLaunchers，加入程序坞，并建立本机备份与一键恢复脚本
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 SRC="$ROOT/build/DockLaunchers"
 [ -d "$SRC" ] || { echo "未找到构建产物，先执行 build.sh"; exit 1; }
 DEST="$HOME/Applications/DockLaunchers"
+BACKUP="$HOME/Library/Application Support/DockLaunchers/backup/DockLaunchers"
 echo "==> 安装到 $DEST"
 mkdir -p "$DEST"
 
@@ -25,23 +26,51 @@ for app in "$DEST"/*.app; do
 done
 mdimport "$DEST" 2>/dev/null || true
 
-URLS=(
-"file://$HOME/Applications/DockLaunchers/%E5%B7%A5%E4%BD%9C.app"
-"file://$HOME/Applications/DockLaunchers/%E8%81%8A%E5%A4%A9.app"
-"file://$HOME/Applications/DockLaunchers/%E5%A4%96%E7%BD%91.app"
-"file://$HOME/Applications/DockLaunchers/%E5%BD%B1%E9%9F%B3.app"
-"file://$HOME/Applications/DockLaunchers/Ai.app"
-"file://$HOME/Applications/DockLaunchers/Docker.app"
-"file://$HOME/Applications/DockLaunchers/%E5%B7%A5%E5%85%B7.app"
-)
-EXISTING=$(defaults read com.apple.dock persistent-apps 2>/dev/null || true)
-for u in "${URLS[@]}"; do
-  if ! printf '%s' "$EXISTING" | grep -qF "$u"; then
-    defaults write com.apple.dock persistent-apps -array-add "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>$u</string><key>_CFURLStringType</key><integer>0</integer></dict></dict><key>tile-type</key><string>file-tile</string></dict>"
-  fi
+# 用 App 自身的 --restore-dock 模式补齐/修正 Dock 条目（含标签与 bundle id）
+RESTORE_BIN="$(ls "$DEST"/*.app/Contents/MacOS/ui 2>/dev/null | head -1)"
+if [ -n "$RESTORE_BIN" ]; then
+  "$RESTORE_BIN" --restore-dock || true
+fi
+killall -KILL Dock 2>/dev/null || true
+
+# ===== 本机备份 + 桌面一键恢复脚本 =====
+echo "==> 建立本机备份"
+rm -rf "$BACKUP"
+mkdir -p "$BACKUP"
+cp -R "$DEST"/*.app "$BACKUP"/
+[ -d "$DEST/lists" ] && cp -R "$DEST/lists" "$BACKUP/lists"
+
+RECOVER="$HOME/Desktop/恢复Dock分组.command"
+cat > "$RECOVER" <<'EOS'
+#!/bin/bash
+set -u
+SRC="$HOME/Library/Application Support/DockLaunchers/backup/DockLaunchers"
+DST="$HOME/Applications/DockLaunchers"
+if [ ! -d "$SRC" ]; then
+  echo "找不到本机备份：$SRC"
+  echo "（备份可能也被删除；如有 GitHub 网络可重新下载安装包）"
+  read -n1
+  exit 1
+fi
+mkdir -p "$DST"
+pkill -f "/DockLaunchers/.*/Contents/MacOS/ui" 2>/dev/null
+cp -R "$SRC"/*.app "$DST"/ 2>/dev/null
+[ -d "$SRC/lists" ] && cp -R "$SRC/lists" "$DST/"
+mdimport "$DST" 2>/dev/null
+for app in "$DST"/*.app; do
+  codesign --force --deep --sign - "$app" >/dev/null 2>&1
 done
-killall Dock 2>/dev/null || true
+BIN="$(ls "$DST"/*.app/Contents/MacOS/ui 2>/dev/null | head -1)"
+[ -n "$BIN" ] && "$BIN" --restore-dock
+sleep 0.3
+killall -KILL Dock 2>/dev/null
+echo "已恢复 Dock 分组：$DST"
+read -n1
+EOS
+chmod +x "$RECOVER"
 
 echo ""
 echo "✅ 完成：7 个分组已安装并加入程序坞"
+echo "   本机备份：${BACKUP}"
+echo "   一键恢复：${RECOVER}（桌面双击即可，无需网络）"
 echo "   修改分组：打开窗口用 + / −，或编辑 $DEST/lists/*.txt"

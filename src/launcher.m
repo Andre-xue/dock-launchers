@@ -309,6 +309,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)resetAllDefaults:(id)sender;
 - (void)resetListMode:(id)sender;
 - (void)resetSingleLayout:(id)sender;
+- (void)backupGroupsNow:(id)sender;
 - (void)skinWhite:(id)sender;
 - (void)skinBlack:(id)sender;
 - (void)skinGlass:(id)sender;
@@ -1877,6 +1878,7 @@ static NSString *ResolveAppPath(NSString *target) {
       @{@"title":@"Dock 风格", @"children":@[
         @{@"title":@"更换 Dock 图标…", @"sel":@"pickIconImage:"},
         @{@"title":@"恢复分组默认图标", @"sel":@"resetCustomIcon:"}]},
+      @{@"title":@"备份到本机（一键恢复用）", @"sel":@"backupGroupsNow:"},
       @{@"title":@"一键恢复 Dock 栏", @"sel":@"repairDockMenuTapped:"}]},
     @{@"title":@"设置", @"children":@[
       @{@"title":@"快捷键映射", @"sel":@"showShortcutSettings:"},
@@ -2171,6 +2173,48 @@ static NSString *ResolveAppPath(NSString *target) {
   [self saveTheme];
   [self reload];
   [self layoutContent];
+}
+
+- (void)backupGroupsNow:(id)sender {
+  NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
+  NSString *base = [@"~/Library/Application Support/DockLaunchers/backup/DockLaunchers" stringByExpandingTildeInPath];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  [fm removeItemAtPath:base error:NULL];
+  [fm createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:NULL];
+  for (NSString *f in [fm contentsOfDirectoryAtPath:parent error:NULL]) {
+    if ([f hasSuffix:@".app"]) {
+      [fm copyItemAtPath:[parent stringByAppendingPathComponent:f] toPath:[base stringByAppendingPathComponent:f] error:NULL];
+    }
+  }
+  NSString *lists = [parent stringByAppendingPathComponent:@"lists"];
+  if ([fm fileExistsAtPath:lists]) [fm copyItemAtPath:lists toPath:[base stringByAppendingPathComponent:@"lists"] error:NULL];
+
+  // 在桌面生成一键恢复脚本
+  NSString *script = [NSHomeDirectory() stringByAppendingPathComponent:@"Desktop/恢复Dock分组.command"];
+  NSString *body =
+    @"#!/bin/bash\n"
+    @"set -u\n"
+    @"SRC=\"$HOME/Library/Application Support/DockLaunchers/backup/DockLaunchers\"\n"
+    @"DST=\"$HOME/Applications/DockLaunchers\"\n"
+    @"if [ ! -d \"$SRC\" ]; then echo \"找不到本机备份：$SRC\"; read -n1; exit 1; fi\n"
+    @"mkdir -p \"$DST\"\n"
+    @"pkill -f \"/DockLaunchers/.*/Contents/MacOS/ui\" 2>/dev/null\n"
+    @"cp -R \"$SRC\"/*.app \"$DST\"/ 2>/dev/null\n"
+    @"[ -d \"$SRC/lists\" ] && cp -R \"$SRC/lists\" \"$DST/\"\n"
+    @"mdimport \"$DST\" 2>/dev/null\n"
+    @"for app in \"$DST\"/*.app; do codesign --force --deep --sign - \"$app\" >/dev/null 2>&1; done\n"
+    @"BIN=\"$(ls \"$DST\"/*.app/Contents/MacOS/ui 2>/dev/null | head -1)\"\n"
+    @"[ -n \"$BIN\" ] && \"$BIN\" --restore-dock\n"
+    @"killall -KILL Dock 2>/dev/null\n"
+    @"echo \"已恢复 Dock 分组：$DST\"\n"
+    @"read -n1\n";
+  [body writeToFile:script atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  [fm setAttributes:@{NSFilePosixPermissions: @0755} ofItemAtPath:script error:NULL];
+
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"已备份到本机";
+  a.informativeText = [NSString stringWithFormat:@"备份位置：%@\n\n桌面已生成「恢复Dock分组.command」，即使 Dock 图标和 App 被删除、没网络，双击它即可恢复全部 Dock 项目。", base];
+  [a runModal];
 }
 
 - (void)resetSingleLayout:(id)sender {
@@ -4051,6 +4095,18 @@ int main(int argc, const char *argv[]) {
     gGroup = display;
     NSString *nameOverride = [[NSUserDefaults standardUserDefaults] stringForKey:@"displayNameOverride"];
     if (nameOverride.length > 0) gGroup = nameOverride;
+
+    if (argc >= 2 && strcmp(argv[1], "--restore-dock") == 0) {
+      [NSApplication sharedApplication];
+      Controller *c = [[Controller alloc] init];
+      [c repairDockEntries];
+      NSTask *t = [[NSTask alloc] init];
+      t.launchPath = @"/usr/bin/killall";
+      t.arguments = @[@"-KILL", @"Dock"];
+      @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+      fprintf(stderr, "DOCK_RESTORED\n");
+      return 0;
+    }
 
     NSTimeInterval tA = [NSDate timeIntervalSinceReferenceDate];
     [NSApplication sharedApplication];
