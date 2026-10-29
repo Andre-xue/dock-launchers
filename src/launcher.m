@@ -16,6 +16,7 @@ static NSString *const kSkinPrefix = @"skin.";
 static CGFloat gCornerRatio = 0.0;   // 0 = 矩形，0.5 = 圆形
 static BOOL gIconMode = NO;          // YES = 图标网格模式
 static NSMutableDictionary *gAppIconSettings = nil;  // target -> {size, corner, image}
+static NSMutableDictionary *gOriginalNames = nil;      // target -> 首次添加时的名称
 
 @class Controller;
 @class BackdropView;
@@ -919,6 +920,7 @@ static NSString *ResolveAppPath(NSString *target) {
     }
     if (target.length == 0) continue;
     if (label.length == 0) label = target;
+    if (!gOriginalNames[target]) { gOriginalNames[target] = label; [self saveTheme]; }
     [arr addObject:@{@"label": label, @"target": target}];
   }
   return arr;
@@ -1464,6 +1466,7 @@ static NSString *ResolveAppPath(NSString *target) {
     if (display.length == 0) display = [[u lastPathComponent] stringByDeletingPathExtension];
     if ([display hasSuffix:@".app"]) display = [display substringToIndex:display.length - 4];
     [add appendFormat:@"\n%@|%@", display, [u path]];
+    if (!gOriginalNames[[u path]]) gOriginalNames[[u path]] = display;
     [added addObject:@{@"label": display, @"target": [u path]}];
   }
   if (add.length) {
@@ -1691,6 +1694,7 @@ static NSString *ResolveAppPath(NSString *target) {
   if ([d objectForKey:@"cornerRatio"]) gCornerRatio = [d doubleForKey:@"cornerRatio"];
   gIconMode = [d boolForKey:@"iconMode"];
   gAppIconSettings = [[[d dictionaryForKey:@"appIconSettings"] mutableCopy] mutableCopy] ?: [NSMutableDictionary dictionary];
+  gOriginalNames = [[[d dictionaryForKey:@"originalAppNames"] mutableCopy] mutableCopy] ?: [NSMutableDictionary dictionary];
   [self loadCustomShortcuts];
   if (gTheme == 3 && gImgPath.length == 0) gTheme = 0;
   if (gGlassAlpha < 0.3) gGlassAlpha = 0.82;
@@ -1707,6 +1711,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [d setDouble:gCornerRatio forKey:@"cornerRatio"];
   [d setBool:gIconMode forKey:@"iconMode"];
   [d setObject:gAppIconSettings forKey:@"appIconSettings"];
+  [d setObject:gOriginalNames forKey:@"originalAppNames"];
   [d setObject:(gImgPath ?: @"") forKey:@"skinImgPath"];
   [d synchronize];
 }
@@ -2751,10 +2756,10 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)resetAppIcon:(id)sender {
   if (!self.appIconEditTarget) return;
-  // 恢复首次添加时的默认名称
+  // 恢复"首次添加时"记录的名称（而不是系统当前默认名）
   NSString *path = ResolveAppPath(self.appIconEditTarget);
-  NSString *orig = nil;
-  if (path) {
+  NSString *orig = gOriginalNames[self.appIconEditTarget];
+  if (orig.length == 0 && path) {
     orig = [[NSFileManager defaultManager] displayNameAtPath:path];
     if ([orig hasSuffix:@".app"]) orig = [orig substringToIndex:orig.length - 4];
   }
@@ -3531,6 +3536,21 @@ int main(int argc, const char *argv[]) {
         [c layoutContent];
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_RESETNAME")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gIconMode = YES; [c reload];
+        c.sel = 0; [c selectRow:0];
+        NSString *t = c.items[0][@"target"];
+        gOriginalNames[t] = @"首次添加名";
+        c.appIconEditTarget = t;
+        [c showAppIconPanel:nil];
+        [c updateLabel:@"后来改名" forTarget:t];
+        [c resetAppIcon:nil];
+        NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL];
+        fprintf(stderr, "RESETNAME content=%s\n", [content UTF8String]);
         exit(0);
       });
     }
