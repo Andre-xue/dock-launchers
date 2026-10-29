@@ -5,6 +5,8 @@
 #include <sys/sysctl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#import <IOKit/ps/IOPowerSources.h>
+#import <IOKit/ps/IOPSKeys.h>
 
 static double gPrevCPUBusy = 0, gPrevCPUTotal = 0;
 static unsigned long long gPrevNetIn = 0, gPrevNetOut = 0;
@@ -93,6 +95,10 @@ static NSString *ResolveAppPath(NSString *target) {
 @property (strong) NSSearchField *uninstallSearch;
 @property (strong) NSTextField *uninstallFooter;
 @property (strong) NSButton *uninstallGo;
+@property (strong) NSPopover *popover;
+@property (strong) NSView *quickGroups;
+@property (strong) NSTextField *quickCPU, *quickMem, *quickBat;
+@property (strong) NSTextField *batteryLabel, *thermalLabel, *processLabel;
 @end
 
 @implementation Controller
@@ -125,13 +131,19 @@ static NSString *ResolveAppPath(NSString *target) {
   self.statusItem.button.imageScaling = NSImageScaleProportionallyDown;
   self.statusItem.button.title = @" --%";
   self.statusItem.button.target = self;
-  self.statusItem.button.action = @selector(showWindow:);
+  self.statusItem.button.action = @selector(togglePopover:);
   [self buildWindow];
+  [self buildPopover];
   self.timer = [NSTimer scheduledTimerWithTimeInterval:self.sampleSeconds target:self selector:@selector(sample) userInfo:nil repeats:YES];
   [self sample];
   [self showWindow:nil];
   if (getenv("DOCKLAUNCHERS_CENTER_SECTION")) {
     [self showSection:atoi(getenv("DOCKLAUNCHERS_CENTER_SECTION"))];
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_POPOVER")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self togglePopover:nil];
+    });
   }
 }
 
@@ -232,46 +244,62 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)buildLiveView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"本机实时状态" size:22 bold:YES color:nil];
-  h.frame = NSMakeRect(24, 606, 400, 30); [v addSubview:h];
+  h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
   NSTextField *sub = [self label:@"每 2 秒采样 · 菜单栏同步显示 CPU / 内存" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  sub.frame = NSMakeRect(24, 584, 500, 18); [v addSubview:sub];
+  sub.frame = NSMakeRect(24, 584, 400, 18); [v addSubview:sub];
+  self.batteryLabel = [self label:@"电池 --" size:12 bold:NO color:nil];
+  self.batteryLabel.alignment = NSTextAlignmentRight;
+  self.batteryLabel.frame = NSMakeRect(470, 608, 250, 20); [v addSubview:self.batteryLabel];
+  self.thermalLabel = [self label:@"热状态 --" size:12 bold:NO color:[NSColor secondaryLabelColor]];
+  self.thermalLabel.alignment = NSTextAlignmentRight;
+  self.thermalLabel.frame = NSMakeRect(470, 588, 250, 18); [v addSubview:self.thermalLabel];
 
-  NSView *card1 = [self cardAt:NSMakeRect(24, 400, 340, 160)];
+  NSView *card1 = [self cardAt:NSMakeRect(24, 430, 340, 150)];
   [v addSubview:card1];
   self.cpuLabel = [self label:@"CPU  --" size:18 bold:YES color:nil];
-  self.cpuLabel.frame = NSMakeRect(16, 128, 200, 24); [card1 addSubview:self.cpuLabel];
-  self.cpuSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(16, 22, 308, 92)];
+  self.cpuLabel.frame = NSMakeRect(16, 118, 200, 24); [card1 addSubview:self.cpuLabel];
+  self.cpuSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(16, 18, 308, 88)];
   self.cpuSpark.lineColor = [NSColor systemBlueColor];
   [card1 addSubview:self.cpuSpark];
 
-  NSView *card2 = [self cardAt:NSMakeRect(384, 400, 340, 160)];
+  NSView *card2 = [self cardAt:NSMakeRect(384, 430, 340, 150)];
   [v addSubview:card2];
   self.memLabel = [self label:@"内存  --" size:18 bold:YES color:nil];
-  self.memLabel.frame = NSMakeRect(16, 128, 200, 24); [card2 addSubview:self.memLabel];
-  self.memSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(16, 22, 308, 92)];
+  self.memLabel.frame = NSMakeRect(16, 118, 200, 24); [card2 addSubview:self.memLabel];
+  self.memSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(16, 18, 308, 88)];
   self.memSpark.lineColor = [NSColor systemGreenColor];
   [card2 addSubview:self.memSpark];
 
-  NSView *card3 = [self cardAt:NSMakeRect(24, 230, 340, 140)];
+  NSView *card3 = [self cardAt:NSMakeRect(24, 300, 340, 110)];
   [v addSubview:card3];
-  NSTextField *dl = [self label:@"磁盘" size:13 bold:YES color:nil]; dl.frame = NSMakeRect(16, 110, 100, 18); [card3 addSubview:dl];
-  self.diskLabel = [self label:@"已用 --" size:20 bold:NO color:nil]; self.diskLabel.frame = NSMakeRect(16, 60, 300, 26); [card3 addSubview:self.diskLabel];
-  NSTextField *dt = [self label:@"系统启动磁盘使用率" size:10 bold:NO color:[NSColor secondaryLabelColor]]; dt.frame = NSMakeRect(16, 34, 260, 16); [card3 addSubview:dt];
+  NSTextField *dl = [self label:@"磁盘" size:12 bold:YES color:nil]; dl.frame = NSMakeRect(16, 84, 100, 18); [card3 addSubview:dl];
+  self.diskLabel = [self label:@"已用 --" size:18 bold:NO color:nil]; self.diskLabel.frame = NSMakeRect(16, 44, 300, 24); [card3 addSubview:self.diskLabel];
+  NSTextField *dt = [self label:@"系统启动磁盘" size:10 bold:NO color:[NSColor secondaryLabelColor]]; dt.frame = NSMakeRect(16, 20, 260, 16); [card3 addSubview:dt];
 
-  NSView *card4 = [self cardAt:NSMakeRect(384, 230, 340, 140)];
+  NSView *card4 = [self cardAt:NSMakeRect(384, 300, 340, 110)];
   [v addSubview:card4];
-  NSTextField *nl = [self label:@"网络" size:13 bold:YES color:nil]; nl.frame = NSMakeRect(16, 110, 100, 18); [card4 addSubview:nl];
-  self.netLabel = [self label:@"↓ --   ↑ --" size:16 bold:NO color:nil]; self.netLabel.frame = NSMakeRect(16, 60, 310, 24); [card4 addSubview:self.netLabel];
-  NSTextField *nt = [self label:@"实时上下行速率" size:10 bold:NO color:[NSColor secondaryLabelColor]]; nt.frame = NSMakeRect(16, 34, 260, 16); [card4 addSubview:nt];
+  NSTextField *nl = [self label:@"网络" size:12 bold:YES color:nil]; nl.frame = NSMakeRect(16, 84, 100, 18); [card4 addSubview:nl];
+  self.netLabel = [self label:@"↓ --   ↑ --" size:16 bold:NO color:nil]; self.netLabel.frame = NSMakeRect(16, 44, 310, 24); [card4 addSubview:self.netLabel];
+  NSTextField *nt = [self label:@"实时上下行速率" size:10 bold:NO color:[NSColor secondaryLabelColor]]; nt.frame = NSMakeRect(16, 20, 260, 16); [card4 addSubview:nt];
+
+  NSView *card5 = [self cardAt:NSMakeRect(24, 120, 700, 165)];
+  [v addSubview:card5];
+  NSTextField *pt = [self label:@"进程 TOP 5（按 CPU）" size:12 bold:YES color:nil];
+  pt.frame = NSMakeRect(16, 136, 300, 18); [card5 addSubview:pt];
+  self.processLabel = [self label:@"" size:11.5 bold:NO color:[NSColor labelColor]];
+  self.processLabel.font = [NSFont monospacedDigitSystemFontOfSize:11.5 weight:NSFontWeightRegular];
+  self.processLabel.frame = NSMakeRect(16, 14, 670, 118);
+  self.processLabel.maximumNumberOfLines = 6;
+  [card5 addSubview:self.processLabel];
 
   self.uptimeLabel = [self label:@"" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  self.uptimeLabel.frame = NSMakeRect(24, 190, 700, 18);
+  self.uptimeLabel.frame = NSMakeRect(24, 92, 700, 18);
   [v addSubview:self.uptimeLabel];
 
   NSButton *folder = [NSButton buttonWithTitle:@"打开分组文件夹" target:self action:@selector(openGroupsFolder:)];
-  folder.frame = NSMakeRect(24, 130, 160, 34); folder.bezelStyle = NSBezelStyleRounded; [v addSubview:folder];
+  folder.frame = NSMakeRect(24, 42, 160, 32); folder.bezelStyle = NSBezelStyleRounded; [v addSubview:folder];
   NSButton *hide = [NSButton buttonWithTitle:@"隐藏主窗口" target:self action:@selector(hideWindow:)];
-  hide.frame = NSMakeRect(196, 130, 140, 34); hide.bezelStyle = NSBezelStyleRounded; [v addSubview:hide];
+  hide.frame = NSMakeRect(196, 42, 140, 32); hide.bezelStyle = NSBezelStyleRounded; [v addSubview:hide];
   self.liveView = v;
 }
 
@@ -822,6 +850,150 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)quitApp:(id)sender { [NSApp terminate:nil]; }
 
+- (void)buildPopover {
+  NSPopover *pop = [[NSPopover alloc] init];
+  pop.behavior = NSPopoverBehaviorTransient;
+  self.popover = pop;
+  NSViewController *vc = [[NSViewController alloc] init];
+  NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0,0,360,460)];
+  vc.view = root;
+
+  NSTextField *title = [self label:@"DockLaunchers" size:15 bold:YES color:nil];
+  title.frame = NSMakeRect(16, 424, 200, 20); [root addSubview:title];
+  self.quickCPU = [self label:@"CPU --" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  self.quickCPU.frame = NSMakeRect(16, 400, 100, 18); [root addSubview:self.quickCPU];
+  self.quickMem = [self label:@"内存 --" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  self.quickMem.frame = NSMakeRect(130, 400, 100, 18); [root addSubview:self.quickMem];
+  self.quickBat = [self label:@"电池 --" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  self.quickBat.frame = NSMakeRect(244, 400, 110, 18); [root addSubview:self.quickBat];
+
+  NSTextField *gl = [self label:@"分组快捷启动" size:11 bold:YES color:nil];
+  gl.frame = NSMakeRect(16, 372, 200, 18); [root addSubview:gl];
+  self.quickGroups = [[NSView alloc] initWithFrame:NSMakeRect(10, 110, 340, 258)];
+  [root addSubview:self.quickGroups];
+
+  NSButton *open = [NSButton buttonWithTitle:@"打开控制台" target:self action:@selector(openConsoleFromPopover:)];
+  open.frame = NSMakeRect(16, 60, 150, 32); open.bezelStyle = NSBezelStyleRounded; [root addSubview:open];
+  NSButton *quit = [NSButton buttonWithTitle:@"退出" target:self action:@selector(quitFromPopover:)];
+  quit.frame = NSMakeRect(270, 60, 74, 32); quit.bezelStyle = NSBezelStyleRounded; [root addSubview:quit];
+
+  pop.contentViewController = vc;
+}
+
+- (void)rebuildQuickGroups {
+  for (NSView *v in [self.quickGroups.subviews copy]) [v removeFromSuperview];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSArray *items = [[fm contentsOfDirectoryAtPath:GroupDir() error:NULL] sortedArrayUsingSelector:@selector(localizedCompare:)];
+  CGFloat x = 6, y = 190, bw = 104, bh = 82;
+  NSInteger col = 0;
+  for (NSString *f in items) {
+    if (![f hasSuffix:@".app"]) continue;
+    NSString *path = [GroupDir() stringByAppendingPathComponent:f];
+    NSString *name = [f stringByDeletingPathExtension];
+    NSButton *b = [[NSButton alloc] initWithFrame:NSMakeRect(x, y, bw, bh)];
+    b.image = [[NSWorkspace sharedWorkspace] iconForFile:path];
+    b.imageScaling = NSImageScaleProportionallyUpOrDown;
+    b.imagePosition = NSImageAbove;
+    b.title = name;
+    b.font = [NSFont systemFontOfSize:10.5];
+    b.bordered = NO;
+    b.tag = 0;
+    b.toolTip = path;
+    b.target = self;
+    b.action = @selector(openQuickGroup:);
+    [self.quickGroups addSubview:b];
+    col++;
+    if (col % 3 == 0) { col = 0; x = 6; y -= 88; } else x += 112;
+  }
+}
+
+- (void)togglePopover:(id)sender {
+  if (self.popover.isShown) { [self.popover performClose:nil]; return; }
+  [self rebuildQuickGroups];
+  [self.popover showRelativeToRect:self.statusItem.button.bounds ofView:self.statusItem.button preferredEdge:NSRectEdgeMinY];
+}
+
+- (void)openQuickGroup:(NSButton *)b {
+  if (b.toolTip) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:b.toolTip]];
+  [self.popover performClose:nil];
+}
+
+- (void)openConsoleFromPopover:(id)sender {
+  [self.popover performClose:nil];
+  [self showWindow:nil];
+}
+
+- (void)quitFromPopover:(id)sender { [NSApp terminate:nil]; }
+
+- (NSString *)batteryText {
+  CFTypeRef blob = IOPSCopyPowerSourcesInfo();
+  if (!blob) return @"电池 --";
+  CFArrayRef list = IOPSCopyPowerSourcesList(blob);
+  NSString *result = @"电池 --";
+  if (list) {
+    for (CFIndex i = 0; i < CFArrayGetCount(list); i++) {
+      CFTypeRef src = CFArrayGetValueAtIndex(list, i);
+      NSDictionary *d = (__bridge NSDictionary *)IOPSGetPowerSourceDescription(blob, src);
+      if (![d isKindOfClass:[NSDictionary class]]) continue;
+      NSNumber *cur = d[@kIOPSCurrentCapacityKey];
+      NSNumber *max = d[@kIOPSMaxCapacityKey];
+      NSNumber *charging = d[@kIOPSIsChargingKey];
+      if (![cur isKindOfClass:[NSNumber class]] || ![max isKindOfClass:[NSNumber class]] || max.doubleValue <= 0) continue;
+      double pct = cur.doubleValue / max.doubleValue * 100.0;
+      if ([charging boolValue]) result = [NSString stringWithFormat:@"电池 %.0f%% · 充电中", pct];
+      else {
+        NSNumber *mins = d[@kIOPSTimeToEmptyKey];
+        if ([mins isKindOfClass:[NSNumber class]] && mins.intValue > 0)
+          result = [NSString stringWithFormat:@"电池 %.0f%% · 剩 %d:%02d", pct, mins.intValue/60, mins.intValue%60];
+        else result = [NSString stringWithFormat:@"电池 %.0f%%", pct];
+      }
+      break;
+    }
+    CFRelease(list);
+  }
+  CFRelease(blob);
+  return result;
+}
+
+- (NSString *)thermalText {
+  NSProcessInfoThermalState st = [[NSProcessInfo processInfo] thermalState];
+  NSString *s = @"热状态 正常";
+  if (st == NSProcessInfoThermalStateFair) s = @"热状态 偏热";
+  else if (st == NSProcessInfoThermalStateSerious) s = @"热状态 严重";
+  else if (st == NSProcessInfoThermalStateCritical) s = @"热状态 过热";
+  int level = 0; size_t sz = sizeof(level);
+  if (sysctlbyname("machdep.xcpm.cpu_thermal_level", &level, &sz, NULL, 0) == 0 && level > 0) {
+    s = [s stringByAppendingFormat:@" · CPU 热档 %d", level];
+  }
+  return s;
+}
+
+- (NSString *)processTopText {
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/bin/ps";
+  t.arguments = @[@"-Ao", @"pcpu=,pmem=,comm=", @"-r"];
+  NSPipe *pipe = [NSPipe pipe];
+  t.standardOutput = pipe;
+  t.standardError = [NSPipe pipe];
+  @try { [t launch]; } @catch (NSException *e) { return @"进程信息不可用"; }
+  NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
+  [t waitUntilExit];
+  NSString *out = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+  NSMutableArray *lines = [NSMutableArray array];
+  for (NSString *line in [out componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+    NSString *trim = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (!trim.length) continue;
+    NSArray *parts = [trim componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (parts.count < 3) continue;
+    NSString *cpu = parts[0], *mem = parts[1];
+    NSString *name = [[parts subarrayWithRange:NSMakeRange(2, parts.count-2)] componentsJoinedByString:@" "];
+    if ([name containsString:@"/"]) name = [name lastPathComponent];
+    [lines addObject:[NSString stringWithFormat:@"%5.1f%%  %5.1f%%   %@", cpu.doubleValue, mem.doubleValue, name]];
+    if (lines.count >= 5) break;
+  }
+  return [lines componentsJoinedByString:@"\n"];
+}
+
 // ---------------- 采样 ----------------
 - (void)sample {
   host_cpu_load_info_data_t cpu;
@@ -876,6 +1048,14 @@ static NSString *ResolveAppPath(NSString *target) {
   [self.cpuSpark addValue:cpuPct];
   [self.memSpark addValue:memPct];
   self.uptimeLabel.stringValue = [NSString stringWithFormat:@"系统启动：%@", [self uptimeString]];
+  self.batteryLabel.stringValue = [self batteryText];
+  self.thermalLabel.stringValue = [self thermalText];
+  self.processLabel.stringValue = [self processTopText];
+  if (self.popover.isShown) {
+    self.quickCPU.stringValue = [NSString stringWithFormat:@"CPU %.0f%%", cpuPct];
+    self.quickMem.stringValue = [NSString stringWithFormat:@"内存 %.0f%%", memPct];
+    self.quickBat.stringValue = [self batteryText];
+  }
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
   id mt = [ud objectForKey:@"centerMenuText"];
   BOOL showText = mt ? [mt boolValue] : YES;
