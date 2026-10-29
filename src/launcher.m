@@ -310,6 +310,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)resetListMode:(id)sender;
 - (void)resetSingleLayout:(id)sender;
 - (void)backupGroupsNow:(id)sender;
+- (BOOL)writeLocalBackup;
+- (void)uninstallAll:(id)sender;
 - (void)skinWhite:(id)sender;
 - (void)skinBlack:(id)sender;
 - (void)skinGlass:(id)sender;
@@ -1879,6 +1881,7 @@ static NSString *ResolveAppPath(NSString *target) {
         @{@"title":@"更换 Dock 图标…", @"sel":@"pickIconImage:"},
         @{@"title":@"恢复分组默认图标", @"sel":@"resetCustomIcon:"}]},
       @{@"title":@"备份到本机（一键恢复用）", @"sel":@"backupGroupsNow:"},
+      @{@"title":@"一键卸载全部（移到废纸篓）", @"sel":@"uninstallAll:"},
       @{@"title":@"一键恢复 Dock 栏", @"sel":@"repairDockMenuTapped:"}]},
     @{@"title":@"设置", @"children":@[
       @{@"title":@"快捷键映射", @"sel":@"showShortcutSettings:"},
@@ -2175,46 +2178,109 @@ static NSString *ResolveAppPath(NSString *target) {
   [self layoutContent];
 }
 
-- (void)backupGroupsNow:(id)sender {
+- (BOOL)writeLocalBackup {
   NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
   NSString *base = [@"~/Library/Application Support/DockLaunchers/backup/DockLaunchers" stringByExpandingTildeInPath];
   NSFileManager *fm = [NSFileManager defaultManager];
   [fm removeItemAtPath:base error:NULL];
   [fm createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:NULL];
   for (NSString *f in [fm contentsOfDirectoryAtPath:parent error:NULL]) {
-    if ([f hasSuffix:@".app"]) {
-      [fm copyItemAtPath:[parent stringByAppendingPathComponent:f] toPath:[base stringByAppendingPathComponent:f] error:NULL];
-    }
+    if ([f hasSuffix:@".app"]) [fm copyItemAtPath:[parent stringByAppendingPathComponent:f] toPath:[base stringByAppendingPathComponent:f] error:NULL];
   }
   NSString *lists = [parent stringByAppendingPathComponent:@"lists"];
   if ([fm fileExistsAtPath:lists]) [fm copyItemAtPath:lists toPath:[base stringByAppendingPathComponent:@"lists"] error:NULL];
 
-  // 在桌面生成一键恢复脚本
-  NSString *script = [NSHomeDirectory() stringByAppendingPathComponent:@"Desktop/恢复Dock分组.command"];
-  NSString *body =
-    @"#!/bin/bash\n"
-    @"set -u\n"
-    @"SRC=\"$HOME/Library/Application Support/DockLaunchers/backup/DockLaunchers\"\n"
-    @"DST=\"$HOME/Applications/DockLaunchers\"\n"
-    @"if [ ! -d \"$SRC\" ]; then echo \"找不到本机备份：$SRC\"; read -n1; exit 1; fi\n"
-    @"mkdir -p \"$DST\"\n"
-    @"pkill -f \"/DockLaunchers/.*/Contents/MacOS/ui\" 2>/dev/null\n"
-    @"cp -R \"$SRC\"/*.app \"$DST\"/ 2>/dev/null\n"
-    @"[ -d \"$SRC/lists\" ] && cp -R \"$SRC/lists\" \"$DST/\"\n"
-    @"mdimport \"$DST\" 2>/dev/null\n"
-    @"for app in \"$DST\"/*.app; do codesign --force --deep --sign - \"$app\" >/dev/null 2>&1; done\n"
-    @"BIN=\"$(ls \"$DST\"/*.app/Contents/MacOS/ui 2>/dev/null | head -1)\"\n"
-    @"[ -n \"$BIN\" ] && \"$BIN\" --restore-dock\n"
-    @"killall -KILL Dock 2>/dev/null\n"
-    @"echo \"已恢复 Dock 分组：$DST\"\n"
-    @"read -n1\n";
-  [body writeToFile:script atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-  [fm setAttributes:@{NSFilePosixPermissions: @0755} ofItemAtPath:script error:NULL];
+  // 同时备份各分组偏好（自定义图标/名字/主题等）
+  NSString *prefsDir = [base stringByAppendingPathComponent:@"prefs"];
+  [fm createDirectoryAtPath:prefsDir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSArray *domains = @[@"com.docklaunchers.gongzuo", @"com.docklaunchers.liaotian", @"com.docklaunchers.waiwang",
+                       @"com.docklaunchers.yingyin", @"com.docklaunchers.ai", @"com.docklaunchers.docker",
+                       @"com.docklaunchers.gongju", @"com.docklaunchers.shared"];
+  for (NSString *dom in domains) {
+    NSString *out = [prefsDir stringByAppendingPathComponent:[dom stringByAppendingPathExtension:@"plist"]];
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/bin/defaults";
+    t.arguments = @[@"export", dom, out];
+    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+  }
+  return YES;
+}
 
+- (void)backupGroupsNow:(id)sender {
+  [self writeLocalBackup];
+  NSString *base = [@"~/Library/Application Support/DockLaunchers/backup/DockLaunchers" stringByExpandingTildeInPath];
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"已备份到本机";
-  a.informativeText = [NSString stringWithFormat:@"备份位置：%@\n\n桌面已生成「恢复Dock分组.command」，即使 Dock 图标和 App 被删除、没网络，双击它即可恢复全部 Dock 项目。", base];
+  a.informativeText = [NSString stringWithFormat:@"备份位置：%@\n\n桌面「恢复Dock分组.command」与「恢复Dock分组.app」可离线恢复全部内容。", base];
   [a runModal];
+}
+
+- (void)uninstallAll:(id)sender {
+  NSAlert *c = [[NSAlert alloc] init];
+  c.messageText = @"一键卸载全部 Dock 分组？";
+  c.informativeText = @"将把 7 个分组 App、列表、本机偏好与缓存移到废纸篓，并移除全部 Dock 图标。\n本机备份与恢复工具会保留，可随时一键恢复。";
+  [c addButtonWithTitle:@"卸载"];
+  [c addButtonWithTitle:@"取消"];
+  if ([c runModal] != NSAlertFirstButtonReturn) return;
+
+  // 先刷新备份，保证可恢复
+  [self writeLocalBackup];
+
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
+  NSArray *order = @[@"工作", @"聊天", @"外网", @"影音", @"Ai", @"Docker", @"工具"];
+  NSMutableArray *paths = [NSMutableArray array];
+  for (NSString *n in order) {
+    NSString *p = [parent stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"app"]];
+    if ([fm fileExistsAtPath:p]) { [paths addObject:p]; [self removeDockEntryForPath:p]; }
+  }
+  for (NSString *f in [fm contentsOfDirectoryAtPath:parent error:NULL]) {
+    if ([f hasSuffix:@".app"]) {
+      NSString *p = [parent stringByAppendingPathComponent:f];
+      if (![paths containsObject:p]) { [paths addObject:p]; [self removeDockEntryForPath:p]; }
+    }
+  }
+  NSString *prefsDir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Preferences"];
+  NSMutableArray *prefFiles = [NSMutableArray array];
+  for (NSString *f in [fm contentsOfDirectoryAtPath:prefsDir error:NULL]) {
+    if ([f hasPrefix:@"com.docklaunchers."] && [f hasSuffix:@".plist"]) [prefFiles addObject:[prefsDir stringByAppendingPathComponent:f]];
+  }
+  NSString *appIcons = [@"~/Library/Application Support/DockLaunchers/appicons" stringByExpandingTildeInPath];
+
+  if (getenv("DOCKLAUNCHER_TEST_UNINSTALL")) {
+    // 测试模式：移动到 /tmp 而不是废纸篓，便于自动验证
+    NSString *staging = [NSString stringWithFormat:@"/tmp/DockLaunchers-uninstall-%d", getpid()];
+    [fm createDirectoryAtPath:staging withIntermediateDirectories:YES attributes:nil error:NULL];
+    if ([fm fileExistsAtPath:parent]) [fm moveItemAtPath:parent toPath:[staging stringByAppendingPathComponent:@"DockLaunchers"] error:NULL];
+    for (NSString *pf in prefFiles) [fm moveItemAtPath:pf toPath:[staging stringByAppendingPathComponent:[pf lastPathComponent]] error:NULL];
+    if ([fm fileExistsAtPath:appIcons]) [fm moveItemAtPath:appIcons toPath:[staging stringByAppendingPathComponent:@"appicons"] error:NULL];
+    fprintf(stderr, "UNINSTALL staging=%s\n", [staging UTF8String]);
+    exit(0);
+  }
+
+  // 真实卸载：管理员脚本移动到废纸篓（保留 backup 与恢复工具）
+  NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\n"];
+  NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
+  NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
+  [body appendFormat:@"mkdir -p \"%@\"\n", trash];
+  [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/DockLaunchers-uninstall-%@\"\n", parent, parent, trash, stamp];
+  for (NSString *pf in prefFiles) [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/\"\n", pf, pf, trash];
+  if ([fm fileExistsAtPath:appIcons]) [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/appicons-%@\"\n", appIcons, appIcons, trash, stamp];
+  [body appendString:@"/usr/bin/killall -KILL Dock 2>/dev/null\n"];
+  NSString *sp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-uninstall.sh"];
+  [body writeToFile:sp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  [fm setAttributes:@{NSFilePosixPermissions: @0755} ofItemAtPath:sp error:NULL];
+  NSString *osa = [NSString stringWithFormat:@"do shell script \"/bin/sh %@\" with administrator privileges", sp];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/osascript";
+  t.arguments = @[@"-e", osa];
+  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+
+  NSAlert *d = [[NSAlert alloc] init];
+  d.messageText = @"已卸载到废纸篓";
+  d.informativeText = @"分组 App、列表、偏好与缓存已移入废纸篓；本机备份和恢复工具已保留。\n双击「恢复Dock分组.app」即可恢复。";
+  [d runModal];
+  exit(0);
 }
 
 - (void)resetSingleLayout:(id)sender {
@@ -4096,6 +4162,12 @@ int main(int argc, const char *argv[]) {
     NSString *nameOverride = [[NSUserDefaults standardUserDefaults] stringForKey:@"displayNameOverride"];
     if (nameOverride.length > 0) gGroup = nameOverride;
 
+    if (getenv("DOCKLAUNCHER_TEST_UNINSTALL")) {
+      [NSApplication sharedApplication];
+      Controller *uc = [[Controller alloc] init];
+      [uc uninstallAll:nil];
+      return 0;
+    }
     if (argc >= 2 && strcmp(argv[1], "--restore-dock") == 0) {
       [NSApplication sharedApplication];
       Controller *c = [[Controller alloc] init];

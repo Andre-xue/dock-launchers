@@ -39,6 +39,10 @@ rm -rf "$BACKUP"
 mkdir -p "$BACKUP"
 cp -R "$DEST"/*.app "$BACKUP"/
 [ -d "$DEST/lists" ] && cp -R "$DEST/lists" "$BACKUP/lists"
+mkdir -p "$BACKUP/prefs"
+for dom in com.docklaunchers.gongzuo com.docklaunchers.liaotian com.docklaunchers.waiwang com.docklaunchers.yingyin com.docklaunchers.ai com.docklaunchers.docker com.docklaunchers.gongju com.docklaunchers.shared; do
+  defaults export "$dom" "$BACKUP/prefs/$dom.plist" 2>/dev/null || true
+done
 
 RECOVER="$HOME/Desktop/恢复Dock分组.command"
 cat > "$RECOVER" <<'EOS'
@@ -60,6 +64,13 @@ mdimport "$DST" 2>/dev/null
 for app in "$DST"/*.app; do
   codesign --force --deep --sign - "$app" >/dev/null 2>&1
 done
+if [ -d "$SRC/prefs" ]; then
+  for f in "$SRC/prefs"/*.plist; do
+    [ -f "$f" ] || continue
+    dom=$(basename "$f" .plist)
+    defaults import "$dom" "$f" 2>/dev/null || true
+  done
+fi
 BIN="$(ls "$DST"/*.app/Contents/MacOS/ui 2>/dev/null | head -1)"
 [ -n "$BIN" ] && "$BIN" --restore-dock
 sleep 0.3
@@ -101,6 +112,13 @@ cp -R "$SRC"/*.app "$DST"/ 2>/dev/null
 [ -d "$SRC/lists" ] && cp -R "$SRC/lists" "$DST/"
 mdimport "$DST" 2>/dev/null
 for app in "$DST"/*.app; do codesign --force --deep --sign - "$app" >/dev/null 2>&1; done
+if [ -d "$SRC/prefs" ]; then
+  for f in "$SRC/prefs"/*.plist; do
+    [ -f "$f" ] || continue
+    dom=$(basename "$f" .plist)
+    defaults import "$dom" "$f" 2>/dev/null || true
+  done
+fi
 BIN="$(ls "$DST"/*.app/Contents/MacOS/ui 2>/dev/null | head -1)"
 [ -n "$BIN" ] && "$BIN" --restore-dock
 sleep 0.3
