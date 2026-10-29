@@ -263,6 +263,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSView *settingsTopBar;
 @property (strong) NSMutableArray *settingsTabButtons;
 @property (copy) NSString *settingsFocusPath;
+@property (strong) NSPanel *uninstallPanel;
+@property (strong) NSMutableArray *uninstallChecks;
 @property (strong) NSPanel *idlePanel;
 @property (strong) NSButton *idleCheck;
 @property (strong) NSDatePicker *idleDatePicker;
@@ -300,6 +302,12 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)rebuildSettingsTabs;
 - (void)settingsTabClicked:(id)sender;
 - (BOOL)handleSettingsKeyDown:(NSEvent *)event;
+- (void)appUninstallTabRequested;
+- (void)showUninstallAppsPanel;
+- (void)confirmUninstallApps:(id)sender;
+- (void)uninstallSelectAll:(id)sender;
+- (void)uninstallSelectNone:(id)sender;
+- (void)closeUninstallPanel:(id)sender;
 - (void)updateSettingsFocusUI;
 - (void)settingsRowClicked:(id)sender;
 - (void)closeSettingsPanel:(id)sender;
@@ -1871,6 +1879,7 @@ static NSString *ResolveAppPath(NSString *target) {
       @{@"title":@"三列布局", @"sel":@"layoutThree:"},
       @{@"title":@"四列布局", @"sel":@"layoutFour:"},
       @{@"title":@"一键恢复（单列）", @"sel":@"resetSingleLayout:"}]},
+    @{@"title":@"应用卸载"},
     @{@"title":@"图标风格", @"children":@[
       @{@"title":@"图标自定义", @"children":@[@{@"title":@"图标大小 / 形状 / 重命名…", @"sel":@"showAppIconPanel:"}]},
       @{@"title":@"一键恢复默认", @"sel":@"resetAllAppIcons:"}]},
@@ -1946,6 +1955,15 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)settingsTabClicked:(id)sender {
   NSInteger idx = [sender tag];
   if (idx < 0 || idx >= (NSInteger)self.settingsTree.count) return;
+  NSString *t = self.settingsTree[idx][@"title"] ?: @"";
+  if ([t isEqualToString:@"应用卸载"]) {
+    self.settingsTabIndex = -1;
+    self.settingsFocusPath = @"";
+    [self rebuildSettingsTabs];
+    [self rebuildSettingsRows];
+    [self appUninstallTabRequested];
+    return;
+  }
   self.settingsTabIndex = (self.settingsTabIndex == idx) ? -1 : idx;
   self.settingsFocusPath = @"";
   [self rebuildSettingsTabs];
@@ -2031,6 +2049,179 @@ static NSString *ResolveAppPath(NSString *target) {
   self.settingsContent = content;
 }
 
+- (void)appUninstallTabRequested {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.icon = [[NSImage alloc] initWithSize:NSMakeSize(1, 1)];
+  a.messageText = @"此项操作为卸载应用本体，请谨慎选择是否卸载";
+  a.informativeText = @"卸载会把这些应用从本机移除（移到废纸篓），并从当前分组列表删除，操作不可恢复。";
+  [a addButtonWithTitle:@"是"];
+  [a addButtonWithTitle:@"否"];
+  if ([a runModal] == NSAlertFirstButtonReturn) {
+    [self showUninstallAppsPanel];
+  } else {
+    self.settingsTabIndex = -1;
+    self.settingsFocusPath = @"";
+    [self rebuildSettingsTabs];
+    [self rebuildSettingsRows];
+  }
+}
+
+- (void)showUninstallAppsPanel {
+  if (!self.uninstallChecks) self.uninstallChecks = [NSMutableArray array];
+  [self.uninstallChecks removeAllObjects];
+  NSMutableArray *valid = [NSMutableArray array];
+  for (NSDictionary *it in self.items) {
+    NSString *p = ResolveAppPath(it[@"target"]);
+    if (p.length) [valid addObject:@{@"label": it[@"label"] ?: @"", @"path": p, @"target": it[@"target"]}];
+  }
+  if (valid.count == 0) {
+    NSAlert *e = [[NSAlert alloc] init];
+    e.messageText = @"没有可卸载的应用";
+    e.informativeText = @"当前分组里没有解析到有效的应用路径。";
+    [e runModal];
+    return;
+  }
+  [self.uninstallPanel orderOut:nil];
+  NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,520,560)
+                                          styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
+                                            backing:NSBackingStoreBuffered defer:NO];
+  p.title = @"选择要卸载的应用（卸载本体）";
+  p.level = NSFloatingWindowLevel;
+  self.uninstallPanel = p;
+  NSView *cv = p.contentView;
+
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 488, 456)];
+  sv.hasVerticalScroller = YES;
+  sv.drawsBackground = NO;
+  [cv addSubview:sv];
+  CGFloat totalH = valid.count * 34 + 10;
+  NSView *content = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,470,totalH)];
+  CGFloat y = 6;
+  for (NSDictionary *v in valid) {
+    NSButton *cb = [NSButton checkboxWithTitle:[NSString stringWithFormat:@"%@    %@", v[@"label"], v[@"path"]] target:nil action:nil];
+    cb.font = [NSFont systemFontOfSize:12.5];
+    cb.frame = NSMakeRect(8, y, 450, 26);
+    [content addSubview:cb];
+    [self.uninstallChecks addObject:cb];
+    y += 34;
+  }
+  [sv setDocumentView:content];
+  [sv.contentView scrollPoint:NSMakePoint(0, 0)];
+
+  NSButton *all = [NSButton buttonWithTitle:@"全选" target:self action:@selector(uninstallSelectAll:)];
+  all.frame = NSMakeRect(16, 30, 70, 32); all.bezelStyle = NSBezelStyleRounded; [cv addSubview:all];
+  NSButton *none = [NSButton buttonWithTitle:@"全不选" target:self action:@selector(uninstallSelectNone:)];
+  none.frame = NSMakeRect(92, 30, 80, 32); none.bezelStyle = NSBezelStyleRounded; [cv addSubview:none];
+  NSButton *cancel = [NSButton buttonWithTitle:@"取消" target:self action:@selector(closeUninstallPanel:)];
+  cancel.frame = NSMakeRect(320, 30, 80, 32); cancel.bezelStyle = NSBezelStyleRounded; [cv addSubview:cancel];
+  NSButton *go = [NSButton buttonWithTitle:@"卸载所选" target:self action:@selector(confirmUninstallApps:)];
+  go.frame = NSMakeRect(408, 30, 96, 32); go.bezelStyle = NSBezelStyleRounded; [cv addSubview:go];
+  [p center];
+  [NSApp activateIgnoringOtherApps:YES];
+  [p makeKeyAndOrderFront:nil];
+}
+
+- (void)uninstallSelectAll:(id)sender {
+  for (NSButton *b in self.uninstallChecks) b.state = NSControlStateValueOn;
+}
+
+- (void)uninstallSelectNone:(id)sender {
+  for (NSButton *b in self.uninstallChecks) b.state = NSControlStateValueOff;
+}
+
+- (void)closeUninstallPanel:(id)sender {
+  [self.uninstallPanel orderOut:nil];
+}
+
+- (void)confirmUninstallApps:(id)sender {
+  NSMutableArray *selected = [NSMutableArray array];
+  NSInteger i = 0;
+  for (NSDictionary *it in self.items) {
+    NSString *path = ResolveAppPath(it[@"target"]);
+    if (!path.length) continue;
+    if (i < (NSInteger)self.uninstallChecks.count && [self.uninstallChecks[i] state] == NSControlStateValueOn) {
+      [selected addObject:@{@"label": it[@"label"] ?: @"", @"path": path, @"target": it[@"target"]}];
+    }
+    i++;
+  }
+  if (selected.count == 0) {
+    NSAlert *e = [[NSAlert alloc] init];
+    e.messageText = @"未选择应用";
+    e.informativeText = @"请勾选要卸载的应用。";
+    [e runModal];
+    return;
+  }
+  NSAlert *c = [[NSAlert alloc] init];
+  c.messageText = [NSString stringWithFormat:@"确认卸载 %ld 个应用？", (long)selected.count];
+  c.informativeText = @"将把这些应用本体移到废纸篓，并从当前分组删除，操作不可恢复。";
+  [c addButtonWithTitle:@"卸载"];
+  [c addButtonWithTitle:@"取消"];
+  if ([c runModal] != NSAlertFirstButtonReturn) return;
+
+  // 管理员脚本：移动到废纸篓
+  NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\n"];
+  NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
+  NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
+  [body appendFormat:@"mkdir -p \"%@\"\n", trash];
+  for (NSDictionary *sel in selected) {
+    NSString *path = sel[@"path"];
+    [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%@\"\n", path, path, trash, stamp, [path lastPathComponent]];
+  }
+  BOOL testMode = (getenv("DOCKLAUNCHER_TEST_UNINSTALL_APPS") != NULL);
+  BOOL ok = NO;
+  if (testMode) {
+    NSString *staging = [NSString stringWithFormat:@"/tmp/DockLaunchers-apps-uninstall-%d", getpid()];
+    [[NSFileManager defaultManager] createDirectoryAtPath:staging withIntermediateDirectories:YES attributes:nil error:NULL];
+    for (NSDictionary *sel in selected) {
+      NSString *path = sel[@"path"];
+      [[NSFileManager defaultManager] moveItemAtPath:path toPath:[staging stringByAppendingPathComponent:[path lastPathComponent]] error:NULL];
+    }
+    ok = YES;
+    fprintf(stderr, "UNINSTALL_APPS staging=%s count=%ld\n", [staging UTF8String], (long)selected.count);
+  } else {
+    NSString *sp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-uninstall-apps.sh"];
+    [body writeToFile:sp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions: @0755} ofItemAtPath:sp error:NULL];
+    NSString *osa = [NSString stringWithFormat:@"do shell script \"/bin/sh %@\" with administrator privileges", sp];
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/bin/osascript";
+    t.arguments = @[@"-e", osa];
+    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+    ok = (t.terminationStatus == 0);
+  }
+
+  if (ok) {
+    // 从列表文件删除对应行
+    NSMutableSet *targets = [NSMutableSet set];
+    for (NSDictionary *sel in selected) [targets addObject:sel[@"target"]];
+    NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+    NSMutableArray *keep = [NSMutableArray array];
+    for (NSString *raw in [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if (line.length == 0) continue;
+      if ([line hasPrefix:@"#"]) { [keep addObject:raw]; continue; }
+      NSString *target = line;
+      NSRange r = [line rangeOfString:@"|"];
+      if (r.location != NSNotFound) target = [[line substringFromIndex:r.location+1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if (![targets containsObject:target]) [keep addObject:raw];
+    }
+    [[keep componentsJoinedByString:@"\n"] writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    [self reload];
+    [self.uninstallPanel orderOut:nil];
+    if (!testMode) {
+      NSAlert *d = [[NSAlert alloc] init];
+      d.messageText = @"卸载完成";
+      d.informativeText = [NSString stringWithFormat:@"已将 %ld 个应用移到废纸篓，并从分组列表中移除。", (long)selected.count];
+      [d runModal];
+    }
+  } else {
+    NSAlert *d = [[NSAlert alloc] init];
+    d.messageText = @"已取消";
+    d.informativeText = @"未通过管理员验证，未卸载任何应用。";
+    [d runModal];
+  }
+}
+
 - (void)settingsRowClicked:(id)sender {
   NSInteger idx = [sender tag];
   if (idx < 0 || idx >= (NSInteger)self.settingsVisible.count) return;
@@ -2079,6 +2270,7 @@ static NSString *ResolveAppPath(NSString *target) {
       self.settingsFocusPath = @"";
       [self rebuildSettingsTabs];
       [self rebuildSettingsRows];
+      if ([self.settingsTree[idx][@"title"] isEqualToString:@"应用卸载"]) [self appUninstallTabRequested];
       return YES;
     }
     if (down && self.settingsVisible.count > 0) {
@@ -4365,6 +4557,30 @@ int main(int argc, const char *argv[]) {
         [c handleSettingsKeyDown:ev(right)];
         fprintf(stderr, "KEYS4 visible=%ld\n", (long)c.settingsVisible.count);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_UNINSTALL_RUN")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c showUninstallAppsPanel];
+        if (c.uninstallChecks.count) [(NSButton *)c.uninstallChecks.firstObject setState:NSControlStateValueOn];
+        [c confirmUninstallApps:nil];
+        NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL];
+        fprintf(stderr, "UNINSTALL_RUN list='%s'\n", [content UTF8String]);
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_UNINSTALL_PANEL_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gIconMode = NO; [c reload];
+        [c showUninstallAppsPanel];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(7.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_UNINSTALL_WARN_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c showSkinMenu:nil];
+        [c appUninstallTabRequested];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(7.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_SETTINGS_SHOW")) {
