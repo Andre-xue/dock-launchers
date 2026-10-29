@@ -1308,6 +1308,7 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)closeCancel:(id)sender {
+  if (self.pinned) { NSBeep(); return; }
   fflush(stdout);
   [NSApp terminate:nil];
   exit(1);
@@ -3159,6 +3160,14 @@ int main(int argc, const char *argv[]) {
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
         exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_PINCANCEL")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c togglePin:nil];
+        [c closeCancel:nil];
+        fprintf(stderr, "PINCANCEL alive=1 pinned=%d\n", c.pinned);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_PININFO")) {
