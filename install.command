@@ -128,6 +128,13 @@ EOR
 chmod +x "$RECOVER_APP/Contents/MacOS/run"
 codesign --force --deep --sign - "$RECOVER_APP" >/dev/null 2>&1 || true
 
+# 安装菜单栏控制台（若已构建）
+if [ -d "$ROOT/build/DockLaunchers控制台.app" ]; then
+  rm -rf "$HOME/Applications/DockLaunchers控制台.app"
+  cp -R "$ROOT/build/DockLaunchers控制台.app" "$HOME/Applications/"
+  codesign --force --deep --sign - "$HOME/Applications/DockLaunchers控制台.app" >/dev/null 2>&1 || true
+fi
+
 echo ""
 echo "✅ 完成：7 个分组已安装并加入程序坞"
 echo "   本机备份：${BACKUP}"

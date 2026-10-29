@@ -108,6 +108,19 @@ export GH_CONFIG_DIR=/Users/andre/deepseek/tools/gh/config
 
 反向删除：`build.sh` 对应行、`resources/icons/xxx.icns`、`lists/xxx.txt`、`install.command` 的 URL、`launcher.m` 里 `order` 与 emoji 映射、README 数量，然后同样 `build.sh` + `sync-github.sh` + 发版。
 
+## 菜单栏控制台（正式版）
+
+`DockLaunchers控制台.app` 是常驻菜单栏的总控制台：
+
+- 菜单栏显示角色图标 + CPU / 内存百分比
+- 主窗口四个模块：实时数据、Dock 分组、应用卸载、设置
+- 实时数据：CPU/内存折线、磁盘、网络速率
+- Dock 分组：列出分组、直接打开、新建/删除并同步 Dock 图标
+- 应用卸载：跨分组扫描应用，表格勾选，卸载本体+用户数据
+- 设置：采样间隔、菜单栏数字开关、开机启动
+
+构建：`bash build_center.sh`
+
 ## 本机备份与离线一键恢复
 
 运行 `install.command` 后会自动：
