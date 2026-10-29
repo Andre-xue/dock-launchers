@@ -1586,9 +1586,12 @@ static NSString *ResolveAppPath(NSString *target) {
     }
     for (NSString *p in wanted) {
       NSString *enc = [p stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
+      NSString *label = [[p lastPathComponent] stringByDeletingPathExtension];
       [kept addObject:@{
         @"tile-data": @{@"file-data": @{@"_CFURLString": [NSString stringWithFormat:@"file://%@/", enc],
-                                        @"_CFURLStringType": @0}},
+                                        @"_CFURLStringType": @0},
+                        @"file-label": label,
+                        @"file-type": @41},
         @"tile-type": @"file-tile"
       }];
     }
