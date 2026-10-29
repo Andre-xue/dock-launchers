@@ -118,6 +118,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property NSInteger userColumns;
 @property (copy) NSString *customIconPath;
 @property NSInteger forceColumns;
+@property CGFloat lastContentWidth;
 @property (strong) LightButton *lightRed;
 @property (strong) LightButton *lightYellow;
 @property (strong) LightButton *lightGreen;
@@ -1052,7 +1053,11 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)windowDidResize:(NSNotification *)notification {
   CGFloat w = self.window.contentView.bounds.size.width;
-  if (w < 560 && self.userColumns != 1) { self.userColumns = 1; }
+  // 只在大窗缩回小窗时恢复单列；变形导致的布局变化不重置列数
+  if (w < 560 && self.lastContentWidth >= 600 && self.userColumns != 1) {
+    self.userColumns = 1;
+  }
+  self.lastContentWidth = w;
   [self layoutContent];
   [self reload];
 }
@@ -1092,6 +1097,10 @@ static NSString *ResolveAppPath(NSString *target) {
   self.addBtn.frame    = NSMakeRect(ox + cw*3.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
 
   BOOL morph = (gCornerRatio > 0.05);
+  NSWindowStyleMask wantMask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                               NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskFullSizeContentView;
+  if (!morph) wantMask |= NSWindowStyleMaskResizable;
+  if (self.window.styleMask != wantMask) self.window.styleMask = wantMask;
   for (NSWindowButton b = NSWindowCloseButton; b <= NSWindowZoomButton; b++) {
     NSButton *btn = [self.window standardWindowButton:b];
     if (btn) btn.hidden = morph;
@@ -1113,11 +1122,18 @@ static NSString *ResolveAppPath(NSString *target) {
 
   if (self.backdrop) self.backdrop.frame = NSMakeRect(0,0,W,H);
   if (self.vibrancy) self.vibrancy.frame = NSMakeRect(0,0,W,H);
-  self.scroll.frame = NSMakeRect(ox + 16, oy + 76, rw - 32, MAX(40, rh - 100 - 76));
+  if (morph) {
+    self.scroll.frame = NSMakeRect(ox + 16, oy + 92, rw - 32, MAX(40, rh - 110 - 92));
+    self.hintLabel.frame = NSMakeRect(ox + 60, oy + 70, MAX(40, rw - 120), 18);
+    self.hintLabel.maximumNumberOfLines = 1;
+  } else {
+    self.scroll.frame = NSMakeRect(ox + 16, oy + 76, rw - 32, MAX(40, rh - 100 - 76));
+    self.hintLabel.frame = NSMakeRect(ox + 96, oy + 10, MAX(40, rw - 192), 34);
+    self.hintLabel.maximumNumberOfLines = 2;
+  }
   [self.scroll layoutSubtreeIfNeeded];
   self.cancelBtn.frame = NSMakeRect(ox + 16, oy + 10, 56, 56);
   self.openBtn.frame = NSMakeRect(ox + rw - 16 - 56, oy + 10, 56, 56);
-  self.hintLabel.frame = NSMakeRect(ox + 96, oy + 10, MAX(40, rw - 192), 34);
   [self.listContainer setFrameSize:NSMakeSize(rw - 32, self.listContainer.frame.size.height)];
 }
 
@@ -1543,7 +1559,21 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)cLightRedTapped:(id)sender { [NSApp terminate:nil]; }
 - (void)cLightYellowTapped:(id)sender { [self.window miniaturize:nil]; }
-- (void)cLightGreenTapped:(id)sender { [self.window zoom:nil]; }
+- (void)cLightGreenTapped:(id)sender {
+  NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
+  NSRect vf = screen.visibleFrame;
+  CGFloat w = MIN(vf.size.width * 0.78, 980.0);
+  CGFloat h = MIN(vf.size.height * 0.86, 900.0);
+  NSRect std = NSMakeRect(vf.origin.x + (vf.size.width - w)/2.0,
+                          vf.origin.y + (vf.size.height - h)/2.0, w, h);
+  if (self.window.frame.size.width < 600) [self.window setFrame:std display:YES animate:YES];
+  else {
+    NSRect normal = NSMakeRect(self.window.frame.origin.x, self.window.frame.origin.y, 480, 600);
+    normal.origin.x = std.origin.x + (std.size.width - 480)/2.0;
+    normal.origin.y = std.origin.y + (std.size.height - 600)/2.0;
+    [self.window setFrame:normal display:YES animate:YES];
+  }
+}
 
 #pragma mark - 重命名分组
 
@@ -2284,25 +2314,35 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
     self.shapePanel.title = @"窗口变形（实时预览）";
     self.shapePanel.level = NSFloatingWindowLevel;
     NSView *cv = self.shapePanel.contentView;
+    CGFloat W3 = 380.0 / 3.0;
 
-    NSTextField *lab = [NSTextField labelWithString:@"圆角"];
-    lab.font = [NSFont systemFontOfSize:13];
-    lab.frame = NSMakeRect(20, 96, 80, 20);
-    [cv addSubview:lab];
+    NSTextField *leftLab = [NSTextField labelWithString:@"矩形"];
+    leftLab.font = [NSFont systemFontOfSize:12];
+    leftLab.textColor = [NSColor secondaryLabelColor];
+    leftLab.alignment = NSTextAlignmentCenter;
+    leftLab.frame = NSMakeRect(0, 100, W3, 20);
+    [cv addSubview:leftLab];
 
     self.shapeValueLabel = [NSTextField labelWithString:@"0%"];
-    self.shapeValueLabel.font = [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightRegular];
-    self.shapeValueLabel.alignment = NSTextAlignmentRight;
-    self.shapeValueLabel.frame = NSMakeRect(290, 96, 70, 20);
+    self.shapeValueLabel.font = [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightMedium];
+    self.shapeValueLabel.alignment = NSTextAlignmentCenter;
+    self.shapeValueLabel.frame = NSMakeRect(W3, 100, W3, 20);
     [cv addSubview:self.shapeValueLabel];
 
+    NSTextField *rightLab = [NSTextField labelWithString:@"圆形"];
+    rightLab.font = [NSFont systemFontOfSize:12];
+    rightLab.textColor = [NSColor secondaryLabelColor];
+    rightLab.alignment = NSTextAlignmentCenter;
+    rightLab.frame = NSMakeRect(W3*2, 100, W3, 20);
+    [cv addSubview:rightLab];
+
     self.shapeSlider = [NSSlider sliderWithValue:gCornerRatio*100.0 minValue:0 maxValue:50 target:self action:@selector(shapeSliderChanged:)];
-    self.shapeSlider.frame = NSMakeRect(20, 64, 340, 24);
+    self.shapeSlider.frame = NSMakeRect(20, 56, 340, 24);
     self.shapeSlider.continuous = YES;
     [cv addSubview:self.shapeSlider];
 
     NSButton *done = [NSButton buttonWithTitle:@"完成" target:self action:@selector(closeShapePanel:)];
-    done.frame = NSMakeRect(260, 16, 100, 32);
+    done.frame = NSMakeRect(260, 14, 100, 32);
     done.bezelStyle = NSBezelStyleRounded;
     [cv addSubview:done];
     [self.shapePanel center];
@@ -2317,6 +2357,7 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
   self.shapeValueLabel.stringValue = [NSString stringWithFormat:@"%.0f%%", gCornerRatio*100.0];
   [self applyTheme];
   [self layoutContent];
+  [self reload];
   [self saveTheme];
 }
 
@@ -2461,6 +2502,18 @@ int main(int argc, const char *argv[]) {
         if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS) {
           fprintf(stderr, "RSS=%.1fMB\n", info.resident_size / 1048576.0);
         }
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_SHAPE_COLS")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        c.userColumns = 3;
+        [c reload];
+        gCornerRatio = 0.5;
+        [c applyTheme];
+        [c layoutContent];
+        [c reload];
+        fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
         exit(0);
       });
     }
