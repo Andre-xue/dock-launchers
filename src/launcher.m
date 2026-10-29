@@ -303,6 +303,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)settingsTabClicked:(id)sender;
 - (BOOL)handleSettingsKeyDown:(NSEvent *)event;
 - (void)appUninstallTabRequested;
+- (NSImage *)currentGroupDockIcon;
 - (void)showUninstallAppsPanel;
 - (void)confirmUninstallApps:(id)sender;
 - (void)uninstallSelectAll:(id)sender;
@@ -2049,9 +2050,15 @@ static NSString *ResolveAppPath(NSString *target) {
   self.settingsContent = content;
 }
 
+- (NSImage *)currentGroupDockIcon {
+  NSImage *img = [[NSWorkspace sharedWorkspace] iconForFile:[[NSBundle mainBundle] bundlePath]];
+  if (!img) img = [NSApp applicationIconImage];
+  return img ?: [[NSImage alloc] initWithSize:NSMakeSize(64, 64)];
+}
+
 - (void)appUninstallTabRequested {
   NSAlert *a = [[NSAlert alloc] init];
-  a.icon = [[NSImage alloc] initWithSize:NSMakeSize(1, 1)];
+  a.icon = [self currentGroupDockIcon];
   a.messageText = @"此项操作为卸载应用本体，请谨慎选择是否卸载";
   a.informativeText = @"卸载会把这些应用从本机移除（移到废纸篓），并从当前分组列表删除，操作不可恢复。";
   [a addButtonWithTitle:@"是"];
@@ -2168,6 +2175,7 @@ static NSString *ResolveAppPath(NSString *target) {
     return;
   }
   NSAlert *c = [[NSAlert alloc] init];
+  c.icon = [self currentGroupDockIcon];
   c.messageText = [NSString stringWithFormat:@"确认卸载 %ld 个应用？", (long)selected.count];
   c.informativeText = @"将把这些应用本体移到废纸篓，并从当前分组删除，操作不可恢复。";
   [c addButtonWithTitle:@"卸载"];
