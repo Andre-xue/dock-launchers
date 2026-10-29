@@ -103,6 +103,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) TitlePillView *windowTitleLabel;
 @property (strong) NSTextField *hintLabel;
 @property (strong) NSTextField *searchField;
+@property (strong) NSButton *pinBtn;
+@property BOOL pinned;
 @property (strong) CircleButton *searchBtn;
 @property (copy) NSString *searchQuery;
 @property BOOL searchActive;
@@ -157,6 +159,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)resetIdleTimer;
 - (void)idleExitFired:(NSTimer *)t;
 - (void)refreshListAndCaches:(id)sender;
+- (void)togglePin:(id)sender;
+- (void)updatePinAppearance;
 - (void)closeShapePanel:(id)sender;
 - (void)setupTrafficLights;
 - (void)greenLightTapped:(id)sender;
@@ -841,6 +845,15 @@ static NSString *ResolveAppPath(NSString *target) {
   self.searchBtn.toolTip = @"搜索本组应用（F4 或 ⌘Space）";
   [cv addSubview:self.searchBtn];
 
+  self.pinBtn = [NSButton buttonWithTitle:@"" target:self action:@selector(togglePin:)];
+  self.pinBtn.frame = NSMakeRect(W-44, H-50, 28, 28);
+  self.pinBtn.bordered = NO;
+  self.pinBtn.focusRingType = NSFocusRingTypeNone;
+  self.pinBtn.toolTip = @"钉住：禁止自动退出与关闭窗口（再点取消）";
+  [cv addSubview:self.pinBtn];
+  self.pinned = [[NSUserDefaults standardUserDefaults] boolForKey:@"pinned"];
+  [self updatePinAppearance];
+
   self.cLightRed = [[PillButton alloc] initWithFrame:NSMakeRect(0,0,14,14)];
   self.cLightRed.fillColor = [NSColor colorWithCalibratedRed:1.0 green:0.37 blue:0.34 alpha:1.0];
   self.cLightRed.target = self; self.cLightRed.action = @selector(cLightRedTapped:);
@@ -1102,6 +1115,8 @@ static NSString *ResolveAppPath(NSString *target) {
   self.windowTitleLabel.titleFont = tf;
   self.windowTitleLabel.frame = NSMakeRect(ox + (rw - tw)/2.0, oy + rh - 48, tw, th);
 
+  if (self.pinBtn) self.pinBtn.frame = NSMakeRect(ox + rw - 14 - 28, oy + rh - 52, 28, 28);
+
   // 第二行四个控件各占 1/4
   CGFloat btnSize = 30.0;
   CGFloat cw = rw / 4.0;
@@ -1159,6 +1174,10 @@ static NSString *ResolveAppPath(NSString *target) {
   if (!cv) return;
   if (self.vibrancy) [cv addSubview:self.vibrancy positioned:NSWindowBelow relativeTo:nil];
   if (self.backdrop) [cv addSubview:self.backdrop positioned:NSWindowBelow relativeTo:nil];
+}
+
+- (BOOL)windowShouldClose:(NSWindow *)sender {
+  return !self.pinned;
 }
 
 - (void)windowWillClose:(NSNotification *)notification {
@@ -1937,6 +1956,35 @@ static NSString *ResolveAppPath(NSString *target) {
   [done runModal];
 }
 
+#pragma mark - 钉住
+
+- (void)updatePinAppearance {
+  NSImage *img = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"钉住"];
+  if (img) {
+    [img setTemplate:YES];
+    self.pinBtn.image = img;
+    self.pinBtn.imagePosition = NSImageOnly;
+    self.pinBtn.contentTintColor = self.pinned ? [NSColor systemRedColor] : [NSColor secondaryLabelColor];
+    self.pinBtn.title = @"";
+  } else {
+    self.pinBtn.title = @"📌";
+    self.pinBtn.font = [NSFont systemFontOfSize:18];
+    self.pinBtn.alphaValue = self.pinned ? 1.0 : 0.45;
+  }
+  self.pinBtn.toolTip = self.pinned ? @"已钉住：自动退出与关闭已禁用" : @"钉住：禁止自动退出与关闭窗口（再点取消）";
+}
+
+- (void)togglePin:(id)sender {
+  self.pinned = !self.pinned;
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  [d setBool:self.pinned forKey:@"pinned"];
+  [d synchronize];
+  [self updatePinAppearance];
+  if (self.pinned) { [self.idleExitTimer invalidate]; self.idleExitTimer = nil; }
+  else [self resetIdleTimer];
+  if (self.pinned) NSBeep();
+}
+
 #pragma mark - 内存/缓存
 
 - (void)toggleIdleExit:(id)sender {
@@ -1950,6 +1998,7 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)resetIdleTimer {
   [self.idleExitTimer invalidate];
   self.idleExitTimer = nil;
+  if (self.pinned) return;
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   if (![d boolForKey:@"idleExitEnabled"]) return;
   self.idleExitTimer = [NSTimer timerWithTimeInterval:180.0 target:self selector:@selector(idleExitFired:) userInfo:nil repeats:NO];
@@ -1958,6 +2007,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)idleExitFired:(NSTimer *)t {
   self.idleExitTimer = nil;
+  if (self.pinned) return;
   [NSApp terminate:nil];
 }
 
