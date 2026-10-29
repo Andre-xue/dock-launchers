@@ -514,7 +514,7 @@ static NSString *ResolveAppPath(NSString *target) {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"应用卸载" size:22 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
-  NSTextField *sub = [self label:@"扫描本机应用（全部应用）或仅分组内；卸载会同时清理应用数据" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *sub = [self label:@"扫描本机应用（全部应用）或仅分组内；已排除本程序自身的 Dock 分组应用" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 550, 18); [v addSubview:sub];
 
   self.uninstallScopeCtl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(24, 540, 220, 28)];
@@ -640,6 +640,10 @@ static NSString *ResolveAppPath(NSString *target) {
   NSMutableArray *arr = [NSMutableArray array];
   for (NSString *p in paths) {
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+    NSString *bid = info[@"CFBundleIdentifier"] ?: @"";
+    // 排除本程序自身创建的 Dock 分组 / 恢复工具 / 控制台
+    if ([bid hasPrefix:@"com.docklaunchers."]) continue;
+    if ([p hasPrefix:GroupDir()]) continue;
     NSString *label = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [[p lastPathComponent] stringByDeletingPathExtension];
     BOOL isRunning = NO;
     for (NSRunningApplication *ra in running) if (ra.bundleURL && [[ra.bundleURL path] isEqualToString:p]) { isRunning = YES; break; }
@@ -647,7 +651,7 @@ static NSString *ResolveAppPath(NSString *target) {
     NSDictionary *attr = [fm attributesOfItemAtPath:p error:NULL] ?: @{};
     NSMutableDictionary *d = [@{@"label": label, @"name": [[p lastPathComponent] stringByDeletingPathExtension],
                                 @"path": p, @"group": group,
-                                @"bid": info[@"CFBundleIdentifier"] ?: @"",
+                                @"bid": bid,
                                 @"size": @0,
                                 @"installed": attr[NSFileCreationDate] ?: [NSDate date],
                                 @"running": @(isRunning),
