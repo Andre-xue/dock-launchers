@@ -115,6 +115,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (copy) NSString *recordingAction;
 @property (strong) id keyMonitor;
 @property (strong) id recordingMonitor;
+@property (strong) id activityMonitor;
+@property (strong) NSTimer *idleExitTimer;
 @property NSInteger userColumns;
 @property (copy) NSString *customIconPath;
 @property NSInteger forceColumns;
@@ -150,6 +152,11 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)closeGlassPanel:(id)sender;
 - (void)showShapePanel:(id)sender;
 - (void)shapeSliderChanged:(id)sender;
+- (void)resetShapeRectangle:(id)sender;
+- (void)toggleIdleExit:(id)sender;
+- (void)resetIdleTimer;
+- (void)idleExitFired:(NSTimer *)t;
+- (void)refreshListAndCaches:(id)sender;
 - (void)closeShapePanel:(id)sender;
 - (void)setupTrafficLights;
 - (void)greenLightTapped:(id)sender;
@@ -909,9 +916,16 @@ static NSString *ResolveAppPath(NSString *target) {
   __weak Controller *weakSelf = self;
   self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
     Controller *ss = weakSelf; if (!ss) return e;
+    [ss resetIdleTimer];
     if ([ss handleCustomShortcut:e]) return nil;
     return e;
   }];
+
+  self.activityMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskAny handler:^NSEvent *(NSEvent *e) {
+    Controller *ss = weakSelf; if (ss) [ss resetIdleTimer];
+    return e;
+  }];
+  [self resetIdleTimer];
 
   self.hintLabel = [NSTextField labelWithString:@"←→↑↓ 选择 · Enter 打开 · ⌫ 移除 · Esc 取消"];
   self.hintLabel.font = [NSFont systemFontOfSize:11];
@@ -1514,6 +1528,11 @@ static NSString *ResolveAppPath(NSString *target) {
   [m addItem:[NSMenuItem separatorItem]];
   it = [m addItemWithTitle:@"玻璃透明度…" action:@selector(showGlassPanel:) keyEquivalent:@""]; it.target = self; it.enabled = (gTheme == 2);
   it = [m addItemWithTitle:@"窗口变形（矩形→圆形）…" action:@selector(showShapePanel:) keyEquivalent:@""]; it.target = self;
+  it = [m addItemWithTitle:@"恢复默认矩形" action:@selector(resetShapeRectangle:) keyEquivalent:@""]; it.target = self;
+  it = [m addItemWithTitle:@"刷新列表并释放缓存" action:@selector(refreshListAndCaches:) keyEquivalent:@""]; it.target = self;
+  it = [m addItemWithTitle:@"空闲 5 分钟自动退出" action:@selector(toggleIdleExit:) keyEquivalent:@""];
+  it.target = self;
+  it.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"idleExitEnabled"] ? NSControlStateValueOn : NSControlStateValueOff;
   it = [m addItemWithTitle:@"选择自定义图片…" action:@selector(customPick:) keyEquivalent:@""]; it.target = self; it.state = (gTheme == 3);
   [m addItem:[NSMenuItem separatorItem]];
   NSMenuItem *hdr = [m addItemWithTitle:@"布局" action:nil keyEquivalent:@""];
@@ -1916,6 +1935,35 @@ static NSString *ResolveAppPath(NSString *target) {
   done.messageText = [NSString stringWithFormat:@"已重命名 %ld 个分组", (long)renamed];
   done.informativeText = renamed ? @"程序坞会在稍后自动刷新，标签将不再带「组」。" : @"没有需要改名的分组。";
   [done runModal];
+}
+
+#pragma mark - 内存/缓存
+
+- (void)toggleIdleExit:(id)sender {
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  BOOL on = ![d boolForKey:@"idleExitEnabled"];
+  [d setBool:on forKey:@"idleExitEnabled"];
+  [d synchronize];
+  if (on) [self resetIdleTimer]; else { [self.idleExitTimer invalidate]; self.idleExitTimer = nil; }
+}
+
+- (void)resetIdleTimer {
+  [self.idleExitTimer invalidate];
+  self.idleExitTimer = nil;
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  if (![d boolForKey:@"idleExitEnabled"]) return;
+  self.idleExitTimer = [NSTimer timerWithTimeInterval:300.0 target:self selector:@selector(idleExitFired:) userInfo:nil repeats:NO];
+  [[NSRunLoop mainRunLoop] addTimer:self.idleExitTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)idleExitFired:(NSTimer *)t {
+  self.idleExitTimer = nil;
+  [NSApp terminate:nil];
+}
+
+- (void)refreshListAndCaches:(id)sender {
+  [self reload];
+  [[NSURLCache sharedURLCache] removeAllCachedResponses];
 }
 
 #pragma mark - 快捷键映射
@@ -2344,6 +2392,10 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
     self.shapeSlider.continuous = YES;
     [cv addSubview:self.shapeSlider];
 
+    NSButton *resetBtn = [NSButton buttonWithTitle:@"恢复矩形" target:self action:@selector(resetShapeRectangle:)];
+    resetBtn.frame = NSMakeRect(20, 14, 110, 32);
+    resetBtn.bezelStyle = NSBezelStyleRounded;
+    [cv addSubview:resetBtn];
     NSButton *done = [NSButton buttonWithTitle:@"完成" target:self action:@selector(closeShapePanel:)];
     done.frame = NSMakeRect(260, 14, 100, 32);
     done.bezelStyle = NSBezelStyleRounded;
@@ -2358,6 +2410,16 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
 - (void)shapeSliderChanged:(id)sender {
   gCornerRatio = self.shapeSlider.doubleValue / 100.0;
   self.shapeValueLabel.stringValue = [NSString stringWithFormat:@"%.0f%%", gCornerRatio*100.0];
+  [self applyTheme];
+  [self layoutContent];
+  [self reload];
+  [self saveTheme];
+}
+
+- (void)resetShapeRectangle:(id)sender {
+  gCornerRatio = 0;
+  if (self.shapeSlider) [self.shapeSlider setDoubleValue:0];
+  if (self.shapeValueLabel) self.shapeValueLabel.stringValue = @"0%";
   [self applyTheme];
   [self layoutContent];
   [self reload];
