@@ -1881,7 +1881,7 @@ static NSString *ResolveAppPath(NSString *target) {
       @{@"title":@"效率", @"children":@[
         @{@"title":@"自动退出程序时间（空闲 3 分钟）", @"sel":@"toggleIdleExit:"},
         @{@"title":@"刷新列表并释放内存缓存", @"sel":@"refreshListAndCaches:"}]},
-      @{@"title":@"一键恢复所有默认状态", @"sel":@"resetAllDefaults:"}]}
+      @{@"title":@"一键恢复所有页面状态（回到初始）", @"sel":@"resetAllDefaults:"}]}
   ];
 
   if (!self.settingsPanel) {
@@ -2165,17 +2165,41 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)resetAllDefaults:(id)sender {
+  // 恢复为该分组"刚打开时"的初始状态
   gTheme = 0;
+  gGlassAlpha = 0.82;
+  gImgScale = 1.0;
+  gImgDX = 0.0;
+  gImgDY = 0.0;
+  gImgPath = nil;
   gCornerRatio = 0;
   gIconMode = NO;
   self.userColumns = 1;
+  self.forceColumns = 0;
   [gAppIconSettings removeAllObjects];
   [gOriginalNames removeAllObjects];
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  [d removeObjectForKey:@"idleExitEnabled"];
+  [d removeObjectForKey:@"skinImgPath"];
+  [d synchronize];
+  [self.idleExitTimer invalidate];
+  self.idleExitTimer = nil;
+  [self hideCountdown];
+  self.pinned = NO;
+  [d setBool:NO forKey:@"pinned"];
+  [self updatePinAppearance];
   [self saveTheme];
   [self resetCustomIcon:nil];
   [self applyTheme];
   [self reload];
+  // 窗口尺寸恢复默认 480x600 居中
+  NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
+  NSRect vf = screen.visibleFrame;
+  NSRect normal = NSMakeRect(vf.origin.x + (vf.size.width - 480)/2.0,
+                             vf.origin.y + (vf.size.height - 600)/2.0, 480, 600);
+  [self.window setFrame:normal display:YES];
   [self layoutContent];
+  [self resetIdleTimer];
 }
 
 - (void)skinWhite:(id)sender { gTheme = 0; [self applyTheme]; }
