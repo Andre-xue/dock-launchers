@@ -835,7 +835,6 @@ static NSString *ResolveAppPath(NSString *target) {
   self.window.title = gGroup;
   self.window.releasedWhenClosed = NO;
   self.window.delegate = self;
-  [self updatePinAppearance];
   self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenNone;
   self.window.contentMinSize = NSMakeSize(420, 480);
   self.window.titlebarAppearsTransparent = YES;
@@ -1010,6 +1009,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [self reload];
   [self applyTheme];
   [self layoutContent];
+  [self updatePinAppearance];
   [self.window makeFirstResponder:cv];
 }
 
@@ -3158,6 +3158,15 @@ int main(int argc, const char *argv[]) {
         [c layoutContent];
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_PININFO")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSButton *pb = c.pinBtn;
+        fprintf(stderr, "PININFO frame=%.0f,%.0f,%.0fx%.0f image=%d title='%s' hidden=%d super=%d pinned=%d\n",
+                pb.frame.origin.x, pb.frame.origin.y, pb.frame.size.width, pb.frame.size.height,
+                pb.image != nil, [pb.title UTF8String], pb.hidden, pb.superview != nil, c.pinned);
         exit(0);
       });
     }
