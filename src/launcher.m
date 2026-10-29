@@ -172,6 +172,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)shortcutPanelKeyDown:(NSEvent *)event;
 - (void)startRecordingForAction:(NSString *)actionId;
 - (void)resetShortcutForAction:(NSString *)actionId;
+- (NSString *)shortcutSuffixForAction:(NSString *)actionId;
+- (NSUserDefaults *)sharedShortcutDefaults;
 - (void)closeShortcutPanel:(id)sender;
 - (void)beginRecordingShortcut:(id)sender;
 - (void)finishRecordingWithEvent:(NSEvent *)event;
@@ -1118,13 +1120,14 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)setupTooltips {
-  self.addBtn.toolTip = @"添加应用到本组（＋）";
-  self.removeBtn.toolTip = @"移除选中应用（只从列表移除）";
-  self.skinBtn.toolTip = @"皮肤 / 布局 / 更换图标";
-  self.cancelBtn.toolTip = @"取消（Esc）";
-  self.openBtn.toolTip = @"打开选中应用（Enter）";
+  if (!self.addBtn) return;
+  self.addBtn.toolTip = [@"添加应用到本组" stringByAppendingString:[self shortcutSuffixForAction:@"add"]];
+  self.removeBtn.toolTip = [@"移除选中应用（只从列表移除）" stringByAppendingString:[self shortcutSuffixForAction:@"remove"]];
+  self.skinBtn.toolTip = [@"皮肤 / 布局 / 更换图标" stringByAppendingString:[self shortcutSuffixForAction:@"skin"]];
+  self.cancelBtn.toolTip = [@"取消（Esc）" stringByAppendingString:[self shortcutSuffixForAction:@"cancel"]];
+  self.openBtn.toolTip = [@"打开选中应用（Enter）" stringByAppendingString:[self shortcutSuffixForAction:@"open"]];
   self.searchField.toolTip = @"输入关键字搜索本组应用，Esc 退出搜索";
-  self.searchBtn.toolTip = @"搜索本组应用（F4 或 ⌘Space）";
+  self.searchBtn.toolTip = [@"搜索本组应用（F4 或 ⌘Space）" stringByAppendingString:[self shortcutSuffixForAction:@"search"]];
   [[self.window standardWindowButton:NSWindowCloseButton] setToolTip:@"关闭"];
   [[self.window standardWindowButton:NSWindowMiniaturizeButton] setToolTip:@"最小化"];
   [[self.window standardWindowButton:NSWindowZoomButton] setToolTip:@"放大（Option+点击 = 四列）"];
@@ -1432,15 +1435,35 @@ static NSString *ResolveAppPath(NSString *target) {
 
 #pragma mark - 快捷键映射
 
+// 所有分组共用同一份快捷键（存放在共享偏好域里）
+static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
+
+- (NSUserDefaults *)sharedShortcutDefaults {
+  return [[NSUserDefaults alloc] initWithSuiteName:kSharedShortcutSuite];
+}
+
 - (void)loadCustomShortcuts {
-  NSDictionary *d = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"customShortcuts"];
+  NSUserDefaults *shared = [self sharedShortcutDefaults];
+  NSDictionary *d = [shared dictionaryForKey:@"customShortcuts"];
+  if (!d) {
+    // 迁移旧的“按分组保存”的快捷键
+    d = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"customShortcuts"];
+    if (d) { [shared setObject:d forKey:@"customShortcuts"]; [shared synchronize]; }
+  }
   self.customShortcuts = d ? [d mutableCopy] : [NSMutableDictionary dictionary];
 }
 
 - (void)saveCustomShortcuts {
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-  [d setObject:self.customShortcuts forKey:@"customShortcuts"];
-  [d synchronize];
+  NSUserDefaults *shared = [self sharedShortcutDefaults];
+  [shared setObject:self.customShortcuts forKey:@"customShortcuts"];
+  [shared synchronize];
+  [self setupTooltips];
+}
+
+- (NSString *)shortcutSuffixForAction:(NSString *)actionId {
+  NSString *sig = self.customShortcuts[actionId];
+  if (sig.length == 0) return @"";
+  return [NSString stringWithFormat:@"（%@）", DisplayForSignature(sig)];
 }
 
 - (void)showShortcutSettings:(id)sender {
@@ -1905,6 +1928,12 @@ int main(int argc, const char *argv[]) {
         exit(0);
       });
     }
+    if (getenv("DOCKLAUNCHER_TEST_SHORTCUT_DUMP")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        fprintf(stderr, "SHORTCUTS=%s\n", [[c.customShortcuts description] UTF8String]);
+        exit(0);
+      });
+    }
     if (getenv("DOCKLAUNCHER_TEST_SHORTCUT")) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         c.customShortcuts[@"search"] = @"cmd+f";
@@ -1914,6 +1943,7 @@ int main(int argc, const char *argv[]) {
                                    characters:@"f" charactersIgnoringModifiers:@"f"
                                      isARepeat:NO keyCode:3];
         BOOL handled = [c handleCustomShortcut:ev];
+        [c saveCustomShortcuts];
         [NSApp sendAction:@selector(showShortcutSettings:) to:c from:nil];
         fprintf(stderr, "HANDLED=%d SEARCH_ACTIVE=%d VISIBLE=%d FRAME=%.0f,%.0f,%.0fx%.0f\n",
                 handled, c.searchActive, c.shortcutPanel.isVisible,
