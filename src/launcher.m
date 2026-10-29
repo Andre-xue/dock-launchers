@@ -1661,6 +1661,8 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
 
 - (BOOL)handleCustomShortcut:(NSEvent *)event {
   if (self.recordingAction) return NO;
+  // 快捷键设置面板打开时，不触发应用内快捷键（避免设单键时误触发操作）
+  if (self.shortcutPanel.sheetParent != nil) return NO;
   NSString *sig = SignatureForEvent(event);
   BOOL hasMod = SignatureHasModifier(sig);
   BOOL editing = [self.window.firstResponder isKindOfClass:[NSTextView class]];
