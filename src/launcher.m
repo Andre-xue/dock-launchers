@@ -2998,7 +2998,7 @@ static NSString *ResolveAppPath(NSString *target) {
     self.idleTimePicker.datePickerElements = NSDatePickerElementFlagHourMinute;
     [cv addSubview:self.idleTimePicker];
 
-    NSTextField *tip = [NSTextField labelWithString:@"每天到该时间自动退出；若今天已过则从明天开始。默认关闭"];
+    NSTextField *tip = [NSTextField labelWithString:@"到该时间自动退出；若今天已过则顺延到明天。默认关闭"];
     tip.frame = NSMakeRect(20, 78, 360, 20);
     tip.font = [NSFont systemFontOfSize:11];
     tip.textColor = [NSColor secondaryLabelColor];
