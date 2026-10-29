@@ -1530,7 +1530,7 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"窗口变形（矩形→圆形）…" action:@selector(showShapePanel:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"恢复默认矩形" action:@selector(resetShapeRectangle:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"刷新列表并释放缓存" action:@selector(refreshListAndCaches:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"空闲 5 分钟自动退出" action:@selector(toggleIdleExit:) keyEquivalent:@""];
+  it = [m addItemWithTitle:@"空闲 3 分钟自动退出" action:@selector(toggleIdleExit:) keyEquivalent:@""];
   it.target = self;
   it.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"idleExitEnabled"] ? NSControlStateValueOn : NSControlStateValueOff;
   it = [m addItemWithTitle:@"选择自定义图片…" action:@selector(customPick:) keyEquivalent:@""]; it.target = self; it.state = (gTheme == 3);
@@ -1952,7 +1952,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.idleExitTimer = nil;
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   if (![d boolForKey:@"idleExitEnabled"]) return;
-  self.idleExitTimer = [NSTimer timerWithTimeInterval:300.0 target:self selector:@selector(idleExitFired:) userInfo:nil repeats:NO];
+  self.idleExitTimer = [NSTimer timerWithTimeInterval:180.0 target:self selector:@selector(idleExitFired:) userInfo:nil repeats:NO];
   [[NSRunLoop mainRunLoop] addTimer:self.idleExitTimer forMode:NSRunLoopCommonModes];
 }
 
