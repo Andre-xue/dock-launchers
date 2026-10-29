@@ -253,6 +253,12 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) id recordingMonitor;
 @property (strong) id activityMonitor;
 @property (strong) NSTimer *idleExitTimer;
+@property (strong) NSPanel *settingsPanel;
+@property (strong) NSView *settingsContent;
+@property (strong) NSScrollView *settingsScroll;
+@property (strong) NSArray *settingsTree;
+@property (strong) NSMutableArray *settingsVisible;
+@property (strong) NSMutableSet *settingsExpanded;
 @property (strong) NSPanel *idlePanel;
 @property (strong) NSButton *idleCheck;
 @property (strong) NSDatePicker *idleDatePicker;
@@ -286,6 +292,13 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)selectRow:(NSInteger)idx;
 - (void)applyTheme;
 - (void)showSkinMenu:(id)sender;
+- (void)rebuildSettingsRows;
+- (void)settingsRowClicked:(id)sender;
+- (void)closeSettingsPanel:(id)sender;
+- (void)setShapeRect:(id)sender;
+- (void)setShapeCircle:(id)sender;
+- (void)resetAllAppIcons:(id)sender;
+- (void)resetAllDefaults:(id)sender;
 - (void)skinWhite:(id)sender;
 - (void)skinBlack:(id)sender;
 - (void)skinGlass:(id)sender;
@@ -1822,43 +1835,170 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)showSkinMenu:(id)sender {
-  NSMenu *m = [[NSMenu alloc] init];
-  NSMenuItem *it;
-  it = [m addItemWithTitle:@"纯白背景" action:@selector(skinWhite:) keyEquivalent:@""]; it.target = self; it.state = (gTheme == 0);
-  it = [m addItemWithTitle:@"纯黑背景" action:@selector(skinBlack:) keyEquivalent:@""]; it.target = self; it.state = (gTheme == 1);
-  it = [m addItemWithTitle:@"质感玻璃" action:@selector(skinGlass:) keyEquivalent:@""]; it.target = self; it.state = (gTheme == 2);
-  [m addItem:[NSMenuItem separatorItem]];
-  it = [m addItemWithTitle:@"玻璃透明度…" action:@selector(showGlassPanel:) keyEquivalent:@""]; it.target = self; it.enabled = (gTheme == 2);
-  it = [m addItemWithTitle:@"窗口变形（矩形→圆形）…" action:@selector(showShapePanel:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"恢复默认矩形" action:@selector(resetShapeRectangle:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"刷新列表并释放缓存" action:@selector(refreshListAndCaches:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"空闲 3 分钟自动退出" action:@selector(toggleIdleExit:) keyEquivalent:@""];
-  it.target = self;
-  it.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"idleExitEnabled"] ? NSControlStateValueOn : NSControlStateValueOff;
-  it = [m addItemWithTitle:@"选择自定义图片…" action:@selector(customPick:) keyEquivalent:@""]; it.target = self; it.state = (gTheme == 3);
-  [m addItem:[NSMenuItem separatorItem]];
-  NSMenuItem *modeHdr = [m addItemWithTitle:@"排列方式" action:nil keyEquivalent:@""];
-  modeHdr.enabled = NO;
-  it = [m addItemWithTitle:@"列表显示" action:@selector(setDisplayListMode:) keyEquivalent:@""]; it.target = self; it.state = (gIconMode ? NSControlStateValueOff : NSControlStateValueOn);
-  it = [m addItemWithTitle:@"图标显示" action:@selector(setDisplayIconMode:) keyEquivalent:@""]; it.target = self; it.state = (gIconMode ? NSControlStateValueOn : NSControlStateValueOff);
-  [m addItem:[NSMenuItem separatorItem]];
-  NSMenuItem *hdr = [m addItemWithTitle:@"布局" action:nil keyEquivalent:@""];
-  hdr.enabled = NO;
-  NSInteger curCols = [self effectiveColumns];
-  it = [m addItemWithTitle:@"单列（默认）" action:@selector(layoutSingle:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 1);
-  it = [m addItemWithTitle:@"三列" action:@selector(layoutThree:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 3);
-  it = [m addItemWithTitle:@"四列" action:@selector(layoutFour:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 4);
-  [m addItem:[NSMenuItem separatorItem]];
-  it = [m addItemWithTitle:@"自定义选中应用图标…" action:@selector(showAppIconPanel:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"新建分组…" action:@selector(createGroupTapped:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"删除当前分组…" action:@selector(deleteCurrentGroup:) keyEquivalent:@""]; it.target = self;
-  [m addItem:[NSMenuItem separatorItem]];
-  it = [m addItemWithTitle:@"修复程序坞图标…" action:@selector(repairDockMenuTapped:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"快捷键设置…" action:@selector(showShortcutSettings:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"恢复分组默认图标" action:@selector(resetCustomIcon:) keyEquivalent:@""]; it.target = self;
-  [m addItem:[NSMenuItem separatorItem]];
-  it = [m addItemWithTitle:@"恢复默认（纯白）" action:@selector(skinReset:) keyEquivalent:@""]; it.target = self;
-  [m popUpMenuPositioningItem:nil atLocation:NSMakePoint(16, 0) inView:self.skinBtn];
+  if (!self.settingsExpanded) self.settingsExpanded = [NSMutableSet set];
+  self.settingsTree = @[
+    @{@"title":@"窗口背景", @"children":@[
+      @{@"title":@"纯白风格（默认）", @"sel":@"skinWhite:"},
+      @{@"title":@"纯黑风格", @"sel":@"skinBlack:"},
+      @{@"title":@"质感玻璃", @"children":@[@{@"title":@"玻璃透明度…", @"sel":@"showGlassPanel:"}]},
+      @{@"title":@"自定义背景", @"children":@[@{@"title":@"选择背景图片…", @"sel":@"customPick:"}]},
+      @{@"title":@"一键恢复（纯白）", @"sel":@"skinReset:"}]},
+    @{@"title":@"窗口形变", @"children":@[
+      @{@"title":@"矩形（默认）", @"sel":@"setShapeRect:"},
+      @{@"title":@"圆形（最圆）", @"sel":@"setShapeCircle:"},
+      @{@"title":@"手动形变", @"children":@[@{@"title":@"窗口形状调节…", @"sel":@"showShapePanel:"}]},
+      @{@"title":@"一键恢复（矩形）", @"sel":@"resetShapeRectangle:"}]},
+    @{@"title":@"应用排列", @"children":@[
+      @{@"title":@"列表显示（默认）", @"sel":@"setDisplayListMode:"},
+      @{@"title":@"图标显示", @"sel":@"setDisplayIconMode:"},
+      @{@"title":@"一键恢复（列表）", @"sel":@"setDisplayListMode:"}]},
+    @{@"title":@"应用布局", @"children":@[
+      @{@"title":@"单列布局（默认）", @"sel":@"layoutSingle:"},
+      @{@"title":@"三列布局", @"sel":@"layoutThree:"},
+      @{@"title":@"四列布局", @"sel":@"layoutFour:"},
+      @{@"title":@"一键恢复（单列）", @"sel":@"layoutSingle:"}]},
+    @{@"title":@"图标风格", @"children":@[
+      @{@"title":@"图标自定义", @"children":@[@{@"title":@"图标大小 / 形状 / 重命名…", @"sel":@"showAppIconPanel:"}]},
+      @{@"title":@"一键恢复默认", @"sel":@"resetAllAppIcons:"}]},
+    @{@"title":@"Dock 栏", @"children":@[
+      @{@"title":@"新建 Dock", @"sel":@"createGroupTapped:"},
+      @{@"title":@"移除 Dock", @"sel":@"deleteCurrentGroup:"},
+      @{@"title":@"Dock 风格", @"children":@[
+        @{@"title":@"更换 Dock 图标…", @"sel":@"pickIconImage:"},
+        @{@"title":@"恢复分组默认图标", @"sel":@"resetCustomIcon:"}]},
+      @{@"title":@"一键恢复 Dock 栏", @"sel":@"repairDockMenuTapped:"}]},
+    @{@"title":@"设置", @"children":@[
+      @{@"title":@"快捷键映射", @"sel":@"showShortcutSettings:"},
+      @{@"title":@"效率", @"children":@[
+        @{@"title":@"自动退出程序时间（空闲 3 分钟）", @"sel":@"toggleIdleExit:"},
+        @{@"title":@"刷新列表并释放内存缓存", @"sel":@"refreshListAndCaches:"}]},
+      @{@"title":@"一键恢复所有默认状态", @"sel":@"resetAllDefaults:"}]}
+  ];
+
+  if (!self.settingsPanel) {
+    NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,440,620)
+                                            styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
+                                              backing:NSBackingStoreBuffered defer:NO];
+    p.title = @"设置";
+    p.level = NSFloatingWindowLevel;
+    self.settingsPanel = p;
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,440,584)];
+    sv.hasVerticalScroller = YES;
+    sv.drawsBackground = NO;
+    sv.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
+    self.settingsScroll = sv;
+    [p.contentView addSubview:sv];
+  }
+  [self rebuildSettingsRows];
+  [self.settingsPanel center];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.settingsPanel makeKeyAndOrderFront:nil];
+}
+
+- (void)rebuildSettingsRows {
+  if (!self.settingsVisible) self.settingsVisible = [NSMutableArray array];
+  [self.settingsVisible removeAllObjects];
+  if (!self.settingsExpanded) self.settingsExpanded = [NSMutableSet set];
+  __block NSMutableArray *flat = [NSMutableArray array];
+  __block void (^walk)(NSArray *, NSInteger, NSString *);
+  walk = ^(NSArray *nodes, NSInteger level, NSString *prefix) {
+    for (NSDictionary *n in nodes) {
+      NSString *title = n[@"title"] ?: @"";
+      NSString *path = prefix.length ? [prefix stringByAppendingFormat:@"/%@", title] : title;
+      BOOL hasKids = [(NSArray *)n[@"children"] count] > 0;
+      BOOL expanded = hasKids && [self.settingsExpanded containsObject:path];
+      [flat addObject:@{@"title":title, @"level":@(level), @"path":path, @"sel":(n[@"sel"] ?: @""), @"kids":@(hasKids), @"open":@(expanded)}];
+      if (expanded) walk(n[@"children"], level+1, path);
+    }
+  };
+  walk(self.settingsTree, 0, @"");
+  [self.settingsVisible addObjectsFromArray:flat];
+  CGFloat totalH = 20;
+  for (NSDictionary *n in flat) totalH += ([n[@"level"] integerValue] == 0 ? 40 : 34);
+  NSInteger idx = 0;
+  CGFloat y = 10;
+  NSView *content = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,420,totalH)];
+  for (NSDictionary *n in flat) {
+    NSInteger level = [n[@"level"] integerValue];
+    BOOL kids = [n[@"kids"] boolValue], open = [n[@"open"] boolValue];
+    CGFloat h = (level == 0 ? 40 : 34);
+    NSString *mark = kids ? (open ? @"▾ " : @"▸ ") : @"   ";
+    NSString *title = [NSString stringWithFormat:@"%@%@", mark, n[@"title"]];
+    NSFont *font = (level == 0) ? [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold]
+                                : [NSFont systemFontOfSize:(level == 1 ? 13 : 12)];
+    NSButton *b = [NSButton buttonWithTitle:title target:self action:@selector(settingsRowClicked:)];
+    b.frame = NSMakeRect(10 + level * 22, y, 400 - level * 22, h - 4);
+    y += h;
+    b.tag = idx;
+    b.bordered = NO;
+    b.focusRingType = NSFocusRingTypeNone;
+    b.alignment = NSTextAlignmentLeft;
+    b.font = font;
+    b.wantsLayer = YES;
+    if (level == 0) {
+      b.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.94 alpha:1.0].CGColor;
+      b.layer.cornerRadius = 8;
+    }
+    [content addSubview:b];
+    idx++;
+  }
+  content.frame = NSMakeRect(0, 0, 420, MAX(y + 10, totalH));
+  [self.settingsScroll setDocumentView:content];
+  [content scrollPoint:NSMakePoint(0, 0)];
+  self.settingsContent = content;
+}
+
+- (void)settingsRowClicked:(id)sender {
+  NSInteger idx = [sender tag];
+  if (idx < 0 || idx >= (NSInteger)self.settingsVisible.count) return;
+  NSDictionary *n = self.settingsVisible[idx];
+  if ([n[@"kids"] boolValue]) {
+    NSString *path = n[@"path"];
+    if ([self.settingsExpanded containsObject:path]) [self.settingsExpanded removeObject:path];
+    else [self.settingsExpanded addObject:path];
+    [self rebuildSettingsRows];
+    return;
+  }
+  NSString *selName = n[@"sel"];
+  [self closeSettingsPanel:nil];
+  if (selName.length) {
+    SEL sel = NSSelectorFromString(selName);
+    if ([self respondsToSelector:sel]) [self performSelector:sel withObject:nil];
+  }
+}
+
+- (void)closeSettingsPanel:(id)sender {
+  [self.settingsPanel orderOut:nil];
+}
+
+- (void)setShapeRect:(id)sender {
+  gCornerRatio = 0;
+  [self applyTheme]; [self layoutContent]; [self reload]; [self saveTheme];
+}
+
+- (void)setShapeCircle:(id)sender {
+  gCornerRatio = 0.5;
+  [self applyTheme]; [self layoutContent]; [self reload]; [self saveTheme];
+}
+
+- (void)resetAllAppIcons:(id)sender {
+  [gAppIconSettings removeAllObjects];
+  [self saveTheme];
+  [self reload];
+}
+
+- (void)resetAllDefaults:(id)sender {
+  gTheme = 0;
+  gCornerRatio = 0;
+  gIconMode = NO;
+  self.userColumns = 1;
+  [gAppIconSettings removeAllObjects];
+  [gOriginalNames removeAllObjects];
+  [self saveTheme];
+  [self resetCustomIcon:nil];
+  [self applyTheme];
+  [self reload];
+  [self layoutContent];
 }
 
 - (void)skinWhite:(id)sender { gTheme = 0; [self applyTheme]; }
@@ -3784,6 +3924,17 @@ int main(int argc, const char *argv[]) {
         [c resetIdleTimer];
         fprintf(stderr, "CD hidden=%d frame=%.0f,%.0f,%.0fx%.0f text='%s'\n", c.countdownLabel.hidden, c.countdownLabel.frame.origin.x, c.countdownLabel.frame.origin.y, c.countdownLabel.frame.size.width, c.countdownLabel.frame.size.height, [c.countdownLabel.stringValue UTF8String]);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_SETTINGS_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c showSkinMenu:nil];
+        fprintf(stderr, "SETTINGS tree=%ld visible0=%ld\n", (long)c.settingsTree.count, (long)c.settingsVisible.count);
+        NSButton *fake = [[NSButton alloc] init];
+        fake.tag = 0;
+        [c settingsRowClicked:fake];
+        fprintf(stderr, "SETTINGS visible=%ld\n", (long)c.settingsVisible.count);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_IDLE_IDLE")) {
