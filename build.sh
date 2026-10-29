@@ -7,7 +7,7 @@ UI="$ROOT/build/ui"
 
 echo "==> 编译通用二进制（arm64 + x86_64）"
 mkdir -p "$ROOT/build"
-xcrun clang -fobjc-arc -framework Cocoa \
+xcrun clang -fobjc-arc -framework Cocoa -framework Security \
   -arch arm64 -arch x86_64 \
   -o "$UI" "$ROOT/src/launcher.m"
 

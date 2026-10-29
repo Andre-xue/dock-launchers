@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <Security/Security.h>
 #import <mach/mach.h>
 #import <sys/xattr.h>
 
@@ -297,6 +298,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (BOOL)updateLabel:(NSString *)newLabel forTarget:(NSString *)target;
 - (BOOL)createGroupNamed:(NSString *)name;
 - (void)deleteCurrentGroup:(id)sender;
+- (BOOL)authorizeAdminDeletion;
+- (BOOL)trashGroupFilesWithAdmin;
+- (void)destroyGroupData;
 - (void)addDockEntryForPath:(NSString *)path label:(NSString *)label;
 - (void)removeDockEntryForPath:(NSString *)path;
 - (void)togglePin:(id)sender;
@@ -2386,40 +2390,111 @@ static NSString *ResolveAppPath(NSString *target) {
   [ok runModal];
 }
 
-- (void)deleteCurrentGroup:(id)sender {
-  NSAlert *a = [[NSAlert alloc] init];
-  a.messageText = [NSString stringWithFormat:@"删除分组「%@」？", gGroup];
-  a.informativeText = [NSString stringWithFormat:@"分组里的 %ld 个应用不会被卸载，只会删除分组本身（App 与列表移到废纸篓）并从程序坞移除。", (long)self.items.count];
-  [a addButtonWithTitle:@"继续"];
-  [a addButtonWithTitle:@"取消"];
-  if ([a runModal] != NSAlertFirstButtonReturn) return;
+- (BOOL)authorizeAdminDeletion {
+  AuthorizationRef ref = NULL;
+  OSStatus st = AuthorizationCreate(NULL, NULL, kAuthorizationFlagDefaults, &ref);
+  if (st != errAuthorizationSuccess) return NO;
+  AuthorizationItem item = { "system.privilege.admin", 0, NULL, 0 };
+  AuthorizationRights rights = { 1, &item };
+  AuthorizationFlags flags = kAuthorizationFlagDefaults | kAuthorizationFlagInteractionAllowed |
+                             kAuthorizationFlagPreAuthorize | kAuthorizationFlagExtendRights;
+  st = AuthorizationCopyRights(ref, &rights, NULL, flags, NULL);
+  AuthorizationFree(ref, kAuthorizationFlagDefaults);
+  return st == errAuthorizationSuccess;
+}
 
-  NSAlert *confirm2 = [[NSAlert alloc] init];
-  confirm2.messageText = [NSString stringWithFormat:@"再次确认：删除分组「%@」？", gGroup];
-  confirm2.informativeText = @"此操作会把该分组的 App 包和列表文件移到废纸篓，Dock 图标会被移除；分组里的应用本体不受影响。";
-  [confirm2 addButtonWithTitle:@"确认删除"];
-  [confirm2 addButtonWithTitle:@"取消"];
-  if ([confirm2 runModal] != NSAlertFirstButtonReturn) return;
+- (BOOL)trashGroupFilesWithAdmin {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *curPath = [self currentBundlePathByID];
+  NSString *parent = [curPath stringByDeletingLastPathComponent];
+  NSString *base = [[curPath lastPathComponent] stringByDeletingPathExtension];
+  NSString *listFile = [[parent stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[base stringByAppendingPathExtension:@"txt"]];
+  NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
+  NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
+  NSString *scriptPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"docklauncher-admin-delete.sh"];
+  NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\nmkdir -p \"$TRASH\"\n"];
+  [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%@\" 2>/dev/null\n", curPath, curPath, trash, stamp, [curPath lastPathComponent]];
+  if ([fm fileExistsAtPath:listFile]) [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%@\" 2>/dev/null\n", listFile, listFile, trash, stamp, [listFile lastPathComponent]];
+  [body appendString:@"/usr/bin/killall -KILL Dock 2>/dev/null\ntrue\n"];
+  NSString *final = [body stringByReplacingOccurrencesOfString:@"\"$TRASH\"" withString:[NSString stringWithFormat:@"\"%@\"", trash]];
+  if (![final writeToFile:scriptPath atomically:YES encoding:NSUTF8StringEncoding error:NULL]) return NO;
+  [fm setAttributes:@{NSFilePosixPermissions: @0755} ofItemAtPath:scriptPath error:NULL];
+  NSString *osa = [NSString stringWithFormat:@"do shell script \"/bin/sh %@\" with administrator privileges", scriptPath];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/osascript";
+  t.arguments = @[@"-e", osa];
+  @try {
+    [t launch];
+    [t waitUntilExit];
+  } @catch (NSException *e) { return NO; }
+  return (t.terminationStatus == 0);
+}
 
+- (void)destroyGroupData {
+  NSFileManager *fm = [NSFileManager defaultManager];
   NSString *curPath = [self currentBundlePathByID];
   NSString *parent = [curPath stringByDeletingLastPathComponent];
   NSString *base = [[curPath lastPathComponent] stringByDeletingPathExtension];
   [self removeDockEntryForPath:curPath];
-  NSFileManager *fm = [NSFileManager defaultManager];
-  [fm trashItemAtURL:[NSURL fileURLWithPath:curPath] resultingItemURL:nil error:NULL];
+  for (NSDictionary *cfg in [gAppIconSettings allValues]) {
+    NSString *img = cfg[@"image"];
+    if (img.length && [fm fileExistsAtPath:img]) [fm removeItemAtPath:img error:NULL];
+  }
+  [gAppIconSettings removeAllObjects];
+  [gOriginalNames removeAllObjects];
   NSString *listFile = [[parent stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[base stringByAppendingPathExtension:@"txt"]];
-  if ([fm fileExistsAtPath:listFile]) [fm trashItemAtURL:[NSURL fileURLWithPath:listFile] resultingItemURL:nil error:NULL];
-
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    NSTask *task = [[NSTask alloc] init];
-    task.launchPath = @"/usr/bin/killall";
-    task.arguments = @[@"-KILL", @"Dock"];
-    @try { [task launch]; } @catch (NSException *e) {}
-  });
-  [NSApp terminate:nil];
+  NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+  if (bid.length) [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:bid];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  (void)curPath; (void)listFile;
 }
 
-#pragma mark - 应用图标自定义
+- (void)deleteCurrentGroup:(id)sender {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"删除分组「%@」？", gGroup];
+  a.informativeText = [NSString stringWithFormat:@"此操作将删除该页面的所有数据（不可逆）：\n• 分组 App 与列表（含 %ld 个应用条目）\n• 自定义图标、大小、形状、改名记录\n• Dock 图标与本机设置\n\n不会卸载应用本体。", (long)self.items.count];
+  [a addButtonWithTitle:@"删除"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+
+  NSAlert *warn = [[NSAlert alloc] init];
+  warn.messageText = @"此操作将删除该页面的所有数据不可逆，是否操作？";
+  warn.informativeText = @"5 秒后可点击「是」继续；选择「否」将退回设置界面。";
+  [warn addButtonWithTitle:@"是（5）"];
+  [warn addButtonWithTitle:@"否"];
+  NSButton *yesBtn = warn.buttons[0];
+  yesBtn.enabled = NO;
+  for (int sec = 5; sec >= 1; sec--) {
+    int remain = sec - 1;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((5 - sec + 1) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      if (remain > 0) yesBtn.title = [NSString stringWithFormat:@"是（%d）", remain];
+      else { yesBtn.title = @"是"; yesBtn.enabled = YES; }
+    });
+  }
+  if ([warn runModal] != NSAlertFirstButtonReturn) return;
+
+  NSAlert *warn2 = [[NSAlert alloc] init];
+  warn2.messageText = @"再次确认：删除当前分组？";
+  warn2.informativeText = @"确认后需要输入管理员密码，所有数据会被移到废纸篓且无法恢复。";
+  [warn2 addButtonWithTitle:@"是"];
+  [warn2 addButtonWithTitle:@"否"];
+  if ([warn2 runModal] != NSAlertFirstButtonReturn) return;
+
+  if (![self trashGroupFilesWithAdmin]) {
+    NSAlert *e = [[NSAlert alloc] init];
+    e.messageText = @"已取消";
+    e.informativeText = @"未通过管理员验证，数据未做任何改动。";
+    [e runModal];
+    return;
+  }
+
+  [self destroyGroupData];
+  NSAlert *done = [[NSAlert alloc] init];
+  done.messageText = @"该数据已被全部清除在废纸篓内";
+  done.informativeText = @"分组 App、列表与本地设置已删除；如需找回，可从废纸篓恢复。";
+  [done runModal];
+  exit(0);
+}
 
 - (void)appIconPickerChanged:(id)sender {
   NSInteger idx = self.appIconPicker.indexOfSelectedItem;
@@ -3545,6 +3620,15 @@ int main(int argc, const char *argv[]) {
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
         exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_DESTROY")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        fprintf(stderr, "DESTROY before=%s\n", [[c currentBundlePathByID] UTF8String]);
+        gAppIconSettings[@"x"] = @{@"image": @"/nonexistent"};
+        [c destroyGroupData];
+        fprintf(stderr, "DESTROY after=%d\n", [[NSFileManager defaultManager] fileExistsAtPath:[c currentBundlePathByID]]);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_RESETNAME")) {
