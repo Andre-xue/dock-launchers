@@ -2182,6 +2182,9 @@ static NSString *ResolveAppPath(NSString *target) {
   NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
   NSString *base = [@"~/Library/Application Support/DockLaunchers/backup/DockLaunchers" stringByExpandingTildeInPath];
   NSFileManager *fm = [NSFileManager defaultManager];
+  NSInteger appCount = 0;
+  for (NSString *f in [fm contentsOfDirectoryAtPath:parent error:NULL]) if ([f hasSuffix:@".app"]) appCount++;
+  if (appCount == 0) return NO;   // 没有 App 时不覆盖已有备份
   [fm removeItemAtPath:base error:NULL];
   [fm createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:NULL];
   for (NSString *f in [fm contentsOfDirectoryAtPath:parent error:NULL]) {
@@ -2207,7 +2210,13 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)backupGroupsNow:(id)sender {
-  [self writeLocalBackup];
+  if (![self writeLocalBackup]) {
+    NSAlert *e = [[NSAlert alloc] init];
+    e.messageText = @"备份失败";
+    e.informativeText = @"当前目录下没有找到分组 App，已保留原有备份未覆盖。";
+    [e runModal];
+    return;
+  }
   NSString *base = [@"~/Library/Application Support/DockLaunchers/backup/DockLaunchers" stringByExpandingTildeInPath];
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"已备份到本机";
@@ -2223,8 +2232,14 @@ static NSString *ResolveAppPath(NSString *target) {
   [c addButtonWithTitle:@"取消"];
   if ([c runModal] != NSAlertFirstButtonReturn) return;
 
-  // 先刷新备份，保证可恢复
-  [self writeLocalBackup];
+  // 先刷新备份，保证可恢复；备份失败则取消卸载
+  if (![self writeLocalBackup]) {
+    NSAlert *e = [[NSAlert alloc] init];
+    e.messageText = @"无法卸载";
+    e.informativeText = @"未能完成本机备份，为避免数据丢失，已取消卸载。";
+    [e runModal];
+    return;
+  }
 
   NSFileManager *fm = [NSFileManager defaultManager];
   NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
