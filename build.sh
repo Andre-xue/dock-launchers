@@ -15,12 +15,12 @@ rm -rf "$OUT"
 mkdir -p "$OUT/lists"
 
 build_one() {
-  local NAME="$1" DISPLAY="$2" IDENT="$3"
+  local NAME="$1" DISPLAY="$2" IDENT="$3" ICON="$4"
   local APP="$OUT/$NAME.app"
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
   cp "$UI" "$APP/Contents/MacOS/ui"
   chmod +x "$APP/Contents/MacOS/ui"
-  cp "$ROOT/resources/icons/$NAME.icns" "$APP/Contents/Resources/AppIcon.icns"
+  cp "$ROOT/resources/icons/${ICON:-$NAME}.icns" "$APP/Contents/Resources/AppIcon.icns"
   cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -45,13 +45,13 @@ PLIST
   echo "  构建 $NAME.app ($DISPLAY)"
 }
 
-build_one "工作组"  "工作"    "gongzuo"
-build_one "聊天组"  "聊天"    "liaotian"
-build_one "外网组"  "外网"    "waiwang"
-build_one "影音组"  "影音"    "yingyin"
-build_one "Ai组"    "Ai"      "ai"
-build_one "Docker组" "Docker" "docker"
-build_one "工具组"  "工具"    "gongju"
+build_one "工作" "工作" "gongzuo" "工作组"
+build_one "聊天" "聊天" "liaotian" "聊天组"
+build_one "外网" "外网" "waiwang" "外网组"
+build_one "影音" "影音" "yingyin" "影音组"
+build_one "Ai"   "Ai"   "ai"       "Ai组"
+build_one "Docker" "Docker" "docker" "Docker组"
+build_one "工具" "工具" "gongju" "工具组"
 
 cp "$ROOT/lists/"*.txt "$OUT/lists/" 2>/dev/null || true
 echo "==> 完成：$OUT"

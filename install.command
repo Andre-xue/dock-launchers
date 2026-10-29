@@ -26,13 +26,13 @@ done
 mdimport "$DEST" 2>/dev/null || true
 
 URLS=(
-"file://$HOME/Applications/DockLaunchers/%E5%B7%A5%E4%BD%9C%E7%BB%84.app"
-"file://$HOME/Applications/DockLaunchers/%E8%81%8A%E5%A4%A9%E7%BB%84.app"
-"file://$HOME/Applications/DockLaunchers/%E5%A4%96%E7%BD%91%E7%BB%84.app"
-"file://$HOME/Applications/DockLaunchers/%E5%BD%B1%E9%9F%B3%E7%BB%84.app"
-"file://$HOME/Applications/DockLaunchers/Ai%E7%BB%84.app"
-"file://$HOME/Applications/DockLaunchers/Docker%E7%BB%84.app"
-"file://$HOME/Applications/DockLaunchers/%E5%B7%A5%E5%85%B7%E7%BB%84.app"
+"file://$HOME/Applications/DockLaunchers/%E5%B7%A5%E4%BD%9C.app"
+"file://$HOME/Applications/DockLaunchers/%E8%81%8A%E5%A4%A9.app"
+"file://$HOME/Applications/DockLaunchers/%E5%A4%96%E7%BD%91.app"
+"file://$HOME/Applications/DockLaunchers/%E5%BD%B1%E9%9F%B3.app"
+"file://$HOME/Applications/DockLaunchers/Ai.app"
+"file://$HOME/Applications/DockLaunchers/Docker.app"
+"file://$HOME/Applications/DockLaunchers/%E5%B7%A5%E5%85%B7.app"
 )
 EXISTING=$(defaults read com.apple.dock persistent-apps 2>/dev/null || true)
 for u in "${URLS[@]}"; do
