@@ -159,6 +159,10 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)resetIdleTimer;
 - (void)idleExitFired:(NSTimer *)t;
 - (void)refreshListAndCaches:(id)sender;
+- (void)createGroupTapped:(id)sender;
+- (void)deleteCurrentGroup:(id)sender;
+- (void)addDockEntryForPath:(NSString *)path label:(NSString *)label;
+- (void)removeDockEntryForPath:(NSString *)path;
 - (void)togglePin:(id)sender;
 - (void)updatePinAppearance;
 - (void)closeShapePanel:(id)sender;
@@ -1561,6 +1565,9 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"三列" action:@selector(layoutThree:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 3);
   it = [m addItemWithTitle:@"四列" action:@selector(layoutFour:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 4);
   [m addItem:[NSMenuItem separatorItem]];
+  it = [m addItemWithTitle:@"新建分组…" action:@selector(createGroupTapped:) keyEquivalent:@""]; it.target = self;
+  it = [m addItemWithTitle:@"删除当前分组…" action:@selector(deleteCurrentGroup:) keyEquivalent:@""]; it.target = self;
+  [m addItem:[NSMenuItem separatorItem]];
   it = [m addItemWithTitle:@"修复程序坞图标…" action:@selector(repairDockMenuTapped:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"快捷键设置…" action:@selector(showShortcutSettings:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"更换图标（人物图片）…" action:@selector(pickIconImage:) keyEquivalent:@""]; it.target = self;
@@ -1954,6 +1961,131 @@ static NSString *ResolveAppPath(NSString *target) {
   done.messageText = [NSString stringWithFormat:@"已重命名 %ld 个分组", (long)renamed];
   done.informativeText = renamed ? @"程序坞会在稍后自动刷新，标签将不再带「组」。" : @"没有需要改名的分组。";
   [done runModal];
+}
+
+#pragma mark - 新建 / 删除分组
+
+- (void)addDockEntryForPath:(NSString *)path label:(NSString *)label {
+  @try {
+    CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+    NSMutableArray *apps = raw ? [CFBridgingRelease(raw) mutableCopy] : [NSMutableArray array];
+    NSString *enc = [[path stringByAppendingString:@"/"] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
+    NSString *url = [NSString stringWithFormat:@"file://%@", enc];
+    for (id item in apps) {
+      NSString *u = nil; @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
+      if (u && [u containsString:enc]) return;
+    }
+    [apps addObject:@{@"tile-data": @{@"file-data": @{@"_CFURLString": url, @"_CFURLStringType": @0},
+                                      @"file-label": label, @"file-type": @41},
+                      @"tile-type": @"file-tile"}];
+    CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)apps, CFSTR("com.apple.dock"));
+    CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+  } @catch (NSException *e) {}
+}
+
+- (void)removeDockEntryForPath:(NSString *)path {
+  @try {
+    NSString *enc = [[path stringByAppendingString:@"/"] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
+    CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+    if (!raw) return;
+    NSArray *apps = CFBridgingRelease(raw);
+    NSMutableArray *kept = [NSMutableArray array];
+    for (id item in apps) {
+      NSString *u = nil; @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
+      if (u && [u containsString:enc]) continue;
+      [kept addObject:item];
+    }
+    CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)kept, CFSTR("com.apple.dock"));
+    CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+  } @catch (NSException *e) {}
+}
+
+- (void)createGroupTapped:(id)sender {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"新建分组";
+  a.informativeText = @"输入分组名（例如 设计 或 设计组）。会复制当前分组作为模板，创建后可在窗口里用 ＋ 添加应用。";
+  NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,240,24)];
+  a.accessoryView = tf;
+  [a addButtonWithTitle:@"创建"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSString *name = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  while ([name hasSuffix:@"组"] && name.length > 1) name = [name substringToIndex:name.length-1];
+  if (name.length == 0) return;
+
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
+  NSString *newPath = [parent stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]];
+  if ([fm fileExistsAtPath:newPath]) {
+    NSAlert *e = [[NSAlert alloc] init]; e.messageText = @"已存在同名分组"; [e runModal]; return;
+  }
+  NSError *err = nil;
+  if (![fm copyItemAtPath:[self currentBundlePathByID] toPath:newPath error:&err]) {
+    NSAlert *e = [[NSAlert alloc] init];
+    e.messageText = @"创建失败";
+    e.informativeText = err.localizedDescription ?: @"";
+    [e runModal];
+    return;
+  }
+  // 修改 Info
+  NSString *plistPath = [newPath stringByAppendingPathComponent:@"Contents/Info.plist"];
+  NSData *data = [NSData dataWithContentsOfFile:plistPath];
+  NSMutableDictionary *info = data ? [[NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainers format:NULL error:NULL] mutableCopy] : nil;
+  if (info) {
+    info[@"CFBundleName"] = name;
+    info[@"CFBundleDisplayName"] = name;
+    info[@"CFBundleIdentifier"] = [NSString stringWithFormat:@"com.docklaunchers.%lu", (unsigned long)([[NSDate date] timeIntervalSince1970] * 1000)];
+    NSData *out = [NSPropertyListSerialization dataWithPropertyList:info format:NSPropertyListXMLFormat_v1_0 options:0 error:NULL];
+    [out writeToFile:plistPath atomically:YES];
+  }
+  NSString *listsDir = [parent stringByAppendingPathComponent:@"lists"];
+  [fm createDirectoryAtPath:listsDir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *listFile = [listsDir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+  if (![fm fileExistsAtPath:listFile]) [@"" writeToFile:listFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+
+  NSTask *sign = [[NSTask alloc] init];
+  sign.launchPath = @"/usr/bin/codesign";
+  sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", newPath];
+  @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
+
+  [self addDockEntryForPath:newPath label:name];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    NSTask *task = [[NSTask alloc] init];
+    task.launchPath = @"/usr/bin/killall";
+    task.arguments = @[@"-KILL", @"Dock"];
+    @try { [task launch]; } @catch (NSException *e) {}
+  });
+
+  NSAlert *ok = [[NSAlert alloc] init];
+  ok.messageText = @"已创建";
+  ok.informativeText = [NSString stringWithFormat:@"%@.app 已创建并加入程序坞。\n双击 Dock 里的新图标即可打开并添加应用。", name];
+  [ok runModal];
+}
+
+- (void)deleteCurrentGroup:(id)sender {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"删除分组「%@」？", gGroup];
+  a.informativeText = @"会删除该分组的 App 和列表文件（移到废纸篓），并从程序坞移除。应用本身不受影响。";
+  [a addButtonWithTitle:@"删除"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+
+  NSString *curPath = [self currentBundlePathByID];
+  NSString *parent = [curPath stringByDeletingLastPathComponent];
+  NSString *base = [[curPath lastPathComponent] stringByDeletingPathExtension];
+  [self removeDockEntryForPath:curPath];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  [fm trashItemAtURL:[NSURL fileURLWithPath:curPath] resultingItemURL:nil error:NULL];
+  NSString *listFile = [[parent stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[base stringByAppendingPathExtension:@"txt"]];
+  if ([fm fileExistsAtPath:listFile]) [fm trashItemAtURL:[NSURL fileURLWithPath:listFile] resultingItemURL:nil error:NULL];
+
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    NSTask *task = [[NSTask alloc] init];
+    task.launchPath = @"/usr/bin/killall";
+    task.arguments = @[@"-KILL", @"Dock"];
+    @try { [task launch]; } @catch (NSException *e) {}
+  });
+  [NSApp terminate:nil];
 }
 
 #pragma mark - 钉住
