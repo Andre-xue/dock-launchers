@@ -168,6 +168,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)searchTapped:(id)sender;
 - (void)renameGroupFromTitle;
 - (void)updateGroupDisplayName:(NSString *)name;
+- (void)performFullRename:(NSString *)typed;
+- (void)writeInfoNamesInBundle:(NSString *)bundlePath base:(NSString *)base display:(NSString *)display;
+- (void)updateDockPathFrom:(NSString *)oldPath to:(NSString *)newPath;
 - (void)loadCustomShortcuts;
 - (void)saveCustomShortcuts;
 - (void)showShortcutSettings:(id)sender;
@@ -1458,7 +1461,7 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)renameGroupFromTitle {
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"重命名分组";
-  a.informativeText = @"只改显示名称，不会移动或删除任何文件。";
+  a.informativeText = @"会同时重命名 App 包、列表文件和程序坞图标名，分组内容保留。";
   NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 240, 24)];
   tf.stringValue = gGroup ?: @"";
   a.accessoryView = tf;
@@ -1467,31 +1470,133 @@ static NSString *ResolveAppPath(NSString *target) {
   if ([a runModal] != NSAlertFirstButtonReturn) return;
   NSString *name = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
   if (name.length == 0) return;
-  gGroup = name;
-  [self updateGroupDisplayName:name];
+  [self performFullRename:name];
 }
 
-- (void)updateGroupDisplayName:(NSString *)name {
-  self.windowTitleLabel.title = name;
-  self.window.title = name;
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-  [d setObject:name forKey:@"displayNameOverride"];
-  [d synchronize];
-  // 同步写入 Info.plist 的显示名，Dock 标签在下次启动/刷新后生效
+- (void)writeInfoNamesInBundle:(NSString *)bundlePath base:(NSString *)base display:(NSString *)display {
   @try {
-    NSString *plistPath = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:@"Contents/Info.plist"];
+    NSString *plistPath = [bundlePath stringByAppendingPathComponent:@"Contents/Info.plist"];
     NSData *data = [NSData dataWithContentsOfFile:plistPath];
-    if (data) {
-      NSMutableDictionary *info = [[NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainers format:NULL error:NULL] mutableCopy];
-      if (info) {
-        info[@"CFBundleDisplayName"] = name;
-        NSData *out = [NSPropertyListSerialization dataWithPropertyList:info format:NSPropertyListXMLFormat_v1_0 options:0 error:NULL];
-        if (out) [out writeToFile:plistPath atomically:YES];
+    if (!data) return;
+    NSMutableDictionary *info = [[NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainers format:NULL error:NULL] mutableCopy];
+    if (!info) return;
+    info[@"CFBundleName"] = base;
+    info[@"CFBundleDisplayName"] = display;
+    NSData *out = [NSPropertyListSerialization dataWithPropertyList:info format:NSPropertyListXMLFormat_v1_0 options:0 error:NULL];
+    if (out) [out writeToFile:plistPath atomically:YES];
+  } @catch (NSException *e) {}
+}
+
+- (void)updateDockPathFrom:(NSString *)oldPath to:(NSString *)newPath {
+  @try {
+    NSString *oldBase = [[oldPath lastPathComponent] stringByDeletingPathExtension];
+    NSString *newBase = [[newPath lastPathComponent] stringByDeletingPathExtension];
+    NSString *oldEnc = (__bridge_transfer NSString *)CFURLCreateStringByAddingPercentEscapes(NULL, (__bridge CFStringRef)[NSString stringWithFormat:@"%@.app", oldBase], NULL, CFSTR("/"), kCFStringEncodingUTF8);
+    NSString *newEnc = (__bridge_transfer NSString *)CFURLCreateStringByAddingPercentEscapes(NULL, (__bridge CFStringRef)[NSString stringWithFormat:@"%@.app", newBase], NULL, CFSTR("/"), kCFStringEncodingUTF8);
+    CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+    if (!raw) return;
+    NSArray *apps = CFBridgingRelease(raw);
+    NSMutableArray *updated = [NSMutableArray array];
+    BOOL changed = NO;
+    for (id item in apps) {
+      if ([item isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *m = [item mutableCopy];
+        NSMutableDictionary *tileData = [m[@"tile-data"] mutableCopy];
+        if (tileData) {
+          NSMutableDictionary *fileData = [tileData[@"file-data"] mutableCopy];
+          if (fileData[@"_CFURLString"]) {
+            NSString *u = fileData[@"_CFURLString"];
+            if ([u containsString:oldEnc]) {
+              fileData[@"_CFURLString"] = [u stringByReplacingOccurrencesOfString:oldEnc withString:newEnc];
+              tileData[@"file-data"] = fileData;
+              m[@"tile-data"] = tileData;
+              changed = YES;
+            }
+          }
+        }
+        [updated addObject:m];
+      } else {
+        [updated addObject:item];
       }
     }
+    if (changed) {
+      CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)updated, CFSTR("com.apple.dock"));
+      CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+    }
   } @catch (NSException *e) {}
-  [self layoutContent];
 }
+
+- (void)performFullRename:(NSString *)typed {
+  BOOL hadSuffix = [typed hasSuffix:@"组"];
+  NSString *display = hadSuffix ? [typed substringToIndex:typed.length - 1] : typed;
+  NSString *newBase = hadSuffix ? typed : [typed stringByAppendingString:@"组"];
+  if (display.length == 0) return;
+
+  NSString *oldPath = [[NSBundle mainBundle] bundlePath];
+  NSString *parent = [oldPath stringByDeletingLastPathComponent];
+  NSString *oldBase = [[oldPath lastPathComponent] stringByDeletingPathExtension];
+  NSString *newPath = [parent stringByAppendingPathComponent:[newBase stringByAppendingPathExtension:@"app"]];
+  NSFileManager *fm = [NSFileManager defaultManager];
+
+  if (![newBase isEqualToString:oldBase]) {
+    if ([fm fileExistsAtPath:newPath]) {
+      NSAlert *e = [[NSAlert alloc] init];
+      e.messageText = @"名称已存在";
+      e.informativeText = [NSString stringWithFormat:@"%@ 已经存在，请换一个名字。", [newBase stringByAppendingPathExtension:@"app"]];
+      [e runModal];
+      return;
+    }
+    // 1. 重命名列表文件
+    NSString *listsDir = [parent stringByAppendingPathComponent:@"lists"];
+    NSString *oldList = [listsDir stringByAppendingPathComponent:[oldBase stringByAppendingPathExtension:@"txt"]];
+    NSString *newList = [listsDir stringByAppendingPathComponent:[newBase stringByAppendingPathExtension:@"txt"]];
+    BOOL hadList = [fm fileExistsAtPath:oldList];
+    if (hadList) {
+      NSError *err = nil;
+      [fm moveItemAtPath:oldList toPath:newList error:&err];
+      if (err) { NSAlert *a = [[NSAlert alloc] init]; a.messageText = @"重命名列表失败"; a.informativeText = err.localizedDescription; [a runModal]; return; }
+    }
+    // 2. 先写 Info.plist，再移动 App 包
+    [self writeInfoNamesInBundle:oldPath base:newBase display:display];
+    NSError *moveErr = nil;
+    [fm moveItemAtPath:oldPath toPath:newPath error:&moveErr];
+    if (moveErr) {
+      if (hadList) [fm moveItemAtPath:newList toPath:oldList error:nil];
+      NSAlert *a = [[NSAlert alloc] init];
+      a.messageText = @"重命名 App 失败";
+      a.informativeText = moveErr.localizedDescription;
+      [a runModal];
+      return;
+    }
+    gListKey = newBase;
+    gListFile = newList;
+    [self updateDockPathFrom:oldPath to:newPath];
+  }
+
+  gGroup = display;
+  self.windowTitleLabel.title = display;
+  self.window.title = display;
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  [d setObject:display forKey:@"displayNameOverride"];
+  [d synchronize];
+
+  // 同名情况下也刷新 Info（显示名）
+  NSString *curPath = [fm fileExistsAtPath:newPath] ? newPath : oldPath;
+  [self writeInfoNamesInBundle:curPath base:newBase display:display];
+  [self layoutContent];
+
+  // 刷新程序坞与 Spotlight
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (getenv("DOCKLAUNCHER_TEST_RENAME")) return;
+    [[NSWorkspace sharedWorkspace] setIcon:[[NSWorkspace sharedWorkspace] iconForFile:curPath] forFile:curPath options:0];
+    NSTask *task = [[NSTask alloc] init];
+    task.launchPath = @"/usr/bin/killall";
+    task.arguments = @[@"Dock"];
+    @try { [task launch]; } @catch (NSException *e) {}
+  });
+}
+
+- (void)updateGroupDisplayName:(NSString *)name { [self performFullRename:name]; }
 
 #pragma mark - 快捷键映射
 
@@ -2021,6 +2126,13 @@ int main(int argc, const char *argv[]) {
         if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS) {
           fprintf(stderr, "RSS=%.1fMB\n", info.resident_size / 1048576.0);
         }
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_RENAME")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c performFullRename:[NSString stringWithUTF8String:getenv("DOCKLAUNCHER_TEST_RENAME")]];
+        fprintf(stderr, "RENAMED group=%s list=%s\n", [gGroup UTF8String], [gListFile UTF8String]);
         exit(0);
       });
     }
