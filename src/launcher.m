@@ -169,6 +169,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)renameGroupFromTitle;
 - (void)updateGroupDisplayName:(NSString *)name;
 - (void)performFullRename:(NSString *)typed;
+- (void)batchStripGroupSuffix:(id)sender;
+- (BOOL)renameBundleAtPath:(NSString *)oldPath toBase:(NSString *)newBase display:(NSString *)display;
 - (void)writeInfoNamesInBundle:(NSString *)bundlePath base:(NSString *)base display:(NSString *)display;
 - (void)updateDockPathFrom:(NSString *)oldPath to:(NSString *)newPath;
 - (void)loadCustomShortcuts;
@@ -1420,6 +1422,7 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"三列" action:@selector(layoutThree:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 3);
   it = [m addItemWithTitle:@"四列" action:@selector(layoutFour:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 4);
   [m addItem:[NSMenuItem separatorItem]];
+  it = [m addItemWithTitle:@"批量去掉「组」后缀…" action:@selector(batchStripGroupSuffix:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"快捷键设置…" action:@selector(showShortcutSettings:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"更换图标（人物图片）…" action:@selector(pickIconImage:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"恢复默认图标" action:@selector(resetCustomIcon:) keyEquivalent:@""]; it.target = self;
@@ -1597,6 +1600,95 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)updateGroupDisplayName:(NSString *)name { [self performFullRename:name]; }
+
+#pragma mark - 批量改名
+
+- (BOOL)renameBundleAtPath:(NSString *)oldPath toBase:(NSString *)newBase display:(NSString *)display {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *parent = [oldPath stringByDeletingLastPathComponent];
+  NSString *oldBase = [[oldPath lastPathComponent] stringByDeletingPathExtension];
+  if ([newBase isEqualToString:oldBase]) return NO;
+  NSString *newPath = [parent stringByAppendingPathComponent:[newBase stringByAppendingPathExtension:@"app"]];
+  if ([fm fileExistsAtPath:newPath]) return NO;
+
+  NSString *listsDir = [parent stringByAppendingPathComponent:@"lists"];
+  NSString *oldList = [listsDir stringByAppendingPathComponent:[oldBase stringByAppendingPathExtension:@"txt"]];
+  NSString *newList = [listsDir stringByAppendingPathComponent:[newBase stringByAppendingPathExtension:@"txt"]];
+  BOOL hadList = [fm fileExistsAtPath:oldList];
+  if (hadList) {
+    NSError *err = nil;
+    [fm moveItemAtPath:oldList toPath:newList error:&err];
+    if (err) return NO;
+  }
+  [self writeInfoNamesInBundle:oldPath base:newBase display:display];
+  NSError *moveErr = nil;
+  [fm moveItemAtPath:oldPath toPath:newPath error:&moveErr];
+  if (moveErr) {
+    if (hadList) [fm moveItemAtPath:newList toPath:oldList error:nil];
+    return NO;
+  }
+  [self updateDockPathFrom:oldPath to:newPath];
+  return YES;
+}
+
+- (void)batchStripGroupSuffix:(id)sender {
+  NSAlert *confirm = [[NSAlert alloc] init];
+  confirm.messageText = @"批量去掉分组名里的「组」？";
+  confirm.informativeText = @"会把所有以「组」结尾的分组 App 包和列表文件一起改名（如 影音组.app → 影音.app），并更新程序坞图标。";
+  [confirm addButtonWithTitle:@"开始"];
+  [confirm addButtonWithTitle:@"取消"];
+  if (!getenv("DOCKLAUNCHER_TEST_BATCH")) {
+    if ([confirm runModal] != NSAlertFirstButtonReturn) return;
+  }
+
+  NSString *parent = [[[NSBundle mainBundle] bundlePath] stringByDeletingLastPathComponent];
+  NSArray *contents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:parent error:NULL];
+  NSMutableArray *targets = [NSMutableArray array];
+  for (NSString *name in contents) {
+    if (![name hasSuffix:@".app"]) continue;
+    NSString *base = [name stringByDeletingPathExtension];
+    if ([base hasSuffix:@"组"] && base.length > 1) [targets addObject:base];
+  }
+
+  NSInteger renamed = 0;
+  NSString *selfOldPath = [[NSBundle mainBundle] bundlePath];
+  for (NSString *base in targets) {
+    NSString *display = [base substringToIndex:base.length - 1];
+    NSString *path = [parent stringByAppendingPathComponent:[base stringByAppendingPathExtension:@"app"]];
+    BOOL isSelf = [path isEqualToString:selfOldPath];
+    if ([self renameBundleAtPath:path toBase:display display:display]) {
+      renamed++;
+      if (isSelf) {
+        gListKey = display;
+        gListFile = [[parent stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[display stringByAppendingPathExtension:@"txt"]];
+        gGroup = display;
+        self.windowTitleLabel.title = display;
+        self.window.title = display;
+      }
+    }
+  }
+
+  if (renamed > 0) {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    [d setObject:gGroup forKey:@"displayNameOverride"];
+    [d synchronize];
+    [self layoutContent];
+    if (!getenv("DOCKLAUNCHER_TEST_BATCH")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSTask *task = [[NSTask alloc] init];
+        task.launchPath = @"/usr/bin/killall";
+        task.arguments = @[@"Dock"];
+        @try { [task launch]; } @catch (NSException *e) {}
+      });
+    }
+  }
+
+  if (getenv("DOCKLAUNCHER_TEST_BATCH")) { fprintf(stderr, "renamed=%ld\n", (long)renamed); return; }
+  NSAlert *done = [[NSAlert alloc] init];
+  done.messageText = [NSString stringWithFormat:@"已重命名 %ld 个分组", (long)renamed];
+  done.informativeText = renamed ? @"程序坞会在稍后自动刷新，标签将不再带「组」。" : @"没有需要改名的分组。";
+  [done runModal];
+}
 
 #pragma mark - 快捷键映射
 
@@ -2126,6 +2218,13 @@ int main(int argc, const char *argv[]) {
         if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS) {
           fprintf(stderr, "RSS=%.1fMB\n", info.resident_size / 1048576.0);
         }
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_BATCH")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c batchStripGroupSuffix:nil];
+        fprintf(stderr, "BATCH_DONE\n");
         exit(0);
       });
     }
