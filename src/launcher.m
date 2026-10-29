@@ -160,6 +160,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)idleExitFired:(NSTimer *)t;
 - (void)refreshListAndCaches:(id)sender;
 - (void)createGroupTapped:(id)sender;
+- (BOOL)createGroupNamed:(NSString *)name;
 - (void)deleteCurrentGroup:(id)sender;
 - (void)addDockEntryForPath:(NSString *)path label:(NSString *)label;
 - (void)removeDockEntryForPath:(NSString *)path;
@@ -1802,8 +1803,10 @@ static NSString *ResolveAppPath(NSString *target) {
         }
       } else {
         NSString *url = [NSString stringWithFormat:@"file://%@/", [p stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]]];
-        [apps addObject:@{@"tile-data": @{@"file-data": @{@"_CFURLString": url, @"_CFURLStringType": @0},
-                                          @"file-label": label, @"file-type": @41},
+        NSString *bid = info[@"CFBundleIdentifier"] ?: label;
+        [apps addObject:@{@"tile-data": @{@"file-data": @{@"_CFURLString": url, @"_CFURLStringType": @15},
+                                          @"file-label": label, @"file-type": @41,
+                                          @"bundle-identifier": bid, @"dock-extra": @NO},
                           @"tile-type": @"file-tile"}];
         changed = YES;
       }
@@ -1975,8 +1978,11 @@ static NSString *ResolveAppPath(NSString *target) {
       NSString *u = nil; @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
       if (u && [u containsString:enc]) return;
     }
-    [apps addObject:@{@"tile-data": @{@"file-data": @{@"_CFURLString": url, @"_CFURLStringType": @0},
-                                      @"file-label": label, @"file-type": @41},
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Info.plist"]];
+    NSString *bid = info[@"CFBundleIdentifier"] ?: label;
+    [apps addObject:@{@"tile-data": @{@"file-data": @{@"_CFURLString": url, @"_CFURLStringType": @15},
+                                      @"file-label": label, @"file-type": @41,
+                                      @"bundle-identifier": bid, @"dock-extra": @NO},
                       @"tile-type": @"file-tile"}];
     CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)apps, CFSTR("com.apple.dock"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
@@ -2000,6 +2006,43 @@ static NSString *ResolveAppPath(NSString *target) {
   } @catch (NSException *e) {}
 }
 
+- (BOOL)createGroupNamed:(NSString *)name {
+  while ([name hasSuffix:@"组"] && name.length > 1) name = [name substringToIndex:name.length-1];
+  if (name.length == 0) return NO;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
+  NSString *newPath = [parent stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]];
+  if ([fm fileExistsAtPath:newPath]) return NO;
+  NSError *err = nil;
+  if (![fm copyItemAtPath:[self currentBundlePathByID] toPath:newPath error:&err]) return NO;
+
+  NSString *plistPath = [newPath stringByAppendingPathComponent:@"Contents/Info.plist"];
+  NSData *data = [NSData dataWithContentsOfFile:plistPath];
+  NSMutableDictionary *info = data ? [[NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainers format:NULL error:NULL] mutableCopy] : nil;
+  if (!info) { [fm removeItemAtPath:newPath error:NULL]; return NO; }
+  info[@"CFBundleName"] = name;
+  info[@"CFBundleDisplayName"] = name;
+  info[@"CFBundleIdentifier"] = [NSString stringWithFormat:@"com.docklaunchers.g%lu", (unsigned long)([[NSDate date] timeIntervalSince1970] * 1000)];
+  NSData *out = [NSPropertyListSerialization dataWithPropertyList:info format:NSPropertyListXMLFormat_v1_0 options:0 error:NULL];
+  if (!out || ![out writeToFile:plistPath atomically:YES]) { [fm removeItemAtPath:newPath error:NULL]; return NO; }
+
+  NSString *listsDir = [parent stringByAppendingPathComponent:@"lists"];
+  [fm createDirectoryAtPath:listsDir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *listFile = [listsDir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+  if (![fm fileExistsAtPath:listFile]) [@"" writeToFile:listFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+
+  NSTask *sign = [[NSTask alloc] init];
+  sign.launchPath = @"/usr/bin/codesign";
+  sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", newPath];
+  @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
+
+  // 校验产物
+  NSString *exe = [newPath stringByAppendingPathComponent:@"Contents/MacOS/ui"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:exe]) { [fm removeItemAtPath:newPath error:NULL]; return NO; }
+  if (![[NSFileManager defaultManager] fileExistsAtPath:plistPath]) { return NO; }
+  return YES;
+}
+
 - (void)createGroupTapped:(id)sender {
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"新建分组";
@@ -2013,43 +2056,23 @@ static NSString *ResolveAppPath(NSString *target) {
   while ([name hasSuffix:@"组"] && name.length > 1) name = [name substringToIndex:name.length-1];
   if (name.length == 0) return;
 
-  NSFileManager *fm = [NSFileManager defaultManager];
-  NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
-  NSString *newPath = [parent stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]];
-  if ([fm fileExistsAtPath:newPath]) {
-    NSAlert *e = [[NSAlert alloc] init]; e.messageText = @"已存在同名分组"; [e runModal]; return;
-  }
-  NSError *err = nil;
-  if (![fm copyItemAtPath:[self currentBundlePathByID] toPath:newPath error:&err]) {
+  if (![self createGroupNamed:name]) {
     NSAlert *e = [[NSAlert alloc] init];
     e.messageText = @"创建失败";
-    e.informativeText = err.localizedDescription ?: @"";
+    e.informativeText = @"同名分组已存在，或复制/写入失败。请换一个名字再试。";
     [e runModal];
     return;
   }
-  // 修改 Info
-  NSString *plistPath = [newPath stringByAppendingPathComponent:@"Contents/Info.plist"];
-  NSData *data = [NSData dataWithContentsOfFile:plistPath];
-  NSMutableDictionary *info = data ? [[NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainers format:NULL error:NULL] mutableCopy] : nil;
-  if (info) {
-    info[@"CFBundleName"] = name;
-    info[@"CFBundleDisplayName"] = name;
-    info[@"CFBundleIdentifier"] = [NSString stringWithFormat:@"com.docklaunchers.%lu", (unsigned long)([[NSDate date] timeIntervalSince1970] * 1000)];
-    NSData *out = [NSPropertyListSerialization dataWithPropertyList:info format:NSPropertyListXMLFormat_v1_0 options:0 error:NULL];
-    [out writeToFile:plistPath atomically:YES];
-  }
-  NSString *listsDir = [parent stringByAppendingPathComponent:@"lists"];
-  [fm createDirectoryAtPath:listsDir withIntermediateDirectories:YES attributes:nil error:NULL];
-  NSString *listFile = [listsDir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
-  if (![fm fileExistsAtPath:listFile]) [@"" writeToFile:listFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
 
-  NSTask *sign = [[NSTask alloc] init];
-  sign.launchPath = @"/usr/bin/codesign";
-  sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", newPath];
-  @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
-
+  NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
+  NSString *newPath = [parent stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]];
+  // 先让 LaunchServices 认识新 App，再写入 Dock，避免出现问号
+  NSTask *reg = [[NSTask alloc] init];
+  reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+  reg.arguments = @[@"-f", newPath];
+  @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
   [self addDockEntryForPath:newPath label:name];
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     NSTask *task = [[NSTask alloc] init];
     task.launchPath = @"/usr/bin/killall";
     task.arguments = @[@"-KILL", @"Dock"];
@@ -2058,7 +2081,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
   NSAlert *ok = [[NSAlert alloc] init];
   ok.messageText = @"已创建";
-  ok.informativeText = [NSString stringWithFormat:@"%@.app 已创建并加入程序坞。\n双击 Dock 里的新图标即可打开并添加应用。", name];
+  ok.informativeText = [NSString stringWithFormat:@"%@.app 已创建并加入程序坞。\n如果图标显示异常，可点 🎨 →「修复程序坞图标…」。", name];
   [ok runModal];
 }
 
@@ -2782,6 +2805,14 @@ int main(int argc, const char *argv[]) {
                 c.scroll.frame.size.width, c.scroll.frame.size.height,
                 c.scroll.frame.origin.x, c.scroll.frame.origin.y,
                 c.windowTitleLabel.frame.origin.x, c.windowTitleLabel.frame.origin.y);
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_CREATE")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSString *nm = [NSString stringWithUTF8String:getenv("DOCKLAUNCHER_TEST_CREATE")];
+        BOOL ok = [c createGroupNamed:nm];
+        fprintf(stderr, "CREATE ok=%d path=%s\n", ok, [[[c currentBundlePathByID] stringByDeletingLastPathComponent] UTF8String]);
         exit(0);
       });
     }
