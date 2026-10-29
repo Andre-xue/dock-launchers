@@ -296,6 +296,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)shapeSliderChanged:(id)sender;
 - (void)resetShapeRectangle:(id)sender;
 - (void)showIdlePanel:(id)sender;
+- (void)toggleIdleExit:(id)sender;
 - (void)saveIdlePanel:(id)sender;
 - (void)closeIdlePanel:(id)sender;
 - (void)resetIdleTimer;
@@ -1831,12 +1832,9 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"窗口变形（矩形→圆形）…" action:@selector(showShapePanel:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"恢复默认矩形" action:@selector(resetShapeRectangle:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"刷新列表并释放缓存" action:@selector(refreshListAndCaches:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"定时自动关闭…" action:@selector(showIdlePanel:) keyEquivalent:@""];
+  it = [m addItemWithTitle:@"空闲 3 分钟自动退出" action:@selector(toggleIdleExit:) keyEquivalent:@""];
   it.target = self;
-  {
-    double ts = [[NSUserDefaults standardUserDefaults] doubleForKey:@"autoCloseDate"];
-    it.state = (ts > [[NSDate date] timeIntervalSince1970]) ? NSControlStateValueOn : NSControlStateValueOff;
-  }
+  it.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"idleExitEnabled"] ? NSControlStateValueOn : NSControlStateValueOff;
   it = [m addItemWithTitle:@"选择自定义图片…" action:@selector(customPick:) keyEquivalent:@""]; it.target = self; it.state = (gTheme == 3);
   [m addItem:[NSMenuItem separatorItem]];
   NSMenuItem *modeHdr = [m addItemWithTitle:@"排列方式" action:nil keyEquivalent:@""];
@@ -2984,7 +2982,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [d setBool:self.pinned forKey:@"pinned"];
   [d synchronize];
   [self updatePinAppearance];
-  if (self.pinned) { [self.idleExitTimer invalidate]; self.idleExitTimer = nil; }
+  if (self.pinned) { [self.idleExitTimer invalidate]; self.idleExitTimer = nil; [self hideCountdown]; }
   else [self resetIdleTimer];
   if (self.pinned) NSBeep();
 }
@@ -3100,13 +3098,10 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)updateCountdown {
-  double ts = [[NSUserDefaults standardUserDefaults] doubleForKey:@"autoCloseDate"];
-  NSTimeInterval left = ts - [[NSDate date] timeIntervalSince1970];
-  if (ts <= 0 || left <= 0) {
-    if (left <= 0 && ts > 0) { [self idleExitFired:nil]; return; }
-    [self hideCountdown];
-    return;
-  }
+  if (!self.idleExitTimer) { [self hideCountdown]; return; }
+  NSTimeInterval left = [self.idleExitTimer.fireDate timeIntervalSinceNow];
+  if (left <= 0) { [self idleExitFired:nil]; return; }
+  double ts = [self.idleExitTimer.fireDate timeIntervalSince1970];
   NSInteger total = (NSInteger)left;
   NSInteger h = total / 3600, m = (total % 3600) / 60, sec = total % 60;
   NSString *remain;
@@ -3124,11 +3119,8 @@ static NSString *ResolveAppPath(NSString *target) {
   [self.idleExitTimer invalidate];
   self.idleExitTimer = nil;
   if (self.pinned) { [self hideCountdown]; return; }
-  double ts = [[NSUserDefaults standardUserDefaults] doubleForKey:@"autoCloseDate"];
-  if (ts <= 0) { [self hideCountdown]; return; }
-  NSTimeInterval interval = ts - [[NSDate date] timeIntervalSince1970];
-  if (interval <= 0) interval = 1.0;
-  self.idleExitTimer = [NSTimer timerWithTimeInterval:interval target:self selector:@selector(idleExitFired:) userInfo:nil repeats:NO];
+  if (![[NSUserDefaults standardUserDefaults] boolForKey:@"idleExitEnabled"]) { [self hideCountdown]; return; }
+  self.idleExitTimer = [NSTimer timerWithTimeInterval:180.0 target:self selector:@selector(idleExitFired:) userInfo:nil repeats:NO];
   [[NSRunLoop mainRunLoop] addTimer:self.idleExitTimer forMode:NSRunLoopCommonModes];
   if (!self.countdownTimer) {
     self.countdownTimer = [NSTimer timerWithTimeInterval:1.0 target:self selector:@selector(updateCountdown) userInfo:nil repeats:YES];
@@ -3139,11 +3131,18 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)idleExitFired:(NSTimer *)t {
   self.idleExitTimer = nil;
-  if (self.pinned) return;
-  [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"autoCloseDate"];
-  [[NSUserDefaults standardUserDefaults] synchronize];
   [self hideCountdown];
+  if (self.pinned) return;
   [NSApp terminate:nil];
+}
+
+- (void)toggleIdleExit:(id)sender {
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  BOOL on = ![d boolForKey:@"idleExitEnabled"];
+  [d setBool:on forKey:@"idleExitEnabled"];
+  [d synchronize];
+  if (on) [self resetIdleTimer];
+  else { [self.idleExitTimer invalidate]; self.idleExitTimer = nil; [self hideCountdown]; }
 }
 
 - (void)refreshListAndCaches:(id)sender {
@@ -3785,6 +3784,17 @@ int main(int argc, const char *argv[]) {
         [c resetIdleTimer];
         fprintf(stderr, "CD hidden=%d frame=%.0f,%.0f,%.0fx%.0f text='%s'\n", c.countdownLabel.hidden, c.countdownLabel.frame.origin.x, c.countdownLabel.frame.origin.y, c.countdownLabel.frame.size.width, c.countdownLabel.frame.size.height, [c.countdownLabel.stringValue UTF8String]);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_IDLE_IDLE")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"idleExitEnabled"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+        [c resetIdleTimer];
+        fprintf(stderr, "IDLEIDLE fireIn=%.0f cdHidden=%d text='%s'\n", c.idleExitTimer ? [c.idleExitTimer.fireDate timeIntervalSinceNow] : -1, c.countdownLabel.hidden, [c.countdownLabel.stringValue UTF8String]);
+        [c togglePin:nil];
+        fprintf(stderr, "IDLEIDLE pinned timerNil=%d cdHidden=%d\n", c.idleExitTimer == nil, c.countdownLabel.hidden);
+        exit(0);
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_IDLE_SHOW")) {
