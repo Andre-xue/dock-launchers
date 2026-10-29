@@ -262,6 +262,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property NSInteger settingsTabIndex;
 @property (strong) NSView *settingsTopBar;
 @property (strong) NSMutableArray *settingsTabButtons;
+@property (copy) NSString *settingsFocusPath;
 @property (strong) NSPanel *idlePanel;
 @property (strong) NSButton *idleCheck;
 @property (strong) NSDatePicker *idleDatePicker;
@@ -298,6 +299,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)rebuildSettingsRows;
 - (void)rebuildSettingsTabs;
 - (void)settingsTabClicked:(id)sender;
+- (BOOL)handleSettingsKeyDown:(NSEvent *)event;
+- (void)updateSettingsFocusUI;
 - (void)settingsRowClicked:(id)sender;
 - (void)closeSettingsPanel:(id)sender;
 - (void)setShapeRect:(id)sender;
@@ -1122,6 +1125,7 @@ static NSString *ResolveAppPath(NSString *target) {
     Controller *ss = weakSelf; if (!ss) return e;
     [ss resetIdleTimer];
     if ([NSApp modalWindow]) return e;
+    if ([ss handleSettingsKeyDown:e]) return nil;
     if (ss.appIconPanel && ss.appIconPanel.isVisible) return e;
     if ([ss handleCustomShortcut:e]) return nil;
     return e;
@@ -1897,6 +1901,7 @@ static NSString *ResolveAppPath(NSString *target) {
     self.settingsScroll = sv;
     [p.contentView addSubview:sv];
   }
+  if (self.settingsFocusPath == nil) self.settingsFocusPath = @"";
   [self rebuildSettingsTabs];
   [self rebuildSettingsRows];
   [self.settingsPanel center];
@@ -1918,7 +1923,8 @@ static NSString *ResolveAppPath(NSString *target) {
     b.frame = NSMakeRect(gap + i * (bw + gap), 6, bw, 34);
     b.bordered = NO;
     b.focusRingType = NSFocusRingTypeNone;
-    b.font = [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium];
+    b.font = [NSFont systemFontOfSize:12.5 weight:NSFontWeightBold];
+    b.contentTintColor = [NSColor labelColor];
     b.wantsLayer = YES;
     b.layer.cornerRadius = 8;
     BOOL sel = (self.settingsTabIndex == i);
@@ -1934,6 +1940,7 @@ static NSString *ResolveAppPath(NSString *target) {
   NSInteger idx = [sender tag];
   if (idx < 0 || idx >= (NSInteger)self.settingsTree.count) return;
   self.settingsTabIndex = (self.settingsTabIndex == idx) ? -1 : idx;
+  self.settingsFocusPath = @"";
   [self rebuildSettingsTabs];
   [self rebuildSettingsRows];
 }
@@ -1992,9 +1999,21 @@ static NSString *ResolveAppPath(NSString *target) {
     b.alignment = NSTextAlignmentLeft;
     b.font = font;
     b.wantsLayer = YES;
-    if (level == 0) {
-      b.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.94 alpha:1.0].CGColor;
-      b.layer.cornerRadius = 8;
+    b.layer.cornerRadius = 7;
+    BOOL focused = (self.settingsFocusPath.length > 0 && [self.settingsFocusPath isEqualToString:n[@"path"]]);
+    if (level == 1) {
+      b.font = [NSFont systemFontOfSize:13];
+      if (focused) b.layer.backgroundColor = [NSColor colorWithCalibratedRed:0.85 green:0.92 blue:1.0 alpha:1.0].CGColor;
+    } else if (level >= 2) {
+      b.font = [NSFont systemFontOfSize:12.5];
+      if (focused) {
+        b.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.97 alpha:1.0].CGColor;
+        b.layer.shadowColor = [NSColor blackColor].CGColor;
+        b.layer.shadowOpacity = 0.28;
+        b.layer.shadowRadius = 4;
+        b.layer.shadowOffset = CGSizeMake(0, -1.5);
+        b.layer.masksToBounds = NO;
+      }
     }
     [content addSubview:b];
     idx++;
@@ -2009,6 +2028,7 @@ static NSString *ResolveAppPath(NSString *target) {
   NSInteger idx = [sender tag];
   if (idx < 0 || idx >= (NSInteger)self.settingsVisible.count) return;
   NSDictionary *n = self.settingsVisible[idx];
+  self.settingsFocusPath = n[@"path"] ?: @"";
   if ([n[@"kids"] boolValue]) {
     NSString *path = n[@"path"];
     if ([self.settingsExpanded containsObject:path]) [self.settingsExpanded removeObject:path];
@@ -2017,11 +2037,111 @@ static NSString *ResolveAppPath(NSString *target) {
     return;
   }
   NSString *selName = n[@"sel"];
-  [self closeSettingsPanel:nil];
+  self.settingsFocusPath = n[@"path"] ?: @"";
+  [self updateSettingsFocusUI];
   if (selName.length) {
     SEL sel = NSSelectorFromString(selName);
     if ([self respondsToSelector:sel]) [self performSelector:sel withObject:nil];
   }
+}
+
+- (void)updateSettingsFocusUI {
+  [self rebuildSettingsRows];
+}
+
+- (BOOL)handleSettingsKeyDown:(NSEvent *)event {
+  if (!self.settingsPanel.isVisible || !self.settingsPanel.isKeyWindow) return NO;
+  NSString *chars = event.charactersIgnoringModifiers;
+  if (chars.length == 0) return NO;
+  unichar c = [chars characterAtIndex:0];
+  BOOL left = (c == NSLeftArrowFunctionKey), right = (c == NSRightArrowFunctionKey);
+  BOOL up = (c == NSUpArrowFunctionKey), down = (c == NSDownArrowFunctionKey);
+  if (!left && !right && !up && !down) {
+    if (c == 27) [self closeSettingsPanel:nil];
+    return YES; // 设置页内只响应方向键与鼠标，其它按键吞掉
+  }
+  BOOL tabFocus = (self.settingsFocusPath.length == 0);
+  if (tabFocus) {
+    if (left || right) {
+      NSInteger idx = self.settingsTabIndex;
+      if (idx < 0) idx = (right ? 0 : self.settingsTree.count - 1);
+      else idx += (right ? 1 : -1);
+      if (idx < 0) idx = self.settingsTree.count - 1;
+      if (idx >= (NSInteger)self.settingsTree.count) idx = 0;
+      self.settingsTabIndex = idx;
+      self.settingsFocusPath = @"";
+      [self rebuildSettingsTabs];
+      [self rebuildSettingsRows];
+      return YES;
+    }
+    if (down && self.settingsVisible.count > 0) {
+      self.settingsFocusPath = self.settingsVisible.firstObject[@"path"];
+      [self rebuildSettingsRows];
+      return YES;
+    }
+    return YES;
+  }
+  NSInteger cur = -1;
+  for (NSInteger i = 0; i < (NSInteger)self.settingsVisible.count; i++) {
+    if ([self.settingsVisible[i][@"path"] isEqualToString:self.settingsFocusPath]) { cur = i; break; }
+  }
+  if (cur < 0) { self.settingsFocusPath = @""; [self rebuildSettingsRows]; return YES; }
+  NSDictionary *node = self.settingsVisible[cur];
+  NSInteger level = [node[@"level"] integerValue];
+  NSString *path = node[@"path"];
+  if (up || down) {
+    NSString *parentPrefix = @"";
+    NSRange dot = [path rangeOfString:@"/" options:NSBackwardsSearch];
+    if (dot.location != NSNotFound) parentPrefix = [path substringToIndex:dot.location];
+    NSMutableArray *siblings = [NSMutableArray array];
+    for (NSInteger i = 0; i < (NSInteger)self.settingsVisible.count; i++) {
+      NSDictionary *m = self.settingsVisible[i];
+      if ([m[@"level"] integerValue] != level) continue;
+      NSString *mp = m[@"path"];
+      if (level == 1) { [siblings addObject:@(i)]; continue; }
+      NSRange d = [mp rangeOfString:@"/" options:NSBackwardsSearch];
+      NSString *parent = (d.location != NSNotFound) ? [mp substringToIndex:d.location] : @"";
+      if ([parent isEqualToString:parentPrefix]) [siblings addObject:@(i)];
+    }
+    NSInteger pos = [siblings indexOfObject:@(cur)];
+    if (pos == NSNotFound) pos = 0;
+    NSInteger nxtPos = pos + (down ? 1 : -1);
+    if (nxtPos >= 0 && nxtPos < (NSInteger)siblings.count) {
+      NSInteger nxt = [siblings[nxtPos] integerValue];
+      self.settingsFocusPath = self.settingsVisible[nxt][@"path"];
+      [self rebuildSettingsRows];
+    }
+    return YES;
+  }
+  if (right && [node[@"kids"] boolValue]) {
+    if (![self.settingsExpanded containsObject:path]) [self.settingsExpanded addObject:path];
+    [self rebuildSettingsRows];
+    NSString *prefix = [path stringByAppendingString:@"/"];
+    for (NSDictionary *m in self.settingsVisible) {
+      if ([m[@"path"] hasPrefix:prefix] && [m[@"level"] integerValue] == level + 1) {
+        self.settingsFocusPath = m[@"path"];
+        [self rebuildSettingsRows];
+        break;
+      }
+    }
+    return YES;
+  }
+  if (left) {
+    if ([self.settingsExpanded containsObject:path]) {
+      [self.settingsExpanded removeObject:path];
+      [self rebuildSettingsRows];
+    } else {
+      NSRange d = [path rangeOfString:@"/" options:NSBackwardsSearch];
+      if (d.location != NSNotFound) {
+        NSString *parent = [path substringToIndex:d.location];
+        BOOL isTab = NO;
+        for (NSDictionary *tab in self.settingsTree) if ([tab[@"title"] isEqualToString:parent]) isTab = YES;
+        self.settingsFocusPath = isTab ? @"" : parent;
+        [self rebuildSettingsRows];
+      }
+    }
+  }
+  return YES;
 }
 
 - (void)closeSettingsPanel:(id)sender {
@@ -3981,6 +4101,41 @@ int main(int argc, const char *argv[]) {
         [c resetIdleTimer];
         fprintf(stderr, "CD hidden=%d frame=%.0f,%.0f,%.0fx%.0f text='%s'\n", c.countdownLabel.hidden, c.countdownLabel.frame.origin.x, c.countdownLabel.frame.origin.y, c.countdownLabel.frame.size.width, c.countdownLabel.frame.size.height, [c.countdownLabel.stringValue UTF8String]);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_SETTINGS_SUB")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c showSkinMenu:nil];
+        NSButton *fake = [[NSButton alloc] init];
+        fake.tag = 0; [c settingsTabClicked:fake];
+        fake.tag = 2; [c settingsRowClicked:fake];
+        fake.tag = 3; [c settingsRowClicked:fake];
+        fprintf(stderr, "SUB focus=%s visible=%ld panelVisible=%d\n", [c.settingsFocusPath UTF8String], (long)c.settingsVisible.count, c.settingsPanel.isVisible);
+        fake.tag = 0; [c settingsRowClicked:fake];
+        fprintf(stderr, "SUB leaf panelVisible=%d\n", c.settingsPanel.isVisible);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_SETTINGS_KEYS")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c showSkinMenu:nil];
+        NSString *right = [NSString stringWithFormat:@"%C", (unichar)NSRightArrowFunctionKey];
+        NSString *down = [NSString stringWithFormat:@"%C", (unichar)NSDownArrowFunctionKey];
+        NSEvent *(^ev)(NSString *) = ^NSEvent *(NSString *ch) {
+          return [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0
+                                 timestamp:0 windowNumber:c.settingsPanel.windowNumber context:nil
+                                characters:ch charactersIgnoringModifiers:ch isARepeat:NO keyCode:0];
+        };
+        [c handleSettingsKeyDown:ev(right)];
+        fprintf(stderr, "KEYS tab=%ld focus=%s visible=%ld\n", (long)c.settingsTabIndex, [c.settingsFocusPath UTF8String], (long)c.settingsVisible.count);
+        [c handleSettingsKeyDown:ev(down)];
+        fprintf(stderr, "KEYS2 focus=%s\n", [c.settingsFocusPath UTF8String]);
+        [c handleSettingsKeyDown:ev(down)];
+        [c handleSettingsKeyDown:ev(down)];
+        fprintf(stderr, "KEYS3 focus=%s kids=%s\n", [c.settingsFocusPath UTF8String], "");
+        [c handleSettingsKeyDown:ev(right)];
+        fprintf(stderr, "KEYS4 visible=%ld\n", (long)c.settingsVisible.count);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_SETTINGS_SHOW")) {
