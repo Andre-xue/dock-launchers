@@ -104,6 +104,7 @@ static NSString *const kSkinPrefix = @"skin.";
 @property (strong) NSWindow *shortcutPanel;
 @property (copy) NSString *recordingAction;
 @property (strong) id keyMonitor;
+@property (strong) id recordingMonitor;
 @property NSInteger userColumns;
 @property (copy) NSString *customIconPath;
 @property NSInteger forceColumns;
@@ -1385,12 +1386,14 @@ static NSString *ResolveAppPath(NSString *target) {
       b.frame = NSMakeRect(180, y - 6, 210, 30);
       b.identifier = a[@"id"];
       b.toolTip = @"点击后按下想要的组合键（需含 ⌘/⌃/⌥/⇧ 或 F 键）";
+      b.focusRingType = NSFocusRingTypeNone;
       [cv addSubview:b];
       y -= 38;
     }
     NSButton *done = [NSButton buttonWithTitle:@"关闭" target:self action:@selector(closeShortcutPanel:)];
     done.bezelStyle = NSBezelStyleRounded;
     done.frame = NSMakeRect(350, 16, 100, 32);
+    done.focusRingType = NSFocusRingTypeNone;
     [cv addSubview:done];
   }
   for (NSView *v in self.shortcutPanel.contentView.subviews) {
@@ -1406,6 +1409,7 @@ static NSString *ResolveAppPath(NSString *target) {
   }
   [NSApp activateIgnoringOtherApps:YES];
   [self.window beginSheet:self.shortcutPanel completionHandler:nil];
+  [self.shortcutPanel makeFirstResponder:self.shortcutPanel.contentView];
 }
 
 - (void)closeShortcutPanel:(id)sender {
@@ -1418,9 +1422,9 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)recordButtonTapped:(NSButton *)sender {
   self.recordingAction = (NSString *)sender.identifier;
-  if (self.keyMonitor) { [NSEvent removeMonitor:self.keyMonitor]; self.keyMonitor = nil; }
+  if (self.recordingMonitor) { [NSEvent removeMonitor:self.recordingMonitor]; self.recordingMonitor = nil; }
   __weak Controller *weakSelf = self;
-  self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+  self.recordingMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
     Controller *ss = weakSelf; if (!ss) return e;
     [ss finishRecordingWithEvent:e];
     return nil;
@@ -1428,13 +1432,37 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)finishRecordingWithEvent:(NSEvent *)event {
-  if (self.keyMonitor) { [NSEvent removeMonitor:self.keyMonitor]; self.keyMonitor = nil; }
+  if (self.recordingMonitor) { [NSEvent removeMonitor:self.recordingMonitor]; self.recordingMonitor = nil; }
   NSString *action = self.recordingAction;
   self.recordingAction = nil;
   if (!action) return;
   if (event.keyCode == 53) return; // Esc 取消
   NSString *sig = SignatureForEvent(event);
   if (!SignatureIsAllowed(sig)) { NSBeep(); return; }
+
+  // 系统保留组合键提示
+  NSArray *reserved = @[@"cmd+space", @"cmd+tab", @"cmd+`", @"cmd+q", @"cmd+w", @"cmd+h", @"cmd+m", @"ctrl+up", @"ctrl+down", @"ctrl+left", @"ctrl+right"];
+  if ([reserved containsObject:sig]) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"这是 macOS 系统快捷键";
+    a.informativeText = [NSString stringWithFormat:@"%@ 可能被系统占用导致不生效，建议换一个组合键。", DisplayForSignature(sig)];
+    [a runModal];
+    return;
+  }
+
+  // 与本应用其他动作冲突检查
+  for (NSDictionary *a in ShortcutActions()) {
+    if ([a[@"id"] isEqualToString:action]) continue;
+    NSString *other = self.customShortcuts[a[@"id"]];
+    if (other.length && [other isEqualToString:sig]) {
+      NSAlert *al = [[NSAlert alloc] init];
+      al.messageText = @"快捷键已被占用";
+      al.informativeText = [NSString stringWithFormat:@"%@ 已经绑定给「%@」，请换一个组合键。", DisplayForSignature(sig), a[@"name"]];
+      [al runModal];
+      return;
+    }
+  }
+
   self.customShortcuts[action] = sig;
   [self saveCustomShortcuts];
   [self showShortcutSettings:nil];
