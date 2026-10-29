@@ -64,6 +64,12 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
   return res;
 }
 
+@interface FlippedView : NSView
+@end
+@implementation FlippedView
+- (BOOL)isFlipped { return YES; }
+@end
+
 @interface Sparkline : NSView
 @property (strong) NSMutableArray<NSNumber *> *values;
 @property (strong) NSColor *lineColor;
@@ -120,7 +126,9 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
 @property (strong) NSButton *loginCheck;
 // groups
 @property (strong) NSMutableArray<NSDictionary *> *groups;
+@property (strong) NSMutableSet<NSString *> *selectedGroups;
 @property (strong) NSView *groupsList;
+@property (strong) NSScrollView *groupsScroll;
 // uninstall
 @property (strong) NSMutableArray<NSDictionary *> *uninstallData;
 @property (strong) NSMutableArray<NSDictionary *> *uninstallFiltered;
@@ -178,6 +186,15 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
   self.statusItem.button.action = @selector(togglePopover:);
   [self buildWindow];
   [self buildPopover];
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_BACKUP")) {
+    NSString *n = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_BACKUP")];
+    [self backupGroupNames:@[n]];
+    exit(0);
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_RESTORE")) {
+    [self restoreGroupsClicked:nil];
+    exit(0);
+  }
   self.timer = [NSTimer scheduledTimerWithTimeInterval:self.sampleSeconds target:self selector:@selector(sample) userInfo:nil repeats:YES];
   [self sample];
   [self showWindow:nil];
@@ -375,6 +392,199 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
 - (void)openGroupsFolder:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:GroupDir()]]; }
 
 // ---------------- Dock 分组 ----------------
+- (NSString *)backupBaseDir {
+  return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/backup"];
+}
+- (NSString *)groupBackupRoot {
+  return [[self backupBaseDir] stringByAppendingPathComponent:@"groups"];
+}
+- (NSString *)deletedManifestPath {
+  return [[self backupBaseDir] stringByAppendingPathComponent:@"deleted.plist"];
+}
+
+- (NSMutableArray<NSString *> *)deletedGroupNames {
+  NSArray *a = [NSArray arrayWithContentsOfFile:[self deletedManifestPath]];
+  return a ? [a mutableCopy] : [NSMutableArray array];
+}
+- (void)saveDeletedGroupNames:(NSArray *)names {
+  [[NSFileManager defaultManager] createDirectoryAtPath:[self backupBaseDir] withIntermediateDirectories:YES attributes:nil error:NULL];
+  [names writeToFile:[self deletedManifestPath] atomically:YES];
+}
+
+- (BOOL)isGroupBackedUp:(NSString *)name {
+  NSString *dir = [[self groupBackupRoot] stringByAppendingPathComponent:name];
+  return [[NSFileManager defaultManager] fileExistsAtPath:[dir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]]];
+}
+
+- (BOOL)backupGroupNamed:(NSString *)name {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *app = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
+  if (![fm fileExistsAtPath:app]) return NO;
+  NSString *dst = [[self groupBackupRoot] stringByAppendingPathComponent:name];
+  [fm removeItemAtPath:dst error:NULL];
+  [fm createDirectoryAtPath:dst withIntermediateDirectories:YES attributes:nil error:NULL];
+  if (![fm copyItemAtPath:app toPath:[dst stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]] error:NULL]) return NO;
+  NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+  if ([fm fileExistsAtPath:list]) [fm copyItemAtPath:list toPath:[dst stringByAppendingPathComponent:@"list.txt"] error:NULL];
+  NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[app stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+  NSString *bid = info[@"CFBundleIdentifier"];
+  if (bid.length) {
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/bin/defaults";
+    t.arguments = @[@"export", bid, [dst stringByAppendingPathComponent:@"prefs.plist"]];
+    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+  }
+  return YES;
+}
+
+- (void)backupGroupNames:(NSArray<NSString *> *)names {
+  NSInteger ok = 0;
+  for (NSString *n in names) if ([self backupGroupNamed:n]) ok++;
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_SILENT")) { fprintf(stderr, "BACKUP_TEST ok=%ld\n", (long)ok); return; }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.icon = [self characterImage:64];
+  a.messageText = @"备份完成";
+  a.informativeText = [NSString stringWithFormat:@"已备份 %ld 个分组到本机：\n%@", (long)ok, [self backupBaseDir]];
+  [a runModal];
+}
+
+- (void)runAdminTrashPaths:(NSArray<NSString *> *)paths {
+  if (!paths.count) return;
+  NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\n"];
+  NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
+  NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
+  [body appendFormat:@"mkdir -p \"%@\"\n", trash];
+  NSInteger idx = 0;
+  for (NSString *p in paths) [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%ld-%@\"\n", p, p, trash, stamp, (long)idx++, [p lastPathComponent]];
+  [body appendString:@"/usr/bin/killall -KILL Dock 2>/dev/null\n"];
+  NSString *sp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-center-groups.sh"];
+  [body writeToFile:sp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions:@0755} ofItemAtPath:sp error:NULL];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/osascript";
+  t.arguments = @[@"-e", [NSString stringWithFormat:@"do shell script \"/bin/sh %@\" with administrator privileges", sp]];
+  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+}
+
+- (NSArray<NSString *> *)targetGroupNamesFromSelection {
+  if (self.selectedGroups.count > 0) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *g in self.groups) {
+      if ([self.selectedGroups containsObject:g[@"name"]]) [out addObject:g[@"name"]];
+    }
+    return out;
+  }
+  NSMutableArray *all = [NSMutableArray array];
+  for (NSDictionary *g in self.groups) [all addObject:g[@"name"]];
+  return all;
+}
+
+- (void)backupGroupsClicked:(id)sender {
+  NSArray *names = [self targetGroupNamesFromSelection];
+  if (!names.count) return;
+  [self backupGroupNames:names];
+}
+
+- (void)deleteGroupsClicked:(id)sender {
+  NSArray *names = [self targetGroupNamesFromSelection];
+  if (!names.count) return;
+  [self deleteGroupNames:names];
+}
+
+- (void)deleteGroupNames:(NSArray<NSString *> *)names {
+  NSAlert *bk = [[NSAlert alloc] init];
+  bk.icon = [self characterImage:64];
+  bk.messageText = @"删除前必须先备份";
+  bk.informativeText = [NSString stringWithFormat:@"将先备份 %ld 个分组，然后再执行删除。是否继续？", (long)names.count];
+  [bk addButtonWithTitle:@"备份并删除"];
+  [bk addButtonWithTitle:@"取消"];
+  if ([bk runModal] != NSAlertFirstButtonReturn) return;
+  for (NSString *n in names) [self backupGroupNamed:n];
+  NSAlert *c = [[NSAlert alloc] init];
+  c.icon = [self characterImage:64];
+  c.messageText = [NSString stringWithFormat:@"确认删除 %ld 个分组？", (long)names.count];
+  c.informativeText = @"只会删除 Dock 分组本身（App 与列表移到废纸篓），不会卸载分组里的应用。5 秒后可点击「是」。";
+  [c addButtonWithTitle:@"是（5）"];
+  [c addButtonWithTitle:@"否"];
+  NSButton *yes = c.buttons[0]; yes.enabled = NO;
+  for (int s = 5; s >= 1; s--) {
+    int remain = s - 1;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((5-s+1)*NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      if (remain > 0) yes.title = [NSString stringWithFormat:@"是（%d）", remain];
+      else { yes.title = @"是"; yes.enabled = YES; }
+    });
+  }
+  if ([c runModal] != NSAlertFirstButtonReturn) return;
+
+  NSMutableArray *trashPaths = [NSMutableArray array];
+  NSMutableArray *deleted = [self deletedGroupNames];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  for (NSString *n in names) {
+    NSString *app = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
+    NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"txt"]];
+    [self removeDockEntry:app];
+    if ([fm fileExistsAtPath:app]) [trashPaths addObject:app];
+    if ([fm fileExistsAtPath:list]) [trashPaths addObject:list];
+    if (![deleted containsObject:n]) [deleted addObject:n];
+  }
+  [self saveDeletedGroupNames:deleted];
+  [self runAdminTrashPaths:trashPaths];
+  [self killDock];
+  [self refreshGroups];
+  if (self.popover.isShown) [self rebuildQuickGroups];
+}
+
+- (void)restoreGroupsClicked:(id)sender {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *root = [self groupBackupRoot];
+  NSArray *dirs = [fm contentsOfDirectoryAtPath:root error:NULL];
+  NSMutableArray *restored = [NSMutableArray array];
+  NSMutableArray *deleted = [self deletedGroupNames];
+  for (NSString *n in dirs) {
+    NSString *appBackup = [[root stringByAppendingPathComponent:n] stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"app"]];
+    if (![fm fileExistsAtPath:appBackup]) continue;
+    NSString *installed = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
+    if ([fm fileExistsAtPath:installed]) continue;   // 未删除的跳过
+    if (![fm copyItemAtPath:appBackup toPath:installed error:NULL]) continue;
+    NSString *listBackup = [[root stringByAppendingPathComponent:n] stringByAppendingPathComponent:@"list.txt"];
+    NSString *listsDir = [GroupDir() stringByAppendingPathComponent:@"lists"];
+    [fm createDirectoryAtPath:listsDir withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSString *listDst = [listsDir stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"txt"]];
+    if ([fm fileExistsAtPath:listBackup] && ![fm fileExistsAtPath:listDst]) [fm copyItemAtPath:listBackup toPath:listDst error:NULL];
+
+    NSString *prefs = [[root stringByAppendingPathComponent:n] stringByAppendingPathComponent:@"prefs.plist"];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[installed stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+    NSString *bid = info[@"CFBundleIdentifier"];
+    if (bid.length && [fm fileExistsAtPath:prefs]) {
+      NSTask *t = [[NSTask alloc] init];
+      t.launchPath = @"/usr/bin/defaults";
+      t.arguments = @[@"import", bid, prefs];
+      @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+    }
+    NSTask *sign = [[NSTask alloc] init];
+    sign.launchPath = @"/usr/bin/codesign";
+    sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", installed];
+    @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
+    NSTask *reg = [[NSTask alloc] init];
+    reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+    reg.arguments = @[@"-f", installed];
+    @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
+    [self addDockEntry:installed label:n];
+    [deleted removeObject:n];
+    [restored addObject:n];
+  }
+  [self saveDeletedGroupNames:deleted];
+  [self killDock];
+  [self refreshGroups];
+  if (self.popover.isShown) [self rebuildQuickGroups];
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_SILENT")) { fprintf(stderr, "RESTORE_TEST count=%ld\n", (long)restored.count); return; }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.icon = [self characterImage:64];
+  a.messageText = restored.count ? @"恢复完成" : @"没有需要恢复的分组";
+  a.informativeText = restored.count ? [NSString stringWithFormat:@"已恢复：%@", [restored componentsJoinedByString:@"、"]] : @"所有备份的分组都已经安装。";
+  [a runModal];
+}
+
 - (void)buildGroupsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"Dock 分组" size:22 bold:YES color:nil];
@@ -388,12 +598,19 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
   refresh.frame = NSMakeRect(152, 540, 80, 32); refresh.bezelStyle = NSBezelStyleRounded; [v addSubview:refresh];
   NSButton *folder = [NSButton buttonWithTitle:@"打开文件夹" target:self action:@selector(openGroupsFolder:)];
   folder.frame = NSMakeRect(240, 540, 110, 32); folder.bezelStyle = NSBezelStyleRounded; [v addSubview:folder];
+  NSButton *backupAll = [NSButton buttonWithTitle:@"一键备份" target:self action:@selector(backupGroupsClicked:)];
+  backupAll.frame = NSMakeRect(360, 540, 100, 32); backupAll.bezelStyle = NSBezelStyleRounded; [v addSubview:backupAll];
+  NSButton *delAll = [NSButton buttonWithTitle:@"一键删除" target:self action:@selector(deleteGroupsClicked:)];
+  delAll.frame = NSMakeRect(468, 540, 100, 32); delAll.bezelStyle = NSBezelStyleRounded; [v addSubview:delAll];
+  NSButton *restoreAll = [NSButton buttonWithTitle:@"一键恢复" target:self action:@selector(restoreGroupsClicked:)];
+  restoreAll.frame = NSMakeRect(576, 540, 100, 32); restoreAll.bezelStyle = NSBezelStyleRounded; [v addSubview:restoreAll];
 
   NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 20, 710, 500)];
   sv.hasVerticalScroller = YES;
   sv.drawsBackground = NO;
-  self.groupsList = [[NSView alloc] initWithFrame:NSMakeRect(0,0,690,10)];
+  self.groupsList = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,690,10)];
   sv.documentView = self.groupsList;
+  self.groupsScroll = sv;
   [v addSubview:sv];
   self.groupsView = v;
 }
@@ -418,24 +635,34 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
     row.wantsLayer = YES;
     row.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.975 alpha:1.0].CGColor;
     row.layer.cornerRadius = 10;
-    NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(10, 9, 40, 40)];
+    if (!self.selectedGroups) self.selectedGroups = [NSMutableSet set];
+    NSButton *cb = [NSButton checkboxWithTitle:@"" target:self action:@selector(toggleGroupSelection:)];
+    cb.frame = NSMakeRect(8, 18, 18, 18);
+    cb.tag = idx;
+    cb.state = [self.selectedGroups containsObject:g[@"name"]] ? NSControlStateValueOn : NSControlStateValueOff;
+    [row addSubview:cb];
+    NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(32, 9, 40, 40)];
     icon.image = [[NSWorkspace sharedWorkspace] iconForFile:g[@"path"]];
     [row addSubview:icon];
     NSTextField *nm = [self label:g[@"display"] size:14 bold:YES color:nil];
-    nm.frame = NSMakeRect(62, 30, 260, 18); [row addSubview:nm];
+    nm.frame = NSMakeRect(84, 30, 240, 18); [row addSubview:nm];
     NSTextField *pt = [self label:g[@"path"] size:10 bold:NO color:[NSColor secondaryLabelColor]];
-    pt.frame = NSMakeRect(62, 10, 400, 16); [row addSubview:pt];
+    pt.frame = NSMakeRect(84, 10, 300, 16); [row addSubview:pt];
     NSButton *open = [NSButton buttonWithTitle:@"打开" target:self action:@selector(openGroupRow:)];
-    open.frame = NSMakeRect(500, 14, 70, 30); open.bezelStyle = NSBezelStyleRounded; open.tag = idx;
+    open.frame = NSMakeRect(406, 14, 62, 30); open.bezelStyle = NSBezelStyleRounded; open.tag = idx;
     [row addSubview:open];
+    NSButton *bk = [NSButton buttonWithTitle:@"备份" target:self action:@selector(backupGroupRow:)];
+    bk.frame = NSMakeRect(474, 14, 62, 30); bk.bezelStyle = NSBezelStyleRounded; bk.tag = idx;
+    [row addSubview:bk];
     NSButton *del = [NSButton buttonWithTitle:@"删除" target:self action:@selector(deleteGroupRow:)];
-    del.frame = NSMakeRect(578, 14, 70, 30); del.bezelStyle = NSBezelStyleRounded; del.tag = idx;
+    del.frame = NSMakeRect(542, 14, 62, 30); del.bezelStyle = NSBezelStyleRounded; del.tag = idx;
     [row addSubview:del];
     [self.groupsList addSubview:row];
     y += 66;
     idx++;
   }
   self.groupsList.frame = NSMakeRect(0,0,690,MAX(y+10,10));
+  [self.groupsScroll.contentView scrollToPoint:NSMakePoint(0, 0)];
 }
 
 - (void)openGroupRow:(NSButton *)b {
@@ -444,25 +671,27 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.groups[i][@"path"]]];
 }
 
+- (void)toggleGroupSelection:(NSButton *)b {
+  NSInteger i = b.tag;
+  if (i < 0 || i >= (NSInteger)self.groups.count) return;
+  if (!self.selectedGroups) self.selectedGroups = [NSMutableSet set];
+  NSString *n = self.groups[i][@"name"];
+  if ([self.selectedGroups containsObject:n]) [self.selectedGroups removeObject:n];
+  else [self.selectedGroups addObject:n];
+  b.state = [self.selectedGroups containsObject:n] ? NSControlStateValueOn : NSControlStateValueOff;
+}
+
+- (void)backupGroupRow:(NSButton *)b {
+  NSInteger i = b.tag;
+  if (i < 0 || i >= (NSInteger)self.groups.count) return;
+  NSString *n = self.groups[i][@"name"];
+  [self backupGroupNames:@[n]];
+}
+
 - (void)deleteGroupRow:(NSButton *)b {
   NSInteger i = b.tag;
   if (i < 0 || i >= (NSInteger)self.groups.count) return;
-  NSDictionary *g = self.groups[i];
-  NSAlert *a = [[NSAlert alloc] init];
-  a.icon = [self characterImage:64];
-  a.messageText = [NSString stringWithFormat:@"删除分组「%@」？", g[@"display"]];
-  a.informativeText = @"分组 App 与列表会移到废纸篓，并从 Dock 移除；应用本体不受影响。";
-  [a addButtonWithTitle:@"删除"];
-  [a addButtonWithTitle:@"取消"];
-  if ([a runModal] != NSAlertFirstButtonReturn) return;
-  NSString *p = g[@"path"];
-  [self removeDockEntry:p];
-  NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[g[@"name"] stringByAppendingPathExtension:@"txt"]];
-  NSFileManager *fm = [NSFileManager defaultManager];
-  [fm trashItemAtURL:[NSURL fileURLWithPath:p] resultingItemURL:nil error:NULL];
-  if ([fm fileExistsAtPath:list]) [fm trashItemAtURL:[NSURL fileURLWithPath:list] resultingItemURL:nil error:NULL];
-  [self killDock];
-  [self refreshGroups];
+  [self deleteGroupNames:@[self.groups[i][@"name"]]];
 }
 
 - (void)createGroup:(id)sender {
