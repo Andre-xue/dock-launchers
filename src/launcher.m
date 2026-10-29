@@ -1809,7 +1809,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [m addItem:[NSMenuItem separatorItem]];
   it = [m addItemWithTitle:@"修复程序坞图标…" action:@selector(repairDockMenuTapped:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"快捷键设置…" action:@selector(showShortcutSettings:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"恢复默认图标" action:@selector(resetCustomIcon:) keyEquivalent:@""]; it.target = self;
+  it = [m addItemWithTitle:@"恢复分组默认图标" action:@selector(resetCustomIcon:) keyEquivalent:@""]; it.target = self;
   [m addItem:[NSMenuItem separatorItem]];
   it = [m addItemWithTitle:@"恢复默认（纯白）" action:@selector(skinReset:) keyEquivalent:@""]; it.target = self;
   [m popUpMenuPositioningItem:nil atLocation:NSMakePoint(16, 0) inView:self.skinBtn];
