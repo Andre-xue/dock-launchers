@@ -19,6 +19,9 @@ static NSString *const kSkinPrefix = @"skin.";
 @class PillButton;
 @class LightButton;
 @class TitlePillView;
+@class ShortcutRowView;
+static NSString *DisplayForSignature(NSString *sig);
+static NSString *SignatureForEvent(NSEvent *e);
 
 @interface RowView : NSView
 @property (assign) NSInteger idx;
@@ -102,6 +105,8 @@ static NSString *const kSkinPrefix = @"skin.";
 @property (strong) NSTimer *searchAutoHideTimer;
 @property (strong) NSMutableDictionary *customShortcuts;
 @property (strong) NSWindow *shortcutPanel;
+@property (strong) NSArray<ShortcutRowView *> *shortcutRows;
+@property NSInteger shortcutSel;
 @property (copy) NSString *recordingAction;
 @property (strong) id keyMonitor;
 @property (strong) id recordingMonitor;
@@ -163,6 +168,10 @@ static NSString *const kSkinPrefix = @"skin.";
 - (void)loadCustomShortcuts;
 - (void)saveCustomShortcuts;
 - (void)showShortcutSettings:(id)sender;
+- (void)refreshShortcutRows;
+- (void)shortcutPanelKeyDown:(NSEvent *)event;
+- (void)startRecordingForAction:(NSString *)actionId;
+- (void)resetShortcutForAction:(NSString *)actionId;
 - (void)closeShortcutPanel:(id)sender;
 - (void)beginRecordingShortcut:(id)sender;
 - (void)finishRecordingWithEvent:(NSEvent *)event;
@@ -306,6 +315,79 @@ static NSColor *ThemeSel(NSInteger t) {
   [(self.dotColor ?: [NSColor systemRedColor]) setFill];
   [p fill];
 }
+@end
+
+@interface ShortcutRowView : NSView
+@property (copy) NSString *actionId;
+@property (copy) NSString *nameText;
+@property (copy) NSString *sigText;
+@property BOOL selected;
+@property BOOL hovered;
+@property (copy) void (^onActivate)(void);
+@property (copy) void (^onReset)(void);
+@end
+
+@implementation ShortcutRowView
+- (BOOL)isFlipped { return NO; }
+- (void)updateTrackingAreas {
+  [super updateTrackingAreas];
+  for (NSTrackingArea *t in [self.trackingAreas copy]) [self removeTrackingArea:t];
+  NSTrackingArea *a = [[NSTrackingArea alloc] initWithRect:self.bounds
+                                                   options:(NSTrackingMouseEnteredAndExited|NSTrackingActiveAlways|NSTrackingInVisibleRect)
+                                                     owner:self userInfo:nil];
+  [self addTrackingArea:a];
+}
+- (void)mouseEntered:(NSEvent *)e { self.hovered = YES; [self setNeedsDisplay:YES]; }
+- (void)mouseExited:(NSEvent *)e { self.hovered = NO; [self setNeedsDisplay:YES]; }
+- (void)mouseDown:(NSEvent *)e {
+  NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+  if (p.x > NSWidth(self.bounds) - 52) { if (self.onReset) self.onReset(); return; }
+  if (self.onActivate) self.onActivate();
+}
+- (void)drawRect:(NSRect)dirtyRect {
+  NSRect r = NSInsetRect(self.bounds, 2, 4);
+  NSBezierPath *bg = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8 yRadius:8];
+  NSColor *fill = (self.selected || self.hovered)
+      ? [NSColor colorWithCalibratedRed:1.0 green:0.68 blue:0.75 alpha:1.0]
+      : [NSColor colorWithCalibratedWhite:0.93 alpha:1.0];
+  [fill setFill]; [bg fill];
+
+  NSFont *nf = [NSFont systemFontOfSize:13];
+  NSDictionary *nattrs = @{NSFontAttributeName: nf, NSForegroundColorAttributeName: [NSColor blackColor]};
+  [self.nameText drawAtPoint:NSMakePoint(14, NSMidY(self.bounds) - 9) withAttributes:nattrs];
+
+  NSString *shown = self.sigText.length ? DisplayForSignature(self.sigText) : @"未设置";
+  NSFont *sf = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+  NSDictionary *sattrs = @{NSFontAttributeName: sf,
+                           NSForegroundColorAttributeName: (self.sigText.length ? [NSColor blackColor] : [NSColor grayColor])};
+  NSSize ts = [shown sizeWithAttributes:sattrs];
+  [shown drawAtPoint:NSMakePoint(NSWidth(self.bounds) - 66 - ts.width, NSMidY(self.bounds) - ts.height/2.0) withAttributes:sattrs];
+
+  // 重置图标（圆形箭头）
+  CGFloat cx = NSWidth(self.bounds) - 30, cy = NSMidY(self.bounds);
+  NSBezierPath *arc = [NSBezierPath bezierPath];
+  [arc appendBezierPathWithArcWithCenter:NSMakePoint(cx, cy) radius:8
+                                  startAngle:40 endAngle:320 clockwise:NO];
+  arc.lineWidth = 1.8;
+  [[NSColor colorWithCalibratedWhite:0.35 alpha:1.0] setStroke];
+  [arc stroke];
+  NSBezierPath *arrow = [NSBezierPath bezierPath];
+  [arrow moveToPoint:NSMakePoint(cx + 3, cy + 9)];
+  [arrow lineToPoint:NSMakePoint(cx + 11, cy + 5)];
+  [arrow lineToPoint:NSMakePoint(cx + 2, cy + 1)];
+  [arrow closePath];
+  [[NSColor colorWithCalibratedWhite:0.35 alpha:1.0] setFill];
+  [arrow fill];
+}
+@end
+
+@interface ShortcutPanelView : NSView
+@property (weak) Controller *ctrl;
+@end
+
+@implementation ShortcutPanelView
+- (BOOL)acceptsFirstResponder { return YES; }
+- (void)keyDown:(NSEvent *)event { if (self.ctrl) [self.ctrl shortcutPanelKeyDown:event]; }
 @end
 
 @interface BackdropView : NSView
@@ -1363,53 +1445,107 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)showShortcutSettings:(id)sender {
   if (!self.shortcutPanel) {
-    CGFloat h = 190 + [ShortcutActions() count] * 38;
-    self.shortcutPanel = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,470,h)
+    CGFloat rowH = 46.0;
+    CGFloat n = (CGFloat)[ShortcutActions() count];
+    CGFloat h = 150.0 + rowH * n;
+    ShortcutPanelView *pv = [[ShortcutPanelView alloc] initWithFrame:NSMakeRect(0, 0, 500, h)];
+    pv.ctrl = self;
+    self.shortcutPanel = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,500,h)
                                                      styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
                                                        backing:NSBackingStoreBuffered defer:NO];
     self.shortcutPanel.title = @"快捷键设置（仅本应用生效）";
     self.shortcutPanel.level = NSFloatingWindowLevel;
-    NSView *cv = self.shortcutPanel.contentView;
-    CGFloat y = h - 50;
-    NSTextField *tip = [NSTextField labelWithString:@"点击右侧按钮后直接按组合键；Esc 取消。⌘Space 被系统占用，建议用 ⌘F。"];
+    self.shortcutPanel.contentView = pv;
+
+    NSTextField *tip = [NSTextField labelWithString:@"↑↓ 选择 · Enter/空格 录制 · Esc 取消 · 右侧 ↺ 重置。⌘Space 被系统占用，建议用 ⌘F。"];
     tip.font = [NSFont systemFontOfSize:11];
     tip.textColor = [NSColor secondaryLabelColor];
-    tip.frame = NSMakeRect(20, h - 34, 430, 16);
-    [cv addSubview:tip];
+    tip.frame = NSMakeRect(20, h - 34, 460, 16);
+    [pv addSubview:tip];
+
+    NSMutableArray *rows = [NSMutableArray array];
+    __weak Controller *weakSelf = self;
+    CGFloat y = h - 72;
     for (NSDictionary *a in ShortcutActions()) {
-      NSTextField *lab = [NSTextField labelWithString:a[@"name"]];
-      lab.font = [NSFont systemFontOfSize:13];
-      lab.frame = NSMakeRect(20, y, 150, 20);
-      [cv addSubview:lab];
-      NSButton *b = [NSButton buttonWithTitle:@"点击设置" target:self action:@selector(recordButtonTapped:)];
-      b.bezelStyle = NSBezelStyleRounded;
-      b.frame = NSMakeRect(180, y - 6, 210, 30);
-      b.identifier = a[@"id"];
-      b.toolTip = @"点击后按下想要的组合键（需含 ⌘/⌃/⌥/⇧ 或 F 键）";
-      b.focusRingType = NSFocusRingTypeNone;
-      [cv addSubview:b];
-      y -= 38;
+      ShortcutRowView *r = [[ShortcutRowView alloc] initWithFrame:NSMakeRect(20, y, 460, rowH)];
+      r.actionId = a[@"id"];
+      r.nameText = a[@"name"];
+      NSString *aid = a[@"id"];
+      r.onActivate = ^{
+        Controller *ss = weakSelf; if (!ss) return;
+        ss.shortcutSel = [ss.shortcutRows indexOfObject:r];
+        [ss refreshShortcutRows];
+        [ss startRecordingForAction:aid];
+      };
+      r.onReset = ^{
+        Controller *ss = weakSelf; if (!ss) return;
+        [ss resetShortcutForAction:aid];
+      };
+      [pv addSubview:r];
+      [rows addObject:r];
+      y -= rowH;
     }
+    self.shortcutRows = rows;
+
     NSButton *done = [NSButton buttonWithTitle:@"关闭" target:self action:@selector(closeShortcutPanel:)];
     done.bezelStyle = NSBezelStyleRounded;
-    done.frame = NSMakeRect(350, 16, 100, 32);
+    done.frame = NSMakeRect(380, 16, 100, 32);
     done.focusRingType = NSFocusRingTypeNone;
-    [cv addSubview:done];
+    [pv addSubview:done];
   }
-  for (NSView *v in self.shortcutPanel.contentView.subviews) {
-    if ([v isKindOfClass:[NSButton class]] && [(NSButton *)v identifier]) {
-      NSString *aid = (NSString *)[(NSButton *)v identifier];
-      NSString *sig = self.customShortcuts[aid];
-      [(NSButton *)v setTitle:(sig.length ? DisplayForSignature(sig) : @"点击设置")];
-    }
-  }
+
+  [self refreshShortcutRows];
   if (self.shortcutPanel.sheetParent) {
     [self.shortcutPanel makeKeyAndOrderFront:nil];
     return;
   }
+  self.shortcutSel = 0;
+  [self refreshShortcutRows];
   [NSApp activateIgnoringOtherApps:YES];
   [self.window beginSheet:self.shortcutPanel completionHandler:nil];
   [self.shortcutPanel makeFirstResponder:self.shortcutPanel.contentView];
+}
+
+- (void)refreshShortcutRows {
+  NSInteger idx = 0;
+  for (ShortcutRowView *r in self.shortcutRows) {
+    r.sigText = self.customShortcuts[r.actionId];
+    r.selected = (idx == self.shortcutSel);
+    [r setNeedsDisplay:YES];
+    idx++;
+  }
+}
+
+- (void)shortcutPanelKeyDown:(NSEvent *)event {
+  NSUInteger code = event.keyCode;
+  NSInteger n = (NSInteger)self.shortcutRows.count;
+  if (code == 126) { // ↑
+    if (n > 0) { self.shortcutSel = (self.shortcutSel - 1 + n) % n; [self refreshShortcutRows]; }
+  } else if (code == 125) { // ↓
+    if (n > 0) { self.shortcutSel = (self.shortcutSel + 1) % n; [self refreshShortcutRows]; }
+  } else if (code == 36 || code == 49) { // Enter / Space
+    if (self.shortcutSel < n) [self startRecordingForAction:self.shortcutRows[self.shortcutSel].actionId];
+  } else if (code == 53) { // Esc
+    [self closeShortcutPanel:nil];
+  }
+}
+
+- (void)startRecordingForAction:(NSString *)actionId {
+  self.recordingAction = actionId;
+  for (ShortcutRowView *r in self.shortcutRows) { r.selected = NO; r.hovered = NO; [r setNeedsDisplay:YES]; }
+  if (self.recordingMonitor) { [NSEvent removeMonitor:self.recordingMonitor]; self.recordingMonitor = nil; }
+  __weak Controller *weakSelf = self;
+  self.recordingMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    Controller *ss = weakSelf; if (!ss) return e;
+    [ss finishRecordingWithEvent:e];
+    return nil;
+  }];
+}
+
+- (void)resetShortcutForAction:(NSString *)actionId {
+  [self.customShortcuts removeObjectForKey:actionId];
+  [self saveCustomShortcuts];
+  [self refreshShortcutRows];
 }
 
 - (void)closeShortcutPanel:(id)sender {
@@ -1420,21 +1556,12 @@ static NSString *ResolveAppPath(NSString *target) {
   }
 }
 
-- (void)recordButtonTapped:(NSButton *)sender {
-  self.recordingAction = (NSString *)sender.identifier;
-  if (self.recordingMonitor) { [NSEvent removeMonitor:self.recordingMonitor]; self.recordingMonitor = nil; }
-  __weak Controller *weakSelf = self;
-  self.recordingMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
-    Controller *ss = weakSelf; if (!ss) return e;
-    [ss finishRecordingWithEvent:e];
-    return nil;
-  }];
-}
-
 - (void)finishRecordingWithEvent:(NSEvent *)event {
   if (self.recordingMonitor) { [NSEvent removeMonitor:self.recordingMonitor]; self.recordingMonitor = nil; }
   NSString *action = self.recordingAction;
   self.recordingAction = nil;
+  [self refreshShortcutRows];
+  [self.shortcutPanel makeFirstResponder:self.shortcutPanel.contentView];
   if (!action) return;
   if (event.keyCode == 53) return; // Esc 取消
   NSString *sig = SignatureForEvent(event);
@@ -1465,7 +1592,8 @@ static NSString *ResolveAppPath(NSString *target) {
 
   self.customShortcuts[action] = sig;
   [self saveCustomShortcuts];
-  [self showShortcutSettings:nil];
+  [self refreshShortcutRows];
+  [self.shortcutPanel makeFirstResponder:self.shortcutPanel.contentView];
 }
 
 - (BOOL)handleCustomShortcut:(NSEvent *)event {
