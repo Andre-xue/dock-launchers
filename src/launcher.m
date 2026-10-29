@@ -97,6 +97,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSButton *removeBtn;
 @property (strong) PillButton *cancelBtn;
 @property (strong) PillButton *openBtn;
+@property (strong) PillButton *cLightRed;
+@property (strong) PillButton *cLightYellow;
+@property (strong) PillButton *cLightGreen;
 @property (strong) TitlePillView *windowTitleLabel;
 @property (strong) NSTextField *hintLabel;
 @property (strong) NSTextField *searchField;
@@ -174,6 +177,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)applySearchQuery;
 - (void)searchTapped:(id)sender;
 - (void)renameGroupFromTitle;
+- (void)cLightRedTapped:(id)sender;
+- (void)cLightYellowTapped:(id)sender;
+- (void)cLightGreenTapped:(id)sender;
 - (void)updateGroupDisplayName:(NSString *)name;
 - (void)performFullRename:(NSString *)typed;
 - (void)batchStripGroupSuffix:(id)sender;
@@ -827,6 +833,21 @@ static NSString *ResolveAppPath(NSString *target) {
   self.searchBtn.toolTip = @"搜索本组应用（F4 或 ⌘Space）";
   [cv addSubview:self.searchBtn];
 
+  self.cLightRed = [[PillButton alloc] initWithFrame:NSMakeRect(0,0,14,14)];
+  self.cLightRed.fillColor = [NSColor colorWithCalibratedRed:1.0 green:0.37 blue:0.34 alpha:1.0];
+  self.cLightRed.target = self; self.cLightRed.action = @selector(cLightRedTapped:);
+  self.cLightRed.bordered = NO; self.cLightRed.title = @""; self.cLightRed.focusRingType = NSFocusRingTypeNone;
+  self.cLightYellow = [[PillButton alloc] initWithFrame:NSMakeRect(0,0,14,14)];
+  self.cLightYellow.fillColor = [NSColor colorWithCalibratedRed:1.0 green:0.74 blue:0.18 alpha:1.0];
+  self.cLightYellow.target = self; self.cLightYellow.action = @selector(cLightYellowTapped:);
+  self.cLightYellow.bordered = NO; self.cLightYellow.title = @""; self.cLightYellow.focusRingType = NSFocusRingTypeNone;
+  self.cLightGreen = [[PillButton alloc] initWithFrame:NSMakeRect(0,0,14,14)];
+  self.cLightGreen.fillColor = [NSColor colorWithCalibratedRed:0.16 green:0.78 blue:0.25 alpha:1.0];
+  self.cLightGreen.target = self; self.cLightGreen.action = @selector(cLightGreenTapped:);
+  self.cLightGreen.bordered = NO; self.cLightGreen.title = @""; self.cLightGreen.focusRingType = NSFocusRingTypeNone;
+  for (PillButton *b in @[self.cLightRed, self.cLightYellow, self.cLightGreen]) { b.hidden = YES; [cv addSubview:b]; }
+  self.cLightRed.toolTip = @"关闭"; self.cLightYellow.toolTip = @"最小化"; self.cLightGreen.toolTip = @"放大";
+
   self.searchField = [[NSTextField alloc] initWithFrame:NSMakeRect(W/2.0-170, H-50, 340, 30)];
   self.searchField.placeholderString = @"搜索本组应用…";
   self.searchField.font = [NSFont systemFontOfSize:14];
@@ -1069,6 +1090,21 @@ static NSString *ResolveAppPath(NSString *target) {
   self.skinBtn.frame   = NSMakeRect(ox + cw*1.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
   if (self.searchBtn) self.searchBtn.frame = NSMakeRect(ox + cw*2.5 - 15.0, oy + rh - 88, 30, 30);
   self.addBtn.frame    = NSMakeRect(ox + cw*3.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
+
+  BOOL morph = (gCornerRatio > 0.05);
+  for (NSWindowButton b = NSWindowCloseButton; b <= NSWindowZoomButton; b++) {
+    NSButton *btn = [self.window standardWindowButton:b];
+    if (btn) btn.hidden = morph;
+  }
+  self.cLightRed.hidden = !morph;
+  self.cLightYellow.hidden = !morph;
+  self.cLightGreen.hidden = !morph;
+  if (morph) {
+    CGFloat ly2 = oy + rh - 24;
+    self.cLightRed.frame = NSMakeRect(ox + 18, ly2, 14, 14);
+    self.cLightYellow.frame = NSMakeRect(ox + 40, ly2, 14, 14);
+    self.cLightGreen.frame = NSMakeRect(ox + 62, ly2, 14, 14);
+  }
 
   CGFloat ly = oy + rh - 26;
   if (self.lightRed) self.lightRed.frame = NSMakeRect(ox + 20, ly, 12, 12);
@@ -1504,6 +1540,10 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)layoutSingle:(id)sender { [self applyLayoutColumns:1]; }
 - (void)layoutThree:(id)sender { [self applyLayoutColumns:3]; }
 - (void)layoutFour:(id)sender { [self applyLayoutColumns:4]; }
+
+- (void)cLightRedTapped:(id)sender { [NSApp terminate:nil]; }
+- (void)cLightYellowTapped:(id)sender { [self.window miniaturize:nil]; }
+- (void)cLightGreenTapped:(id)sender { [self.window zoom:nil]; }
 
 #pragma mark - 重命名分组
 
