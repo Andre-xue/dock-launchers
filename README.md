@@ -53,12 +53,59 @@ bash install.command
 | 黄灯 | 最小化到程序坞 |
 | 绿灯 | 点击放大（三列）/ Option+点击四列 |
 | 搜索（蓝点 / F4 / ⌘Space） | 只搜索当前分组内的应用 |
+| 🎨 →「新建分组…」 | 输入名字，自动创建 App/列表/签名/加入 Dock |
+| 🎨 →「删除当前分组…」 | 确认后把 App 与列表移到废纸篓，并从 Dock 移除 |
 | ⌘Space 搜组名（窗口外） | 系统 Spotlight 直接打开分组 |
 
 底部操作提示由 `ShortcutTable()` 单一数据源自动生成（`src/launcher.m`）。
 **新增快捷键/按钮功能时**：在 `ShortcutTable()` 里加一行，再在 `keyDown:` 里接一个分支，底部提示与 tooltip 会自动同步，无需改 UI 代码。
 
 分组内容文件：`~/Applications/DockLaunchers/lists/<组名>.txt`，格式 `显示名称|应用名称或完整路径`，`#` 开头为注释。
+
+## 增加 / 删除分组
+
+### 一键操作（仅本机）
+
+- **新增**：任意分组窗口 → 🎨 →「新建分组…」→ 输入名字（如 `设计`）→ 创建。
+  会自动复制当前分组作为模板、改包名/标识、创建 `lists/设计.txt`、签名、加入程序坞并重启 Dock。
+- **删除**：打开要删除的分组 → 🎨 →「删除当前分组…」→ 确认。
+  App 和列表文件会移到废纸篓（可恢复），并自动从 Dock 移除。
+
+> 一键操作只影响本机安装；要让新分组进入 GitHub 发布包，按下面步骤改仓库。
+
+### 同步到 GitHub 仓库（新增一个分组）
+
+以新增「设计」为例，改仓库里这几处：
+
+1. `build.sh` 末尾增加：
+   ```bash
+   build_one "设计" "设计" "sheji" "工作组"
+   #        包名    显示名  bundle标识  图标源名
+   ```
+2. 放入图标：`resources/icons/设计.icns`
+3. 放入默认列表：`lists/设计.txt`（格式 `显示名称|应用名或路径`）
+4. `install.command` 的 `URLS` 数组追加（中文需百分号编码）：
+   ```bash
+   "file://$HOME/Applications/DockLaunchers/%E8%AE%BE%E8%AE%A1.app"
+   ```
+5. `src/launcher.m`：
+   - `repairDockEntries` 的 `order` 数组加上 `@"设计"`
+   - `emojiForGroup` 加上映射，如 `if ([g containsString:@"设计"]) return @"🎨";`
+6. `README.md` 把数量描述改成新数量
+
+然后构建、推送、发版：
+
+```bash
+bash build.sh
+bash /Users/andre/deepseek/sync-github.sh "feat: 新增设计组"
+# 发版（可选）
+export GH_CONFIG_DIR=/Users/andre/deepseek/tools/gh/config
+/Users/andre/deepseek/tools/gh/gh release create v1.15.0 dist/DockLaunchers-portable.zip
+```
+
+### 同步到 GitHub 仓库（删除一个分组）
+
+反向删除：`build.sh` 对应行、`resources/icons/xxx.icns`、`lists/xxx.txt`、`install.command` 的 URL、`launcher.m` 里 `order` 与 emoji 映射、README 数量，然后同样 `build.sh` + `sync-github.sh` + 发版。
 
 ## 目录结构
 
