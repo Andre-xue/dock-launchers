@@ -26,9 +26,28 @@ static NSMutableDictionary *gAppIconSettings = nil;  // target -> {size, corner,
 static NSString *DisplayForSignature(NSString *sig);
 static NSString *SignatureForEvent(NSEvent *e);
 
+@interface AppIconView : NSView
+@property (strong) NSImage *image;
+@property CGFloat cornerRatio;
+@end
+
+@implementation AppIconView
+- (BOOL)isFlipped { return NO; }
+- (void)setImage:(NSImage *)image { _image = image; [self setNeedsDisplay:YES]; }
+- (void)setCornerRatio:(CGFloat)cornerRatio { _cornerRatio = cornerRatio; [self setNeedsDisplay:YES]; }
+- (void)drawRect:(NSRect)dirtyRect {
+  if (!self.image) return;
+  CGFloat r = self.cornerRatio * MIN(self.bounds.size.width, self.bounds.size.height);
+  NSBezierPath *clip = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:r yRadius:r];
+  [clip addClip];
+  [self.image drawInRect:self.bounds fromRect:NSZeroRect
+               operation:NSCompositingOperationSourceOver fraction:1.0];
+}
+@end
+
 @interface RowView : NSView
 @property (assign) NSInteger idx;
-@property (strong) NSImageView *iconView;
+@property (strong) AppIconView *iconView;
 @property (strong) NSTextField *label;
 @property (assign) BOOL selected;
 @property (weak) Controller *ctrl;
@@ -246,6 +265,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)pickAppIconImage:(id)sender;
 - (void)resetAppIcon:(id)sender;
 - (void)closeAppIconPanel:(id)sender;
+- (void)updateSelectedIconAppearance;
 @end
 
 static NSColor *ThemeBG(NSInteger t) {
@@ -1019,12 +1039,8 @@ static NSString *ResolveAppPath(NSString *target) {
     if (icons) {
       CGFloat sz = customSz > 0 ? customSz : MIN(cell.size.width * 0.62, MIN(cell.size.height * 0.72, 64.0));
       sz = MAX(24.0, sz);
-      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect((cell.size.width - sz)/2.0, (cell.size.height - sz)/2.0, sz, sz)];
-      iv.image = nil;
-      iv.imageScaling = NSImageScaleProportionallyUpOrDown;
-      iv.wantsLayer = YES;
-      iv.layer.cornerRadius = customCorner * sz;
-      iv.layer.masksToBounds = (customCorner > 0.01);
+      AppIconView *iv = [[AppIconView alloc] initWithFrame:NSMakeRect((cell.size.width - sz)/2.0, (cell.size.height - sz)/2.0, sz, sz)];
+      iv.cornerRatio = customCorner;
       [row addSubview:iv];
       row.iconView = iv;
       row.label = nil;
@@ -1043,12 +1059,8 @@ static NSString *ResolveAppPath(NSString *target) {
     lab.textColor = ThemeText(gTheme);
     lab.lineBreakMode = NSLineBreakByTruncatingTail;
     lab.frame = NSMakeRect(textX, (rowH-24)/2.0, MAX(40, cell.size.width - textX - 8), 24);
-    NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(iconX, (rowH-iconSize)/2, iconSize, iconSize)];
-    iv.image = nil;
-    iv.imageScaling = NSImageScaleProportionallyUpOrDown;
-    iv.wantsLayer = YES;
-    iv.layer.cornerRadius = customCorner * iconSize;
-    iv.layer.masksToBounds = (customCorner > 0.01);
+    AppIconView *iv = [[AppIconView alloc] initWithFrame:NSMakeRect(iconX, (rowH-iconSize)/2, iconSize, iconSize)];
+    iv.cornerRatio = customCorner;
     [row addSubview:iv];
     [row addSubview:lab];
     row.iconView = iv;
@@ -2327,6 +2339,44 @@ static NSString *ResolveAppPath(NSString *target) {
   [p makeKeyAndOrderFront:nil];
 }
 
+- (void)updateSelectedIconAppearance {
+  if (!self.appIconEditTarget) return;
+  NSInteger idx = -1;
+  for (RowView *r in self.rows) { if (r.idx >= 0 && r.idx < (NSInteger)self.items.count && [self.items[r.idx][@"target"] isEqualToString:self.appIconEditTarget]) { idx = r.idx; break; } }
+  if (idx < 0) { [self reload]; return; }
+  RowView *row = self.rows[idx];
+  NSDictionary *cfg = gAppIconSettings[self.appIconEditTarget] ?: @{};
+  CGFloat customSz = cfg[@"size"] ? [cfg[@"size"] doubleValue] : 0;
+  CGFloat corner = cfg[@"corner"] ? [cfg[@"corner"] doubleValue] : 0;
+  NSImage *img = nil;
+  if (cfg[@"image"]) img = [[NSImage alloc] initWithContentsOfFile:cfg[@"image"]];
+  if (!img) {
+    NSString *path = ResolveAppPath(self.items[idx][@"target"]);
+    if (path) img = [[NSWorkspace sharedWorkspace] iconForFile:path];
+  }
+  AppIconView *iv = row.iconView;
+  CGFloat cellW = row.bounds.size.width, cellH = row.bounds.size.height;
+  BOOL grid = gIconMode;
+  if (grid) {
+    CGFloat sz = customSz > 0 ? customSz : MIN(cellW * 0.62, MIN(cellH * 0.72, 64.0));
+    sz = MAX(24.0, MIN(sz, MIN(cellW, cellH) - 4));
+    iv.frame = NSMakeRect((cellW - sz)/2.0, (cellH - sz)/2.0, sz, sz);
+  } else {
+    BOOL narrow = (cellW < 250);
+    CGFloat base = narrow ? 34 : 40;
+    CGFloat sz = customSz > 0 ? MAX(24.0, MIN(customSz, cellH - 10)) : base;
+    CGFloat iconX = narrow ? 12 : 20;
+    iv.frame = NSMakeRect(iconX, (cellH - sz)/2.0, sz, sz);
+    if (row.label) {
+      CGFloat textX = iconX + sz + (narrow ? 8 : 14);
+      row.label.frame = NSMakeRect(textX, (cellH - 24)/2.0, MAX(40, cellW - textX - 8), 24);
+    }
+  }
+  iv.cornerRatio = corner;
+  iv.image = img;
+  [iv setNeedsDisplay:YES];
+}
+
 - (void)appIconSizeChanged:(id)sender {
   if (!self.appIconEditTarget) return;
   NSMutableDictionary *cfg = [gAppIconSettings[self.appIconEditTarget] mutableCopy] ?: [NSMutableDictionary dictionary];
@@ -2334,7 +2384,7 @@ static NSString *ResolveAppPath(NSString *target) {
   gAppIconSettings[self.appIconEditTarget] = cfg;
   self.appIconSizeLabel.stringValue = [NSString stringWithFormat:@"%.0f", self.appIconSizeSlider.doubleValue];
   [self saveTheme];
-  [self reload];
+  [self updateSelectedIconAppearance];
 }
 
 - (void)appIconCornerChanged:(id)sender {
@@ -2344,7 +2394,7 @@ static NSString *ResolveAppPath(NSString *target) {
   gAppIconSettings[self.appIconEditTarget] = cfg;
   self.appIconCornerLabel.stringValue = [NSString stringWithFormat:@"%.0f%%", self.appIconCornerSlider.doubleValue];
   [self saveTheme];
-  [self reload];
+  [self updateSelectedIconAppearance];
 }
 
 - (void)pickAppIconImage:(id)sender {
@@ -2358,7 +2408,7 @@ static NSString *ResolveAppPath(NSString *target) {
   cfg[@"image"] = pn.URL.path;
   gAppIconSettings[self.appIconEditTarget] = cfg;
   [self saveTheme];
-  [self reload];
+  [self updateSelectedIconAppearance];
 }
 
 - (void)resetAppIcon:(id)sender {
@@ -3051,6 +3101,16 @@ int main(int argc, const char *argv[]) {
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
         exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_APPICON_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSString *target = c.items.count ? c.items[0][@"target"] : nil;
+        if (target) {
+          gAppIconSettings[target] = [@{@"size": @64, @"corner": @(atof(getenv("DOCKLAUNCHER_TEST_APPICON_SHOW")))} mutableCopy];
+          [c reload];
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_APPICON")) {
