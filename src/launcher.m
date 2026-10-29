@@ -100,6 +100,10 @@ static NSString *const kSkinPrefix = @"skin.";
 @property (copy) NSString *searchQuery;
 @property BOOL searchActive;
 @property (strong) NSTimer *searchAutoHideTimer;
+@property (strong) NSMutableDictionary *customShortcuts;
+@property (strong) NSWindow *shortcutPanel;
+@property (copy) NSString *recordingAction;
+@property (strong) id keyMonitor;
 @property NSInteger userColumns;
 @property (copy) NSString *customIconPath;
 @property NSInteger forceColumns;
@@ -155,6 +159,13 @@ static NSString *const kSkinPrefix = @"skin.";
 - (void)closeSearch;
 - (void)applySearchQuery;
 - (void)searchTapped:(id)sender;
+- (void)loadCustomShortcuts;
+- (void)saveCustomShortcuts;
+- (void)showShortcutSettings:(id)sender;
+- (void)beginRecordingShortcut:(id)sender;
+- (void)finishRecordingWithEvent:(NSEvent *)event;
+- (BOOL)handleCustomShortcut:(NSEvent *)event;
+- (void)performShortcutAction:(NSString *)action;
 - (void)scheduleSearchAutoHide;
 - (void)searchAutoHideFired:(NSTimer *)t;
 - (void)moveSel:(NSInteger)delta;
@@ -445,6 +456,70 @@ static NSColor *ThemeSel(NSInteger t) {
 }
 @end
 
+// ================= 可自定义快捷键 =================
+static NSArray<NSDictionary *> *ShortcutActions(void) {
+  return @[
+    @{@"id": @"add",    @"name": @"添加应用",   @"sel": @"addApps:"},
+    @{@"id": @"remove", @"name": @"移除应用",   @"sel": @"removeSelected:"},
+    @{@"id": @"skin",   @"name": @"皮肤/布局",  @"sel": @"showSkinMenu:"},
+    @{@"id": @"search", @"name": @"搜索本组",   @"sel": @"toggleSearch"},
+    @{@"id": @"open",   @"name": @"打开选中",   @"sel": @"openSelected:"},
+    @{@"id": @"cancel", @"name": @"取消/关闭",  @"sel": @"closeCancel:"},
+  ];
+}
+
+static NSString *KeyNameForCode(unsigned short code) {
+  switch (code) {
+    case 122: return @"f1"; case 120: return @"f2"; case 99: return @"f3"; case 118: return @"f4";
+    case 96: return @"f5"; case 97: return @"f6"; case 98: return @"f7"; case 100: return @"f8";
+    case 101: return @"f9"; case 109: return @"f10"; case 103: return @"f11"; case 111: return @"f12";
+    default: return nil;
+  }
+}
+
+static NSString *SignatureForEvent(NSEvent *e) {
+  NSMutableString *sig = [NSMutableString string];
+  NSEventModifierFlags f = e.modifierFlags;
+  if (f & NSEventModifierFlagCommand) [sig appendString:@"cmd+"];
+  if (f & NSEventModifierFlagControl) [sig appendString:@"ctrl+"];
+  if (f & NSEventModifierFlagOption)  [sig appendString:@"opt+"];
+  if (f & NSEventModifierFlagShift)   [sig appendString:@"shift+"];
+  NSString *fn = KeyNameForCode(e.keyCode);
+  NSString *key = fn;
+  if (!key) {
+    key = [e.charactersIgnoringModifiers lowercaseString];
+    if (key.length == 0) key = [NSString stringWithFormat:@"key%u", e.keyCode];
+  }
+  [sig appendString:key];
+  return sig;
+}
+
+static NSString *DisplayForSignature(NSString *sig) {
+  if (sig.length == 0) return @"（未设置）";
+  NSMutableString *out = [NSMutableString string];
+  NSArray *parts = [sig componentsSeparatedByString:@"+"];
+  for (NSString *p in parts) {
+    if ([p isEqualToString:@"cmd"]) [out appendString:@"⌘"];
+    else if ([p isEqualToString:@"ctrl"]) [out appendString:@"⌃"];
+    else if ([p isEqualToString:@"opt"]) [out appendString:@"⌥"];
+    else if ([p isEqualToString:@"shift"]) [out appendString:@"⇧"];
+    else if (p.length == 1) [out appendString:[p uppercaseString]];
+    else [out appendString:[p uppercaseString]];
+  }
+  return out;
+}
+
+static BOOL SignatureIsAllowed(NSString *sig) {
+  if (sig.length == 0) return NO;
+  if ([sig hasPrefix:@"f"] && sig.length <= 3) return YES; // F 键
+  if ([sig containsString:@"cmd+"] || [sig containsString:@"ctrl+"] ||
+      [sig containsString:@"opt+"] || [sig containsString:@"shift+"]) {
+    // 必须有修饰键 + 至少一个普通键
+    return [sig componentsSeparatedByString:@"+"].lastObject.length > 0;
+  }
+  return NO;
+}
+
 // ================= 快捷键 / 操作说明（唯一数据源） =================
 // 以后新增快捷键或按钮功能时，只需在这里加一行，底部提示会自动更新。
 static NSArray<NSDictionary *> *ShortcutTable(void) {
@@ -685,6 +760,13 @@ static NSString *ResolveAppPath(NSString *target) {
   [cv addSubview:open];
   self.openBtn = open;
   [self setupTooltips];
+
+  __weak Controller *weakSelf = self;
+  self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    Controller *ss = weakSelf; if (!ss) return e;
+    if ([ss handleCustomShortcut:e]) return nil;
+    return e;
+  }];
 
   self.hintLabel = [NSTextField labelWithString:@"←→↑↓ 选择 · Enter 打开 · ⌫ 移除 · Esc 取消"];
   self.hintLabel.font = [NSFont systemFontOfSize:11];
@@ -1137,6 +1219,7 @@ static NSString *ResolveAppPath(NSString *target) {
   if ([d objectForKey:@"skinImgDX"]) gImgDX = [d doubleForKey:@"skinImgDX"];
   if ([d objectForKey:@"skinImgDY"]) gImgDY = [d doubleForKey:@"skinImgDY"];
   gImgPath = [d stringForKey:@"skinImgPath"];
+  [self loadCustomShortcuts];
   if (gTheme == 3 && gImgPath.length == 0) gTheme = 0;
   if (gGlassAlpha < 0.3) gGlassAlpha = 0.82;
   if (gImgScale < 1.0) gImgScale = 1.0;
@@ -1227,6 +1310,7 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"三列" action:@selector(layoutThree:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 3);
   it = [m addItemWithTitle:@"四列" action:@selector(layoutFour:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 4);
   [m addItem:[NSMenuItem separatorItem]];
+  it = [m addItemWithTitle:@"快捷键设置…" action:@selector(showShortcutSettings:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"更换图标（人物图片）…" action:@selector(pickIconImage:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"恢复默认图标" action:@selector(resetCustomIcon:) keyEquivalent:@""]; it.target = self;
   [m addItem:[NSMenuItem separatorItem]];
@@ -1261,6 +1345,105 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)layoutSingle:(id)sender { [self applyLayoutColumns:1]; }
 - (void)layoutThree:(id)sender { [self applyLayoutColumns:3]; }
 - (void)layoutFour:(id)sender { [self applyLayoutColumns:4]; }
+
+#pragma mark - 快捷键映射
+
+- (void)loadCustomShortcuts {
+  NSDictionary *d = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"customShortcuts"];
+  self.customShortcuts = d ? [d mutableCopy] : [NSMutableDictionary dictionary];
+}
+
+- (void)saveCustomShortcuts {
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  [d setObject:self.customShortcuts forKey:@"customShortcuts"];
+  [d synchronize];
+}
+
+- (void)showShortcutSettings:(id)sender {
+  if (!self.shortcutPanel) {
+    CGFloat h = 190 + [ShortcutActions() count] * 38;
+    self.shortcutPanel = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,470,h)
+                                                     styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
+                                                       backing:NSBackingStoreBuffered defer:NO];
+    self.shortcutPanel.title = @"快捷键设置（仅本应用生效）";
+    self.shortcutPanel.level = NSFloatingWindowLevel;
+    NSView *cv = self.shortcutPanel.contentView;
+    CGFloat y = h - 50;
+    NSTextField *tip = [NSTextField labelWithString:@"点击右侧按钮后直接按组合键；Esc 取消。⌘Space 被系统占用，建议用 ⌘F。"];
+    tip.font = [NSFont systemFontOfSize:11];
+    tip.textColor = [NSColor secondaryLabelColor];
+    tip.frame = NSMakeRect(20, h - 34, 430, 16);
+    [cv addSubview:tip];
+    for (NSDictionary *a in ShortcutActions()) {
+      NSTextField *lab = [NSTextField labelWithString:a[@"name"]];
+      lab.font = [NSFont systemFontOfSize:13];
+      lab.frame = NSMakeRect(20, y, 150, 20);
+      [cv addSubview:lab];
+      NSButton *b = [NSButton buttonWithTitle:@"点击设置" target:self action:@selector(recordButtonTapped:)];
+      b.bezelStyle = NSBezelStyleRounded;
+      b.frame = NSMakeRect(180, y - 6, 210, 30);
+      b.identifier = a[@"id"];
+      b.toolTip = @"点击后按下想要的组合键（需含 ⌘/⌃/⌥/⇧ 或 F 键）";
+      [cv addSubview:b];
+      y -= 38;
+    }
+  }
+  for (NSView *v in self.shortcutPanel.contentView.subviews) {
+    if ([v isKindOfClass:[NSButton class]] && [(NSButton *)v identifier]) {
+      NSString *aid = (NSString *)[(NSButton *)v identifier];
+      NSString *sig = self.customShortcuts[aid];
+      [(NSButton *)v setTitle:(sig.length ? DisplayForSignature(sig) : @"点击设置")];
+    }
+  }
+  [self.shortcutPanel center];
+  [self.shortcutPanel makeKeyAndOrderFront:nil];
+}
+
+- (void)recordButtonTapped:(NSButton *)sender {
+  self.recordingAction = (NSString *)sender.identifier;
+  if (self.keyMonitor) { [NSEvent removeMonitor:self.keyMonitor]; self.keyMonitor = nil; }
+  __weak Controller *weakSelf = self;
+  self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    Controller *ss = weakSelf; if (!ss) return e;
+    [ss finishRecordingWithEvent:e];
+    return nil;
+  }];
+}
+
+- (void)finishRecordingWithEvent:(NSEvent *)event {
+  if (self.keyMonitor) { [NSEvent removeMonitor:self.keyMonitor]; self.keyMonitor = nil; }
+  NSString *action = self.recordingAction;
+  self.recordingAction = nil;
+  if (!action) return;
+  if (event.keyCode == 53) return; // Esc 取消
+  NSString *sig = SignatureForEvent(event);
+  if (!SignatureIsAllowed(sig)) { NSBeep(); return; }
+  self.customShortcuts[action] = sig;
+  [self saveCustomShortcuts];
+  [self showShortcutSettings:nil];
+}
+
+- (BOOL)handleCustomShortcut:(NSEvent *)event {
+  if (self.recordingAction) return NO;
+  NSString *sig = SignatureForEvent(event);
+  for (NSDictionary *a in ShortcutActions()) {
+    NSString *stored = self.customShortcuts[a[@"id"]];
+    if (stored.length && [stored isEqualToString:sig]) {
+      [self performShortcutAction:a[@"id"]];
+      return YES;
+    }
+  }
+  return NO;
+}
+
+- (void)performShortcutAction:(NSString *)action {
+  if ([action isEqualToString:@"add"]) [self addApps:nil];
+  else if ([action isEqualToString:@"remove"]) [self removeSelected:nil];
+  else if ([action isEqualToString:@"skin"]) [self showSkinMenu:nil];
+  else if ([action isEqualToString:@"search"]) [self toggleSearch];
+  else if ([action isEqualToString:@"open"]) [self openSelected:nil];
+  else if ([action isEqualToString:@"cancel"]) [self closeCancel:nil];
+}
 
 #pragma mark - 自定义图标
 
@@ -1546,6 +1729,20 @@ int main(int argc, const char *argv[]) {
         if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS) {
           fprintf(stderr, "RSS=%.1fMB\n", info.resident_size / 1048576.0);
         }
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_SHORTCUT")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        c.customShortcuts[@"search"] = @"cmd+f";
+        NSEvent *ev = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                                 modifierFlags:NSEventModifierFlagCommand timestamp:0
+                                  windowNumber:c.window.windowNumber context:nil
+                                   characters:@"f" charactersIgnoringModifiers:@"f"
+                                     isARepeat:NO keyCode:3];
+        BOOL handled = [c handleCustomShortcut:ev];
+        [c showShortcutSettings:nil];
+        fprintf(stderr, "HANDLED=%d SEARCH_ACTIVE=%d PANEL_VIEWS=%ld\n", handled, c.searchActive, (long)c.shortcutPanel.contentView.subviews.count);
         exit(0);
       });
     }
