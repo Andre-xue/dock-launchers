@@ -2070,14 +2070,21 @@ static NSString *ResolveAppPath(NSString *target) {
   if (!self.uninstallChecks) self.uninstallChecks = [NSMutableArray array];
   [self.uninstallChecks removeAllObjects];
   NSMutableArray *valid = [NSMutableArray array];
+  NSInteger systemSkipped = 0;
   for (NSDictionary *it in self.items) {
     NSString *p = ResolveAppPath(it[@"target"]);
-    if (p.length) [valid addObject:@{@"label": it[@"label"] ?: @"", @"path": p, @"target": it[@"target"]}];
+    if (!p.length) continue;
+    NSString *real = [p stringByResolvingSymlinksInPath];
+    if ([real hasPrefix:@"/System/"] || [p hasPrefix:@"/System/"]) {
+      systemSkipped++;   // macOS 自带应用不支持卸载
+      continue;
+    }
+    [valid addObject:@{@"label": it[@"label"] ?: @"", @"path": p, @"target": it[@"target"]}];
   }
   if (valid.count == 0) {
     NSAlert *e = [[NSAlert alloc] init];
     e.messageText = @"没有可卸载的应用";
-    e.informativeText = @"当前分组里没有解析到有效的应用路径。";
+    e.informativeText = systemSkipped > 0 ? @"当前分组里只有 macOS 自带应用，系统应用不支持卸载。" : @"当前分组里没有解析到有效的应用路径。";
     [e runModal];
     return;
   }
@@ -2089,8 +2096,15 @@ static NSString *ResolveAppPath(NSString *target) {
   p.level = NSFloatingWindowLevel;
   self.uninstallPanel = p;
   NSView *cv = p.contentView;
+  if (systemSkipped > 0) {
+    NSTextField *tip = [NSTextField labelWithString:[NSString stringWithFormat:@"macOS 自带应用不支持卸载，已隐藏 %ld 个", (long)systemSkipped]];
+    tip.font = [NSFont systemFontOfSize:11];
+    tip.textColor = [NSColor secondaryLabelColor];
+    tip.frame = NSMakeRect(16, 530, 480, 18);
+    [cv addSubview:tip];
+  }
 
-  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 488, 456)];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 488, systemSkipped > 0 ? 448 : 456)];
   sv.hasVerticalScroller = YES;
   sv.drawsBackground = NO;
   [cv addSubview:sv];
@@ -2139,6 +2153,8 @@ static NSString *ResolveAppPath(NSString *target) {
   for (NSDictionary *it in self.items) {
     NSString *path = ResolveAppPath(it[@"target"]);
     if (!path.length) continue;
+    NSString *real = [path stringByResolvingSymlinksInPath];
+    if ([real hasPrefix:@"/System/"] || [path hasPrefix:@"/System/"]) continue;
     if (i < (NSInteger)self.uninstallChecks.count && [self.uninstallChecks[i] state] == NSControlStateValueOn) {
       [selected addObject:@{@"label": it[@"label"] ?: @"", @"path": path, @"target": it[@"target"]}];
     }
