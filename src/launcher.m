@@ -3014,8 +3014,19 @@ static NSString *ResolveAppPath(NSString *target) {
     self.idleTimePicker.datePickerElements = NSDatePickerElementFlagHourMinute;
     [cv addSubview:self.idleTimePicker];
 
-    NSTextField *tip = [NSTextField labelWithString:@"到该时间自动退出；若今天已过则顺延到明天。默认关闭"];
-    tip.frame = NSMakeRect(20, 78, 360, 20);
+    NSTextField *hh = [NSTextField labelWithString:@"时"];
+    hh.font = [NSFont systemFontOfSize:10];
+    hh.textColor = [NSColor secondaryLabelColor];
+    hh.frame = NSMakeRect(96, 97, 20, 16);
+    [cv addSubview:hh];
+    NSTextField *mm = [NSTextField labelWithString:@"分"];
+    mm.font = [NSFont systemFontOfSize:10];
+    mm.textColor = [NSColor secondaryLabelColor];
+    mm.frame = NSMakeRect(146, 97, 20, 16);
+    [cv addSubview:mm];
+
+    NSTextField *tip = [NSTextField labelWithString:@"格式为 时:分；到该时间自动退出，若今天已过则顺延到明天。默认关闭"];
+    tip.frame = NSMakeRect(20, 68, 360, 20);
     tip.font = [NSFont systemFontOfSize:11];
     tip.textColor = [NSColor secondaryLabelColor];
     [cv addSubview:tip];
@@ -3070,6 +3081,7 @@ static NSString *ResolveAppPath(NSString *target) {
     NSDateFormatter *df = [[NSDateFormatter alloc] init];
     df.dateFormat = @"HH:mm";
     NSAlert *n = [[NSAlert alloc] init];
+    n.icon = [[NSImage alloc] initWithSize:NSMakeSize(1, 1)];
     n.messageText = [NSString stringWithFormat:@"已设置为明天 %@ 自动关闭", [df stringFromDate:when]];
     n.informativeText = @"今天该时间已过，因此顺延到明天的同一时间。";
     [n runModal];
@@ -3778,6 +3790,7 @@ int main(int argc, const char *argv[]) {
     if (getenv("DOCKLAUNCHER_TEST_IDLE_SHOW")) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [c showIdlePanel:nil];
+        fprintf(stderr, "IDLESHOW vis=%d frame=%.0f,%.0f level=%ld\n", c.idlePanel.isVisible, c.idlePanel.frame.origin.x, c.idlePanel.frame.origin.y, (long)c.idlePanel.level);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
     }
