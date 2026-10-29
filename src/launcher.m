@@ -1529,7 +1529,7 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)performFullRename:(NSString *)typed {
   BOOL hadSuffix = [typed hasSuffix:@"组"];
   NSString *display = hadSuffix ? [typed substringToIndex:typed.length - 1] : typed;
-  NSString *newBase = hadSuffix ? typed : [typed stringByAppendingString:@"组"];
+  NSString *newBase = display;   // Dock 标签取包名，所以包名直接用显示名（不再带“组”）
   if (display.length == 0) return;
 
   NSString *oldPath = [[NSBundle mainBundle] bundlePath];
