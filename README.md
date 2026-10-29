@@ -115,10 +115,11 @@ export GH_CONFIG_DIR=/Users/andre/deepseek/tools/gh/config
 - 备份 7 个分组 App 与列表到
   `~/Library/Application Support/DockLaunchers/backup/DockLaunchers/`
 - 在桌面生成 `恢复Dock分组.command`
+- 在 `~/Applications/` 生成更显眼的 `恢复Dock分组.app`（可直接拖到 Dock）
 
 如果误删了 Dock 上全部分组、并清空了废纸篓、且没有网络：
 
-1. 双击桌面上的 `恢复Dock分组.command`
+1. 双击桌面上的 `恢复Dock分组.command`，或 `~/Applications/恢复Dock分组.app`
 2. 会自动从本机备份复制 App 回 `~/Applications/DockLaunchers`
 3. 重新签名、注册，并恢复 7 个 Dock 图标
 4. Dock 自动重启，全部恢复
