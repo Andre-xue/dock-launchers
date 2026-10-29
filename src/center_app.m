@@ -124,6 +124,12 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
+  NSUserDefaults *ud0 = [NSUserDefaults standardUserDefaults];
+  if (![ud0 boolForKey:@"centerMenuTextInit"]) {
+    [ud0 setBool:YES forKey:@"centerMenuText"];
+    [ud0 setBool:YES forKey:@"centerMenuTextInit"];
+    [ud0 synchronize];
+  }
   self.sampleSeconds = 2;
   self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
   self.statusItem.button.image = [self characterImage:18];

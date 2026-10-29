@@ -133,6 +133,22 @@ if [ -d "$ROOT/build/DockLaunchers控制台.app" ]; then
   rm -rf "$HOME/Applications/DockLaunchers控制台.app"
   cp -R "$ROOT/build/DockLaunchers控制台.app" "$HOME/Applications/"
   codesign --force --deep --sign - "$HOME/Applications/DockLaunchers控制台.app" >/dev/null 2>&1 || true
+  # 开机自动启动控制台（写入 LaunchAgent）
+  AGENT="$HOME/Library/LaunchAgents/com.docklaunchers.center.plist"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  cat > "$AGENT" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.docklaunchers.center</string>
+<key>ProgramArguments</key><array><string>$HOME/Applications/DockLaunchers控制台.app/Contents/MacOS/menu</string></array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><false/>
+</dict></plist>
+PLIST
+  launchctl unload "$AGENT" 2>/dev/null || true
+  launchctl load "$AGENT" 2>/dev/null || true
+  open "$HOME/Applications/DockLaunchers控制台.app" 2>/dev/null || true
 fi
 
 echo ""
