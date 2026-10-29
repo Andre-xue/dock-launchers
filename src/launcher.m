@@ -107,6 +107,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSWindow *shortcutPanel;
 @property (strong) NSArray<ShortcutRowView *> *shortcutRows;
 @property NSInteger shortcutSel;
+@property NSInteger hoverRow;
 @property (copy) NSString *recordingAction;
 @property (strong) id keyMonitor;
 @property (strong) id recordingMonitor;
@@ -327,6 +328,7 @@ static NSColor *ThemeSel(NSInteger t) {
 @property BOOL hovered;
 @property (copy) void (^onActivate)(void);
 @property (copy) void (^onReset)(void);
+@property (copy) void (^onHover)(BOOL inside);
 @end
 
 @implementation ShortcutRowView
@@ -339,8 +341,8 @@ static NSColor *ThemeSel(NSInteger t) {
                                                      owner:self userInfo:nil];
   [self addTrackingArea:a];
 }
-- (void)mouseEntered:(NSEvent *)e { self.hovered = YES; [self setNeedsDisplay:YES]; }
-- (void)mouseExited:(NSEvent *)e { self.hovered = NO; [self setNeedsDisplay:YES]; }
+- (void)mouseEntered:(NSEvent *)e { self.hovered = YES; if (self.onHover) self.onHover(YES); [self setNeedsDisplay:YES]; }
+- (void)mouseExited:(NSEvent *)e { self.hovered = NO; if (self.onHover) self.onHover(NO); [self setNeedsDisplay:YES]; }
 - (void)mouseDown:(NSEvent *)e {
   NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
   if (p.x > NSWidth(self.bounds) - 52) { if (self.onReset) self.onReset(); return; }
@@ -349,7 +351,7 @@ static NSColor *ThemeSel(NSInteger t) {
 - (void)drawRect:(NSRect)dirtyRect {
   NSRect r = NSInsetRect(self.bounds, 2, 4);
   NSBezierPath *bg = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8 yRadius:8];
-  NSColor *fill = (self.selected || self.hovered)
+  NSColor *fill = self.selected
       ? [NSColor colorWithCalibratedRed:1.0 green:0.68 blue:0.75 alpha:1.0]
       : [NSColor colorWithCalibratedWhite:0.93 alpha:1.0];
   [fill setFill]; [bg fill];
@@ -1489,10 +1491,17 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
     NSMutableArray *rows = [NSMutableArray array];
     __weak Controller *weakSelf = self;
     CGFloat y = h - 72;
+    NSInteger rowIdx = 0;
     for (NSDictionary *a in ShortcutActions()) {
       ShortcutRowView *r = [[ShortcutRowView alloc] initWithFrame:NSMakeRect(20, y, 460, rowH)];
       r.actionId = a[@"id"];
       r.nameText = a[@"name"];
+      NSInteger myIdx = rowIdx;
+      r.onHover = ^(BOOL inside) {
+        Controller *ss = weakSelf; if (!ss) return;
+        ss.hoverRow = inside ? myIdx : -1;
+        [ss refreshShortcutRows];
+      };
       NSString *aid = a[@"id"];
       r.onActivate = ^{
         Controller *ss = weakSelf; if (!ss) return;
@@ -1506,6 +1515,7 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
       };
       [pv addSubview:r];
       [rows addObject:r];
+      rowIdx++;
       y -= rowH;
     }
     self.shortcutRows = rows;
@@ -1523,6 +1533,7 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
     return;
   }
   self.shortcutSel = -1;   // 进入时不预选，等 ↑↓/点击再高亮
+  self.hoverRow = -1;
   [self refreshShortcutRows];
   [NSApp activateIgnoringOtherApps:YES];
   [self.window beginSheet:self.shortcutPanel completionHandler:nil];
@@ -1530,10 +1541,11 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
 }
 
 - (void)refreshShortcutRows {
+  NSInteger hl = (self.hoverRow >= 0) ? self.hoverRow : self.shortcutSel;
   NSInteger idx = 0;
   for (ShortcutRowView *r in self.shortcutRows) {
     r.sigText = self.customShortcuts[r.actionId];
-    r.selected = (idx == self.shortcutSel);
+    r.selected = (idx == hl);
     [r setNeedsDisplay:YES];
     idx++;
   }
@@ -1543,8 +1555,10 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
   NSUInteger code = event.keyCode;
   NSInteger n = (NSInteger)self.shortcutRows.count;
   if (code == 126) { // ↑
+    self.hoverRow = -1;
     if (n > 0) { self.shortcutSel = (self.shortcutSel <= 0) ? n - 1 : self.shortcutSel - 1; [self refreshShortcutRows]; }
   } else if (code == 125) { // ↓
+    self.hoverRow = -1;
     if (n > 0) { self.shortcutSel = (self.shortcutSel < 0 || self.shortcutSel >= n - 1) ? 0 : self.shortcutSel + 1; [self refreshShortcutRows]; }
   } else if (code == 36 || code == 49) { // Enter / Space
     if (self.shortcutSel >= 0 && self.shortcutSel < n) [self startRecordingForAction:self.shortcutRows[self.shortcutSel].actionId];
@@ -1555,6 +1569,7 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
 
 - (void)startRecordingForAction:(NSString *)actionId {
   self.recordingAction = actionId;
+  self.hoverRow = -1;
   for (ShortcutRowView *r in self.shortcutRows) { r.selected = NO; r.hovered = NO; [r setNeedsDisplay:YES]; }
   if (self.recordingMonitor) { [NSEvent removeMonitor:self.recordingMonitor]; self.recordingMonitor = nil; }
   __weak Controller *weakSelf = self;
