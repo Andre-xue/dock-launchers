@@ -58,6 +58,87 @@ static NSString *SignatureForEvent(NSEvent *e);
 }
 @end
 
+@interface CropView : NSView
+@property (strong) NSImage *sourceImage;
+@property NSRect imgRect;
+@property NSRect cropRect;
+@property NSPoint dragStart;
+@property NSRect cropStart;
+@property NSInteger dragMode;
+@end
+
+@implementation CropView
+- (BOOL)isFlipped { return YES; }
+- (void)setSourceImage:(NSImage *)sourceImage {
+  _sourceImage = sourceImage;
+  [self layoutImageRect];
+  [self setNeedsDisplay:YES];
+}
+- (void)layoutImageRect {
+  if (!self.sourceImage) return;
+  NSSize sz = self.sourceImage.size;
+  if (sz.width <= 0 || sz.height <= 0) return;
+  NSRect b = NSInsetRect(self.bounds, 12, 12);
+  CGFloat scale = MIN(b.size.width / sz.width, b.size.height / sz.height);
+  CGFloat w = sz.width * scale, h = sz.height * scale;
+  self.imgRect = NSMakeRect(b.origin.x + (b.size.width - w)/2.0, b.origin.y + (b.size.height - h)/2.0, w, h);
+  CGFloat side = MIN(self.imgRect.size.width, self.imgRect.size.height) * 0.8;
+  self.cropRect = NSMakeRect(self.imgRect.origin.x + (self.imgRect.size.width - side)/2.0,
+                             self.imgRect.origin.y + (self.imgRect.size.height - side)/2.0, side, side);
+}
+- (void)drawRect:(NSRect)dirtyRect {
+  [[NSColor colorWithCalibratedWhite:0.12 alpha:1.0] setFill];
+  NSRectFill(self.bounds);
+  if (!self.sourceImage) return;
+  [self.sourceImage drawInRect:self.imgRect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0 respectFlipped:YES hints:nil];
+  [[NSColor colorWithCalibratedWhite:0 alpha:0.55] setFill];
+  NSRectFill(NSMakeRect(self.imgRect.origin.x, self.imgRect.origin.y, self.imgRect.size.width, self.cropRect.origin.y - self.imgRect.origin.y));
+  CGFloat bottom = NSMaxY(self.cropRect);
+  NSRectFill(NSMakeRect(self.imgRect.origin.x, bottom, self.imgRect.size.width, NSMaxY(self.imgRect) - bottom));
+  NSRectFill(NSMakeRect(self.imgRect.origin.x, self.cropRect.origin.y, self.cropRect.origin.x - self.imgRect.origin.x, self.cropRect.size.height));
+  CGFloat right = NSMaxX(self.cropRect);
+  NSRectFill(NSMakeRect(right, self.cropRect.origin.y, NSMaxX(self.imgRect) - right, self.cropRect.size.height));
+  [[NSColor whiteColor] setStroke];
+  NSBezierPath *p = [NSBezierPath bezierPathWithRect:self.cropRect];
+  p.lineWidth = 2;
+  [p stroke];
+  NSRect handle = NSMakeRect(NSMaxX(self.cropRect)-12, NSMaxY(self.cropRect)-12, 16, 16);
+  [[NSColor whiteColor] setFill];
+  NSRectFill(handle);
+}
+- (void)mouseDown:(NSEvent *)event {
+  NSPoint pt = [self convertPoint:event.locationInWindow fromView:nil];
+  NSRect handle = NSMakeRect(NSMaxX(self.cropRect)-16, NSMaxY(self.cropRect)-16, 24, 24);
+  self.dragMode = NSPointInRect(pt, handle) ? 2 : (NSPointInRect(pt, self.cropRect) ? 1 : 0);
+  self.dragStart = pt;
+  self.cropStart = self.cropRect;
+}
+- (void)mouseDragged:(NSEvent *)event {
+  NSPoint pt = [self convertPoint:event.locationInWindow fromView:nil];
+  CGFloat dx = pt.x - self.dragStart.x, dy = pt.y - self.dragStart.y;
+  if (self.dragMode == 2) {
+    CGFloat side = MAX(48.0, self.cropStart.size.width + MAX(dx, dy));
+    side = MIN(side, MIN(self.imgRect.size.width, self.imgRect.size.height));
+    self.cropRect = NSMakeRect(self.cropStart.origin.x, self.cropStart.origin.y, side, side);
+    [self clampCrop];
+  } else if (self.dragMode == 1) {
+    NSRect r = self.cropStart;
+    r.origin.x += dx; r.origin.y += dy;
+    self.cropRect = r;
+    [self clampCrop];
+  }
+  [self setNeedsDisplay:YES];
+}
+- (void)clampCrop {
+  NSRect r = self.cropRect;
+  r.size.width = MIN(r.size.width, self.imgRect.size.width);
+  r.size.height = r.size.width;
+  r.origin.x = MAX(self.imgRect.origin.x, MIN(r.origin.x, NSMaxX(self.imgRect) - r.size.width));
+  r.origin.y = MAX(self.imgRect.origin.y, MIN(r.origin.y, NSMaxY(self.imgRect) - r.size.height));
+  self.cropRect = r;
+}
+@end
+
 @interface RowView : NSView
 @property (assign) NSInteger idx;
 @property (strong) AppIconView *iconView;
@@ -157,6 +238,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSSlider *appIconCornerSlider;
 @property (strong) NSPopUpButton *appIconPicker;
 @property (strong) AppIconView *appIconPreview;
+@property (strong) NSPanel *cropPanel;
+@property (strong) CropView *cropView;
+@property (strong) NSImage *croppedResult;
 @property (strong) NSTextField *appIconSizeLabel;
 @property (strong) NSTextField *appIconCornerLabel;
 @property (copy) NSString *recordingAction;
@@ -284,6 +368,10 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)resetAppIcon:(id)sender;
 - (void)closeAppIconPanel:(id)sender;
 - (void)appIconPickerChanged:(id)sender;
+- (void)renameCurrentApp:(id)sender;
+- (NSImage *)runCropForImage:(NSImage *)image;
+- (void)cropConfirm:(id)sender;
+- (void)cropCancel:(id)sender;
 - (void)updateAppIconPreview;
 - (void)updateSelectedIconAppearance;
 @end
@@ -1713,14 +1801,12 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"三列" action:@selector(layoutThree:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 3);
   it = [m addItemWithTitle:@"四列" action:@selector(layoutFour:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 4);
   [m addItem:[NSMenuItem separatorItem]];
-  it = [m addItemWithTitle:@"重命名选中项…" action:@selector(renameSelectedItem:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"自定义选中应用图标…" action:@selector(showAppIconPanel:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"新建分组…" action:@selector(createGroupTapped:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"删除当前分组…" action:@selector(deleteCurrentGroup:) keyEquivalent:@""]; it.target = self;
   [m addItem:[NSMenuItem separatorItem]];
   it = [m addItemWithTitle:@"修复程序坞图标…" action:@selector(repairDockMenuTapped:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"快捷键设置…" action:@selector(showShortcutSettings:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"更换图标（人物图片）…" action:@selector(pickIconImage:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"恢复默认图标" action:@selector(resetCustomIcon:) keyEquivalent:@""]; it.target = self;
   [m addItem:[NSMenuItem separatorItem]];
   it = [m addItemWithTitle:@"恢复默认（纯白）" action:@selector(skinReset:) keyEquivalent:@""]; it.target = self;
@@ -2426,16 +2512,20 @@ static NSString *ResolveAppPath(NSString *target) {
   self.appIconCornerSlider.continuous = YES;
   [cv addSubview:self.appIconCornerSlider];
 
-  NSButton *pick = [NSButton buttonWithTitle:@"更换图片…" target:self action:@selector(pickAppIconImage:)];
-  pick.frame = NSMakeRect(20, 35, 120, 32);
+  NSButton *pick = [NSButton buttonWithTitle:@"更换应用图标" target:self action:@selector(pickAppIconImage:)];
+  pick.frame = NSMakeRect(20, 35, 105, 32);
   pick.bezelStyle = NSBezelStyleRounded;
   [cv addSubview:pick];
+  NSButton *rename = [NSButton buttonWithTitle:@"重命名…" target:self action:@selector(renameCurrentApp:)];
+  rename.frame = NSMakeRect(133, 35, 80, 32);
+  rename.bezelStyle = NSBezelStyleRounded;
+  [cv addSubview:rename];
   NSButton *reset = [NSButton buttonWithTitle:@"重置" target:self action:@selector(resetAppIcon:)];
-  reset.frame = NSMakeRect(155, 35, 80, 32);
+  reset.frame = NSMakeRect(221, 35, 65, 32);
   reset.bezelStyle = NSBezelStyleRounded;
   [cv addSubview:reset];
   NSButton *done = [NSButton buttonWithTitle:@"保存并关闭" target:self action:@selector(closeAppIconPanel:)];
-  done.frame = NSMakeRect(285, 35, 115, 32);
+  done.frame = NSMakeRect(294, 35, 106, 32);
   done.bezelStyle = NSBezelStyleRounded;
   [cv addSubview:done];
 
@@ -2511,6 +2601,69 @@ static NSString *ResolveAppPath(NSString *target) {
   [self updateAppIconPreview];
 }
 
+- (NSImage *)runCropForImage:(NSImage *)image {
+  NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,640,700)
+                                          styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
+                                            backing:NSBackingStoreBuffered defer:NO];
+  p.title = @"裁剪应用图标";
+  p.level = NSFloatingWindowLevel;
+  self.cropPanel = p;
+  NSView *cv = p.contentView;
+  CropView *crop = [[CropView alloc] initWithFrame:NSMakeRect(20, 90, 600, 560)];
+  crop.sourceImage = image;
+  self.cropView = crop;
+  [cv addSubview:crop];
+  NSTextField *tip = [NSTextField labelWithString:@"拖动方框选择裁剪区域，拖右下角调整大小（保持正方形）"];
+  tip.font = [NSFont systemFontOfSize:12];
+  tip.textColor = [NSColor secondaryLabelColor];
+  tip.frame = NSMakeRect(20, 58, 600, 20);
+  [cv addSubview:tip];
+  NSButton *cancel = [NSButton buttonWithTitle:@"取消" target:self action:@selector(cropCancel:)];
+  cancel.frame = NSMakeRect(400, 16, 90, 32);
+  cancel.bezelStyle = NSBezelStyleRounded;
+  [cv addSubview:cancel];
+  NSButton *ok = [NSButton buttonWithTitle:@"确定裁剪" target:self action:@selector(cropConfirm:)];
+  ok.frame = NSMakeRect(500, 16, 120, 32);
+  ok.bezelStyle = NSBezelStyleRounded;
+  [cv addSubview:ok];
+  [p center];
+  [NSApp runModalForWindow:p];
+  [p orderOut:nil];
+  self.cropView = nil;
+  self.cropPanel = nil;
+  NSImage *result = self.croppedResult;
+  self.croppedResult = nil;
+  return result;
+}
+
+- (void)cropConfirm:(id)sender {
+  CropView *crop = self.cropView;
+  if (!crop || !crop.sourceImage) { [NSApp stopModalWithCode:0]; return; }
+  CGImageRef cg = [crop.sourceImage CGImageForProposedRect:NULL context:nil hints:nil];
+  if (!cg) { [NSApp stopModalWithCode:0]; return; }
+  CGFloat pw = (CGFloat)CGImageGetWidth(cg), ph = (CGFloat)CGImageGetHeight(cg);
+  NSRect ir = crop.imgRect, cr = crop.cropRect;
+  CGFloat sx = pw / ir.size.width, sy = ph / ir.size.height;
+  CGRect rect = CGRectMake((cr.origin.x - ir.origin.x) * sx, (cr.origin.y - ir.origin.y) * sy,
+                           cr.size.width * sx, cr.size.height * sy);
+  rect = CGRectIntegral(rect);
+  rect.origin.x = MAX(0, MIN(rect.origin.x, pw - rect.size.width));
+  rect.origin.y = MAX(0, MIN(rect.origin.y, ph - rect.size.height));
+  CGImageRef cropped = CGImageCreateWithImageInRect(cg, rect);
+  if (cropped) {
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithCGImage:cropped];
+    NSImage *img = [[NSImage alloc] initWithSize:NSMakeSize(rect.size.width, rect.size.height)];
+    [img addRepresentation:rep];
+    self.croppedResult = img;
+    CGImageRelease(cropped);
+  }
+  [NSApp stopModalWithCode:1];
+}
+
+- (void)cropCancel:(id)sender {
+  [NSApp stopModalWithCode:0];
+}
+
 - (void)pickAppIconImage:(id)sender {
   if (!self.appIconEditTarget) return;
   NSOpenPanel *pn = [NSOpenPanel openPanel];
@@ -2518,8 +2671,21 @@ static NSString *ResolveAppPath(NSString *target) {
   pn.canChooseDirectories = NO;
   pn.allowedFileTypes = @[@"png", @"jpg", @"jpeg", @"heic", @"tiff", @"gif", @"webp"];
   if ([pn runModal] != NSModalResponseOK) return;
+  NSImage *src = [[NSImage alloc] initWithContentsOfURL:pn.URL];
+  if (!src) return;
+  NSImage *cropped = [self runCropForImage:src];
+  if (!cropped) return;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *support = [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@"DockLaunchers/appicons"];
+  [fm createDirectoryAtPath:support withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *path = [support stringByAppendingPathComponent:[NSString stringWithFormat:@"icon-%lu.png", (unsigned long)([[NSDate date] timeIntervalSince1970]*1000)]];
+  CGImageRef cg = [cropped CGImageForProposedRect:NULL context:nil hints:nil];
+  NSBitmapImageRep *rep = cg ? [[NSBitmapImageRep alloc] initWithCGImage:cg] : nil;
+  NSData *png = rep ? [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] : nil;
+  if (!png || ![png writeToFile:path atomically:YES]) return;
+
   NSMutableDictionary *cfg = [gAppIconSettings[self.appIconEditTarget] mutableCopy] ?: [NSMutableDictionary dictionary];
-  cfg[@"image"] = pn.URL.path;
+  cfg[@"image"] = path;
   gAppIconSettings[self.appIconEditTarget] = cfg;
   [self saveTheme];
   [self updateSelectedIconAppearance];
@@ -2535,6 +2701,39 @@ static NSString *ResolveAppPath(NSString *target) {
   self.appIconSizeLabel.stringValue = @"40";
   self.appIconCornerLabel.stringValue = @"0%";
   [self updateSelectedIconAppearance];
+  [self updateAppIconPreview];
+}
+
+- (void)renameCurrentApp:(id)sender {
+  if (!self.appIconEditTarget) return;
+  NSString *curName = @"";
+  NSInteger idx = -1;
+  for (NSInteger i = 0; i < (NSInteger)self.items.count; i++) {
+    if ([self.items[i][@"target"] isEqualToString:self.appIconEditTarget]) { curName = self.items[i][@"label"] ?: @""; idx = i; break; }
+  }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"重命名应用";
+  a.informativeText = @"只修改列表中的显示名，不改变应用本身；列表显示和图标显示都会同步。";
+  NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,240,24)];
+  tf.stringValue = curName;
+  a.accessoryView = tf;
+  [a addButtonWithTitle:@"确定"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSString *newLabel = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  if (newLabel.length == 0) return;
+  if (![self updateLabel:newLabel forTarget:self.appIconEditTarget]) return;
+
+  // 同步面板下拉标题
+  if (idx >= 0) {
+    NSMenuItem *mi = [self.appIconPicker menu].itemArray[idx];
+    if (mi) mi.title = newLabel;
+    [self.appIconPicker selectItemAtIndex:idx];
+  }
+  // 同步主列表
+  NSInteger keep = self.sel;
+  [self reload];
+  if (self.rows.count) [self selectRow:MIN(keep, (NSInteger)self.rows.count - 1)];
   [self updateAppIconPreview];
 }
 
@@ -3238,6 +3437,15 @@ int main(int argc, const char *argv[]) {
         [c layoutContent];
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_CROP_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSString *path = [NSString stringWithUTF8String:getenv("DOCKLAUNCHER_TEST_CROP_SHOW")];
+        NSImage *src = [[NSImage alloc] initWithContentsOfFile:path];
+        NSImage *out = [c runCropForImage:src];
+        fprintf(stderr, "CROP result=%d size=%.0fx%.0f\n", out != nil, out.size.width, out.size.height);
         exit(0);
       });
     }
