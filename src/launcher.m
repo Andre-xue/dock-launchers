@@ -237,6 +237,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSSlider *appIconSizeSlider;
 @property (strong) NSSlider *appIconCornerSlider;
 @property (strong) NSPopUpButton *appIconPicker;
+@property (strong) NSPopUpButton *appIconModePicker;
+@property (strong) NSButton *appIconSizeCover;
+@property (strong) NSButton *appIconCornerCover;
 @property (strong) AppIconView *appIconPreview;
 @property (strong) NSPanel *cropPanel;
 @property (strong) CropView *cropView;
@@ -369,6 +372,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)closeAppIconPanel:(id)sender;
 - (void)appIconPickerChanged:(id)sender;
 - (void)renameCurrentApp:(id)sender;
+- (void)appIconModePickerChanged:(id)sender;
+- (void)updateAppIconPanelState;
+- (void)showIconModeRequired:(id)sender;
 - (NSImage *)runCropForImage:(NSImage *)image;
 - (void)cropConfirm:(id)sender;
 - (void)cropCancel:(id)sender;
@@ -2444,13 +2450,6 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)showAppIconPanel:(id)sender {
   if (self.items.count == 0) { NSBeep(); return; }
-  if (!gIconMode) {
-    NSAlert *e = [[NSAlert alloc] init];
-    e.messageText = @"仅图标显示模式可用";
-    e.informativeText = @"请先在 🎨 →「排列方式」中切换到「图标显示」，再自定义应用图标。";
-    [e runModal];
-    return;
-  }
   if (self.sel < 0 || self.sel >= (NSInteger)self.items.count) self.sel = 0;
   self.appIconEditTarget = self.items[self.sel][@"target"];
   NSDictionary *cfg = gAppIconSettings[self.appIconEditTarget] ?: @{};
@@ -2458,7 +2457,7 @@ static NSString *ResolveAppPath(NSString *target) {
   CGFloat curCorner = cfg[@"corner"] ? [cfg[@"corner"] doubleValue] : 0;
 
   [self.appIconPanel orderOut:nil];
-  NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,420,400)
+  NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,420,470)
                                           styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
                                             backing:NSBackingStoreBuffered defer:NO];
   p.title = @"自定义图标";
@@ -2466,11 +2465,23 @@ static NSString *ResolveAppPath(NSString *target) {
   self.appIconPanel = p;
   NSView *cv = p.contentView;
 
+  NSTextField *labM = [NSTextField labelWithString:@"应用排列"];
+  labM.font = [NSFont systemFontOfSize:13];
+  labM.frame = NSMakeRect(20, 420, 60, 20);
+  [cv addSubview:labM];
+  self.appIconModePicker = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(90, 416, 310, 26) pullsDown:NO];
+  [self.appIconModePicker addItemWithTitle:@"列表显示"];
+  [self.appIconModePicker addItemWithTitle:@"图标显示"];
+  [self.appIconModePicker selectItemAtIndex:(gIconMode ? 1 : 0)];
+  self.appIconModePicker.target = self;
+  self.appIconModePicker.action = @selector(appIconModePickerChanged:);
+  [cv addSubview:self.appIconModePicker];
+
   NSTextField *lab0 = [NSTextField labelWithString:@"应用"];
   lab0.font = [NSFont systemFontOfSize:13];
-  lab0.frame = NSMakeRect(20, 350, 40, 20);
+  lab0.frame = NSMakeRect(20, 380, 60, 20);
   [cv addSubview:lab0];
-  self.appIconPicker = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(60, 346, 340, 26) pullsDown:NO];
+  self.appIconPicker = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(90, 376, 310, 26) pullsDown:NO];
   for (NSInteger i = 0; i < (NSInteger)self.items.count; i++) {
     [self.appIconPicker addItemWithTitle:(self.items[i][@"label"] ?: @"")];
   }
@@ -2479,7 +2490,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.appIconPicker.action = @selector(appIconPickerChanged:);
   [cv addSubview:self.appIconPicker];
 
-  NSView *host = [[NSView alloc] initWithFrame:NSMakeRect(150, 235, 120, 100)];
+  NSView *host = [[NSView alloc] initWithFrame:NSMakeRect(150, 255, 120, 100)];
   host.wantsLayer = YES;
   host.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.95 alpha:1.0].CGColor;
   host.layer.cornerRadius = 12;
@@ -2490,52 +2501,94 @@ static NSString *ResolveAppPath(NSString *target) {
 
   NSTextField *lab1 = [NSTextField labelWithString:@"图标大小"];
   lab1.font = [NSFont systemFontOfSize:13];
-  lab1.frame = NSMakeRect(20, 200, 90, 20);
+  lab1.frame = NSMakeRect(20, 215, 90, 20);
   [cv addSubview:lab1];
   self.appIconSizeLabel = [NSTextField labelWithString:[NSString stringWithFormat:@"%.0f", curSize]];
   self.appIconSizeLabel.font = [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightRegular];
   self.appIconSizeLabel.alignment = NSTextAlignmentRight;
-  self.appIconSizeLabel.frame = NSMakeRect(320, 200, 80, 20);
+  self.appIconSizeLabel.frame = NSMakeRect(320, 215, 80, 20);
   [cv addSubview:self.appIconSizeLabel];
   self.appIconSizeSlider = [NSSlider sliderWithValue:curSize minValue:24 maxValue:96 target:self action:@selector(appIconSizeChanged:)];
-  self.appIconSizeSlider.frame = NSMakeRect(20, 170, 380, 24);
+  self.appIconSizeSlider.frame = NSMakeRect(20, 185, 380, 24);
   self.appIconSizeSlider.continuous = YES;
   [cv addSubview:self.appIconSizeSlider];
 
   NSTextField *lab2 = [NSTextField labelWithString:@"形状（矩形→圆形）"];
   lab2.font = [NSFont systemFontOfSize:13];
-  lab2.frame = NSMakeRect(20, 135, 200, 20);
+  lab2.frame = NSMakeRect(20, 150, 200, 20);
   [cv addSubview:lab2];
   self.appIconCornerLabel = [NSTextField labelWithString:[NSString stringWithFormat:@"%.0f%%", curCorner*100]];
   self.appIconCornerLabel.font = [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightRegular];
   self.appIconCornerLabel.alignment = NSTextAlignmentRight;
-  self.appIconCornerLabel.frame = NSMakeRect(320, 135, 80, 20);
+  self.appIconCornerLabel.frame = NSMakeRect(320, 150, 80, 20);
   [cv addSubview:self.appIconCornerLabel];
   self.appIconCornerSlider = [NSSlider sliderWithValue:curCorner*100 minValue:0 maxValue:50 target:self action:@selector(appIconCornerChanged:)];
-  self.appIconCornerSlider.frame = NSMakeRect(20, 105, 380, 24);
+  self.appIconCornerSlider.frame = NSMakeRect(20, 120, 380, 24);
   self.appIconCornerSlider.continuous = YES;
   [cv addSubview:self.appIconCornerSlider];
 
+  // 列表模式下的遮挡层：点击提示先切换为图标显示
+  self.appIconSizeCover = [NSButton buttonWithTitle:@"" target:self action:@selector(showIconModeRequired:)];
+  self.appIconSizeCover.frame = self.appIconSizeSlider.frame;
+  self.appIconSizeCover.bordered = NO;
+  self.appIconSizeCover.focusRingType = NSFocusRingTypeNone;
+  [cv addSubview:self.appIconSizeCover];
+  self.appIconCornerCover = [NSButton buttonWithTitle:@"" target:self action:@selector(showIconModeRequired:)];
+  self.appIconCornerCover.frame = self.appIconCornerSlider.frame;
+  self.appIconCornerCover.bordered = NO;
+  self.appIconCornerCover.focusRingType = NSFocusRingTypeNone;
+  [cv addSubview:self.appIconCornerCover];
+
   NSButton *pick = [NSButton buttonWithTitle:@"更换应用图标" target:self action:@selector(pickAppIconImage:)];
-  pick.frame = NSMakeRect(20, 35, 105, 32);
+  pick.frame = NSMakeRect(20, 45, 120, 32);
   pick.bezelStyle = NSBezelStyleRounded;
   [cv addSubview:pick];
   NSButton *rename = [NSButton buttonWithTitle:@"重命名…" target:self action:@selector(renameCurrentApp:)];
-  rename.frame = NSMakeRect(133, 35, 80, 32);
+  rename.frame = NSMakeRect(150, 45, 78, 32);
   rename.bezelStyle = NSBezelStyleRounded;
   [cv addSubview:rename];
   NSButton *reset = [NSButton buttonWithTitle:@"重置" target:self action:@selector(resetAppIcon:)];
-  reset.frame = NSMakeRect(221, 35, 65, 32);
+  reset.frame = NSMakeRect(238, 45, 64, 32);
   reset.bezelStyle = NSBezelStyleRounded;
   [cv addSubview:reset];
-  NSButton *done = [NSButton buttonWithTitle:@"保存并关闭" target:self action:@selector(closeAppIconPanel:)];
-  done.frame = NSMakeRect(294, 35, 106, 32);
+  NSButton *done = [NSButton buttonWithTitle:@"保存设置" target:self action:@selector(closeAppIconPanel:)];
+  done.frame = NSMakeRect(310, 45, 90, 32);
   done.bezelStyle = NSBezelStyleRounded;
   [cv addSubview:done];
 
   [p center];
   [p makeKeyAndOrderFront:nil];
+  [self updateAppIconPanelState];
   [self updateAppIconPreview];
+}
+
+- (void)updateAppIconPanelState {
+  BOOL icons = gIconMode;
+  self.appIconSizeSlider.enabled = icons;
+  self.appIconCornerSlider.enabled = icons;
+  self.appIconSizeSlider.alphaValue = icons ? 1.0 : 0.45;
+  self.appIconCornerSlider.alphaValue = icons ? 1.0 : 0.45;
+  self.appIconSizeLabel.alphaValue = icons ? 1.0 : 0.45;
+  self.appIconCornerLabel.alphaValue = icons ? 1.0 : 0.45;
+  self.appIconSizeCover.hidden = icons;
+  self.appIconCornerCover.hidden = icons;
+  [self.appIconModePicker selectItemAtIndex:(icons ? 1 : 0)];
+}
+
+- (void)appIconModePickerChanged:(id)sender {
+  gIconMode = (self.appIconModePicker.indexOfSelectedItem == 1);
+  [self saveTheme];
+  [self reload];
+  if (self.rows.count) [self selectRow:MIN(self.sel, (NSInteger)self.rows.count - 1)];
+  [self updateAppIconPanelState];
+  [self updateAppIconPreview];
+}
+
+- (void)showIconModeRequired:(id)sender {
+  NSAlert *e = [[NSAlert alloc] init];
+  e.messageText = @"请将应用排列更换为图标显示，方可设置";
+  e.informativeText = @"可在此页面上方「应用排列」中切换到「图标显示」。";
+  [e runModal];
 }
 
 - (void)updateSelectedIconAppearance {
@@ -2698,12 +2751,37 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)resetAppIcon:(id)sender {
   if (!self.appIconEditTarget) return;
+  // 恢复首次添加时的默认名称
+  NSString *path = ResolveAppPath(self.appIconEditTarget);
+  NSString *orig = nil;
+  if (path) {
+    orig = [[NSFileManager defaultManager] displayNameAtPath:path];
+    if ([orig hasSuffix:@".app"]) orig = [orig substringToIndex:orig.length - 4];
+  }
+  if (orig.length > 0) {
+    for (NSInteger i = 0; i < (NSInteger)self.items.count; i++) {
+      if ([self.items[i][@"target"] isEqualToString:self.appIconEditTarget]) {
+        if (![self.items[i][@"label"] isEqualToString:orig]) {
+          [self updateLabel:orig forTarget:self.appIconEditTarget];
+          if (self.appIconPicker && i == self.appIconPicker.indexOfSelectedItem) {
+            NSMenuItem *mi = [self.appIconPicker menu].itemArray[i];
+            if (mi) mi.title = orig;
+          }
+        }
+        break;
+      }
+    }
+  }
+  // 清除自定义图标/大小/形状
   [gAppIconSettings removeObjectForKey:self.appIconEditTarget];
   [self saveTheme];
   [self.appIconSizeSlider setDoubleValue:40];
   [self.appIconCornerSlider setDoubleValue:0];
   self.appIconSizeLabel.stringValue = @"40";
   self.appIconCornerLabel.stringValue = @"0%";
+  NSInteger keep = self.sel;
+  [self reload];
+  if (self.rows.count) [self selectRow:MIN(keep, (NSInteger)self.rows.count - 1)];
   [self updateSelectedIconAppearance];
   [self updateAppIconPreview];
 }
@@ -3454,6 +3532,14 @@ int main(int argc, const char *argv[]) {
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
         exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_PANEL_LIST_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gIconMode = NO; [c reload];
+        c.sel = 0; [c selectRow:0];
+        [c showAppIconPanel:nil];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(7.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_RENAME_SHOW")) {
