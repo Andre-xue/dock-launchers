@@ -2372,9 +2372,18 @@ static NSString *ResolveAppPath(NSString *target) {
   NSAlert *c = [[NSAlert alloc] init];
   c.icon = [self currentGroupDockIcon];
   c.messageText = [NSString stringWithFormat:@"确认卸载 %ld 个应用？", (long)selected.count];
-  c.informativeText = @"将把这些应用本体移到废纸篓，并从当前分组删除，操作不可恢复。";
-  [c addButtonWithTitle:@"卸载"];
-  [c addButtonWithTitle:@"取消"];
+  c.informativeText = @"此操作将卸载应用本体并从分组删除，不可恢复。5 秒后可点击「是」继续；选择「否」将取消。";
+  [c addButtonWithTitle:@"是（5）"];
+  [c addButtonWithTitle:@"否"];
+  NSButton *yesBtn = c.buttons[0];
+  yesBtn.enabled = NO;
+  for (int sec = 5; sec >= 1; sec--) {
+    int remain = sec - 1;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((5 - sec + 1) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      if (remain > 0) yesBtn.title = [NSString stringWithFormat:@"是（%d）", remain];
+      else { yesBtn.title = @"是"; yesBtn.enabled = YES; }
+    });
+  }
   if ([c runModal] != NSAlertFirstButtonReturn) return;
 
   BOOL testMode = (getenv("DOCKLAUNCHER_TEST_UNINSTALL_APPS") != NULL);
@@ -4774,6 +4783,15 @@ int main(int argc, const char *argv[]) {
         [c handleSettingsKeyDown:ev(right)];
         fprintf(stderr, "KEYS4 visible=%ld\n", (long)c.settingsVisible.count);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_UNINSTALL_CONFIRM_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c showUninstallAppsPanel];
+        if (c.uninstallFiltered.count) [c.uninstallSelected addObject:c.uninstallFiltered.firstObject[@"path"]];
+        [c updateUninstallSummary];
+        [c confirmUninstallApps:nil];
+        exit(0);
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_UNINSTALL_RUN")) {
