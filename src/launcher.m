@@ -170,6 +170,10 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)updateGroupDisplayName:(NSString *)name;
 - (void)performFullRename:(NSString *)typed;
 - (void)batchStripGroupSuffix:(id)sender;
+- (void)repairDockMenuTapped:(id)sender;
+- (void)repairDockEntries;
+- (BOOL)dockHasEntryForPath:(NSString *)path;
+- (NSString *)currentBundlePathByID;
 - (BOOL)renameBundleAtPath:(NSString *)oldPath toBase:(NSString *)newBase display:(NSString *)display;
 - (void)writeInfoNamesInBundle:(NSString *)bundlePath base:(NSString *)base display:(NSString *)display;
 - (void)updateDockPathFrom:(NSString *)oldPath to:(NSString *)newPath;
@@ -1422,7 +1426,7 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"三列" action:@selector(layoutThree:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 3);
   it = [m addItemWithTitle:@"四列" action:@selector(layoutFour:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 4);
   [m addItem:[NSMenuItem separatorItem]];
-  it = [m addItemWithTitle:@"批量去掉「组」后缀…" action:@selector(batchStripGroupSuffix:) keyEquivalent:@""]; it.target = self;
+  it = [m addItemWithTitle:@"修复程序坞图标…" action:@selector(repairDockMenuTapped:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"快捷键设置…" action:@selector(showShortcutSettings:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"更换图标（人物图片）…" action:@selector(pickIconImage:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"恢复默认图标" action:@selector(resetCustomIcon:) keyEquivalent:@""]; it.target = self;
@@ -1494,8 +1498,8 @@ static NSString *ResolveAppPath(NSString *target) {
   @try {
     NSString *oldBase = [[oldPath lastPathComponent] stringByDeletingPathExtension];
     NSString *newBase = [[newPath lastPathComponent] stringByDeletingPathExtension];
-    NSString *oldEnc = (__bridge_transfer NSString *)CFURLCreateStringByAddingPercentEscapes(NULL, (__bridge CFStringRef)[NSString stringWithFormat:@"%@.app", oldBase], NULL, CFSTR("/"), kCFStringEncodingUTF8);
-    NSString *newEnc = (__bridge_transfer NSString *)CFURLCreateStringByAddingPercentEscapes(NULL, (__bridge CFStringRef)[NSString stringWithFormat:@"%@.app", newBase], NULL, CFSTR("/"), kCFStringEncodingUTF8);
+    NSString *oldEnc = [[NSString stringWithFormat:@"%@.app", oldBase] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
+    NSString *newEnc = [[NSString stringWithFormat:@"%@.app", newBase] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
     CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
     if (!raw) return;
     NSArray *apps = CFBridgingRelease(raw);
@@ -1529,13 +1533,77 @@ static NSString *ResolveAppPath(NSString *target) {
   } @catch (NSException *e) {}
 }
 
+- (NSString *)currentBundlePathByID {
+  NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+  NSString *parent = [[[NSBundle mainBundle] bundlePath] stringByDeletingLastPathComponent];
+  NSString *bundlePath = [NSBundle mainBundle].bundlePath;
+  // bundlePath 在改名后可能过期，扫描父目录按 bundle id 找
+  NSArray *items = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:parent error:NULL];
+  for (NSString *name in items) {
+    if (![name hasSuffix:@".app"]) continue;
+    NSString *p = [parent stringByAppendingPathComponent:name];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]];
+    if (info && [info[@"CFBundleIdentifier"] isEqualToString:bid]) return p;
+  }
+  return bundlePath;
+}
+
+- (BOOL)dockHasEntryForPath:(NSString *)path {
+  @try {
+    CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+    if (!raw) return NO;
+    NSArray *apps = CFBridgingRelease(raw);
+    NSString *enc = [path stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
+    for (id item in apps) {
+      NSString *u = item[@"tile-data"][@"file-data"][@"_CFURLString"];
+      if (u && [u containsString:enc]) return YES;
+    }
+  } @catch (NSException *e) {}
+  return NO;
+}
+
+- (void)repairDockEntries {
+  @try {
+    NSString *parent = [self.currentBundlePathByID stringByDeletingLastPathComponent];
+    NSMutableArray *wanted = [NSMutableArray array];
+    NSArray *order = @[@"工作", @"聊天", @"外网", @"影音", @"Ai", @"Docker", @"工具"];
+    for (NSString *n in order) {
+      NSString *p = [parent stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"app"]];
+      if ([[NSFileManager defaultManager] fileExistsAtPath:p]) [wanted addObject:p];
+    }
+    if (wanted.count == 0) {
+      NSArray *items = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:parent error:NULL];
+      for (NSString *n in items) if ([n hasSuffix:@".app"]) [wanted addObject:[parent stringByAppendingPathComponent:n]];
+    }
+    CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+    NSArray *apps = raw ? CFBridgingRelease(raw) : @[];
+    NSMutableArray *kept = [NSMutableArray array];
+    for (id item in apps) {
+      NSString *u = nil;
+      @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
+      if (u && [u containsString:@"DockLaunchers"]) continue;
+      [kept addObject:item];
+    }
+    for (NSString *p in wanted) {
+      NSString *enc = [p stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
+      [kept addObject:@{
+        @"tile-data": @{@"file-data": @{@"_CFURLString": [NSString stringWithFormat:@"file://%@/", enc],
+                                        @"_CFURLStringType": @0}},
+        @"tile-type": @"file-tile"
+      }];
+    }
+    CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)kept, CFSTR("com.apple.dock"));
+    CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+  } @catch (NSException *e) {}
+}
+
 - (void)performFullRename:(NSString *)typed {
   BOOL hadSuffix = [typed hasSuffix:@"组"];
   NSString *display = hadSuffix ? [typed substringToIndex:typed.length - 1] : typed;
   NSString *newBase = display;   // Dock 标签取包名，所以包名直接用显示名（不再带“组”）
   if (display.length == 0) return;
 
-  NSString *oldPath = [[NSBundle mainBundle] bundlePath];
+  NSString *oldPath = [self currentBundlePathByID];
   NSString *parent = [oldPath stringByDeletingLastPathComponent];
   NSString *oldBase = [[oldPath lastPathComponent] stringByDeletingPathExtension];
   NSString *newPath = [parent stringByAppendingPathComponent:[newBase stringByAppendingPathExtension:@"app"]];
@@ -1588,9 +1656,12 @@ static NSString *ResolveAppPath(NSString *target) {
   [self writeInfoNamesInBundle:curPath base:newBase display:display];
   [self layoutContent];
 
-  // 刷新程序坞与 Spotlight
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    if (getenv("DOCKLAUNCHER_TEST_RENAME")) return;
+  // 立即重建 Dock 条目并重启 Dock，标签/图标马上生效
+  if (!getenv("DOCKLAUNCHER_TEST_RENAME") && !getenv("DOCKLAUNCHER_TEST_RENAME2")) {
+    if (![self dockHasEntryForPath:curPath]) [self repairDockEntries];
+  }
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (getenv("DOCKLAUNCHER_TEST_RENAME") || getenv("DOCKLAUNCHER_TEST_RENAME2")) return;
     [[NSWorkspace sharedWorkspace] setIcon:[[NSWorkspace sharedWorkspace] iconForFile:curPath] forFile:curPath options:0];
     NSTask *task = [[NSTask alloc] init];
     task.launchPath = @"/usr/bin/killall";
@@ -1600,6 +1671,19 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)updateGroupDisplayName:(NSString *)name { [self performFullRename:name]; }
+
+- (void)repairDockMenuTapped:(id)sender {
+  [self repairDockEntries];
+  [self reload];
+  NSTask *task = [[NSTask alloc] init];
+  task.launchPath = @"/usr/bin/killall";
+  task.arguments = @[@"Dock"];
+  @try { [task launch]; } @catch (NSException *e) {}
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"程序坞已修复";
+  a.informativeText = @"已重新写入 7 个分组图标并重启 Dock。";
+  [a runModal];
+}
 
 #pragma mark - 批量改名
 
@@ -2228,7 +2312,19 @@ int main(int argc, const char *argv[]) {
         exit(0);
       });
     }
-    if (getenv("DOCKLAUNCHER_TEST_RENAME")) {
+    if (getenv("DOCKLAUNCHER_TEST_RENAME2")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        const char *firstEnv = getenv("DOCKLAUNCHER_TEST_RENAME");
+        NSString *firstName = firstEnv ? [NSString stringWithUTF8String:firstEnv] : @"临时名";
+        [c performFullRename:firstName];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+          [c performFullRename:[NSString stringWithUTF8String:getenv("DOCKLAUNCHER_TEST_RENAME2")]];
+          fprintf(stderr, "RENAMED2 group=%s list=%s path=%s\n", [gGroup UTF8String], [gListFile UTF8String], [[c currentBundlePathByID] UTF8String]);
+          exit(0);
+        });
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_RENAME") && !getenv("DOCKLAUNCHER_TEST_RENAME2")) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [c performFullRename:[NSString stringWithUTF8String:getenv("DOCKLAUNCHER_TEST_RENAME")]];
         fprintf(stderr, "RENAMED group=%s list=%s\n", [gGroup UTF8String], [gListFile UTF8String]);
