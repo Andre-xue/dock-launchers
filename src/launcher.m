@@ -99,6 +99,7 @@ static NSString *const kSkinPrefix = @"skin.";
 @property (strong) CircleButton *searchBtn;
 @property (copy) NSString *searchQuery;
 @property BOOL searchActive;
+@property (strong) NSTimer *searchAutoHideTimer;
 @property NSInteger userColumns;
 @property (copy) NSString *customIconPath;
 @property NSInteger forceColumns;
@@ -154,6 +155,8 @@ static NSString *const kSkinPrefix = @"skin.";
 - (void)closeSearch;
 - (void)applySearchQuery;
 - (void)searchTapped:(id)sender;
+- (void)scheduleSearchAutoHide;
+- (void)searchAutoHideFired:(NSTimer *)t;
 - (void)moveSel:(NSInteger)delta;
 - (void)moveSelRow:(NSInteger)dir;
 - (NSInteger)effectiveColumns;
@@ -615,7 +618,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.skinBtn.layer.cornerRadius = 15;
   [cv addSubview:self.skinBtn];
 
-  self.searchBtn = [[CircleButton alloc] initWithFrame:NSMakeRect(W-16-30, H-35, 30, 30)];
+  self.searchBtn = [[CircleButton alloc] initWithFrame:NSMakeRect(W-16-30-38, H-88, 30, 30)];
   self.searchBtn.circleColor = [NSColor colorWithCalibratedRed:0.04 green:0.52 blue:1.0 alpha:1.0];
   self.searchBtn.glyph = @"search";
   self.searchBtn.bordered = NO;
@@ -681,6 +684,7 @@ static NSString *ResolveAppPath(NSString *target) {
   open.action = @selector(openSelected:);
   [cv addSubview:open];
   self.openBtn = open;
+  [self setupTooltips];
 
   self.hintLabel = [NSTextField labelWithString:@"←→↑↓ 选择 · Enter 打开 · ⌫ 移除 · Esc 取消"];
   self.hintLabel.font = [NSFont systemFontOfSize:11];
@@ -845,7 +849,7 @@ static NSString *ResolveAppPath(NSString *target) {
   if (self.lightRed) self.lightRed.frame = NSMakeRect(20, ly, 12, 12);
   if (self.lightYellow) self.lightYellow.frame = NSMakeRect(40, ly, 12, 12);
   if (self.lightGreen) self.lightGreen.frame = NSMakeRect(60, ly, 12, 12);
-  if (self.searchBtn) self.searchBtn.frame = NSMakeRect(W-16-30, H-35, 30, 30);
+  if (self.searchBtn) self.searchBtn.frame = NSMakeRect(W-16-30-38, H-88, 30, 30);
   if (self.backdrop) self.backdrop.frame = NSMakeRect(0,0,W,H);
   if (self.vibrancy) self.vibrancy.frame = NSMakeRect(0,0,W,H);
   self.scroll.frame = NSMakeRect(16, 76, W-32, MAX(40, H-100-76));
@@ -946,12 +950,16 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)setupTooltips {
-  self.addBtn.toolTip = @"添加应用到本组";
+  self.addBtn.toolTip = @"添加应用到本组（＋）";
   self.removeBtn.toolTip = @"移除选中应用（只从列表移除）";
   self.skinBtn.toolTip = @"皮肤 / 布局 / 更换图标";
   self.cancelBtn.toolTip = @"取消（Esc）";
   self.openBtn.toolTip = @"打开选中应用（Enter）";
   self.searchField.toolTip = @"输入关键字搜索本组应用，Esc 退出搜索";
+  self.searchBtn.toolTip = @"搜索本组应用（F4 或 ⌘Space）";
+  [[self.window standardWindowButton:NSWindowCloseButton] setToolTip:@"关闭"];
+  [[self.window standardWindowButton:NSWindowMiniaturizeButton] setToolTip:@"最小化"];
+  [[self.window standardWindowButton:NSWindowZoomButton] setToolTip:@"放大（Option+点击 = 四列）"];
 }
 
 - (void)searchTapped:(id)sender { [self toggleSearch]; }
@@ -963,9 +971,24 @@ static NSString *ResolveAppPath(NSString *target) {
   self.windowTitleLabel.hidden = YES;
   [self.window makeFirstResponder:self.searchField];
   [self applySearchQuery];
+  [self scheduleSearchAutoHide];
+}
+
+- (void)scheduleSearchAutoHide {
+  [self.searchAutoHideTimer invalidate];
+  self.searchAutoHideTimer = [NSTimer timerWithTimeInterval:3.0 target:self selector:@selector(searchAutoHideFired:) userInfo:nil repeats:NO];
+  [[NSRunLoop mainRunLoop] addTimer:self.searchAutoHideTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)searchAutoHideFired:(NSTimer *)t {
+  self.searchAutoHideTimer = nil;
+  if (!self.searchActive) return;
+  if (self.searchField.stringValue.length == 0) [self closeSearch];
 }
 
 - (void)closeSearch {
+  [self.searchAutoHideTimer invalidate];
+  self.searchAutoHideTimer = nil;
   self.searchActive = NO;
   self.searchQuery = nil;
   self.searchField.stringValue = @"";
@@ -983,7 +1006,11 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)controlTextDidChange:(NSNotification *)obj {
-  if (obj.object == self.searchField) [self applySearchQuery];
+  if (obj.object == self.searchField) {
+    [self.searchAutoHideTimer invalidate];
+    self.searchAutoHideTimer = nil;
+    [self applySearchQuery];
+  }
 }
 
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)selector {
@@ -1518,6 +1545,15 @@ int main(int argc, const char *argv[]) {
           fprintf(stderr, "RSS=%.1fMB\n", info.resident_size / 1048576.0);
         }
         exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_SEARCH_TIMEOUT")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c toggleSearch];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+          fprintf(stderr, "SEARCH_ACTIVE=%d FIELD_HIDDEN=%d\n", c.searchActive, c.searchField.hidden);
+          exit(0);
+        });
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_SEARCH")) {
