@@ -259,6 +259,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSArray *settingsTree;
 @property (strong) NSMutableArray *settingsVisible;
 @property (strong) NSMutableSet *settingsExpanded;
+@property NSInteger settingsTabIndex;
+@property (strong) NSView *settingsTopBar;
+@property (strong) NSMutableArray *settingsTabButtons;
 @property (strong) NSPanel *idlePanel;
 @property (strong) NSButton *idleCheck;
 @property (strong) NSDatePicker *idleDatePicker;
@@ -293,6 +296,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)applyTheme;
 - (void)showSkinMenu:(id)sender;
 - (void)rebuildSettingsRows;
+- (void)rebuildSettingsTabs;
+- (void)settingsTabClicked:(id)sender;
 - (void)settingsRowClicked:(id)sender;
 - (void)closeSettingsPanel:(id)sender;
 - (void)setShapeRect:(id)sender;
@@ -1876,23 +1881,61 @@ static NSString *ResolveAppPath(NSString *target) {
   ];
 
   if (!self.settingsPanel) {
-    NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,440,620)
+    self.settingsTabIndex = -1;
+    NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,520,640)
                                             styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
                                               backing:NSBackingStoreBuffered defer:NO];
     p.title = @"设置";
     p.level = NSFloatingWindowLevel;
     self.settingsPanel = p;
-    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,440,584)];
+    self.settingsTopBar = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 640-50, 520, 46)];
+    [p.contentView addSubview:self.settingsTopBar];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,520,640-54)];
     sv.hasVerticalScroller = YES;
     sv.drawsBackground = NO;
     sv.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
     self.settingsScroll = sv;
     [p.contentView addSubview:sv];
   }
+  [self rebuildSettingsTabs];
   [self rebuildSettingsRows];
   [self.settingsPanel center];
   [NSApp activateIgnoringOtherApps:YES];
   [self.settingsPanel makeKeyAndOrderFront:nil];
+}
+
+- (void)rebuildSettingsTabs {
+  for (NSView *v in [self.settingsTopBar.subviews copy]) [v removeFromSuperview];
+  if (!self.settingsTabButtons) self.settingsTabButtons = [NSMutableArray array];
+  [self.settingsTabButtons removeAllObjects];
+  CGFloat W = self.settingsTopBar.bounds.size.width;
+  CGFloat gap = 4;
+  CGFloat bw = (W - gap * (self.settingsTree.count + 1)) / MAX((NSInteger)self.settingsTree.count, 1);
+  NSInteger i = 0;
+  for (NSDictionary *n in self.settingsTree) {
+    NSButton *b = [NSButton buttonWithTitle:(n[@"title"] ?: @"") target:self action:@selector(settingsTabClicked:)];
+    b.tag = i;
+    b.frame = NSMakeRect(gap + i * (bw + gap), 6, bw, 34);
+    b.bordered = NO;
+    b.focusRingType = NSFocusRingTypeNone;
+    b.font = [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium];
+    b.wantsLayer = YES;
+    b.layer.cornerRadius = 8;
+    BOOL sel = (self.settingsTabIndex == i);
+    b.layer.backgroundColor = (sel ? [NSColor colorWithCalibratedRed:0.04 green:0.52 blue:1.0 alpha:0.15].CGColor
+                                   : [NSColor colorWithCalibratedWhite:0.95 alpha:1.0].CGColor);
+    [self.settingsTopBar addSubview:b];
+    [self.settingsTabButtons addObject:b];
+    i++;
+  }
+}
+
+- (void)settingsTabClicked:(id)sender {
+  NSInteger idx = [sender tag];
+  if (idx < 0 || idx >= (NSInteger)self.settingsTree.count) return;
+  self.settingsTabIndex = (self.settingsTabIndex == idx) ? -1 : idx;
+  [self rebuildSettingsTabs];
+  [self rebuildSettingsRows];
 }
 
 - (void)rebuildSettingsRows {
@@ -1911,13 +1954,27 @@ static NSString *ResolveAppPath(NSString *target) {
       if (expanded) walk(n[@"children"], level+1, path);
     }
   };
-  walk(self.settingsTree, 0, @"");
+  if (self.settingsTabIndex >= 0 && self.settingsTabIndex < (NSInteger)self.settingsTree.count) {
+    NSDictionary *tab = self.settingsTree[self.settingsTabIndex];
+    walk(tab[@"children"], 1, tab[@"title"] ?: @"");
+  }
   [self.settingsVisible addObjectsFromArray:flat];
   CGFloat totalH = 20;
   for (NSDictionary *n in flat) totalH += ([n[@"level"] integerValue] == 0 ? 40 : 34);
   NSInteger idx = 0;
   CGFloat y = 10;
   NSView *content = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,420,totalH)];
+  if (flat.count == 0) {
+    NSTextField *hint = [NSTextField labelWithString:@"请选择上方一级菜单"];
+    hint.font = [NSFont systemFontOfSize:12];
+    hint.textColor = [NSColor secondaryLabelColor];
+    hint.frame = NSMakeRect(20, 20, 300, 20);
+    NSView *empty = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,420,60)];
+    [empty addSubview:hint];
+    [self.settingsScroll setDocumentView:empty];
+    self.settingsContent = empty;
+    return;
+  }
   for (NSDictionary *n in flat) {
     NSInteger level = [n[@"level"] integerValue];
     BOOL kids = [n[@"kids"] boolValue], open = [n[@"open"] boolValue];
@@ -3930,9 +3987,9 @@ int main(int argc, const char *argv[]) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [c showSkinMenu:nil];
         fprintf(stderr, "SETTINGS tree=%ld visible0=%ld\n", (long)c.settingsTree.count, (long)c.settingsVisible.count);
-        NSButton *fake = [[NSButton alloc] init];
-        fake.tag = 0;
-        [c settingsRowClicked:fake];
+        NSButton *tab = [[NSButton alloc] init];
+        tab.tag = 0;
+        [c settingsTabClicked:tab];
         fprintf(stderr, "SETTINGS visible=%ld\n", (long)c.settingsVisible.count);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
       });
