@@ -15,6 +15,7 @@ static NSString *gImgPath = nil;
 static NSString *const kSkinPrefix = @"skin.";
 static CGFloat gCornerRatio = 0.0;   // 0 = 矩形，0.5 = 圆形
 static BOOL gIconMode = NO;          // YES = 图标网格模式
+static NSMutableDictionary *gAppIconSettings = nil;  // target -> {size, corner, image}
 
 @class Controller;
 @class BackdropView;
@@ -115,6 +116,12 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSArray<ShortcutRowView *> *shortcutRows;
 @property NSInteger shortcutSel;
 @property NSInteger hoverRow;
+@property (copy) NSString *appIconEditTarget;
+@property (strong) NSPanel *appIconPanel;
+@property (strong) NSSlider *appIconSizeSlider;
+@property (strong) NSSlider *appIconCornerSlider;
+@property (strong) NSTextField *appIconSizeLabel;
+@property (strong) NSTextField *appIconCornerLabel;
 @property (copy) NSString *recordingAction;
 @property (strong) id keyMonitor;
 @property (strong) id recordingMonitor;
@@ -233,6 +240,12 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (NSInteger)displayColumns;
 - (void)setDisplayListMode:(id)sender;
 - (void)setDisplayIconMode:(id)sender;
+- (void)showAppIconPanel:(id)sender;
+- (void)appIconSizeChanged:(id)sender;
+- (void)appIconCornerChanged:(id)sender;
+- (void)pickAppIconImage:(id)sender;
+- (void)resetAppIcon:(id)sender;
+- (void)closeAppIconPanel:(id)sender;
 @end
 
 static NSColor *ThemeBG(NSInteger t) {
@@ -1000,12 +1013,18 @@ static NSString *ResolveAppPath(NSString *target) {
     NSString *path = ResolveAppPath(target);
     NSImage *icon = nil;
     if (path) icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
+    NSDictionary *cfg = target ? gAppIconSettings[target] : nil;
+    CGFloat customSz = cfg[@"size"] ? [cfg[@"size"] doubleValue] : 0;
+    CGFloat customCorner = cfg[@"corner"] ? [cfg[@"corner"] doubleValue] : 0;
     if (icons) {
-      CGFloat sz = MIN(cell.size.width * 0.62, MIN(cell.size.height * 0.72, 64.0));
-      sz = MAX(36.0, sz);
+      CGFloat sz = customSz > 0 ? customSz : MIN(cell.size.width * 0.62, MIN(cell.size.height * 0.72, 64.0));
+      sz = MAX(24.0, sz);
       NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect((cell.size.width - sz)/2.0, (cell.size.height - sz)/2.0, sz, sz)];
       iv.image = nil;
       iv.imageScaling = NSImageScaleProportionallyUpOrDown;
+      iv.wantsLayer = YES;
+      iv.layer.cornerRadius = customCorner * sz;
+      iv.layer.masksToBounds = (customCorner > 0.01);
       [row addSubview:iv];
       row.iconView = iv;
       row.label = nil;
@@ -1017,7 +1036,8 @@ static NSString *ResolveAppPath(NSString *target) {
     }
     CGFloat iconSize = narrow ? 34 : 40;
     CGFloat iconX = narrow ? 12 : 20;
-    CGFloat textX = narrow ? 54 : 78;
+    if (customSz > 0) iconSize = MAX(24.0, MIN(customSz, rowH - 10));
+    CGFloat textX = iconX + iconSize + (narrow ? 8 : 14);
     NSTextField *lab = [NSTextField labelWithString:it[@"label"]];
     lab.font = f;
     lab.textColor = ThemeText(gTheme);
@@ -1026,6 +1046,9 @@ static NSString *ResolveAppPath(NSString *target) {
     NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(iconX, (rowH-iconSize)/2, iconSize, iconSize)];
     iv.image = nil;
     iv.imageScaling = NSImageScaleProportionallyUpOrDown;
+    iv.wantsLayer = YES;
+    iv.layer.cornerRadius = customCorner * iconSize;
+    iv.layer.masksToBounds = (customCorner > 0.01);
     [row addSubview:iv];
     [row addSubview:lab];
     row.iconView = iv;
@@ -1045,10 +1068,16 @@ static NSString *ResolveAppPath(NSString *target) {
   NSInteger end = MIN(start + 3, total);
   for (NSInteger i = start; i < end; i++) {
     NSDictionary *it = self.items[i];
-    NSString *path = ResolveAppPath(it[@"target"]);
-    if (!path) continue;
-    NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
-    self.rows[i].iconView.image = icon;
+    NSString *target = it[@"target"];
+    NSDictionary *cfg = gAppIconSettings[target];
+    NSImage *img = nil;
+    if (cfg[@"image"]) img = [[NSImage alloc] initWithContentsOfFile:cfg[@"image"]];
+    if (!img) {
+      NSString *path = ResolveAppPath(target);
+      if (!path) continue;
+      img = [[NSWorkspace sharedWorkspace] iconForFile:path];
+    }
+    self.rows[i].iconView.image = img;
   }
   if (end < total) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.01 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -1517,6 +1546,7 @@ static NSString *ResolveAppPath(NSString *target) {
   gImgPath = [d stringForKey:@"skinImgPath"];
   if ([d objectForKey:@"cornerRatio"]) gCornerRatio = [d doubleForKey:@"cornerRatio"];
   gIconMode = [d boolForKey:@"iconMode"];
+  gAppIconSettings = [[[d dictionaryForKey:@"appIconSettings"] mutableCopy] mutableCopy] ?: [NSMutableDictionary dictionary];
   [self loadCustomShortcuts];
   if (gTheme == 3 && gImgPath.length == 0) gTheme = 0;
   if (gGlassAlpha < 0.3) gGlassAlpha = 0.82;
@@ -1532,6 +1562,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [d setDouble:gImgDY forKey:@"skinImgDY"];
   [d setDouble:gCornerRatio forKey:@"cornerRatio"];
   [d setBool:gIconMode forKey:@"iconMode"];
+  [d setObject:gAppIconSettings forKey:@"appIconSettings"];
   [d setObject:(gImgPath ?: @"") forKey:@"skinImgPath"];
   [d synchronize];
 }
@@ -1635,6 +1666,7 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"四列" action:@selector(layoutFour:) keyEquivalent:@""]; it.target = self; it.state = (curCols == 4);
   [m addItem:[NSMenuItem separatorItem]];
   it = [m addItemWithTitle:@"重命名选中项…" action:@selector(renameSelectedItem:) keyEquivalent:@""]; it.target = self;
+  it = [m addItemWithTitle:@"自定义选中应用图标…" action:@selector(showAppIconPanel:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"新建分组…" action:@selector(createGroupTapped:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"删除当前分组…" action:@selector(deleteCurrentGroup:) keyEquivalent:@""]; it.target = self;
   [m addItem:[NSMenuItem separatorItem]];
@@ -2228,6 +2260,121 @@ static NSString *ResolveAppPath(NSString *target) {
     @try { [task launch]; } @catch (NSException *e) {}
   });
   [NSApp terminate:nil];
+}
+
+#pragma mark - 应用图标自定义
+
+- (void)showAppIconPanel:(id)sender {
+  if (self.sel < 0 || self.sel >= (NSInteger)self.items.count) { NSBeep(); return; }
+  NSDictionary *it = self.items[self.sel];
+  self.appIconEditTarget = it[@"target"];
+  NSString *name = it[@"label"] ?: @"";
+  NSDictionary *cfg = gAppIconSettings[self.appIconEditTarget] ?: @{};
+  CGFloat curSize = cfg[@"size"] ? [cfg[@"size"] doubleValue] : 40;
+  CGFloat curCorner = cfg[@"corner"] ? [cfg[@"corner"] doubleValue] : 0;
+
+  [self.appIconPanel orderOut:nil];
+  NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,400,260)
+                                          styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
+                                            backing:NSBackingStoreBuffered defer:NO];
+  p.title = [NSString stringWithFormat:@"自定义图标 · %@", name];
+  p.level = NSFloatingWindowLevel;
+  self.appIconPanel = p;
+  NSView *cv = p.contentView;
+
+  NSTextField *lab1 = [NSTextField labelWithString:@"图标大小"];
+  lab1.font = [NSFont systemFontOfSize:13];
+  lab1.frame = NSMakeRect(20, 200, 90, 20);
+  [cv addSubview:lab1];
+  self.appIconSizeLabel = [NSTextField labelWithString:[NSString stringWithFormat:@"%.0f", curSize]];
+  self.appIconSizeLabel.font = [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightRegular];
+  self.appIconSizeLabel.alignment = NSTextAlignmentRight;
+  self.appIconSizeLabel.frame = NSMakeRect(300, 200, 80, 20);
+  [cv addSubview:self.appIconSizeLabel];
+  self.appIconSizeSlider = [NSSlider sliderWithValue:curSize minValue:24 maxValue:96 target:self action:@selector(appIconSizeChanged:)];
+  self.appIconSizeSlider.frame = NSMakeRect(20, 170, 360, 24);
+  self.appIconSizeSlider.continuous = YES;
+  [cv addSubview:self.appIconSizeSlider];
+
+  NSTextField *lab2 = [NSTextField labelWithString:@"形状（矩形→圆形）"];
+  lab2.font = [NSFont systemFontOfSize:13];
+  lab2.frame = NSMakeRect(20, 130, 200, 20);
+  [cv addSubview:lab2];
+  self.appIconCornerLabel = [NSTextField labelWithString:[NSString stringWithFormat:@"%.0f%%", curCorner*100]];
+  self.appIconCornerLabel.font = [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightRegular];
+  self.appIconCornerLabel.alignment = NSTextAlignmentRight;
+  self.appIconCornerLabel.frame = NSMakeRect(300, 130, 80, 20);
+  [cv addSubview:self.appIconCornerLabel];
+  self.appIconCornerSlider = [NSSlider sliderWithValue:curCorner*100 minValue:0 maxValue:50 target:self action:@selector(appIconCornerChanged:)];
+  self.appIconCornerSlider.frame = NSMakeRect(20, 100, 360, 24);
+  self.appIconCornerSlider.continuous = YES;
+  [cv addSubview:self.appIconCornerSlider];
+
+  NSButton *pick = [NSButton buttonWithTitle:@"更换图片…" target:self action:@selector(pickAppIconImage:)];
+  pick.frame = NSMakeRect(20, 30, 120, 32);
+  pick.bezelStyle = NSBezelStyleRounded;
+  [cv addSubview:pick];
+  NSButton *reset = [NSButton buttonWithTitle:@"重置" target:self action:@selector(resetAppIcon:)];
+  reset.frame = NSMakeRect(150, 30, 80, 32);
+  reset.bezelStyle = NSBezelStyleRounded;
+  [cv addSubview:reset];
+  NSButton *done = [NSButton buttonWithTitle:@"完成" target:self action:@selector(closeAppIconPanel:)];
+  done.frame = NSMakeRect(300, 30, 80, 32);
+  done.bezelStyle = NSBezelStyleRounded;
+  [cv addSubview:done];
+
+  [p center];
+  [p makeKeyAndOrderFront:nil];
+}
+
+- (void)appIconSizeChanged:(id)sender {
+  if (!self.appIconEditTarget) return;
+  NSMutableDictionary *cfg = [gAppIconSettings[self.appIconEditTarget] mutableCopy] ?: [NSMutableDictionary dictionary];
+  cfg[@"size"] = @(self.appIconSizeSlider.doubleValue);
+  gAppIconSettings[self.appIconEditTarget] = cfg;
+  self.appIconSizeLabel.stringValue = [NSString stringWithFormat:@"%.0f", self.appIconSizeSlider.doubleValue];
+  [self saveTheme];
+  [self reload];
+}
+
+- (void)appIconCornerChanged:(id)sender {
+  if (!self.appIconEditTarget) return;
+  NSMutableDictionary *cfg = [gAppIconSettings[self.appIconEditTarget] mutableCopy] ?: [NSMutableDictionary dictionary];
+  cfg[@"corner"] = @(self.appIconCornerSlider.doubleValue / 100.0);
+  gAppIconSettings[self.appIconEditTarget] = cfg;
+  self.appIconCornerLabel.stringValue = [NSString stringWithFormat:@"%.0f%%", self.appIconCornerSlider.doubleValue];
+  [self saveTheme];
+  [self reload];
+}
+
+- (void)pickAppIconImage:(id)sender {
+  if (!self.appIconEditTarget) return;
+  NSOpenPanel *pn = [NSOpenPanel openPanel];
+  pn.allowsMultipleSelection = NO;
+  pn.canChooseDirectories = NO;
+  pn.allowedFileTypes = @[@"png", @"jpg", @"jpeg", @"heic", @"tiff", @"gif", @"webp"];
+  if ([pn runModal] != NSModalResponseOK) return;
+  NSMutableDictionary *cfg = [gAppIconSettings[self.appIconEditTarget] mutableCopy] ?: [NSMutableDictionary dictionary];
+  cfg[@"image"] = pn.URL.path;
+  gAppIconSettings[self.appIconEditTarget] = cfg;
+  [self saveTheme];
+  [self reload];
+}
+
+- (void)resetAppIcon:(id)sender {
+  if (!self.appIconEditTarget) return;
+  [gAppIconSettings removeObjectForKey:self.appIconEditTarget];
+  [self saveTheme];
+  [self.appIconSizeSlider setDoubleValue:40];
+  [self.appIconCornerSlider setDoubleValue:0];
+  self.appIconSizeLabel.stringValue = @"40";
+  self.appIconCornerLabel.stringValue = @"0%";
+  [self reload];
+}
+
+- (void)closeAppIconPanel:(id)sender {
+  [self.appIconPanel orderOut:nil];
+  self.appIconEditTarget = nil;
 }
 
 #pragma mark - 钉住
@@ -2903,6 +3050,19 @@ int main(int argc, const char *argv[]) {
         [c layoutContent];
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_APPICON")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSString *target = c.items.count ? c.items[0][@"target"] : nil;
+        if (target) {
+          gAppIconSettings[target] = [@{@"size": @64, @"corner": @0.5} mutableCopy];
+          [c reload];
+          RowView *r = c.rows.firstObject;
+          fprintf(stderr, "APPICON frame=%.0fx%.0f corner=%.1f\n",
+                  r.iconView.frame.size.width, r.iconView.frame.size.height, r.iconView.layer.cornerRadius);
+        }
         exit(0);
       });
     }
