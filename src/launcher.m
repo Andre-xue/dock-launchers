@@ -1500,6 +1500,14 @@ static NSString *ResolveAppPath(NSString *target) {
       }
       [self reload];
     }
+    // 记录"首次添加完成时"的最终名字（包含添加后改名弹窗里的自定义名）
+    for (NSDictionary *item in added) {
+      NSString *t = item[@"target"];
+      for (NSDictionary *cur in self.items) {
+        if ([cur[@"target"] isEqualToString:t]) { gOriginalNames[t] = cur[@"label"]; break; }
+      }
+    }
+    [self saveTheme];
   }
   if (self.rows.count) [self selectRow:0];
 }
