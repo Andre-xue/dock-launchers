@@ -253,6 +253,10 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) id recordingMonitor;
 @property (strong) id activityMonitor;
 @property (strong) NSTimer *idleExitTimer;
+@property (strong) NSPanel *idlePanel;
+@property (strong) NSButton *idleCheck;
+@property (strong) NSDatePicker *idleDatePicker;
+@property (strong) NSDatePicker *idleTimePicker;
 @property NSInteger userColumns;
 @property (copy) NSString *customIconPath;
 @property NSInteger forceColumns;
@@ -289,7 +293,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)showShapePanel:(id)sender;
 - (void)shapeSliderChanged:(id)sender;
 - (void)resetShapeRectangle:(id)sender;
-- (void)toggleIdleExit:(id)sender;
+- (void)showIdlePanel:(id)sender;
+- (void)saveIdlePanel:(id)sender;
+- (void)closeIdlePanel:(id)sender;
 - (void)resetIdleTimer;
 - (void)idleExitFired:(NSTimer *)t;
 - (void)refreshListAndCaches:(id)sender;
@@ -1809,9 +1815,12 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"窗口变形（矩形→圆形）…" action:@selector(showShapePanel:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"恢复默认矩形" action:@selector(resetShapeRectangle:) keyEquivalent:@""]; it.target = self;
   it = [m addItemWithTitle:@"刷新列表并释放缓存" action:@selector(refreshListAndCaches:) keyEquivalent:@""]; it.target = self;
-  it = [m addItemWithTitle:@"空闲 3 分钟自动退出" action:@selector(toggleIdleExit:) keyEquivalent:@""];
+  it = [m addItemWithTitle:@"定时自动关闭…" action:@selector(showIdlePanel:) keyEquivalent:@""];
   it.target = self;
-  it.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"idleExitEnabled"] ? NSControlStateValueOn : NSControlStateValueOff;
+  {
+    double ts = [[NSUserDefaults standardUserDefaults] doubleForKey:@"autoCloseDate"];
+    it.state = (ts > [[NSDate date] timeIntervalSince1970]) ? NSControlStateValueOn : NSControlStateValueOff;
+  }
   it = [m addItemWithTitle:@"选择自定义图片…" action:@selector(customPick:) keyEquivalent:@""]; it.target = self; it.state = (gTheme == 3);
   [m addItem:[NSMenuItem separatorItem]];
   NSMenuItem *modeHdr = [m addItemWithTitle:@"排列方式" action:nil keyEquivalent:@""];
@@ -2966,21 +2975,100 @@ static NSString *ResolveAppPath(NSString *target) {
 
 #pragma mark - 内存/缓存
 
-- (void)toggleIdleExit:(id)sender {
+- (void)showIdlePanel:(id)sender {
+  if (!self.idlePanel) {
+    NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,400,360)
+                                            styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
+                                              backing:NSBackingStoreBuffered defer:NO];
+    p.title = @"定时自动关闭";
+    p.level = NSFloatingWindowLevel;
+    self.idlePanel = p;
+    NSView *cv = p.contentView;
+
+    self.idleCheck = [NSButton checkboxWithTitle:@"启用定时自动关闭" target:nil action:nil];
+    self.idleCheck.frame = NSMakeRect(20, 310, 250, 24);
+    [cv addSubview:self.idleCheck];
+
+    NSTextField *lab1 = [NSTextField labelWithString:@"日期"];
+    lab1.frame = NSMakeRect(20, 272, 40, 20);
+    lab1.font = [NSFont systemFontOfSize:13];
+    [cv addSubview:lab1];
+    self.idleDatePicker = [[NSDatePicker alloc] initWithFrame:NSMakeRect(70, 175, 300, 118)];
+    self.idleDatePicker.datePickerStyle = NSDatePickerStyleClockAndCalendar;
+    self.idleDatePicker.datePickerElements = NSDatePickerElementFlagYearMonthDay;
+    [cv addSubview:self.idleDatePicker];
+
+    NSTextField *lab2 = [NSTextField labelWithString:@"时间"];
+    lab2.frame = NSMakeRect(20, 140, 40, 20);
+    lab2.font = [NSFont systemFontOfSize:13];
+    [cv addSubview:lab2];
+    self.idleTimePicker = [[NSDatePicker alloc] initWithFrame:NSMakeRect(70, 134, 160, 30)];
+    self.idleTimePicker.datePickerStyle = NSDatePickerStyleTextFieldAndStepper;
+    self.idleTimePicker.datePickerElements = NSDatePickerElementFlagHourMinuteSecond;
+    [cv addSubview:self.idleTimePicker];
+    NSTextField *tip = [NSTextField labelWithString:@"到达该时间点后自动退出，释放内存；默认关闭"];
+    tip.frame = NSMakeRect(20, 95, 360, 20);
+    tip.font = [NSFont systemFontOfSize:11];
+    tip.textColor = [NSColor secondaryLabelColor];
+    [cv addSubview:tip];
+
+    NSButton *cancel = [NSButton buttonWithTitle:@"取消" target:self action:@selector(closeIdlePanel:)];
+    cancel.frame = NSMakeRect(190, 35, 90, 32);
+    cancel.bezelStyle = NSBezelStyleRounded;
+    [cv addSubview:cancel];
+    NSButton *save = [NSButton buttonWithTitle:@"保存" target:self action:@selector(saveIdlePanel:)];
+    save.frame = NSMakeRect(290, 35, 90, 32);
+    save.bezelStyle = NSBezelStyleRounded;
+    [cv addSubview:save];
+    [p center];
+  }
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-  BOOL on = ![d boolForKey:@"idleExitEnabled"];
-  [d setBool:on forKey:@"idleExitEnabled"];
-  [d synchronize];
-  if (on) [self resetIdleTimer]; else { [self.idleExitTimer invalidate]; self.idleExitTimer = nil; }
+  double ts = [d doubleForKey:@"autoCloseDate"];
+  NSDate *when = (ts > 0) ? [NSDate dateWithTimeIntervalSince1970:ts] : [NSDate dateWithTimeIntervalSinceNow:180];
+  self.idleCheck.state = (ts > [[NSDate date] timeIntervalSince1970]) ? NSControlStateValueOn : NSControlStateValueOff;
+  self.idleDatePicker.dateValue = when;
+  self.idleTimePicker.dateValue = when;
+  [self.idlePanel makeKeyAndOrderFront:nil];
+}
+
+- (void)saveIdlePanel:(id)sender {
+  if (self.idleCheck.state != NSControlStateValueOn) {
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"autoCloseDate"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    [self.idleExitTimer invalidate]; self.idleExitTimer = nil;
+    [self.idlePanel orderOut:nil];
+    return;
+  }
+  NSDateComponents *dc = [[NSCalendar currentCalendar] components:(NSCalendarUnitYear|NSCalendarUnitMonth|NSCalendarUnitDay) fromDate:self.idleDatePicker.dateValue];
+  NSDateComponents *tc = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour|NSCalendarUnitMinute|NSCalendarUnitSecond) fromDate:self.idleTimePicker.dateValue];
+  dc.hour = tc.hour; dc.minute = tc.minute; dc.second = tc.second;
+  NSDate *when = [[NSCalendar currentCalendar] dateFromComponents:dc];
+  if (!when || [when timeIntervalSinceNow] < 1) {
+    NSAlert *e = [[NSAlert alloc] init];
+    e.messageText = @"时间无效";
+    e.informativeText = @"请选择一个晚于当前时间的时间点。";
+    [e runModal];
+    return;
+  }
+  [[NSUserDefaults standardUserDefaults] setDouble:[when timeIntervalSince1970] forKey:@"autoCloseDate"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self resetIdleTimer];
+  [self.idlePanel orderOut:nil];
+}
+
+- (void)closeIdlePanel:(id)sender {
+  [self.idlePanel orderOut:nil];
 }
 
 - (void)resetIdleTimer {
   [self.idleExitTimer invalidate];
   self.idleExitTimer = nil;
   if (self.pinned) return;
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-  if (![d boolForKey:@"idleExitEnabled"]) return;
-  self.idleExitTimer = [NSTimer timerWithTimeInterval:180.0 target:self selector:@selector(idleExitFired:) userInfo:nil repeats:NO];
+  double ts = [[NSUserDefaults standardUserDefaults] doubleForKey:@"autoCloseDate"];
+  if (ts <= 0) return;
+  NSTimeInterval interval = ts - [[NSDate date] timeIntervalSince1970];
+  if (interval <= 0) interval = 1.0;
+  self.idleExitTimer = [NSTimer timerWithTimeInterval:interval target:self selector:@selector(idleExitFired:) userInfo:nil repeats:NO];
   [[NSRunLoop mainRunLoop] addTimer:self.idleExitTimer forMode:NSRunLoopCommonModes];
 }
 
@@ -3619,6 +3707,24 @@ int main(int argc, const char *argv[]) {
         [c layoutContent];
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_IDLE_SHOW")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c showIdlePanel:nil];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_IDLE_CALC")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [[NSUserDefaults standardUserDefaults] setDouble:([[NSDate date] timeIntervalSince1970] + 60) forKey:@"autoCloseDate"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+        [c resetIdleTimer];
+        fprintf(stderr, "IDLECALC ts=%.0f fireIn=%.1f valid=%d\n", [[NSUserDefaults standardUserDefaults] doubleForKey:@"autoCloseDate"], c.idleExitTimer ? [c.idleExitTimer.fireDate timeIntervalSinceNow] : -1, c.idleExitTimer != nil);
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"autoCloseDate"];
+        [c resetIdleTimer];
+        fprintf(stderr, "IDLECALC off=%d\n", c.idleExitTimer != nil);
         exit(0);
       });
     }
