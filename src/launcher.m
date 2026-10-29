@@ -1499,7 +1499,7 @@ static NSString *ResolveAppPath(NSString *target) {
     [self.shortcutPanel makeKeyAndOrderFront:nil];
     return;
   }
-  self.shortcutSel = 0;
+  self.shortcutSel = -1;   // 进入时不预选，等 ↑↓/点击再高亮
   [self refreshShortcutRows];
   [NSApp activateIgnoringOtherApps:YES];
   [self.window beginSheet:self.shortcutPanel completionHandler:nil];
@@ -1520,11 +1520,11 @@ static NSString *ResolveAppPath(NSString *target) {
   NSUInteger code = event.keyCode;
   NSInteger n = (NSInteger)self.shortcutRows.count;
   if (code == 126) { // ↑
-    if (n > 0) { self.shortcutSel = (self.shortcutSel - 1 + n) % n; [self refreshShortcutRows]; }
+    if (n > 0) { self.shortcutSel = (self.shortcutSel <= 0) ? n - 1 : self.shortcutSel - 1; [self refreshShortcutRows]; }
   } else if (code == 125) { // ↓
-    if (n > 0) { self.shortcutSel = (self.shortcutSel + 1) % n; [self refreshShortcutRows]; }
+    if (n > 0) { self.shortcutSel = (self.shortcutSel < 0 || self.shortcutSel >= n - 1) ? 0 : self.shortcutSel + 1; [self refreshShortcutRows]; }
   } else if (code == 36 || code == 49) { // Enter / Space
-    if (self.shortcutSel < n) [self startRecordingForAction:self.shortcutRows[self.shortcutSel].actionId];
+    if (self.shortcutSel >= 0 && self.shortcutSel < n) [self startRecordingForAction:self.shortcutRows[self.shortcutSel].actionId];
   } else if (code == 53) { // Esc
     [self closeShortcutPanel:nil];
   }
