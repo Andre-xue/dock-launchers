@@ -2065,10 +2065,17 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)deleteCurrentGroup:(id)sender {
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = [NSString stringWithFormat:@"删除分组「%@」？", gGroup];
-  a.informativeText = @"会删除该分组的 App 和列表文件（移到废纸篓），并从程序坞移除。应用本身不受影响。";
-  [a addButtonWithTitle:@"删除"];
+  a.informativeText = [NSString stringWithFormat:@"分组里的 %ld 个应用不会被卸载，只会删除分组本身（App 与列表移到废纸篓）并从程序坞移除。", (long)self.items.count];
+  [a addButtonWithTitle:@"继续"];
   [a addButtonWithTitle:@"取消"];
   if ([a runModal] != NSAlertFirstButtonReturn) return;
+
+  NSAlert *confirm2 = [[NSAlert alloc] init];
+  confirm2.messageText = [NSString stringWithFormat:@"再次确认：删除分组「%@」？", gGroup];
+  confirm2.informativeText = @"此操作会把该分组的 App 包和列表文件移到废纸篓，Dock 图标会被移除；分组里的应用本体不受影响。";
+  [confirm2 addButtonWithTitle:@"确认删除"];
+  [confirm2 addButtonWithTitle:@"取消"];
+  if ([confirm2 runModal] != NSAlertFirstButtonReturn) return;
 
   NSString *curPath = [self currentBundlePathByID];
   NSString *parent = [curPath stringByDeletingLastPathComponent];
