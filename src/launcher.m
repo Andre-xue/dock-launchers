@@ -690,7 +690,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.hintLabel.font = [NSFont systemFontOfSize:11];
   self.hintLabel.textColor = ThemeHint(gTheme);
   self.hintLabel.alignment = NSTextAlignmentCenter;
-  self.hintLabel.frame = NSMakeRect(96, 26, W-192, 18);
+  self.hintLabel.frame = NSMakeRect(96, 10, W-192, 34);
   [cv addSubview:self.hintLabel];
 
   self.rows = [NSMutableArray array];
@@ -842,21 +842,23 @@ static NSString *ResolveAppPath(NSString *target) {
   CGFloat th = 32;
   self.windowTitleLabel.titleFont = tf;
   self.windowTitleLabel.frame = NSMakeRect((W-tw)/2.0, H-48, tw, th);
-  self.removeBtn.frame = NSMakeRect(16, H-88, btnSize, btnSize);
-  self.addBtn.frame = NSMakeRect(W-16-btnSize, H-88, btnSize, btnSize);
-  self.skinBtn.frame = NSMakeRect((W-btnSize)/2.0, H-88, btnSize, btnSize);
+  // 第二行四个控件各占 1/4 列宽，水平居中：−  |  🎨  |  🔍  |  ＋
+  CGFloat cw = W / 4.0;
+  self.removeBtn.frame = NSMakeRect(cw*0.5 - btnSize/2.0, H-88, btnSize, btnSize);
+  self.skinBtn.frame   = NSMakeRect(cw*1.5 - btnSize/2.0, H-88, btnSize, btnSize);
+  if (self.searchBtn) self.searchBtn.frame = NSMakeRect(cw*2.5 - 15.0, H-88, 30, 30);
+  self.addBtn.frame    = NSMakeRect(cw*3.5 - btnSize/2.0, H-88, btnSize, btnSize);
   CGFloat ly = H - 26;
   if (self.lightRed) self.lightRed.frame = NSMakeRect(20, ly, 12, 12);
   if (self.lightYellow) self.lightYellow.frame = NSMakeRect(40, ly, 12, 12);
   if (self.lightGreen) self.lightGreen.frame = NSMakeRect(60, ly, 12, 12);
-  if (self.searchBtn) self.searchBtn.frame = NSMakeRect(W-16-30-38, H-88, 30, 30);
   if (self.backdrop) self.backdrop.frame = NSMakeRect(0,0,W,H);
   if (self.vibrancy) self.vibrancy.frame = NSMakeRect(0,0,W,H);
   self.scroll.frame = NSMakeRect(16, 76, W-32, MAX(40, H-100-76));
   [self.scroll layoutSubtreeIfNeeded];
   self.cancelBtn.frame = NSMakeRect(16, 10, 56, 56);
   self.openBtn.frame = NSMakeRect(W-16-56, 10, 56, 56);
-  self.hintLabel.frame = NSMakeRect(96, 26, W-192, 18);
+  self.hintLabel.frame = NSMakeRect(96, 10, W-192, 34);
   [self.listContainer setFrameSize:NSMakeSize(W-32, self.listContainer.frame.size.height)];
 }
 
