@@ -2977,7 +2977,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)showIdlePanel:(id)sender {
   if (!self.idlePanel) {
-    NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,400,360)
+    NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,400,220)
                                             styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
                                               backing:NSBackingStoreBuffered defer:NO];
     p.title = @"定时自动关闭";
@@ -2986,47 +2986,38 @@ static NSString *ResolveAppPath(NSString *target) {
     NSView *cv = p.contentView;
 
     self.idleCheck = [NSButton checkboxWithTitle:@"启用定时自动关闭" target:nil action:nil];
-    self.idleCheck.frame = NSMakeRect(20, 310, 250, 24);
+    self.idleCheck.frame = NSMakeRect(20, 168, 250, 24);
     [cv addSubview:self.idleCheck];
 
-    NSTextField *lab1 = [NSTextField labelWithString:@"日期"];
-    lab1.frame = NSMakeRect(20, 272, 40, 20);
-    lab1.font = [NSFont systemFontOfSize:13];
-    [cv addSubview:lab1];
-    self.idleDatePicker = [[NSDatePicker alloc] initWithFrame:NSMakeRect(70, 175, 300, 118)];
-    self.idleDatePicker.datePickerStyle = NSDatePickerStyleClockAndCalendar;
-    self.idleDatePicker.datePickerElements = NSDatePickerElementFlagYearMonthDay;
-    [cv addSubview:self.idleDatePicker];
-
     NSTextField *lab2 = [NSTextField labelWithString:@"时间"];
-    lab2.frame = NSMakeRect(20, 140, 40, 20);
+    lab2.frame = NSMakeRect(20, 122, 40, 20);
     lab2.font = [NSFont systemFontOfSize:13];
     [cv addSubview:lab2];
-    self.idleTimePicker = [[NSDatePicker alloc] initWithFrame:NSMakeRect(70, 134, 160, 30)];
+    self.idleTimePicker = [[NSDatePicker alloc] initWithFrame:NSMakeRect(70, 116, 140, 30)];
     self.idleTimePicker.datePickerStyle = NSDatePickerStyleTextFieldAndStepper;
-    self.idleTimePicker.datePickerElements = NSDatePickerElementFlagHourMinuteSecond;
+    self.idleTimePicker.datePickerElements = NSDatePickerElementFlagHourMinute;
     [cv addSubview:self.idleTimePicker];
-    NSTextField *tip = [NSTextField labelWithString:@"到达该时间点后自动退出，释放内存；默认关闭"];
-    tip.frame = NSMakeRect(20, 95, 360, 20);
+
+    NSTextField *tip = [NSTextField labelWithString:@"每天到该时间自动退出；若今天已过则从明天开始。默认关闭"];
+    tip.frame = NSMakeRect(20, 78, 360, 20);
     tip.font = [NSFont systemFontOfSize:11];
     tip.textColor = [NSColor secondaryLabelColor];
     [cv addSubview:tip];
 
     NSButton *cancel = [NSButton buttonWithTitle:@"取消" target:self action:@selector(closeIdlePanel:)];
-    cancel.frame = NSMakeRect(190, 35, 90, 32);
+    cancel.frame = NSMakeRect(190, 25, 90, 32);
     cancel.bezelStyle = NSBezelStyleRounded;
     [cv addSubview:cancel];
     NSButton *save = [NSButton buttonWithTitle:@"保存" target:self action:@selector(saveIdlePanel:)];
-    save.frame = NSMakeRect(290, 35, 90, 32);
+    save.frame = NSMakeRect(290, 25, 90, 32);
     save.bezelStyle = NSBezelStyleRounded;
     [cv addSubview:save];
     [p center];
   }
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   double ts = [d doubleForKey:@"autoCloseDate"];
-  NSDate *when = (ts > 0) ? [NSDate dateWithTimeIntervalSince1970:ts] : [NSDate dateWithTimeIntervalSinceNow:180];
+  NSDate *when = (ts > [[NSDate date] timeIntervalSince1970]) ? [NSDate dateWithTimeIntervalSince1970:ts] : [NSDate dateWithTimeIntervalSinceNow:180];
   self.idleCheck.state = (ts > [[NSDate date] timeIntervalSince1970]) ? NSControlStateValueOn : NSControlStateValueOff;
-  self.idleDatePicker.dateValue = when;
   self.idleTimePicker.dateValue = when;
   [self.idlePanel makeKeyAndOrderFront:nil];
 }
@@ -3039,16 +3030,12 @@ static NSString *ResolveAppPath(NSString *target) {
     [self.idlePanel orderOut:nil];
     return;
   }
-  NSDateComponents *dc = [[NSCalendar currentCalendar] components:(NSCalendarUnitYear|NSCalendarUnitMonth|NSCalendarUnitDay) fromDate:self.idleDatePicker.dateValue];
-  NSDateComponents *tc = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour|NSCalendarUnitMinute|NSCalendarUnitSecond) fromDate:self.idleTimePicker.dateValue];
-  dc.hour = tc.hour; dc.minute = tc.minute; dc.second = tc.second;
+  NSDateComponents *tc = [[NSCalendar currentCalendar] components:(NSCalendarUnitHour|NSCalendarUnitMinute) fromDate:self.idleTimePicker.dateValue];
+  NSDateComponents *dc = [[NSCalendar currentCalendar] components:(NSCalendarUnitYear|NSCalendarUnitMonth|NSCalendarUnitDay) fromDate:[NSDate date]];
+  dc.hour = tc.hour; dc.minute = tc.minute; dc.second = 0;
   NSDate *when = [[NSCalendar currentCalendar] dateFromComponents:dc];
   if (!when || [when timeIntervalSinceNow] < 1) {
-    NSAlert *e = [[NSAlert alloc] init];
-    e.messageText = @"时间无效";
-    e.informativeText = @"请选择一个晚于当前时间的时间点。";
-    [e runModal];
-    return;
+    when = [when dateByAddingTimeInterval:86400];
   }
   [[NSUserDefaults standardUserDefaults] setDouble:[when timeIntervalSince1970] forKey:@"autoCloseDate"];
   [[NSUserDefaults standardUserDefaults] synchronize];
