@@ -2444,6 +2444,51 @@ static NSString *ResolveAppPath(NSString *target) {
   [self updateAppIconPreview];
 }
 
+- (void)updateSelectedIconAppearance {
+  if (!self.appIconEditTarget) return;
+  NSInteger idx = -1;
+  for (RowView *r in self.rows) {
+    if (r.idx >= 0 && r.idx < (NSInteger)self.items.count && [self.items[r.idx][@"target"] isEqualToString:self.appIconEditTarget]) { idx = r.idx; break; }
+  }
+  if (idx < 0) { [self reload]; return; }
+  RowView *row = self.rows[idx];
+  NSDictionary *cfg = gAppIconSettings[self.appIconEditTarget] ?: @{};
+  CGFloat customSz = cfg[@"size"] ? [cfg[@"size"] doubleValue] : 0;
+  CGFloat corner = cfg[@"corner"] ? [cfg[@"corner"] doubleValue] : 0;
+  NSImage *img = nil;
+  if (cfg[@"image"]) img = [[NSImage alloc] initWithContentsOfFile:cfg[@"image"]];
+  if (!img) {
+    NSString *path = ResolveAppPath(self.items[idx][@"target"]);
+    if (path) img = [[NSWorkspace sharedWorkspace] iconForFile:path];
+  }
+  AppIconView *iv = row.iconView;
+  CGFloat cellW = row.bounds.size.width, cellH = row.bounds.size.height;
+  BOOL grid = gIconMode;
+  if (grid) {
+    CGFloat sz = customSz > 0 ? customSz : MIN(cellW * 0.62, MIN(cellH * 0.72, 64.0));
+    sz = MAX(24.0, MIN(sz, MIN(cellW, cellH) - 4));
+    iv.frame = NSMakeRect((cellW - sz)/2.0 - 0.6, (cellH - sz)/2.0 - 0.6, sz + 1.2, sz + 1.2);
+    row.iconRect = iv.frame;
+    row.iconCorner = corner;
+  } else {
+    BOOL narrow = (cellW < 250);
+    CGFloat base = narrow ? 34 : 40;
+    CGFloat sz = customSz > 0 ? MAX(24.0, MIN(customSz, cellH - 10)) : base;
+    CGFloat iconX = narrow ? 12 : 20;
+    iv.frame = NSMakeRect(iconX, (cellH - sz)/2.0, sz, sz);
+    if (row.label) {
+      CGFloat textX = iconX + sz + (narrow ? 8 : 14);
+      row.label.frame = NSMakeRect(textX, (cellH - 24)/2.0, MAX(40, cellW - textX - 8), 24);
+    }
+  }
+  iv.cornerRatio = corner;
+  iv.image = img;
+  iv.selected = YES;
+  iv.selColor = row.selColor;
+  [row setNeedsDisplay:YES];
+  [iv setNeedsDisplay:YES];
+}
+
 - (void)appIconSizeChanged:(id)sender {
   if (!self.appIconEditTarget) return;
   NSMutableDictionary *cfg = [gAppIconSettings[self.appIconEditTarget] mutableCopy] ?: [NSMutableDictionary dictionary];
@@ -3193,6 +3238,25 @@ int main(int argc, const char *argv[]) {
         [c layoutContent];
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_ICONSTRESS")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gIconMode = YES; [c reload];
+        for (int i = 0; i < 12; i++) {
+          c.sel = i % (c.items.count ? c.items.count : 1);
+          [c selectRow:c.sel];
+          [c showAppIconPanel:nil];
+          if (c.appIconPicker.numberOfItems > 1) {
+            [c.appIconPicker selectItemAtIndex:(i+1) % c.appIconPicker.numberOfItems];
+            [c appIconPickerChanged:nil];
+          }
+          [c.appIconCornerSlider setDoubleValue:25]; [c appIconCornerChanged:nil];
+          [c.appIconSizeSlider setDoubleValue:50]; [c appIconSizeChanged:nil];
+          [c closeAppIconPanel:nil];
+        }
+        fprintf(stderr, "ICONSTRESS ok\n");
         exit(0);
       });
     }
