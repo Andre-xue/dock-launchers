@@ -166,6 +166,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)closeSearch;
 - (void)applySearchQuery;
 - (void)searchTapped:(id)sender;
+- (void)renameGroupFromTitle;
+- (void)updateGroupDisplayName:(NSString *)name;
 - (void)loadCustomShortcuts;
 - (void)saveCustomShortcuts;
 - (void)showShortcutSettings:(id)sender;
@@ -275,10 +277,14 @@ static NSColor *ThemeSel(NSInteger t) {
 @interface TitlePillView : NSView
 @property (copy) NSString *title;
 @property (strong) NSFont *titleFont;
+@property (copy) void (^onDoubleClick)(void);
 @end
 
 @implementation TitlePillView
 - (BOOL)isFlipped { return NO; }
+- (void)mouseDown:(NSEvent *)event {
+  if (event.clickCount >= 2 && self.onDoubleClick) self.onDoubleClick();
+}
 - (void)drawRect:(NSRect)dirtyRect {
   CGFloat r = NSHeight(self.bounds) / 2.0;
   NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:r yRadius:r];
@@ -752,6 +758,9 @@ static NSString *ResolveAppPath(NSString *target) {
   self.windowTitleLabel = [[TitlePillView alloc] initWithFrame:NSZeroRect];
   self.windowTitleLabel.title = gGroup;
   self.windowTitleLabel.titleFont = [NSFont systemFontOfSize:20 weight:NSFontWeightSemibold];
+  __weak Controller *weakTitleSelf = self;
+  self.windowTitleLabel.onDoubleClick = ^{ [weakTitleSelf renameGroupFromTitle]; };
+  self.windowTitleLabel.toolTip = @"双击重命名分组";
   [cv addSubview:self.windowTitleLabel];
 
 
@@ -1444,6 +1453,46 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)layoutThree:(id)sender { [self applyLayoutColumns:3]; }
 - (void)layoutFour:(id)sender { [self applyLayoutColumns:4]; }
 
+#pragma mark - 重命名分组
+
+- (void)renameGroupFromTitle {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"重命名分组";
+  a.informativeText = @"只改显示名称，不会移动或删除任何文件。";
+  NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 240, 24)];
+  tf.stringValue = gGroup ?: @"";
+  a.accessoryView = tf;
+  [a addButtonWithTitle:@"确定"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSString *name = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  if (name.length == 0) return;
+  gGroup = name;
+  [self updateGroupDisplayName:name];
+}
+
+- (void)updateGroupDisplayName:(NSString *)name {
+  self.windowTitleLabel.title = name;
+  self.window.title = name;
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  [d setObject:name forKey:@"displayNameOverride"];
+  [d synchronize];
+  // 同步写入 Info.plist 的显示名，Dock 标签在下次启动/刷新后生效
+  @try {
+    NSString *plistPath = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:@"Contents/Info.plist"];
+    NSData *data = [NSData dataWithContentsOfFile:plistPath];
+    if (data) {
+      NSMutableDictionary *info = [[NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainers format:NULL error:NULL] mutableCopy];
+      if (info) {
+        info[@"CFBundleDisplayName"] = name;
+        NSData *out = [NSPropertyListSerialization dataWithPropertyList:info format:NSPropertyListXMLFormat_v1_0 options:0 error:NULL];
+        if (out) [out writeToFile:plistPath atomically:YES];
+      }
+    }
+  } @catch (NSException *e) {}
+  [self layoutContent];
+}
+
 #pragma mark - 快捷键映射
 
 // 所有分组共用同一份快捷键（存放在共享偏好域里）
@@ -1879,6 +1928,8 @@ int main(int argc, const char *argv[]) {
       if ([display hasSuffix:@"组"]) display = [display substringToIndex:display.length-1];
     }
     gGroup = display;
+    NSString *nameOverride = [[NSUserDefaults standardUserDefaults] stringForKey:@"displayNameOverride"];
+    if (nameOverride.length > 0) gGroup = nameOverride;
 
     NSTimeInterval tA = [NSDate timeIntervalSinceReferenceDate];
     [NSApplication sharedApplication];
