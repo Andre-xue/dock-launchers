@@ -652,7 +652,32 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
   self.groupsView = v;
 }
 
+- (void)pruneStaleDockEntries {
+  @try {
+    CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+    if (!raw) return;
+    NSArray *apps = CFBridgingRelease(raw);
+    NSMutableArray *keep = [NSMutableArray array];
+    BOOL changed = NO;
+    NSString *gd = [GroupDir() stringByAppendingString:@"/"];
+    for (id item in apps) {
+      NSString *u = nil, *bid = nil;
+      @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; bid = item[@"tile-data"][@"bundle-identifier"]; } @catch (NSException *e) {}
+      NSString *path = [u hasPrefix:@"file://"] ? [[u substringFromIndex:7] stringByRemovingPercentEncoding] : u;
+      BOOL missing = (path.length && [path hasPrefix:@"/"] && ![[NSFileManager defaultManager] fileExistsAtPath:path]);
+      if (missing && ([path hasPrefix:gd] || [bid hasPrefix:@"com.docklaunchers."])) { changed = YES; continue; }
+      [keep addObject:item];
+    }
+    if (changed) {
+      CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)keep, CFSTR("com.apple.dock"));
+      CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+      [self killDock];
+    }
+  } @catch (NSException *e) {}
+}
+
 - (void)refreshGroups {
+  [self pruneStaleDockEntries];
   NSFileManager *fm = [NSFileManager defaultManager];
   NSArray *items = [[fm contentsOfDirectoryAtPath:GroupDir() error:NULL] sortedArrayUsingSelector:@selector(localizedCompare:)];
   NSMutableArray *gs = [NSMutableArray array];
