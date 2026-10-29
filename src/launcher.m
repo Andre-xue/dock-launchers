@@ -2212,18 +2212,30 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)applyLayoutColumns:(NSInteger)cols {
   if (cols <= 1) {
+    // 恢复单列：清掉强制列数，窗口若已放大则收回默认尺寸
     self.userColumns = 1;
-    if (self.window.contentView.bounds.size.width >= 600) [self.window zoom:nil];
+    self.forceColumns = 0;
+    BOOL big = (self.window.contentView.bounds.size.width >= 560);
+    if (big || self.window.isZoomed) {
+      NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
+      NSRect vf = screen.visibleFrame;
+      NSRect normal = NSMakeRect(vf.origin.x + (vf.size.width - 480)/2.0,
+                                 vf.origin.y + (vf.size.height - 600)/2.0, 480, 600);
+      [self.window setFrame:normal display:YES animate:YES];
+    }
     [self reload];
+    [self layoutContent];
     return;
   }
-  if (self.window.contentView.bounds.size.width < 600) {
+  self.userColumns = cols;
+  if (self.window.contentView.bounds.size.width < 560) {
     self.forceColumns = cols;
     [self.window zoom:nil];
   } else {
-    self.userColumns = cols;
+    self.forceColumns = 0;
     [self reload];
   }
+  [self layoutContent];
 }
 
 - (void)layoutSingle:(id)sender { [self applyLayoutColumns:1]; }
@@ -4125,6 +4137,19 @@ int main(int argc, const char *argv[]) {
         [c resetIdleTimer];
         fprintf(stderr, "CD hidden=%d frame=%.0f,%.0f,%.0fx%.0f text='%s'\n", c.countdownLabel.hidden, c.countdownLabel.frame.origin.x, c.countdownLabel.frame.origin.y, c.countdownLabel.frame.size.width, c.countdownLabel.frame.size.height, [c.countdownLabel.stringValue UTF8String]);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_LAYOUT_SINGLE")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSRect f = c.window.frame; f.size.width = 900; f.size.height = 700;
+        [c.window setFrame:f display:YES];
+        c.userColumns = 4; c.forceColumns = 3;
+        [c reload];
+        fprintf(stderr, "LAYOUT before cols=%ld width=%.0f\n", (long)[c effectiveColumns], c.window.contentView.bounds.size.width);
+        [c layoutSingle:nil];
+        [c layoutContent];
+        fprintf(stderr, "LAYOUT after cols=%ld width=%.0f force=%ld\n", (long)[c effectiveColumns], c.window.contentView.bounds.size.width, (long)c.forceColumns);
+        exit(0);
       });
     }
     if (getenv("DOCKLAUNCHER_TEST_SETTINGS_SUB")) {
