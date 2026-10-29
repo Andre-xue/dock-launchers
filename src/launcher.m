@@ -835,6 +835,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.window.title = gGroup;
   self.window.releasedWhenClosed = NO;
   self.window.delegate = self;
+  [self updatePinAppearance];
   self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenNone;
   self.window.contentMinSize = NSMakeSize(420, 480);
   self.window.titlebarAppearsTransparent = YES;
@@ -911,7 +912,6 @@ static NSString *ResolveAppPath(NSString *target) {
   self.pinBtn.toolTip = @"钉住：禁止自动退出与关闭窗口（再点取消）";
   [cv addSubview:self.pinBtn];
   self.pinned = [[NSUserDefaults standardUserDefaults] boolForKey:@"pinned"];
-  [self updatePinAppearance];
 
   self.cLightRed = [[PillButton alloc] initWithFrame:NSMakeRect(0,0,14,14)];
   self.cLightRed.fillColor = [NSColor colorWithCalibratedRed:1.0 green:0.37 blue:0.34 alpha:1.0];
@@ -1285,6 +1285,10 @@ static NSString *ResolveAppPath(NSString *target) {
   return !self.pinned;
 }
 
+- (void)windowDidMiniaturize:(NSNotification *)notification {
+  if (self.pinned) [self.window deminiaturize:nil];
+}
+
 - (void)windowWillClose:(NSNotification *)notification {
   [NSApp terminate:nil];
 }
@@ -1502,7 +1506,7 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)redLightTapped:(id)sender { [NSApp terminate:nil]; }
-- (void)yellowLightTapped:(id)sender { [self.window miniaturize:nil]; }
+- (void)yellowLightTapped:(id)sender { if (self.pinned) { NSBeep(); return; } [self.window miniaturize:nil]; }
 
 - (void)greenLightTapped:(id)sender {
   BOOL alt = (([NSEvent modifierFlags] & NSEventModifierFlagOption) != 0);
@@ -1747,7 +1751,7 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)layoutFour:(id)sender { [self applyLayoutColumns:4]; }
 
 - (void)cLightRedTapped:(id)sender { [NSApp terminate:nil]; }
-- (void)cLightYellowTapped:(id)sender { [self.window miniaturize:nil]; }
+- (void)cLightYellowTapped:(id)sender { if (self.pinned) { NSBeep(); return; } [self.window miniaturize:nil]; }
 - (void)cLightGreenTapped:(id)sender {
   NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
   NSRect vf = screen.visibleFrame;
@@ -2482,7 +2486,21 @@ static NSString *ResolveAppPath(NSString *target) {
     self.pinBtn.font = [NSFont systemFontOfSize:18];
     self.pinBtn.alphaValue = self.pinned ? 1.0 : 0.45;
   }
-  self.pinBtn.toolTip = self.pinned ? @"已钉住：自动退出与关闭已禁用" : @"钉住：禁止自动退出与关闭窗口（再点取消）";
+  self.pinBtn.toolTip = self.pinned ? @"已钉住：窗口置顶，最小化/关闭已禁用" : @"钉住：置顶并禁用最小化/关闭（再点取消）";
+  if (self.window) {
+    if (self.pinned) {
+      self.window.level = NSStatusWindowLevel;
+      self.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+      self.window.hidesOnDeactivate = NO;
+    } else {
+      self.window.level = NSNormalWindowLevel;
+      self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenNone;
+    }
+    NSButton *mini = [self.window standardWindowButton:NSWindowMiniaturizeButton];
+    if (mini) mini.enabled = !self.pinned;
+    NSButton *cl = [self.window standardWindowButton:NSWindowCloseButton];
+    if (cl) cl.enabled = !self.pinned;
+  }
 }
 
 - (void)togglePin:(id)sender {
@@ -3140,6 +3158,16 @@ int main(int argc, const char *argv[]) {
         [c layoutContent];
         [c reload];
         fprintf(stderr, "COLS=%ld ROWW=%.0f\n", (long)[c effectiveColumns], c.rows.count ? [c.rows.firstObject frame].size.width : 0);
+        exit(0);
+      });
+    }
+    if (getenv("DOCKLAUNCHER_TEST_PIN")) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [c togglePin:nil];
+        NSButton *mini = [c.window standardWindowButton:NSWindowMiniaturizeButton];
+        fprintf(stderr, "PIN1 level=%ld mini=%d shouldClose=%d\n", (long)c.window.level, mini.enabled, [c windowShouldClose:c.window]);
+        [c togglePin:nil];
+        fprintf(stderr, "PIN0 level=%ld mini=%d shouldClose=%d\n", (long)c.window.level, mini.enabled, [c windowShouldClose:c.window]);
         exit(0);
       });
     }
