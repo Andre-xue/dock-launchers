@@ -1348,7 +1348,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.windowTitleLabel.frame = NSMakeRect(ox + (rw - tw)/2.0, oy + rh - 48, tw, th);
 
   if (self.pinBtn) self.pinBtn.frame = NSMakeRect(ox + rw - 14 - 28, oy + rh - 34, 28, 28);
-  if (self.countdownLabel) self.countdownLabel.frame = NSMakeRect(ox + rw - 14 - 28 - 8 - 96, oy + rh - 34 + 4, 96, 20);
+  if (self.countdownLabel) self.countdownLabel.frame = NSMakeRect(ox + rw - 14 - 28 - 8 - 150, oy + rh - 34 + 4, 150, 20);
 
   // 第二行四个控件各占 1/4
   CGFloat btnSize = 30.0;
@@ -3057,13 +3057,23 @@ static NSString *ResolveAppPath(NSString *target) {
   NSDateComponents *dc = [[NSCalendar currentCalendar] components:(NSCalendarUnitYear|NSCalendarUnitMonth|NSCalendarUnitDay) fromDate:[NSDate date]];
   dc.hour = tc.hour; dc.minute = tc.minute; dc.second = 0;
   NSDate *when = [[NSCalendar currentCalendar] dateFromComponents:dc];
+  BOOL rolled = NO;
   if (!when || [when timeIntervalSinceNow] < 1) {
     when = [when dateByAddingTimeInterval:86400];
+    rolled = YES;
   }
   [[NSUserDefaults standardUserDefaults] setDouble:[when timeIntervalSince1970] forKey:@"autoCloseDate"];
   [[NSUserDefaults standardUserDefaults] synchronize];
   [self resetIdleTimer];
   [self.idlePanel orderOut:nil];
+  if (rolled) {
+    NSDateFormatter *df = [[NSDateFormatter alloc] init];
+    df.dateFormat = @"HH:mm";
+    NSAlert *n = [[NSAlert alloc] init];
+    n.messageText = [NSString stringWithFormat:@"已设置为明天 %@ 自动关闭", [df stringFromDate:when]];
+    n.informativeText = @"今天该时间已过，因此顺延到明天的同一时间。";
+    [n runModal];
+  }
 }
 
 - (void)closeIdlePanel:(id)sender {
@@ -3087,10 +3097,14 @@ static NSString *ResolveAppPath(NSString *target) {
   }
   NSInteger total = (NSInteger)left;
   NSInteger h = total / 3600, m = (total % 3600) / 60, sec = total % 60;
-  NSString *txt;
-  if (h >= 24) txt = [NSString stringWithFormat:@"距关闭 %ld天%02ld:%02ld", (long)(h/24), (long)(h%24), (long)m];
-  else txt = [NSString stringWithFormat:@"距关闭 %02ld:%02ld:%02ld", (long)h, (long)m, (long)sec];
-  self.countdownLabel.stringValue = txt;
+  NSString *remain;
+  if (h >= 24) remain = [NSString stringWithFormat:@"剩%ld天%02ld:%02ld", (long)(h/24), (long)(h%24), (long)m];
+  else if (h >= 1) remain = [NSString stringWithFormat:@"剩%02ld:%02ld", (long)h, (long)m];
+  else remain = [NSString stringWithFormat:@"剩%02ld:%02ld", (long)m, (long)sec];
+  NSDateFormatter *df = [[NSDateFormatter alloc] init];
+  df.dateFormat = @"HH:mm";
+  NSString *target = [df stringFromDate:[NSDate dateWithTimeIntervalSince1970:ts]];
+  self.countdownLabel.stringValue = [NSString stringWithFormat:@"%@ 关 · %@", target, remain];
   self.countdownLabel.hidden = NO;
 }
 
