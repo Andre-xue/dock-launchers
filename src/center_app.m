@@ -152,6 +152,8 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property (strong) NSString *dialogPendingOpen;
 @property (strong) NSString *dialogPendingEditName;
 @property BOOL dialogIconsMissing;
+@property (strong) NSMutableArray *emptyGroupCheckboxes;
+@property (strong) NSButton *emptyContinueButton;
 @property BOOL dialogHighlightName;
 @property (strong) NSScrollView *groupsScroll;
 // uninstall
@@ -610,59 +612,109 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   [self deleteGroupNames:names];
 }
 
+- (BOOL)groupIsEmpty:(NSString *)name {
+  NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+  NSString *content = [NSString stringWithContentsOfFile:list encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+  for (NSString *raw in [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+    NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (line.length && ![line hasPrefix:@"#"]) return NO;
+  }
+  return YES;
+}
+
+- (void)emptyGroupCheckToggled:(NSButton *)b {
+  BOOL anyChecked = NO;
+  for (NSButton *cb in self.emptyGroupCheckboxes) if (cb.state == NSControlStateValueOn) { anyChecked = YES; break; }
+  self.emptyContinueButton.enabled = !anyChecked;
+  self.emptyContinueButton.alphaValue = anyChecked ? 0.5 : 1.0;
+}
+
+- (BOOL)confirmEmptyGroups:(NSArray<NSString *> *)emptyNames {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.icon = [self characterImage:64];
+  a.messageText = @"有空实例";
+  a.informativeText = @"以下分组的应用列表为空，删除时不会备份。请取消勾选后才能继续删除；点「取消」会清空当前选择。";
+  CGFloat h = MIN(64 + emptyNames.count * 30, 300);
+  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 500, h)];
+  NSMutableArray *boxes = [NSMutableArray array];
+  CGFloat y = h - 30;
+  for (NSString *n in emptyNames) {
+    NSButton *cb = [NSButton checkboxWithTitle:[NSString stringWithFormat:@"空实例：%@", n] target:self action:@selector(emptyGroupCheckToggled:)];
+    cb.state = NSControlStateValueOn;
+    cb.frame = NSMakeRect(10, y, 470, 24);
+    [v addSubview:cb];
+    [boxes addObject:cb];
+    y -= 30;
+  }
+  self.emptyGroupCheckboxes = boxes;
+  a.accessoryView = v;
+  NSButton *cont = [a addButtonWithTitle:@"继续删除"];
+  cont.enabled = NO;
+  cont.alphaValue = 0.5;
+  self.emptyContinueButton = cont;
+  [a addButtonWithTitle:@"取消"];
+  NSModalResponse r = [a runModal];
+  return (r == NSAlertFirstButtonReturn);
+}
+
 - (void)deleteGroupNames:(NSArray<NSString *> *)names {
-  if (!getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
+  if (!names.count) return;
+  NSMutableArray *empty = [NSMutableArray array];
+  for (NSString *n in names) if ([self groupIsEmpty:n]) [empty addObject:n];
+  if (names.count == 1 && empty.count == 1) { [self finalizeDeleteGroupNames:names backup:NO]; return; }
+  if (empty.count) {
+    if (![self confirmEmptyGroups:empty]) {
+      if (!self.selectedGroups) self.selectedGroups = [NSMutableSet set];
+      [self.selectedGroups removeAllObjects];
+      [self refreshGroups];
+      return;
+    }
+  }
+  [self finalizeDeleteGroupNames:names backup:YES];
+}
+
+- (void)finalizeDeleteGroupNames:(NSArray<NSString *> *)names backup:(BOOL)backup {
+  BOOL testMode = getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE") != NULL;
+  NSMutableArray *backupNames = [NSMutableArray array];
+  for (NSString *n in names) if (![self groupIsEmpty:n]) [backupNames addObject:n];
+  if (backup && !testMode) {
     NSAlert *bk = [[NSAlert alloc] init];
     bk.icon = [self characterImage:64];
     bk.messageText = @"删除前必须先备份";
-    bk.informativeText = [NSString stringWithFormat:@"将先备份 %ld 个分组，然后再执行删除。是否继续？", (long)names.count];
+    bk.informativeText = [NSString stringWithFormat:@"将先备份 %ld 个非空分组，然后再执行删除。空实例不会备份。", (long)backupNames.count];
     [bk addButtonWithTitle:@"备份并删除"];
     [bk addButtonWithTitle:@"取消"];
     if ([bk runModal] != NSAlertFirstButtonReturn) return;
   }
-  for (NSString *n in names) [self backupGroupNamed:n];
-  if (!getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
-  NSAlert *c = [[NSAlert alloc] init];
-  c.icon = [self characterImage:64];
-  c.messageText = [NSString stringWithFormat:@"确认删除 %ld 个分组？", (long)names.count];
-  c.informativeText = @"只会删除 Dock 分组本身（App 与列表移到废纸篓），不会卸载分组里的应用。5 秒后可点击「是」。";
-  [c addButtonWithTitle:@"是（5）"];
-  [c addButtonWithTitle:@"否"];
-  NSButton *yes = c.buttons[0]; yes.enabled = NO;
-  for (int s = 5; s >= 1; s--) {
-    int remain = s - 1;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((5-s+1)*NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      if (remain > 0) yes.title = [NSString stringWithFormat:@"是（%d）", remain];
-      else { yes.title = @"是"; yes.enabled = YES; }
-    });
+  if (backup) for (NSString *n in backupNames) [self backupGroupNamed:n];
+  if (!testMode) {
+    NSAlert *c = [[NSAlert alloc] init];
+    c.icon = [self characterImage:64];
+    c.messageText = [NSString stringWithFormat:@"确认删除 %ld 个分组？", (long)names.count];
+    c.informativeText = @"只会删除 Dock 分组本身（App 与列表移到废纸篓），不会卸载分组里的应用。5 秒后可点击「是」。";
+    [c addButtonWithTitle:@"是（5）"];
+    [c addButtonWithTitle:@"否"];
+    NSButton *yes = c.buttons[0]; yes.enabled = NO;
+    for (int sec = 5; sec >= 1; sec--) {
+      int remain = sec - 1;
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((5-sec+1)*NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (remain > 0) yes.title = [NSString stringWithFormat:@"是（%d）", remain];
+        else { yes.title = @"是"; yes.enabled = YES; }
+      });
+    }
+    if ([c runModal] != NSAlertFirstButtonReturn) return;
   }
-  if ([c runModal] != NSAlertFirstButtonReturn) return;
-  }
-
   NSMutableArray *trashPaths = [NSMutableArray array];
   NSFileManager *fm = [NSFileManager defaultManager];
-  NSMutableArray *apps = [NSMutableArray array];
   for (NSString *n in names) {
     NSString *app = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
     NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"txt"]];
-    if ([fm fileExistsAtPath:app]) { [apps addObject:app]; [trashPaths addObject:app]; }
+    if ([fm fileExistsAtPath:app]) [trashPaths addObject:app];
     if ([fm fileExistsAtPath:list]) [trashPaths addObject:list];
     [self removeDockEntry:app];
   }
-  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")) {
-    NSString *arg = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")];
-    NSMutableArray *names = [NSMutableArray array];
-    for (NSString *x in [arg componentsSeparatedByString:@"|"]) if (x.length) [names addObject:x];
-    [self deleteGroupNames:names];
-    exit(0);
-  }
-  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
-    for (NSString *n in names) {
-      NSString *app = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
-      NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"txt"]];
-      [fm trashItemAtURL:[NSURL fileURLWithPath:app] resultingItemURL:nil error:NULL];
-      if ([fm fileExistsAtPath:list]) [fm trashItemAtURL:[NSURL fileURLWithPath:list] resultingItemURL:nil error:NULL];
-    }
+  if (testMode) {
+    for (NSString *p in trashPaths) [fm trashItemAtURL:[NSURL fileURLWithPath:p] resultingItemURL:nil error:NULL];
   } else {
     [self runAdminTrashPaths:trashPaths];
   }
@@ -673,11 +725,13 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     if ([fm fileExistsAtPath:app]) { [failed addObject:n]; continue; }
     [deleted addObject:n];
   }
-  [self saveLastDeleteBatch:deleted];
+  NSMutableArray *restorable = [NSMutableArray array];
+  for (NSString *n in deleted) if ([self isGroupBackedUp:n]) [restorable addObject:n];
+  [self saveLastDeleteBatch:restorable];
   [self killDock];
   [self refreshGroups];
   if (self.popover.isShown) [self rebuildQuickGroups];
-  if (failed.count && !getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
+  if (failed.count && !testMode) {
     NSAlert *f = [[NSAlert alloc] init];
     f.icon = [self characterImage:64];
     f.messageText = @"部分分组未删除";
