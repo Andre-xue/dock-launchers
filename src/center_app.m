@@ -195,6 +195,7 @@ static NSString *LetterSortKey(NSString *name) {
 @property FSEventStreamRef activityStream;
 @property (strong) NSMutableArray *activityEntries;
 @property (strong) NSButton *activityCheck;
+@property (strong) NSButton *protectedDirsCheck;
 @property (strong) NSTimer *activitySaveTimer;
 @property BOOL activityDirty;
 @property BOOL dialogHighlightName;
@@ -2456,12 +2457,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)startActivityRecorder {
   if (self.activityStream) return;
   [self loadActivityEntries];
-  NSArray *dirs = @[[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"],
-                    [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"],
-                    [NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"],
-                    [NSHomeDirectory() stringByAppendingPathComponent:@"Movies"],
-                    [NSHomeDirectory() stringByAppendingPathComponent:@"Music"],
-                    [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures"]];
+  NSMutableArray *dirs = [NSMutableArray array];
+  for (NSString *sub in [self scanSubdirs]) [dirs addObject:[NSHomeDirectory() stringByAppendingPathComponent:sub]];
   NSMutableArray *existing = [NSMutableArray array];
   for (NSString *d in dirs) if ([[NSFileManager defaultManager] fileExistsAtPath:d]) [existing addObject:d];
   if (!existing.count) return;
@@ -2539,7 +2536,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSMutableArray *out = [NSMutableArray array];
   NSMutableSet *seen = [NSMutableSet set];
   NSString *home = NSHomeDirectory();
-  NSArray *subdirs = @[@"Documents", @"Downloads", @"Desktop", @"Pictures", @"Movies", @"Music"];
+  NSArray *subdirs = [self scanSubdirs];
   for (NSDictionary *d in apps) {
     NSString *name = d[@"name"] ?: @"";
     NSString *label = d[@"label"] ?: @"";
@@ -2962,14 +2959,14 @@ static BOOL ValidGroupName(NSString *raw) {
   NSTextField *h = [self label:@"设置" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
 
-  NSView *card = [self cardAt:NSMakeRect(24, 380, 700, 200)];
+  NSView *card = [self cardAt:NSMakeRect(24, 360, 700, 240)];
   [v addSubview:card];
   self.menuBarCheck = [NSButton checkboxWithTitle:@"在菜单栏显示 CPU / 内存数字" target:self action:@selector(toggleMenuBarText:)];
   self.menuBarCheck.state = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerMenuText"] ? ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerMenuText"] ? NSControlStateValueOn : NSControlStateValueOff) : NSControlStateValueOn;
-  self.menuBarCheck.frame = NSMakeRect(20, 158, 400, 24); [card addSubview:self.menuBarCheck];
+  self.menuBarCheck.frame = NSMakeRect(20, 208, 400, 24); [card addSubview:self.menuBarCheck];
   NSTextField *il = [self label:@"采样间隔" size:13 bold:NO color:nil];
-  il.frame = NSMakeRect(20, 118, 100, 20); [card addSubview:il];
-  self.intervalPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(120, 112, 140, 28) pullsDown:NO];
+  il.frame = NSMakeRect(20, 168, 100, 20); [card addSubview:il];
+  self.intervalPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(120, 162, 140, 28) pullsDown:NO];
   [self.intervalPopup addItemsWithTitles:@[@"1 秒", @"2 秒", @"5 秒", @"10 秒"]];
   NSInteger saved = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerInterval"];
   NSArray *secs = @[@1,@2,@5,@10];
@@ -2981,14 +2978,19 @@ static BOOL ValidGroupName(NSString *raw) {
   self.autoSyncCheck = [NSButton checkboxWithTitle:@"自动同步（外部卸载应用后清理分组）" target:self action:@selector(toggleAutoSync:)];
   id autoSyncVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerAutoSync"];
   self.autoSyncCheck.state = (autoSyncVal ? [autoSyncVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
-  self.autoSyncCheck.frame = NSMakeRect(20, 44, 420, 24); [card addSubview:self.autoSyncCheck];
+  self.autoSyncCheck.frame = NSMakeRect(20, 90, 420, 24); [card addSubview:self.autoSyncCheck];
   self.loginCheck = [NSButton checkboxWithTitle:@"开机自动启动控制台" target:self action:@selector(toggleLoginItem:)];
   self.loginCheck.state = [[NSFileManager defaultManager] fileExistsAtPath:[self loginPlistPath]] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.loginCheck.frame = NSMakeRect(20, 80, 400, 24); [card addSubview:self.loginCheck];
+  self.loginCheck.frame = NSMakeRect(20, 128, 400, 24); [card addSubview:self.loginCheck];
 
   self.activityCheck = [NSButton checkboxWithTitle:@"记录应用保存的文件（卸载候选，默认关）" target:self action:@selector(toggleActivityRecorder:)];
   self.activityCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerFileActivity"] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.activityCheck.frame = NSMakeRect(20, 8, 500, 24); [card addSubview:self.activityCheck];
+  self.activityCheck.frame = NSMakeRect(20, 52, 500, 24); [card addSubview:self.activityCheck];
+  self.protectedDirsCheck = [NSButton checkboxWithTitle:@"扫描受保护目录（文档 / 下载 / 桌面，默认关）" target:self action:@selector(toggleProtectedDirs:)];
+  id pd = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerScanProtectedDirs"];
+  self.protectedDirsCheck.state = (pd ? [pd boolValue] : NO) ? NSControlStateValueOn : NSControlStateValueOff;
+  self.protectedDirsCheck.frame = NSMakeRect(20, 18, 520, 24);
+  [card addSubview:self.protectedDirsCheck];
   NSButton *openGrp = [NSButton buttonWithTitle:@"打开分组文件夹" target:self action:@selector(openGroupsFolder:)];
   openGrp.frame = NSMakeRect(24, 300, 160, 34); openGrp.bezelStyle = NSBezelStyleRounded; [v addSubview:openGrp];
   NSButton *remember = [NSButton buttonWithTitle:@"管理已记住的保存目录…" target:self action:@selector(showRememberedSaveDirs:)];
@@ -3196,6 +3198,21 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 // ---------------- 采样 ----------------
+- (BOOL)scanProtectedDirsEnabled {
+  id v = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerScanProtectedDirs"];
+  return v ? [v boolValue] : NO;
+}
+- (NSArray<NSString *> *)scanSubdirs {
+  NSMutableArray *a = [NSMutableArray arrayWithObjects:@"Movies", @"Music", nil];
+  if ([self scanProtectedDirsEnabled]) [a addObjectsFromArray:@[@"Documents", @"Downloads", @"Desktop"]];
+  return a;
+}
+- (void)toggleProtectedDirs:(id)sender {
+  BOOL on = (self.protectedDirsCheck.state == NSControlStateValueOn);
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerScanProtectedDirs"];
+  if (self.activityStream) { [self stopActivityRecorder]; [self startActivityRecorder]; }
+}
+
 - (void)probeBatteryFromProfiler {
   if (self.batteryProbeRunning) return;
   self.batteryProbeRunning = YES;
