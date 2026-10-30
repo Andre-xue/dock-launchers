@@ -212,6 +212,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSString *shotShortcutDisplay, *selectionShortcutDisplay, *translateShortcutDisplay;
 @property (strong) NSMutableArray *shortcutButtons;
 @property (strong) NSWindow *shortcutSettingsWindow;
+@property (strong) id shortcutRecordingMonitor;
+@property NSInteger shortcutRecordingAction;
+@property (strong) NSTextField *shortcutStatusLabel;
 @property EventHandlerRef translationHotKeyHandler;
 @property (strong) NSProgressIndicator *compressSpinner;
 @property NSInteger groupsPage;
@@ -7524,6 +7527,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.shortcutSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,300) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.shortcutSettingsWindow.title = @"快捷键设置";
     self.shortcutSettingsWindow.releasedWhenClosed = NO;
+    self.shortcutSettingsWindow.level = NSFloatingWindowLevel;
     NSView *cv = self.shortcutSettingsWindow.contentView;
     NSTextField *t = [self label:@"快捷键设置" size:18 bold:YES color:nil];
     t.frame = NSMakeRect(24, 254, 300, 24); [cv addSubview:t];
@@ -7543,39 +7547,40 @@ static BOOL ValidGroupName(NSString *raw) {
       [cv addSubview:b];
       [self.shortcutButtons addObject:b];
     }
-    NSTextField *note = [self label:@"修改后立即生效，并保存到偏好设置" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
-    note.frame = NSMakeRect(24, 18, 420, 16); [cv addSubview:note];
+    self.shortcutStatusLabel = [self label:@"点击右侧快捷键开始录制；Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.shortcutStatusLabel.frame = NSMakeRect(24, 18, 430, 18); [cv addSubview:self.shortcutStatusLabel];
     [self.shortcutSettingsWindow center];
   }
+  [self stopShortcutRecording];
   [self refreshShortcutButtons];
   [NSApp activateIgnoringOtherApps:YES];
   [self.shortcutSettingsWindow makeKeyAndOrderFront:nil];
+  [self.shortcutSettingsWindow orderFrontRegardless];
+}
+
+- (void)stopShortcutRecording {
+  if (self.shortcutRecordingMonitor) {
+    [NSEvent removeMonitor:self.shortcutRecordingMonitor];
+    self.shortcutRecordingMonitor = nil;
+  }
+  self.shortcutRecordingAction = -1;
+  [self refreshShortcutButtons];
+  if (self.shortcutStatusLabel) self.shortcutStatusLabel.stringValue = @"点击右侧快捷键开始录制；Esc 取消";
 }
 
 - (void)recordShortcutForAction:(ColorHoverButton *)sender {
-  NSInteger action = sender.tag;
-  NSArray *names = @[@"截图翻译", @"划词翻译", @"翻译当前文本"];
-  NSWindow *rw = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,420,150) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
-  rw.title = [NSString stringWithFormat:@"设置快捷键 - %@", names[action]];
-  rw.level = NSFloatingWindowLevel;
-  NSView *cv = rw.contentView;
-  NSTextField *l = [self label:@"按下新的组合键（至少包含 ⌃⌥⌘ 之一）" size:13 bold:YES color:nil];
-  l.alignment = NSTextAlignmentCenter; l.frame = NSMakeRect(20, 92, 380, 24); [cv addSubview:l];
-  NSTextField *status = [self label:@"" size:11 bold:NO color:[NSColor systemRedColor]];
-  status.alignment = NSTextAlignmentCenter; status.frame = NSMakeRect(20, 30, 380, 18); [cv addSubview:status];
-  [rw center];
-  [NSApp activateIgnoringOtherApps:YES];
-  [rw makeKeyAndOrderFront:nil];
-  UInt32 oldCode = action == 0 ? self.shotKeyCode : (action == 1 ? self.selectionKeyCode : self.translateKeyCode);
-  UInt32 oldMods = action == 0 ? self.shotModifiers : (action == 1 ? self.selectionModifiers : self.translateModifiers);
-  NSString *oldDisp = [self shortcutDisplayForAction:action];
-  __block id monitor = nil;
+  [self stopShortcutRecording];
+  self.shortcutRecordingAction = sender.tag;
+  sender.title = @"请按新组合键…";
+  if (self.shortcutStatusLabel) self.shortcutStatusLabel.stringValue = @"录制中：按下组合键，Esc 取消";
   __weak typeof(self) weakSelf = self;
-  monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
-    if (e.keyCode == 53) { [NSApp stopModalWithCode:0]; return nil; }
+  self.shortcutRecordingMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    NSInteger action = weakSelf.shortcutRecordingAction;
+    if (action < 0) return e;
+    if (e.keyCode == 53) { [weakSelf stopShortcutRecording]; return nil; }
     NSEventModifierFlags f = e.modifierFlags & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift);
     if (!(f & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption))) {
-      status.stringValue = @"请至少使用 Command / Control / Option 之一";
+      weakSelf.shortcutStatusLabel.stringValue = @"请至少使用 Command / Control / Option 之一";
       return nil;
     }
     UInt32 mods = 0;
@@ -7594,18 +7599,18 @@ static BOOL ValidGroupName(NSString *raw) {
     if (mods & shiftKey) [disp appendString:@"⇧"];
     if (mods & cmdKey) [disp appendString:@"⌘"];
     [disp appendString:key];
+    UInt32 oldCode = action == 0 ? weakSelf.shotKeyCode : (action == 1 ? weakSelf.selectionKeyCode : weakSelf.translateKeyCode);
+    UInt32 oldMods = action == 0 ? weakSelf.shotModifiers : (action == 1 ? weakSelf.selectionModifiers : weakSelf.translateModifiers);
+    NSString *oldDisp = [weakSelf shortcutDisplayForAction:action];
     if (![weakSelf registerHotKeyForAction:action code:(UInt32)e.keyCode modifiers:mods display:disp]) {
-      status.stringValue = @"该快捷键被占用，请换一个";
       [weakSelf registerHotKeyForAction:action code:oldCode modifiers:oldMods display:oldDisp];
+      weakSelf.shortcutStatusLabel.stringValue = @"该快捷键被占用，请换一个";
       return nil;
     }
-    [NSApp stopModalWithCode:1];
+    [weakSelf stopShortcutRecording];
+    weakSelf.shortcutStatusLabel.stringValue = @"已保存，立即生效";
     return nil;
   }];
-  [NSApp runModalForWindow:rw];
-  if (monitor) [NSEvent removeMonitor:monitor];
-  [rw orderOut:nil];
-  [self refreshShortcutButtons];
 }
 
 - (void)translationScreenshot:(id)sender {
