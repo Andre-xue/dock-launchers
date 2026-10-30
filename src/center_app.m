@@ -859,7 +859,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 }
 
 - (void)createGroup:(id)sender {
-  self.dialogSelectedBuiltin = -1;
+  self.dialogSelectedBuiltin = 0;   // 默认选中「工作」图标
   self.dialogCustomIcon = nil;
   self.dialogIconButtons = [NSMutableArray array];
   NSAlert *a = [[NSAlert alloc] init];
@@ -869,7 +869,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(10, 290, 600, 26)];
   tf.placeholderString = @"分组名，如 设计";
   [v addSubview:tf];
-  NSTextField *l1 = [self label:@"Dock 图标（可不选，默认沿用模板图标）" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *l1 = [self label:@"Dock 图标（默认使用「工作」样式，也可以自定义）" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   l1.frame = NSMakeRect(10, 264, 600, 16); [v addSubview:l1];
   NSArray *names = @[@"工作组", @"聊天组", @"外网组", @"影音组", @"Ai组", @"Docker组", @"工具组"];
   for (NSInteger i = 0; i < names.count; i++) {
@@ -885,15 +885,11 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     [v addSubview:b];
     [self.dialogIconButtons addObject:b];
   }
-  NSButton *def = [NSButton buttonWithTitle:@"使用默认（不选）" target:self action:@selector(dialogIconClicked:)];
-  def.tag = 99;
-  def.frame = NSMakeRect(10, 120, 160, 32);
-  def.bezelStyle = NSBezelStyleRounded;
-  [v addSubview:def];
   NSButton *custom = [NSButton buttonWithTitle:@"自定义图标…" target:self action:@selector(dialogChooseCustomIcon:)];
-  custom.frame = NSMakeRect(180, 120, 140, 32);
+  custom.frame = NSMakeRect(10, 120, 140, 32);
   custom.bezelStyle = NSBezelStyleRounded;
   [v addSubview:custom];
+  [self refreshDialogIconSelection];
   a.accessoryView = v;
   [a addButtonWithTitle:@"创建"];
   [a addButtonWithTitle:@"取消"];
