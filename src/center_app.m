@@ -789,7 +789,7 @@ static NSDate *InstallDateForPath(NSString *path) {
   CGFloat gap = 8, left = 20, width = (750 - left*2 - gap*5) / 6.0;
   NSMutableArray *cols = [NSMutableArray array];
   for (NSInteger i = 0; i < 6; i++) {
-    MetricColumnView *c = [[MetricColumnView alloc] initWithFrame:NSMakeRect(left + i*(width+gap), 135, width, 320)
+    MetricColumnView *c = [[MetricColumnView alloc] initWithFrame:NSMakeRect(left + i*(width+gap), 255, width, 320)
                                                             title:titles[i] accent:colors[i] key:keys[i]
                                                            target:self action:@selector(metricClicked:)];
     [v addSubview:c];
