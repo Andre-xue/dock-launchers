@@ -3,3 +3,7 @@ dist/
 *.zip
 .DS_Store
 docs/*.png.tmp
+*.app/
+*.dmg
+resources/icons/控制台-backup.icns
+resources/icons/AppIcon2.icns

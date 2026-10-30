@@ -9,8 +9,12 @@
 #import <IOKit/ps/IOPowerSources.h>
 #import <IOKit/ps/IOPSKeys.h>
 #import <Quartz/Quartz.h>
+#import <objc/runtime.h>
 #import <CoreServices/CoreServices.h>
 #import <IOKit/IOKitLib.h>
+#import <ImageIO/ImageIO.h>
+#import <QuickLookThumbnailing/QuickLookThumbnailing.h>
+#import <Photos/Photos.h>
 
 static double gPrevCPUBusy = 0, gPrevCPUTotal = 0;
 static unsigned long long gPrevNetIn = 0, gPrevNetOut = 0;
@@ -82,6 +86,19 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   return [bid hasPrefix:@"com.docklaunchers."] || [label hasPrefix:@"DockLaunchers"];
 }
 
+static BOOL DLThemeIsDark(void) {
+  NSInteger t = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerTheme"];
+  if (t == 2) return YES;
+  if (t == 1) return NO;
+  return [[[NSApp effectiveAppearance].name lowercaseString] containsString:@"dark"];
+}
+static NSColor *DLButtonBackground(void) {
+  return DLThemeIsDark() ? [NSColor colorWithCalibratedWhite:0.24 alpha:1.0] : [NSColor colorWithCalibratedWhite:0.975 alpha:1.0];
+}
+static NSColor *DLRowBackground(void) {
+  return DLThemeIsDark() ? [NSColor colorWithCalibratedWhite:0.16 alpha:1.0] : [NSColor colorWithCalibratedWhite:0.985 alpha:1.0];
+}
+
 @interface FlippedView : NSView
 @end
 @implementation FlippedView
@@ -103,7 +120,9 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   [self setNeedsDisplay:YES];
 }
 - (void)drawRect:(NSRect)dirtyRect {
-  [[NSColor colorWithCalibratedWhite:0.965 alpha:1.0] setFill];
+  NSInteger themeVal = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerTheme"];
+  BOOL darkBg = (themeVal == 2) || (themeVal == 0 && [[[NSApp effectiveAppearance].name lowercaseString] containsString:@"dark"]);
+  [[NSColor colorWithCalibratedWhite:(darkBg ? 0.20 : 0.985) alpha:1.0] setFill];
   [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:10 yRadius:10] fill];
   if (self.values.count < 2) return;
   CGFloat w = self.bounds.size.width, h = self.bounds.size.height;
@@ -146,18 +165,37 @@ static NSString *LetterSortKey(NSString *name) {
 @class LetterIndexView;
 @class MetricColumnView;
 @class DiskSegmentBar;
-@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
+@class DiskJustifiedLayout;
+@class QuickBarView;
+@class ColorHoverButton;
+@class DiskTypeControl;
+@class ScopeColorControl;
+static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
+  CGFloat bump = size <= 14 ? 2.0 : (size <= 20 ? 1.5 : 1.0);
+  return [NSFont systemFontOfSize:size + bump weight:bold ? NSFontWeightBold : NSFontWeightSemibold];
+}
+
+@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
 @property (strong) NSWindow *window;
 @property (strong) NSTextField *centerTitleLabel;
 @property (strong) NSView *sideView;
-@property (strong) NSButton *sidebarToggle;
+@property (strong) ColorHoverButton *sidebarToggle;
 @property BOOL sidebarCollapsed;
 @property (strong) NSView *content;
-@property (strong) NSButton *sideLive, *sideGroups, *sideDisk, *sideUninstall, *sideSettings;
+@property (strong) NSButton *sideLive, *sideGroups, *sideAI, *sideDisk, *sideUninstall, *sideSettings;
 @property NSInteger section;
 @property (strong) NSView *liveView, *groupsView, *uninstallView, *settingsView;
+@property NSInteger groupsPage;
+@property (strong) NSString *groupsFilter, *groupsHighlightedName, *groupsSelectedName;
+@property (strong) NSArray *groupsFiltered;
+@property (strong) id groupsKeyMonitor;
+@property (strong) NSSearchField *groupsSearch;
+@property (strong) ColorHoverButton *groupsPrevButton, *groupsNextButton;
+@property (strong) NSTextField *groupsPageLabel;
+@property (strong) NSScrollView *contentScroll;
+@property CGFloat uiZoom;
 @property (strong) NSTextField *uptimeLabel;
 @property (strong) NSArray *metricColumns;
 @property (strong) NSArray *internalColumns;
@@ -166,8 +204,27 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSMutableArray *externalVolumes;
 @property NSInteger externalSelectedIndex;
 @property (strong) NSView *metricHostView;
+@property (strong) NSView *liveAIBoard;
+@property NSInteger liveAIPage;
 // disk analysis
 @property (strong) NSView *diskView;
+@property (strong) NSView *aiView;
+@property (strong) NSTableView *aiTable;
+@property (strong) NSMutableArray *aiEntries;
+@property (strong) NSMutableSet *aiSelected;
+@property (strong) NSMutableSet *aiRevealedNames;
+@property (strong) NSArray *backupAppChoices;
+@property (strong) NSDate *lastAIQuotaRefresh;
+@property (strong) NSArray *aiVisibleEntries;
+@property NSInteger aiPage;
+@property (strong) NSString *aiCategory;
+@property (strong) ColorHoverButton *aiPrevButton, *aiNextButton;
+@property (strong) NSTextField *aiPageLabel;
+@property (strong) ColorHoverButton *aiCategoryButton;
+@property (strong) NSSearchField *aiSearchField;
+@property (strong) NSComboBox *dialogAIName;
+@property (strong) NSTextField *dialogAIQuota, *dialogAIEndpoint, *dialogAIApi, *dialogAINote, *dialogAIStatus;
+@property BOOL aiQuotaRefreshing;
 @property (strong) NSPopUpButton *diskVolumePopup;
 @property (strong) NSTextField *diskStatus;
 @property (strong) NSTextField *diskSummary;
@@ -176,6 +233,35 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSTextField *diskAppsLabel;
 @property (strong) NSButton *diskPersonalCheck;
 @property (strong) NSArray *diskVolumes;
+@property (strong) NSTableView *diskTable;
+@property (strong) NSScrollView *diskScroll;
+@property (strong) DiskTypeControl *diskTypeSegment;
+@property (strong) NSTextField *diskHintLabel;
+@property (strong) NSArray *diskFileData;
+@property (strong) NSArray *diskFileFiltered;
+@property (strong) NSProgressIndicator *diskSpinner;
+@property (strong) NSCollectionView *diskCollection;
+@property (strong) NSScrollView *diskCollectionScroll;
+@property (strong) NSArray *diskGalleryItems;
+@property (strong) NSArray *diskAllGalleryItems;
+@property NSInteger diskGalleryPage;
+@property (strong) ColorHoverButton *diskPrevPageButton, *diskNextPageButton;
+@property (strong) NSTextField *diskPageLabel;
+@property (strong) NSCollectionViewFlowLayout *diskFlowLayout;
+@property CGFloat diskGalleryItemWidth;
+@property (strong) NSView *diskCard;
+@property (strong) NSString *diskCurrentPath;
+@property (strong) NSMutableArray *diskBackStack, *diskForwardStack;
+@property (strong) NSButton *diskBackButton, *diskForwardButton;
+@property (strong) NSPathControl *diskPathControl;
+@property BOOL diskSourcePicked;
+@property (strong) NSDatePicker *diskDatePicker;
+@property (strong) NSPopover *diskDatePopover;
+@property (strong) NSButton *diskDateButton;
+@property (strong) NSDate *diskDateFilter;
+@property BOOL diskPreviewMode;
+@property NSInteger diskSelectedIndex;
+@property (strong) id diskKeyMonitor;
 @property (strong) NSString *diskSelectedMount;
 @property NSInteger diskGeneration;
 @property (strong) NSMutableString *gpuText;
@@ -192,6 +278,7 @@ static NSString *LetterSortKey(NSString *name) {
 @property NSInteger sampleSeconds;
 @property (strong) NSButton *menuBarCheck;
 @property (strong) NSPopUpButton *intervalPopup;
+@property (strong) NSPopUpButton *themePopup;
 @property (strong) NSButton *loginCheck;
 // groups
 @property (strong) NSMutableArray<NSDictionary *> *groups;
@@ -219,6 +306,8 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSMutableArray *activityEntries;
 @property (strong) NSButton *activityCheck;
 @property (strong) NSButton *protectedDirsCheck;
+@property (strong) NSButton *albumModeCheck;
+@property (strong) NSButton *mediaModeCheck;
 @property (strong) NSTimer *activitySaveTimer;
 @property BOOL activityDirty;
 @property BOOL dialogHighlightName;
@@ -235,7 +324,7 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) id letterActivityMonitor;
 @property (strong) NSSearchField *uninstallSearch;
 @property (strong) NSTextField *uninstallFooter;
-@property (strong) NSSegmentedControl *uninstallScopeCtl;
+@property (strong) ScopeColorControl *uninstallScopeCtl;
 @property (strong) NSPopUpButton *uninstallGroupPopup;
 @property NSInteger uninstallScope;
 @property (strong) NSButton *uninstallGo;
@@ -243,6 +332,21 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSPopover *popover;
 @property (strong) NSView *quickGroups;
 @property (strong) NSTextField *quickCPU, *quickMem, *quickBat;
+@property (strong) NSTextField *quickGPU, *quickDisk, *quickNet;
+@property (strong) NSTextField *quickCPUSub, *quickGPUSub, *quickMemSub, *quickDiskSub, *quickNetSub;
+@property (strong) QuickBarView *quickMemBar, *quickDiskBar;
+@property (strong) Sparkline *quickCPUSpark, *quickGPUSpark, *quickNetSpark;
+@property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage;
+@property (strong) NSMutableArray *quickAIRowViews;
+@property NSInteger quickAISelectedRow;
+@property (strong) NSView *quickGroupContainer;
+@property (strong) NSSegmentedControl *quickTabs;
+@property (strong) NSTextField *quickDetailTitle, *quickDetailValue, *quickDetailSub, *quickDetailExtra;
+@property (strong) Sparkline *quickDetailChart;
+@property (strong) QuickBarView *quickDetailBar;
+@property NSInteger quickBatteryCycles;
+@property double quickBatteryHealth;
+@property (strong) NSString *quickBatteryState;
 @property (strong) NSTextField *batteryLabel, *thermalLabel, *processLabel;
 @end
 
@@ -298,13 +402,15 @@ static void ActivityStreamCallback(ConstFSEventStreamRef streamRef, void *info, 
   }
 }
 - (void)drawRect:(NSRect)dirtyRect {
-  [[NSColor colorWithCalibratedWhite:0.97 alpha:0.9] setFill];
+  NSInteger themeVal = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerTheme"];
+  BOOL dark = (themeVal == 2) || (themeVal == 0 && [[[NSApp effectiveAppearance].name lowercaseString] containsString:@"dark"]);
+  [[NSColor colorWithCalibratedWhite:(dark ? 0.18 : 0.97) alpha:0.92] setFill];
   [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:8 yRadius:8] fill];
   CGFloat h = self.bounds.size.height / MAX(self.letters.count,1);
   for (NSInteger i = 0; i < (NSInteger)self.letters.count; i++) {
     BOOL hot = (i == self.hovered);
     NSFont *f = hot ? [NSFont boldSystemFontOfSize:15] : [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
-    NSColor *c = hot ? [NSColor controlAccentColor] : [NSColor secondaryLabelColor];
+    NSColor *c = hot ? [NSColor controlAccentColor] : (dark ? [NSColor colorWithCalibratedWhite:0.85 alpha:1.0] : [NSColor secondaryLabelColor]);
     NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
     ps.alignment = NSTextAlignmentCenter;
     NSDictionary *attrs = @{NSFontAttributeName: f, NSForegroundColorAttributeName: c, NSParagraphStyleAttributeName: ps};
@@ -363,7 +469,9 @@ static NSDate *InstallDateForPath(NSString *path) {
   [self setNeedsDisplay:YES];
 }
 - (void)drawRect:(NSRect)dirtyRect {
-  [[NSColor colorWithCalibratedWhite:0.965 alpha:1.0] setFill];
+  NSInteger themeVal = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerTheme"];
+  BOOL darkBg = (themeVal == 2) || (themeVal == 0 && [[[NSApp effectiveAppearance].name lowercaseString] containsString:@"dark"]);
+  [[NSColor colorWithCalibratedWhite:(darkBg ? 0.20 : 0.985) alpha:1.0] setFill];
   [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:8 yRadius:8] fill];
   if (!self.values.count) return;
   CGFloat w = self.bounds.size.width;
@@ -397,10 +505,13 @@ static NSDate *InstallDateForPath(NSString *path) {
   if ((self = [super initWithFrame:frame])) {
     _metricKey = key; _accent = accent; _target = target; _action = action;
     self.wantsLayer = YES;
-    self.layer.backgroundColor = [NSColor whiteColor].CGColor;
+    self.identifier = @"MetricCard";
+    NSInteger themeVal = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerTheme"];
+    BOOL dark = (themeVal == 2) || (themeVal == 0 && [[[NSApp effectiveAppearance].name lowercaseString] containsString:@"dark"]);
+    self.layer.backgroundColor = (dark ? [NSColor colorWithCalibratedWhite:0.13 alpha:1.0] : [NSColor whiteColor]).CGColor;
     self.layer.cornerRadius = 14;
     self.layer.borderWidth = 1;
-    self.layer.borderColor = [NSColor colorWithCalibratedWhite:0.93 alpha:1.0].CGColor;
+    self.layer.borderColor = (dark ? [NSColor colorWithCalibratedWhite:1.0 alpha:0.14] : [NSColor colorWithCalibratedWhite:0.93 alpha:1.0]).CGColor;
     CGFloat w = frame.size.width;
     _titleLabel = [NSTextField labelWithString:title];
     _titleLabel.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold];
@@ -416,6 +527,9 @@ static NSDate *InstallDateForPath(NSString *path) {
     _detailLabel.font = [NSFont systemFontOfSize:9.5];
     _detailLabel.textColor = [NSColor secondaryLabelColor];
     _detailLabel.maximumNumberOfLines = 3;
+    _detailLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    _detailLabel.usesSingleLineMode = NO;
+    _detailLabel.cell.wraps = YES;
     _detailLabel.frame = NSMakeRect(12, 14, w - 24, 48);
     [self addSubview:_detailLabel];
     _bar = [[BarChartView alloc] initWithFrame:NSMakeRect(10, 70, w - 20, frame.size.height - 150)];
@@ -425,6 +539,7 @@ static NSDate *InstallDateForPath(NSString *path) {
   return self;
 }
 - (void)setTitleText:(NSString *)title { self.titleLabel.stringValue = title; }
+- (void)setValueFontSize:(CGFloat)size { self.valueLabel.font = [NSFont systemFontOfSize:size weight:NSFontWeightBold]; }
 - (void)setValueText:(NSString *)value detail:(NSString *)detail bar:(double)barVal {
   self.valueLabel.stringValue = value;
   self.detailLabel.stringValue = detail;
@@ -511,15 +626,474 @@ static NSDate *InstallDateForPath(NSString *path) {
 }
 @end
 
+
+static NSCache *DiskThumbnailCache(void) {
+  static NSCache *cache = nil;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ cache = [[NSCache alloc] init]; cache.countLimit = 80; });
+  return cache;
+}
+
+static NSImage *DiskThumbnailForPath(NSString *path) {
+  NSURL *url = [NSURL fileURLWithPath:path];
+  CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)url, NULL);
+  if (!src) return nil;
+  NSDictionary *opts = @{(id)kCGImageSourceCreateThumbnailFromImageAlways: @YES,
+                         (id)kCGImageSourceCreateThumbnailWithTransform: @YES,
+                         (id)kCGImageSourceThumbnailMaxPixelSize: @1600};
+  CGImageRef cg = CGImageSourceCreateThumbnailAtIndex(src, 0, (__bridge CFDictionaryRef)opts);
+  CFRelease(src);
+  if (!cg) return nil;
+  NSImage *img = [[NSImage alloc] initWithCGImage:cg size:NSMakeSize(120, 100)];
+  CGImageRelease(cg);
+  return img;
+}
+
+
+@interface NoHitTextField : NSTextField
+@end
+@implementation NoHitTextField
+- (NSView *)hitTest:(NSPoint)point { return nil; }
+@end
+
+@interface DiskGalleryItem : NSCollectionViewItem
+@property (strong) NSImageView *thumbView;
+@property (strong) NSTextField *nameLabel;
+@property (strong) NSDictionary *file;
+@property (weak) id owner;
+@end
+@implementation DiskGalleryItem
+- (void)loadView {
+  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 200, 200)];
+  v.wantsLayer = YES;
+  v.layer.cornerRadius = 10;
+  v.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.96 alpha:1.0].CGColor;
+  self.thumbView = [[NSImageView alloc] initWithFrame:NSMakeRect(5, 5, 190, 190)];
+  self.thumbView.imageScaling = NSImageScaleProportionallyUpOrDown;
+  self.thumbView.imageAlignment = NSImageAlignCenter;
+  self.thumbView.wantsLayer = YES;
+  self.thumbView.layer.cornerRadius = 7;
+  self.thumbView.layer.masksToBounds = YES;
+  [v addSubview:self.thumbView];
+  self.nameLabel = [[NoHitTextField alloc] initWithFrame:NSMakeRect(12, 12, 176, 34)];
+  self.nameLabel.bezeled = NO; self.nameLabel.editable = NO; self.nameLabel.selectable = NO;
+  self.nameLabel.drawsBackground = NO;
+  self.nameLabel.alignment = NSTextAlignmentCenter;
+  self.nameLabel.maximumNumberOfLines = 2;
+  self.nameLabel.wantsLayer = YES;
+  self.nameLabel.layer.cornerRadius = 6;
+  self.nameLabel.layer.backgroundColor = [[NSColor blackColor] colorWithAlphaComponent:0.42].CGColor;
+  self.nameLabel.textColor = [NSColor whiteColor];
+  self.nameLabel.font = [NSFont systemFontOfSize:10.5 weight:NSFontWeightBold];
+  [v addSubview:self.nameLabel];
+  NSClickGestureRecognizer *single = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(cellClicked:)];
+  single.numberOfClicksRequired = 1;
+  [v addGestureRecognizer:single];
+  NSClickGestureRecognizer *dbl = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(cellDoubleClicked:)];
+  dbl.numberOfClicksRequired = 2;
+  [v addGestureRecognizer:dbl];
+  self.view = v;
+}
+- (void)cellClicked:(id)sender {
+  if ([self.owner respondsToSelector:@selector(galleryItemClicked:)]) [self.owner performSelector:@selector(galleryItemClicked:) withObject:self];
+}
+- (void)cellDoubleClicked:(id)sender {
+  if ([self.owner respondsToSelector:@selector(galleryItemDoubleClicked:)]) [self.owner performSelector:@selector(galleryItemDoubleClicked:) withObject:self];
+}
+- (void)setSelected:(BOOL)selected {
+  [super setSelected:selected];
+  self.view.layer.borderWidth = selected ? 3 : 0;
+  self.view.layer.borderColor = [NSColor controlAccentColor].CGColor;
+}
+- (void)setFile:(NSDictionary *)file {
+  CGFloat w = MAX(100, self.view.bounds.size.width), h = MAX(100, self.view.bounds.size.height);
+  BOOL browser = [file[@"browser"] boolValue];
+  BOOL isDir = [file[@"isDir"] boolValue];
+  if (browser) {
+    self.thumbView.frame = NSMakeRect(8, 8, MAX(20, w - 16), MAX(20, h - 16));
+    if (isDir) {
+      self.nameLabel.hidden = NO;
+      self.nameLabel.frame = NSMakeRect(12, 12, MAX(20, w - 24), 34);
+      NSInteger cnt = [file[@"count"] integerValue];
+      self.nameLabel.stringValue = cnt > 0 ? [NSString stringWithFormat:@"%@\n%ld 个项目", file[@"name"] ?: @"", (long)cnt] : (file[@"name"] ?: @"");
+    } else {
+      self.nameLabel.hidden = YES;
+    }
+  } else {
+    self.thumbView.frame = NSMakeRect(6, 6, MAX(20, w - 12), MAX(20, h - 12));
+    self.nameLabel.hidden = YES;
+  }
+  self.view.toolTip = file[@"name"];
+  _file = file;
+  NSString *path = file[@"path"];
+  NSImage *cached = [DiskThumbnailCache() objectForKey:path];
+  if (cached) { self.thumbView.image = cached; return; }
+  self.thumbView.image = [[NSWorkspace sharedWorkspace] iconForFile:path ?: @"/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericDocumentIcon.icns"];
+  __weak typeof(self) weakSelf = self;
+  NSString *assetID = file[@"assetID"];
+  if (assetID.length) {
+    NSImage *cached = [DiskThumbnailCache() objectForKey:[@"asset:" stringByAppendingString:assetID]];
+    if (cached) { self.thumbView.image = cached; return; }
+    PHFetchResult *fr = [PHAsset fetchAssetsWithLocalIdentifiers:@[assetID] options:nil];
+    PHAsset *asset = fr.firstObject;
+    if (asset) {
+      PHImageRequestOptions *opt = [[PHImageRequestOptions alloc] init];
+      opt.networkAccessAllowed = YES;
+      opt.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
+      opt.resizeMode = PHImageRequestOptionsResizeModeFast;
+      [[PHImageManager defaultManager] requestImageForAsset:asset targetSize:CGSizeMake(800, 800) contentMode:PHImageContentModeAspectFit options:opt resultHandler:^(NSImage *result, NSDictionary *info) {
+        if (!result) return;
+        [DiskThumbnailCache() setObject:result forKey:[@"asset:" stringByAppendingString:assetID]];
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if ([weakSelf.file[@"assetID"] isEqualToString:assetID]) weakSelf.thumbView.image = result;
+        });
+      }];
+    }
+    return;
+  }
+  if ([file[@"kind"] isEqualToString:@"图片"]) {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      NSImage *img = DiskThumbnailForPath(path);
+      if (!img) return;
+      [DiskThumbnailCache() setObject:img forKey:path];
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = img;
+      });
+    });
+  } else if ([file[@"kind"] isEqualToString:@"视频"]) {
+    NSURL *url = [NSURL fileURLWithPath:path];
+    QLThumbnailGenerationRequest *req = [[QLThumbnailGenerationRequest alloc] initWithFileAtURL:url size:CGSizeMake(800, 800) scale:2 representationTypes:QLThumbnailGenerationRequestRepresentationTypeThumbnail];
+    [[QLThumbnailGenerator sharedGenerator] generateBestRepresentationForRequest:req completionHandler:^(QLThumbnailRepresentation *rep, NSError *error) {
+      if (!rep.CGImage) return;
+      NSImage *img = [[NSImage alloc] initWithCGImage:rep.CGImage size:NSMakeSize(800, 800)];
+      if (!img) return;
+      [DiskThumbnailCache() setObject:img forKey:path];
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = img;
+      });
+    }];
+  }
+}
+@end
+
+
+@interface DiskJustifiedLayout : NSCollectionViewLayout
+@property CGFloat contentWidth;
+@property CGFloat targetHeight;
+@property CGFloat spacing;
+@property (strong) NSArray<NSNumber *> *aspects;
+@property (strong) NSMutableArray<NSCollectionViewLayoutAttributes *> *attrs;
+@property CGFloat contentHeight;
+@end
+@implementation DiskJustifiedLayout
+- (instancetype)init {
+  if ((self = [super init])) { _contentWidth = 640; _targetHeight = 200; _spacing = 10; _aspects = @[]; _attrs = [NSMutableArray array]; }
+  return self;
+}
+- (void)prepareLayout {
+  [super prepareLayout];
+  [self.attrs removeAllObjects];
+  NSInteger count = [self.collectionView numberOfItemsInSection:0];
+  if (count <= 0) { self.contentHeight = 0; return; }
+  CGFloat x = 0, y = 0, rowAspect = 0;
+  NSInteger rowStart = 0, rowCount = 0;
+  for (NSInteger i = 0; i < count; i++) {
+    double aspect = 1.0;
+    if (i < (NSInteger)self.aspects.count) aspect = MAX(0.35, MIN(3.2, self.aspects[i].doubleValue));
+    rowAspect += aspect;
+    rowCount++;
+    CGFloat rowWidth = rowAspect * self.targetHeight + self.spacing * (rowCount - 1);
+    if (rowWidth >= self.contentWidth || i == count - 1) {
+      CGFloat h = (self.contentWidth - self.spacing * (rowCount - 1)) / MAX(0.1, rowAspect);
+      h = MAX(90, MIN(360, h));
+      x = 0;
+      for (NSInteger j = rowStart; j <= i; j++) {
+        double a = (j < (NSInteger)self.aspects.count) ? self.aspects[j].doubleValue : 1.0;
+        a = MAX(0.35, MIN(3.2, a));
+        CGFloat w = h * a;
+        NSIndexPath *ip = [NSIndexPath indexPathForItem:j inSection:0];
+        NSCollectionViewLayoutAttributes *attr = [[NSCollectionViewLayoutAttributes alloc] init];
+        attr.indexPath = ip;
+        attr.frame = NSMakeRect(x, y, w, h);
+        [self.attrs addObject:attr];
+        x += w + self.spacing;
+      }
+      y += h + self.spacing;
+      rowStart = i + 1; rowCount = 0; rowAspect = 0;
+    }
+  }
+  self.contentHeight = MAX(0, y - self.spacing);
+}
+- (NSCollectionViewLayoutAttributes *)layoutAttributesForItemAtIndexPath:(NSIndexPath *)indexPath {
+  if (indexPath.item < (NSInteger)self.attrs.count) return self.attrs[indexPath.item];
+  return nil;
+}
+- (NSArray<NSCollectionViewLayoutAttributes *> *)layoutAttributesForElementsInRect:(NSRect)rect {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSCollectionViewLayoutAttributes *a in self.attrs) if (NSIntersectsRect(a.frame, rect)) [out addObject:a];
+  return out;
+}
+- (NSSize)collectionViewContentSize { return NSMakeSize(self.contentWidth, self.contentHeight); }
+@end
+
+
+@interface QuickBarView : NSView
+@property double value;
+@property (strong) NSColor *barColor;
+@end
+@implementation QuickBarView
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) { _value = 0; _barColor = [NSColor systemOrangeColor]; }
+  return self;
+}
+- (void)drawRect:(NSRect)dirtyRect {
+  NSBezierPath *bg = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:4 yRadius:4];
+  [[NSColor quaternaryLabelColor] setFill]; [bg fill];
+  CGFloat w = self.bounds.size.width * MAX(0, MIN(100, self.value)) / 100.0;
+  if (w <= 0) return;
+  NSRect r = NSMakeRect(0, 0, w, self.bounds.size.height);
+  NSBezierPath *fg = [NSBezierPath bezierPathWithRoundedRect:r xRadius:4 yRadius:4];
+  [self.barColor setFill]; [fg fill];
+}
+- (void)setValue:(double)value { _value = value; [self setNeedsDisplay:YES]; }
+@end
+
+
+@interface ColorHoverButton : NSButton
+@property (strong) NSColor *hoverColor;
+@property BOOL persistentHighlight;
+@end
+@implementation ColorHoverButton
+- (void)updateTrackingAreas {
+  [super updateTrackingAreas];
+  for (NSTrackingArea *a in self.trackingAreas) [self removeTrackingArea:a];
+  NSTrackingArea *ta = [[NSTrackingArea alloc] initWithRect:self.bounds options:(NSTrackingMouseEnteredAndExited|NSTrackingActiveInKeyWindow|NSTrackingInVisibleRect) owner:self userInfo:nil];
+  [self addTrackingArea:ta];
+}
+- (void)applyColor:(NSColor *)color textColor:(NSColor *)text {
+  NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+  ps.alignment = NSTextAlignmentCenter;
+  self.attributedTitle = [[NSAttributedString alloc] initWithString:self.title attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium], NSForegroundColorAttributeName: text, NSParagraphStyleAttributeName: ps}];
+  self.wantsLayer = YES;
+  self.layer.backgroundColor = color.CGColor;
+  self.layer.cornerRadius = 9;
+  self.layer.borderWidth = 1;
+  self.layer.borderColor = [[NSColor whiteColor] colorWithAlphaComponent:0.5].CGColor;
+  self.layer.shadowColor = [NSColor blackColor].CGColor;
+  self.layer.shadowOpacity = 0.0;
+  self.layer.shadowRadius = 3;
+  self.layer.shadowOffset = CGSizeMake(0, -2);
+}
+- (void)mouseDown:(NSEvent *)e {
+  self.layer.shadowOffset = CGSizeMake(0, 0);
+  self.layer.shadowOpacity = 0.0;
+  [super mouseDown:e];
+  self.layer.shadowOffset = CGSizeMake(0, -2);
+  self.layer.shadowOpacity = 0.0;
+}
+- (void)mouseEntered:(NSEvent *)e { [self applyColor:self.hoverColor ?: [NSColor systemBlueColor] textColor:[NSColor whiteColor]]; }
+- (void)mouseExited:(NSEvent *)e {
+  if (self.persistentHighlight) [self applyColor:self.hoverColor ?: [NSColor systemBlueColor] textColor:[NSColor whiteColor]];
+  else [self applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+}
+@end
+
+
+@interface DiskTypeButton : NSButton
+@property (strong) NSColor *segmentColor;
+@property BOOL segmentSelected;
+@end
+@implementation DiskTypeButton
+- (void)updateTrackingAreas {
+  [super updateTrackingAreas];
+  for (NSTrackingArea *a in self.trackingAreas) [self removeTrackingArea:a];
+  NSTrackingArea *ta = [[NSTrackingArea alloc] initWithRect:self.bounds options:(NSTrackingMouseEnteredAndExited|NSTrackingActiveInKeyWindow|NSTrackingInVisibleRect) owner:self userInfo:nil];
+  [self addTrackingArea:ta];
+}
+- (void)applyLook:(BOOL)highlight {
+  self.wantsLayer = YES;
+  self.layer.cornerRadius = 6;
+  NSColor *bg = highlight ? (self.segmentColor ?: [NSColor controlAccentColor]) : DLButtonBackground();
+  NSColor *fg = highlight ? [NSColor whiteColor] : [NSColor labelColor];
+  self.layer.backgroundColor = bg.CGColor;
+  NSFontWeight weight = self.segmentSelected ? NSFontWeightSemibold : NSFontWeightMedium;
+  NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init]; ps.alignment = NSTextAlignmentCenter;
+  self.attributedTitle = [[NSAttributedString alloc] initWithString:self.title attributes:@{NSFontAttributeName: DLDisplayFont(12.5, YES), NSForegroundColorAttributeName: fg, NSParagraphStyleAttributeName: ps}];
+}
+- (void)mouseEntered:(NSEvent *)e { [self applyLook:YES]; }
+- (void)mouseExited:(NSEvent *)e { [self applyLook:NO]; }
+- (void)setSegmentSelected:(BOOL)sel { _segmentSelected = sel; [self applyLook:NO]; }
+@end
+
+@interface DiskTypeControl : NSView
+@property NSInteger selectedSegment;
+@property (weak) id target;
+@property SEL action;
+@end
+@implementation DiskTypeControl {
+  DiskTypeButton *_b0, *_b1, *_b2;
+}
+- (instancetype)initWithFrame:(NSRect)frame target:(id)target action:(SEL)action {
+  if ((self = [super initWithFrame:frame])) {
+    self.target = target; self.action = action; self.selectedSegment = -1;
+    NSArray *titles = @[@"文件", @"图片", @"视频"];
+    NSArray *colors = @[[NSColor systemBlueColor], [NSColor systemGreenColor], [NSColor systemYellowColor]];
+    CGFloat w = frame.size.width / 3.0;
+    NSMutableArray *bs = [NSMutableArray array];
+    for (NSInteger i = 0; i < 3; i++) {
+      DiskTypeButton *b = [[DiskTypeButton alloc] initWithFrame:NSMakeRect(i * w, 0, w - 2, frame.size.height)];
+      b.title = titles[i]; b.segmentColor = colors[i]; b.bordered = NO; b.tag = i;
+      b.target = self; b.action = @selector(clicked:);
+      [b applyLook:NO];
+      [self addSubview:b];
+      [bs addObject:b];
+    }
+    _b0 = bs[0]; _b1 = bs[1]; _b2 = bs[2];
+  }
+  return self;
+}
+- (void)clicked:(DiskTypeButton *)b {
+  self.selectedSegment = b.tag;
+  if (self.target && self.action) [self.target performSelector:self.action withObject:self];
+}
+- (void)setSelectedSegment:(NSInteger)seg {
+  _selectedSegment = seg;
+  _b0.segmentSelected = (seg == 0);
+  _b1.segmentSelected = (seg == 1);
+  _b2.segmentSelected = (seg == 2);
+}
+@end
+
+
+@interface ScopeColorControl : NSView
+@property NSInteger selectedSegment;
+@property (weak) id target;
+@property SEL action;
+@end
+@implementation ScopeColorControl {
+  DiskTypeButton *_b0, *_b1;
+}
+- (instancetype)initWithFrame:(NSRect)frame title0:(NSString *)t0 color0:(NSColor *)c0 title1:(NSString *)t1 color1:(NSColor *)c1 target:(id)target action:(SEL)action {
+  if ((self = [super initWithFrame:frame])) {
+    self.target = target; self.action = action; self.selectedSegment = 0;
+    CGFloat w = frame.size.width / 2.0;
+    _b0 = [[DiskTypeButton alloc] initWithFrame:NSMakeRect(0, 0, w - 2, frame.size.height)];
+    _b0.title = t0; _b0.segmentColor = c0; _b0.bordered = NO; _b0.tag = 0;
+    _b0.target = self; _b0.action = @selector(clicked:);
+    [_b0 applyLook:NO]; [self addSubview:_b0];
+    _b1 = [[DiskTypeButton alloc] initWithFrame:NSMakeRect(w, 0, w - 2, frame.size.height)];
+    _b1.title = t1; _b1.segmentColor = c1; _b1.bordered = NO; _b1.tag = 1;
+    _b1.target = self; _b1.action = @selector(clicked:);
+    [_b1 applyLook:NO]; [self addSubview:_b1];
+    self.selectedSegment = 0;
+  }
+  return self;
+}
+- (void)clicked:(DiskTypeButton *)b {
+  self.selectedSegment = b.tag;
+  if (self.target && self.action) [self.target performSelector:self.action withObject:self];
+}
+- (void)setSelectedSegment:(NSInteger)seg {
+  _selectedSegment = seg;
+  _b0.segmentSelected = (seg == 0);
+  _b1.segmentSelected = (seg == 1);
+}
+@end
+
+
+@interface AIDropView : NSView
+@property (weak) id dropTarget;
+@property SEL dropAction;
+@end
+@implementation AIDropView
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    self.wantsLayer = YES;
+    [self registerForDraggedTypes:@[NSFilenamesPboardType, NSPasteboardTypeFileURL]];
+  }
+  return self;
+}
+- (NSArray<NSURL *> *)draggedURLs:(id<NSDraggingInfo>)info {
+  NSPasteboard *pb = info.draggingPasteboard;
+  NSArray *urls = [pb readObjectsForClasses:@[[NSURL class]] options:nil];
+  if (!urls.count) {
+    NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
+    NSMutableArray *arr = [NSMutableArray array];
+    for (NSString *p in paths) [arr addObject:[NSURL fileURLWithPath:p]];
+    urls = arr;
+  }
+  NSMutableArray *ok = [NSMutableArray array];
+  for (NSURL *u in urls) {
+    NSString *ext = u.pathExtension.lowercaseString;
+    if ([@[@"json", @"csv", @"txt"] containsObject:ext]) [ok addObject:u];
+  }
+  return ok;
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+  if ([self draggedURLs:sender].count) {
+    self.layer.borderWidth = 2;
+    self.layer.borderColor = [NSColor controlAccentColor].CGColor;
+    return NSDragOperationCopy;
+  }
+  return NSDragOperationNone;
+}
+- (void)draggingExited:(id<NSDraggingInfo>)sender {
+  self.layer.borderWidth = 0;
+}
+- (BOOL)prepareForDragOperation:(id<NSDraggingInfo>)sender { return [self draggedURLs:sender].count > 0; }
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  self.layer.borderWidth = 0;
+  NSArray *urls = [self draggedURLs:sender];
+  if (urls.count && self.dropTarget && self.dropAction) {
+    [self.dropTarget performSelector:self.dropAction withObject:urls];
+    return YES;
+  }
+  return NO;
+}
+@end
+
+
+@interface FanTitleView : NSView
+@end
+@implementation FanTitleView
+- (BOOL)isFlipped { return NO; }
+- (void)drawRect:(NSRect)dirtyRect {
+  NSString *text = @"DockLaunchers";
+  CGFloat w = self.bounds.size.width;
+  CGFloat h = self.bounds.size.height;
+  NSInteger n = (NSInteger)text.length;
+  if (n == 0) return;
+  CGFloat step = (w - 4) / n;
+  CGFloat fontSize = MIN(15.5, step * 1.42);
+  CGFloat amp = 20.0;
+  for (NSInteger i = 0; i < n; i++) {
+    NSString *ch = [text substringWithRange:NSMakeRange(i, 1)];
+    CGFloat t = n > 1 ? (CGFloat)i / (CGFloat)(n - 1) : 0.5;
+    CGFloat x = 2 + i * step + step * 0.5;
+    CGFloat y = h * 0.12 + amp * (1.0 - pow((t - 0.5) * 2.0, 2.0));
+    CGFloat angle = (t - 0.5) * 0.90;
+    NSColor *color = [NSColor colorWithCalibratedHue:(CGFloat)i / (CGFloat)n saturation:0.72 brightness:0.92 alpha:1.0];
+    NSFont *font = [NSFont systemFontOfSize:fontSize weight:NSFontWeightBold];
+    NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+    ps.alignment = NSTextAlignmentCenter;
+    NSAttributedString *as = [[NSAttributedString alloc] initWithString:ch attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: color, NSParagraphStyleAttributeName: ps}];
+    [NSGraphicsContext saveGraphicsState];
+    NSAffineTransform *tf = [NSAffineTransform transform];
+    [tf translateXBy:x yBy:y];
+    [tf rotateByRadians:angle];
+    [tf concat];
+    [as drawAtPoint:NSMakePoint(-step / 2.0, 0)];
+    [NSGraphicsContext restoreGraphicsState];
+  }
+}
+@end
+
 @implementation Controller
 
 - (NSImage *)characterImage:(CGFloat)size {
-  NSString *p = [[NSBundle mainBundle] pathForResource:@"menubar" ofType:@"png"];
+  NSString *p = [[NSBundle mainBundle] pathForResource:@"AppIcon2" ofType:@"icns"];
   NSImage *img = p ? [[NSImage alloc] initWithContentsOfFile:p] : nil;
-  if (!img) {
-    p = [[NSBundle mainBundle] pathForResource:@"AppIcon" ofType:@"icns"];
-    img = p ? [[NSImage alloc] initWithContentsOfFile:p] : nil;
-  }
+  if (!img) img = [NSImage imageNamed:NSImageNameApplicationIcon];
   if (!img) img = [NSImage imageNamed:NSImageNameApplicationIcon];
   img.size = NSMakeSize(size, size);
   img.template = NO;
@@ -528,7 +1102,7 @@ static NSDate *InstallDateForPath(NSString *path) {
 
 - (NSTextField *)label:(NSString *)s size:(CGFloat)sz bold:(BOOL)b color:(NSColor *)c {
   NSTextField *l = [NSTextField labelWithString:s];
-  l.font = b ? [NSFont systemFontOfSize:sz weight:NSFontWeightSemibold] : [NSFont systemFontOfSize:sz];
+  l.font = DLDisplayFont(sz, b);
   if (c) l.textColor = c;
   return l;
 }
@@ -555,15 +1129,25 @@ static NSDate *InstallDateForPath(NSString *path) {
   self.statusItem.button.image = [self characterImage:18];
   self.statusItem.button.imagePosition = NSImageLeft;
   self.statusItem.button.imageScaling = NSImageScaleProportionallyDown;
-  self.statusItem.button.title = @" --%";
+  self.statusItem.button.title = @"";
   self.statusItem.button.target = self;
   self.statusItem.button.action = @selector(togglePopover:);
   NSNotificationCenter *wsnc = [[NSWorkspace sharedWorkspace] notificationCenter];
   for (NSString *n in @[NSWorkspaceDidMountNotification, NSWorkspaceDidUnmountNotification, NSWorkspaceDidRenameVolumeNotification]) {
     [wsnc addObserver:self selector:@selector(volumesChanged:) name:n object:nil];
   }
+  [self applyThemeFromDefaults];
+  [self setupMainMenu];
   [self buildWindow];
   [self buildPopover];
+  [self applyThemeFromDefaults];
+  self.diskKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    if (e.keyCode == 49 && self.section == 2 && self.diskCollectionScroll.hidden == NO) {
+      [self previewSelectedDiskFile];
+      return nil;
+    }
+    return e;
+  }];
   // 确保控制台自己出现在 Dock，并刷新图标缓存（先删后加）
   NSString *selfPath = [[NSBundle mainBundle] bundlePath];
   [self removeDockEntry:selfPath];
@@ -635,6 +1219,10 @@ static NSDate *InstallDateForPath(NSString *path) {
       [self editGroupRow:b];
     });
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_AI")) {
+    [self showSection:2];
+    [self showWindow:nil];
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_REFRESH")) {
     [self showSection:1];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -691,12 +1279,12 @@ static NSDate *InstallDateForPath(NSString *path) {
     [self showSection:atoi(getenv("DOCKLAUNCHERS_CENTER_SECTION"))];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_SEARCH")) {
-    [self showSection:3];
+    [self showSection:4];
     self.uninstallSearch.stringValue = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_SEARCH")];
     [self reloadUninstallData];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_GROUP")) {
-    [self showSection:3];
+    [self showSection:4];
     self.uninstallScope = 1;
     self.uninstallScopeCtl.selectedSegment = 1;
     [self refreshUninstallGroupPopup];
@@ -714,17 +1302,52 @@ static NSDate *InstallDateForPath(NSString *path) {
 - (void)toggleSidebar:(id)sender {
   BOOL collapse = !self.sidebarCollapsed;
   self.sidebarCollapsed = collapse;
-  self.sidebarToggle.image = [NSImage imageWithSystemSymbolName:(collapse ? @"sidebar.right" : @"sidebar.left") accessibilityDescription:@"侧边栏"];
-  ((SidebarToggleButton *)self.sidebarToggle).collapsedStyle = collapse;
-  [self.sidebarToggle setNeedsDisplay:YES];
-  if (!collapse) self.sideView.hidden = NO;
+  __weak typeof(self) weakSelf = self;
+  NSArray *nav = @[self.sideLive, self.sideGroups, self.sideAI, self.sideDisk, self.sideUninstall, self.sideSettings];
+  NSArray *navTitles = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
+  for (NSInteger i = 0; i < nav.count; i++) {
+    NSButton *b = nav[i];
+    if (collapse) {
+      b.title = @"";
+      b.imagePosition = NSImageOnly;
+      b.alignment = NSTextAlignmentCenter;
+      b.frame = NSMakeRect(4, 523 - i * 92.4, 36, 36);
+    } else {
+      b.title = navTitles[i];
+      b.imagePosition = NSImageLeft;
+      b.alignment = NSTextAlignmentLeft;
+      b.frame = NSMakeRect(14, 521 - i * 92.4, 212, 40);
+    }
+  }
+  if (collapse) {
+    self.sidebarToggle.title = @"";
+    self.sidebarToggle.image = [NSImage imageWithSystemSymbolName:@"sidebar.right" accessibilityDescription:@"展开侧边栏"];
+    self.sidebarToggle.imagePosition = NSImageOnly;
+    self.sidebarToggle.alignment = NSTextAlignmentCenter;
+    self.sidebarToggle.persistentHighlight = YES;
+    [self.sidebarToggle applyColor:[NSColor systemBrownColor] textColor:[NSColor whiteColor]];
+  } else {
+    for (NSView *v in self.sideView.subviews) v.hidden = NO;
+    self.sidebarToggle.title = @"收起侧边栏";
+    self.sidebarToggle.image = [NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:@"收起侧边栏"];
+    self.sidebarToggle.imagePosition = NSImageLeft;
+    self.sidebarToggle.alignment = NSTextAlignmentLeft;
+    self.sidebarToggle.persistentHighlight = NO;
+    [self.sidebarToggle applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  }
   [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
     ctx.duration = 0.22;
-    self.sideView.animator.alphaValue = collapse ? 0 : 1;
-    self.content.animator.frame = collapse ? NSMakeRect(0, 0, 960, 660) : NSMakeRect(210, 0, 750, 660);
-    self.sidebarToggle.animator.frame = collapse ? NSMakeRect(230, 24, 32, 32) : NSMakeRect(20, 24, 32, 32);
+    NSRect win = weakSelf.window.contentView.bounds;
+    weakSelf.sideView.animator.frame = NSMakeRect(0, 0, collapse ? 44 : 240, win.size.height);
+    weakSelf.contentScroll.animator.frame = NSMakeRect(collapse ? 44 : 240, 0, win.size.width - (collapse ? 44 : 240), win.size.height);
+    weakSelf.sidebarToggle.animator.frame = collapse ? NSMakeRect(6, 20, 32, 32) : NSMakeRect(14, 20, 212, 36);
   } completionHandler:^{
-    if (collapse) self.sideView.hidden = YES;
+    if (collapse) {
+      for (NSView *v in weakSelf.sideView.subviews) {
+        if (![v isKindOfClass:[NSButton class]]) v.hidden = YES;
+      }
+    }
+    [weakSelf layoutPageView:weakSelf.content.subviews.firstObject];
   }];
 }
 
@@ -735,7 +1358,61 @@ static NSDate *InstallDateForPath(NSString *path) {
   CGFloat h = frameView.bounds.size.height;
   self.centerTitleLabel.frame = NSMakeRect((w - 440)/2.0, h - 30, 440, 24);
 }
-- (void)windowDidResize:(NSNotification *)notification { [self layoutCenterTitle]; }
+- (void)layoutPageView:(NSView *)v {
+  if (!v) return;
+  CGFloat aw = MAX(1, self.contentScroll.contentView.bounds.size.width);
+  CGFloat ah = MAX(1, self.contentScroll.contentView.bounds.size.height);
+  CGFloat zoom = self.uiZoom > 0 ? self.uiZoom : 1.0;
+  // 以窗口宽度为主进行等比缩放：拉宽时整体数据同步放大，拉窄时缩小
+  CGFloat scale = (aw / 750.0) * zoom;
+  CGFloat w = 750.0 * scale, h = 660.0 * scale;
+  CGFloat docW = MAX(aw, w + 24), docH = MAX(ah, h + 24);
+  self.content.frame = NSMakeRect(0, 0, docW, docH);
+  v.frame = NSMakeRect((docW - w) / 2.0, (docH - h) / 2.0, w, h);
+  v.bounds = NSMakeRect(0, 0, 750, 660);
+  CGFloat maxY = MAX(0, docH - self.contentScroll.contentView.bounds.size.height);
+  [self.contentScroll.contentView scrollToPoint:NSMakePoint(0, maxY)];
+  [self.contentScroll reflectScrolledClipView:self.contentScroll.contentView];
+}
+
+- (void)windowDidMove:(NSNotification *)notification {
+  NSWindow *w = self.window;
+  if (!w || w.isZoomed) return;
+  NSRect vis = w.screen.visibleFrame;
+  NSRect f = w.frame;
+  CGFloat maxTop = NSMaxY(vis) - 2;
+  if (NSMaxY(f) > maxTop) {
+    f.origin.y = maxTop - f.size.height;
+    if (f.origin.y < NSMinY(vis)) f.origin.y = NSMinY(vis);
+    [w setFrame:f display:YES];
+  }
+}
+
+- (void)windowDidResize:(NSNotification *)notification {
+  [self layoutCenterTitle];
+  [self layoutPageView:self.content.subviews.firstObject];
+  [self updateDiskGalleryLayout];
+}
+
+- (void)setupMainMenu {
+  NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@"Main"];
+  NSMenuItem *appItem = [[NSMenuItem alloc] initWithTitle:@"DockLaunchers" action:nil keyEquivalent:@""];
+  NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"DockLaunchers"];
+  [appMenu addItemWithTitle:@"退出 DockLaunchers" action:@selector(terminate:) keyEquivalent:@"q"];
+  appItem.submenu = appMenu;
+  [mainMenu addItem:appItem];
+  NSMenuItem *editItem = [[NSMenuItem alloc] initWithTitle:@"编辑" action:nil keyEquivalent:@""];
+  NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"编辑"];
+  [editMenu addItemWithTitle:@"撤销" action:@selector(undo:) keyEquivalent:@"z"];
+  [editMenu addItem:[NSMenuItem separatorItem]];
+  [editMenu addItemWithTitle:@"剪切" action:@selector(cut:) keyEquivalent:@"x"];
+  [editMenu addItemWithTitle:@"复制" action:@selector(copy:) keyEquivalent:@"c"];
+  [editMenu addItemWithTitle:@"粘贴" action:@selector(paste:) keyEquivalent:@"v"];
+  [editMenu addItemWithTitle:@"全选" action:@selector(selectAll:) keyEquivalent:@"a"];
+  editItem.submenu = editMenu;
+  [mainMenu addItem:editItem];
+  NSApp.mainMenu = mainMenu;
+}
 
 - (void)buildWindow {
   self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,960,660)
@@ -744,67 +1421,88 @@ static NSDate *InstallDateForPath(NSString *path) {
   self.window.title = @"DockLaunchers 控制台";
   self.window.titleVisibility = NSWindowTitleHidden;
   self.window.delegate = self;
+  self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenNone;
   self.centerTitleLabel = [self label:[NSString stringWithFormat:@"DockLaunchers 控制台  v%@", [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.0"] size:16 bold:YES color:[NSColor systemOrangeColor]];
   self.centerTitleLabel.alignment = NSTextAlignmentCenter;
   [self.window.contentView.superview addSubview:self.centerTitleLabel];
   [self layoutCenterTitle];
-  self.window.minSize = NSMakeSize(820, 540);
+  self.window.styleMask &= ~NSWindowStyleMaskResizable;
+  self.window.contentMinSize = NSMakeSize(960, 660);
+  self.window.contentMaxSize = NSMakeSize(960, 660);
+  self.window.minSize = NSMakeSize(960, 688);
+  self.window.maxSize = NSMakeSize(960, 688);
   self.window.releasedWhenClosed = NO;
   self.window.titlebarAppearsTransparent = NO;
   NSView *root = self.window.contentView;
 
   // 侧边栏
-  NSView *side = [[NSView alloc] initWithFrame:NSMakeRect(0,0,210,660)];
+  NSView *side = [[NSView alloc] initWithFrame:NSMakeRect(0,0,240,660)];
   side.wantsLayer = YES;
-  side.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.972 alpha:1.0].CGColor;
+  side.identifier = @"DLSidebar";
+  side.layer.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance).CGColor;
   side.autoresizingMask = NSViewHeightSizable;
   [root addSubview:side];
-  NSImageView *avatar = [[NSImageView alloc] initWithFrame:NSMakeRect(20, 590, 44, 44)];
-  avatar.image = [self characterImage:44];
+  NSImageView *avatar = [[NSImageView alloc] initWithFrame:NSMakeRect(84, 580.5, 72, 72)];
+  avatar.image = [self characterImage:72];
   [side addSubview:avatar];
-  NSTextField *title = [self label:@"DockLaunchers" size:15 bold:YES color:nil];
-  title.frame = NSMakeRect(74, 608, 130, 20); [side addSubview:title];
-  NSTextField *subtitle = [self label:@"控制台" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  subtitle.frame = NSMakeRect(74, 590, 130, 16); [side addSubview:subtitle];
 
-  NSArray *titles = @[@"实时数据", @"Dock 分组", @"磁盘分析", @"应用卸载", @"设置"];
-  NSArray *symbols = @[@"gauge", @"square.grid.2x2", @"internaldrive", @"trash", @"gearshape"];
-  CGFloat y = 540;
+  NSArray *titles = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
+  NSArray *symbols = @[@"chart.line.uptrend.xyaxis", @"square.grid.2x2", @"sparkles", @"internaldrive", @"trash", @"gearshape"];
+  CGFloat y = 521;
   NSMutableArray *btns = [NSMutableArray array];
   for (NSInteger i = 0; i < titles.count; i++) {
     NSButton *b = [NSButton buttonWithTitle:titles[i] target:self action:@selector(sideClicked:)];
     b.tag = i;
-    b.frame = NSMakeRect(14, y, 182, 38);
+    b.frame = NSMakeRect(14, y, 212, 48);
     b.bordered = NO;
     b.alignment = NSTextAlignmentLeft;
-    b.font = [NSFont systemFontOfSize:13.5 weight:NSFontWeightMedium];
-    b.image = [NSImage imageWithSystemSymbolName:symbols[i] accessibilityDescription:titles[i]];
+    b.font = DLDisplayFont(14, YES);
+    NSImage *navIcon = [[NSImage imageWithSystemSymbolName:symbols[i] accessibilityDescription:titles[i]] imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:18 weight:NSFontWeightSemibold]];
+    navIcon.template = YES;
+    b.image = navIcon;
     b.imagePosition = NSImageLeft;
     b.contentTintColor = [NSColor secondaryLabelColor];
     b.wantsLayer = YES;
     b.layer.cornerRadius = 8;
+    b.toolTip = titles[i];
     [side addSubview:b];
     [btns addObject:b];
-    y -= 46;
+    y -= 92.4;
   }
-  self.sideLive = btns[0]; self.sideGroups = btns[1]; self.sideDisk = btns[2]; self.sideUninstall = btns[3]; self.sideSettings = btns[4];
+  self.sideLive = btns[0]; self.sideGroups = btns[1]; self.sideAI = btns[2]; self.sideDisk = btns[3]; self.sideUninstall = btns[4]; self.sideSettings = btns[5];
 
 
   self.sideView = side;
-  self.content = [[NSView alloc] initWithFrame:NSMakeRect(210, 0, 750, 660)];
-  self.content.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
-  [root addSubview:self.content];
-  self.sidebarToggle = [[SidebarToggleButton alloc] initWithFrame:NSMakeRect(20, 24, 32, 32)];
+  self.contentScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(240, 0, 720, 660)];
+  self.contentScroll.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
+  self.contentScroll.hasVerticalScroller = YES;
+  self.contentScroll.hasHorizontalScroller = YES;
+  self.contentScroll.autohidesScrollers = YES;
+  self.contentScroll.drawsBackground = YES;
+  self.contentScroll.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance);
+  self.content = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 750, 660)];
+  self.content.wantsLayer = YES;
+  self.content.layer.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance).CGColor;
+  self.contentScroll.documentView = self.content;
+  [root addSubview:self.contentScroll];
+  self.uiZoom = 1.0;
+  self.sidebarToggle = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(14, 20, 212, 36)];
+  self.sidebarToggle.title = @"收起侧边栏";
+  self.sidebarToggle.hoverColor = [NSColor systemBrownColor];
   self.sidebarToggle.target = self;
   self.sidebarToggle.action = @selector(toggleSidebar:);
-  [root addSubview:self.sidebarToggle];
+  self.sidebarToggle.toolTip = @"收起 / 展开侧边栏";
+  [self.sidebarToggle applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [side addSubview:self.sidebarToggle];
 
   [self buildLiveView];
   [self buildGroupsView];
+  [self buildAIView];
   [self buildDiskView];
   [self buildUninstallView];
   [self buildSettingsView];
   [self showSection:0];
+  [self installGroupsKeyMonitor];
 }
 
 - (void)sideClicked:(NSButton *)b { [self showSection:b.tag]; }
@@ -835,12 +1533,19 @@ static NSDate *InstallDateForPath(NSString *path) {
   for (NSView *sub in view.subviews) {
     if ([sub isKindOfClass:[NSButton class]]) {
       NSButton *b = (NSButton *)sub;
+      if ([b isKindOfClass:[ColorHoverButton class]]) { [self applyFlatButtonsInView:sub]; continue; }
       NSButtonCell *bc = (NSButtonCell *)b.cell;
       if (b.bezelStyle == NSBezelStyleRounded && bc.type != NSSwitchButton && bc.type != NSRadioButton) {
         b.bordered = NO;
         b.wantsLayer = YES;
-        b.layer.cornerRadius = 8;
-        b.font = [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium];
+        b.layer.cornerRadius = 9;
+        b.layer.borderWidth = 1;
+        b.layer.borderColor = [[NSColor whiteColor] colorWithAlphaComponent:0.4].CGColor;
+        b.layer.shadowColor = [NSColor blackColor].CGColor;
+        b.layer.shadowOpacity = 0.14;
+        b.layer.shadowRadius = 2;
+        b.layer.shadowOffset = CGSizeMake(0, -1.5);
+        b.font = DLDisplayFont(12.5, YES);
         BOOL primary = [primaryTitles containsObject:b.title];
         if (primary) {
           b.layer.backgroundColor = [NSColor controlAccentColor].CGColor;
@@ -848,7 +1553,7 @@ static NSDate *InstallDateForPath(NSString *path) {
           ps.alignment = NSTextAlignmentCenter;
           b.attributedTitle = [[NSAttributedString alloc] initWithString:b.title attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: [NSColor whiteColor], NSParagraphStyleAttributeName: ps}];
         } else {
-          b.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.945 alpha:1.0].CGColor;
+          b.layer.backgroundColor = DLButtonBackground().CGColor;
         }
       }
     }
@@ -859,22 +1564,37 @@ static NSDate *InstallDateForPath(NSString *path) {
 - (void)showSection:(NSInteger)idx {
   self.section = idx;
   for (NSView *v in self.content.subviews) [v removeFromSuperview];
-  NSArray *btns = @[self.sideLive, self.sideGroups, self.sideDisk, self.sideUninstall, self.sideSettings];
+  NSArray *btns = @[self.sideLive, self.sideGroups, self.sideAI, self.sideDisk, self.sideUninstall, self.sideSettings];
+  NSArray *navColors = @[[NSColor systemGreenColor], [NSColor systemYellowColor], [NSColor systemBlueColor],
+                         [NSColor systemOrangeColor], [NSColor systemPurpleColor], [NSColor systemRedColor]];
   for (NSInteger i = 0; i < btns.count; i++) {
     NSButton *b = btns[i];
     BOOL on = (i == idx);
-    b.layer.backgroundColor = on ? [NSColor colorWithCalibratedRed:0.04 green:0.52 blue:1.0 alpha:0.10].CGColor : [NSColor clearColor].CGColor;
-    b.contentTintColor = on ? [NSColor controlAccentColor] : [NSColor secondaryLabelColor];
-    b.font = [NSFont systemFontOfSize:13.5 weight:(on ? NSFontWeightSemibold : NSFontWeightMedium)];
+    NSColor *accent = navColors[i];
+    b.layer.backgroundColor = on ? [accent colorWithAlphaComponent:0.14].CGColor : [NSColor clearColor].CGColor;
+    b.contentTintColor = on ? accent : [NSColor secondaryLabelColor];
+    NSFont *font = DLDisplayFont(14, on);
+    NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+    b.attributedTitle = [[NSAttributedString alloc] initWithString:b.title ?: @"" attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: (on ? accent : [NSColor labelColor]), NSParagraphStyleAttributeName: ps}];
   }
-  NSView *v = @[self.liveView, self.groupsView, self.diskView, self.uninstallView, self.settingsView][idx];
-  v.frame = self.content.bounds;
-  v.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
+  NSView *v = @[self.liveView, self.groupsView, self.aiView, self.diskView, self.uninstallView, self.settingsView][idx];
+  v.autoresizingMask = NSViewNotSizable;
   [self.content addSubview:v];
+  [self layoutPageView:v];
   [self applyFlatButtonsInView:v];
-  if (idx == 1) [self refreshGroups];
-  if (idx == 2) { [self refreshDiskVolumes]; [self runDiskAnalysis]; }
-  if (idx == 3) [self reloadUninstallData];
+  if (idx == 1) {
+    if (!self.groupsSelectedName.length && self.groups.count) {
+      NSDictionary *first = self.groups.firstObject;
+      self.groupsSelectedName = first[@"name"];
+    }
+    [self refreshGroups];
+  }
+  if (idx == 3) { [self refreshDiskVolumes]; [self updateDiskGalleryLayout]; }
+  if (idx == 2) {
+    dispatch_async(dispatch_get_main_queue(), ^{ [self rebuildAIDisplay]; });
+    [self autoRefreshAIQuotas];
+  }
+  if (idx == 4) [self reloadUninstallData];
 }
 
 - (void)showWindow:(id)sender {
@@ -933,6 +1653,9 @@ static NSDate *InstallDateForPath(NSString *path) {
   [v addSubview:self.externalPopup];
   self.metricHostView = v;
   self.liveView = v;
+  self.liveAIBoard = [self cardAt:NSMakeRect(18, 20, 714, 220)];
+  [v addSubview:self.liveAIBoard];
+  [self rebuildLiveAIBoard];
   [self refreshExternalVolumes];
 }
 
@@ -947,9 +1670,13 @@ static NSDate *InstallDateForPath(NSString *path) {
     if (!(m->f_flags & MNT_LOCAL)) continue;
     unsigned long long total = (unsigned long long)m->f_blocks * m->f_bsize;
     unsigned long long freeB = (unsigned long long)m->f_bavail * m->f_bsize;
-    if (total == 0) continue;
+    if (total < 100ULL * 1024 * 1024) continue;
     NSString *name = mountPoint.lastPathComponent;
     if (!name.length) name = @"外接存储";
+    NSArray *skipNames = @[@"Recovery", @"EFI", @"Preboot", @"Update", @"VM", @"com.apple.recovery.boot"];
+    BOOL skip = NO;
+    for (NSString *sn in skipNames) if ([name caseInsensitiveCompare:sn] == NSOrderedSame || [name.lowercaseString containsString:sn.lowercaseString]) { skip = YES; break; }
+    if (skip) continue;
     [out addObject:@{@"url": [NSURL fileURLWithPath:mountPoint], @"name": name, @"total": @(total), @"free": @(freeB)}];
   }
   [out sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
@@ -1006,6 +1733,105 @@ static NSDate *InstallDateForPath(NSString *path) {
   self.externalSelectedIndex = self.externalPopup.indexOfSelectedItem;
   [self updateExternalColumnDisplay];
   [self styleExternalSelection];
+}
+
+- (void)rebuildLiveAIBoard {
+  NSView *board = self.liveAIBoard;
+  if (!board) return;
+  for (NSView *sub in [board.subviews copy]) [sub removeFromSuperview];
+  NSTextField *title = [self label:@"AI 服务余量" size:13 bold:YES color:nil];
+  title.frame = NSMakeRect(16, 186, 240, 20); [board addSubview:title];
+  NSTextField *sub = [self label:@"点击 *** 同步并显示实时余量" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+  sub.frame = NSMakeRect(16, 166, 400, 16); [board addSubview:sub];
+  NSTextField *hn = [self label:@"名称" size:10.5 bold:YES color:nil];
+  hn.frame = NSMakeRect(20, 142, 260, 16); [board addSubview:hn];
+  NSTextField *hq = [self label:@"余量" size:10.5 bold:YES color:nil];
+  hq.alignment = NSTextAlignmentRight;
+  hq.frame = NSMakeRect(600, 142, 90, 16); [board addSubview:hq];
+
+  if (!self.aiEntries) [self loadAIEntries];
+  NSInteger total = self.aiEntries.count;
+  NSInteger pageCount = MAX(1, (total + 1) / 2);
+  if (self.liveAIPage >= pageCount) self.liveAIPage = pageCount - 1;
+  if (self.liveAIPage < 0) self.liveAIPage = 0;
+  NSInteger startIdx = self.liveAIPage * 2;
+  NSInteger showCount = MIN(2, MAX(0, total - startIdx));
+
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(10, 44, 694, 74)];
+  sv.hasVerticalScroller = NO; sv.drawsBackground = NO;
+  CGFloat rowH = 32;
+  CGFloat docH = MAX(64, showCount * rowH);
+  NSView *doc = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 680, docH)];
+  for (NSInteger k = 0; k < showCount; k++) {
+    NSInteger i = startIdx + k;
+    NSDictionary *e = self.aiEntries[i];
+    CGFloat y = docH - (k + 1) * rowH;
+    NSTextField *nm = [self label:e[@"name"] ?: @"" size:11 bold:YES color:nil];
+    nm.lineBreakMode = NSLineBreakByTruncatingTail;
+    nm.frame = NSMakeRect(10, y + 9, 470, 16); [doc addSubview:nm];
+    NSButton *b = [NSButton buttonWithTitle:@"***" target:self action:@selector(liveAIBalanceClicked:)];
+    b.tag = i; b.bordered = NO; b.alignment = NSTextAlignmentRight;
+    b.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightBold];
+    b.contentTintColor = [NSColor controlAccentColor];
+    b.frame = NSMakeRect(560, y + 4, 100, 24);
+    b.toolTip = @"点击同步余额";
+    [doc addSubview:b];
+    NSBox *line = [[NSBox alloc] initWithFrame:NSMakeRect(10, y, 660, 1)];
+    line.boxType = NSBoxSeparator; [doc addSubview:line];
+  }
+  sv.documentView = doc;
+  [board addSubview:sv];
+
+  ColorHoverButton *prev = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(570, 10, 34, 24)];
+  prev.title = @"‹"; prev.hoverColor = [NSColor systemGreenColor];
+  prev.target = self; prev.action = @selector(liveAIPrevPage:);
+  [prev applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  prev.enabled = self.liveAIPage > 0; prev.alphaValue = prev.enabled ? 1.0 : 0.4;
+  [board addSubview:prev];
+  NSTextField *pageLabel = [self label:[NSString stringWithFormat:@"%ld/%ld", (long)(self.liveAIPage + 1), (long)pageCount] size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+  pageLabel.alignment = NSTextAlignmentCenter;
+  pageLabel.frame = NSMakeRect(608, 12, 50, 16); [board addSubview:pageLabel];
+  ColorHoverButton *next = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(662, 10, 34, 24)];
+  next.title = @"›"; next.hoverColor = [NSColor systemGreenColor];
+  next.target = self; next.action = @selector(liveAINextPage:);
+  [next applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  next.enabled = self.liveAIPage < pageCount - 1; next.alphaValue = next.enabled ? 1.0 : 0.4;
+  [board addSubview:next];
+
+  if (!total) {
+    NSTextField *empty = [self label:@"暂无 AI 服务，请先在 AI 管理中添加" size:11 bold:NO color:[NSColor tertiaryLabelColor]];
+    empty.alignment = NSTextAlignmentCenter;
+    empty.frame = NSMakeRect(16, 70, 682, 18); [board addSubview:empty];
+  }
+}
+
+- (void)liveAIPrevPage:(id)sender {
+  if (self.liveAIPage <= 0) return;
+  self.liveAIPage--;
+  [self rebuildLiveAIBoard];
+}
+
+- (void)liveAINextPage:(id)sender {
+  self.liveAIPage++;
+  [self rebuildLiveAIBoard];
+}
+
+- (void)liveAIBalanceClicked:(NSButton *)b {
+  NSInteger idx = b.tag;
+  if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
+  b.enabled = NO;
+  b.title = @"同步中…";
+  __weak typeof(self) weakSelf = self;
+  __weak NSButton *weakBtn = b;
+  [self syncAIQuotaAtIndex:idx completion:^(NSString *quota) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      weakBtn.enabled = YES;
+      weakBtn.title = quota.length ? quota : @"不可用";
+      if (!quota.length) weakBtn.toolTip = @"该服务不支持自动查询，或未填写 API Key";
+      [weakSelf.aiTable reloadData];
+      if (weakSelf.popover.isShown && weakSelf.quickTabs.selectedSegment == 2) [weakSelf rebuildQuickAITab];
+    });
+  }];
 }
 
 - (void)refreshExternalVolumes {
@@ -1078,13 +1904,39 @@ static NSDate *InstallDateForPath(NSString *path) {
   if (url) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:url]];
 }
 
+static BOOL ThemeIsDark(NSAppearance *ap) {
+  NSInteger t = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerTheme"];
+  if (t == 2) return YES;
+  if (t == 1) return NO;
+  return [[ap.name lowercaseString] containsString:@"dark"];
+}
+
+static NSColor *PageBackgroundForAppearance(NSAppearance *ap) {
+  BOOL dark = ThemeIsDark(ap);
+  return dark ? [NSColor colorWithCalibratedWhite:0.09 alpha:1.0] : [NSColor colorWithCalibratedWhite:1.0 alpha:1.0];
+}
+
+static NSColor *CardBackgroundForAppearance(NSAppearance *ap) {
+  BOOL dark = ThemeIsDark(ap);
+  return dark ? [NSColor colorWithCalibratedWhite:0.13 alpha:1.0] : [NSColor colorWithCalibratedWhite:1.0 alpha:1.0];
+}
+static NSColor *CardBorderForAppearance(NSAppearance *ap) {
+  BOOL dark = ThemeIsDark(ap);
+  return dark ? [NSColor colorWithCalibratedWhite:1.0 alpha:0.12] : [NSColor colorWithCalibratedWhite:0.0 alpha:0.08];
+}
+
 - (NSView *)cardAt:(NSRect)r {
   NSView *c = [[NSView alloc] initWithFrame:r];
   c.wantsLayer = YES;
-  c.layer.backgroundColor = [NSColor whiteColor].CGColor;
-  c.layer.cornerRadius = 16;
-  c.layer.borderColor = [NSColor colorWithCalibratedWhite:0.93 alpha:1.0].CGColor;
+  c.identifier = @"DLCard";
+  c.layer.cornerRadius = 18;
+  c.layer.backgroundColor = CardBackgroundForAppearance(NSApp.effectiveAppearance).CGColor;
+  c.layer.shadowColor = [NSColor blackColor].CGColor;
+  c.layer.shadowOpacity = 0.0;
+  c.layer.shadowRadius = 12;
+  c.layer.shadowOffset = CGSizeMake(0, -4);
   c.layer.borderWidth = 1;
+  c.layer.borderColor = CardBorderForAppearance(NSApp.effectiveAppearance).CGColor;
   return c;
 }
 
@@ -1435,28 +2287,49 @@ static NSDate *InstallDateForPath(NSString *path) {
   NSTextField *h = [self label:@"Dock 分组" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
   NSTextField *sub = [self label:@"管理已安装的分组；新建/删除会同步 Dock 图标" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  sub.frame = NSMakeRect(24, 584, 500, 18); [v addSubview:sub];
+  sub.frame = NSMakeRect(24, 584, 430, 18); [v addSubview:sub];
+  self.groupsSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(480, 580, 246, 26)];
+  self.groupsSearch.placeholderString = @"搜索分组，回车定位";
+  self.groupsSearch.target = self;
+  self.groupsSearch.action = @selector(groupsSearchChanged:);
+  self.groupsSearch.appearance = NSApp.effectiveAppearance;
+  [v addSubview:self.groupsSearch];
 
-  NSButton *create = [NSButton buttonWithTitle:@"新建分组…" target:self action:@selector(createGroup:)];
-  create.frame = NSMakeRect(24, 540, 120, 32); create.bezelStyle = NSBezelStyleRounded; [v addSubview:create];
-  NSButton *refresh = [NSButton buttonWithTitle:@"刷新" target:self action:@selector(refreshAllGroupsClicked:)];
-  refresh.frame = NSMakeRect(152, 540, 80, 32); refresh.bezelStyle = NSBezelStyleRounded; [v addSubview:refresh];
-  NSButton *folder = [NSButton buttonWithTitle:@"打开文件夹" target:self action:@selector(openGroupsFolder:)];
-  folder.frame = NSMakeRect(240, 540, 110, 32); folder.bezelStyle = NSBezelStyleRounded; [v addSubview:folder];
-  NSButton *backupAll = [NSButton buttonWithTitle:@"一键备份" target:self action:@selector(backupGroupsClicked:)];
-  backupAll.frame = NSMakeRect(360, 540, 100, 32); backupAll.bezelStyle = NSBezelStyleRounded; [v addSubview:backupAll];
-  NSButton *delAll = [NSButton buttonWithTitle:@"一键删除" target:self action:@selector(deleteGroupsClicked:)];
-  delAll.frame = NSMakeRect(468, 540, 100, 32); delAll.bezelStyle = NSBezelStyleRounded; [v addSubview:delAll];
-  NSButton *restoreAll = [NSButton buttonWithTitle:@"一键恢复" target:self action:@selector(restoreGroupsClicked:)];
-  restoreAll.frame = NSMakeRect(576, 540, 100, 32); restoreAll.bezelStyle = NSBezelStyleRounded; [v addSubview:restoreAll];
+  NSArray *toolDefs = @[
+    @[@"新建分组…", @"新建一个 Dock 分组，可自定义名称、图标和内置应用", @(24), @(120), [NSColor systemBlueColor], @"createGroup:"],
+    @[@"刷新", @"重新读取已安装分组，并刷新 Dock 中的图标", @(152), @(80), [NSColor systemGreenColor], @"refreshAllGroupsClicked:"],
+    @[@"打开文件夹", @"在 Finder 中打开分组 App 所在的文件夹", @(240), @(110), [NSColor systemYellowColor], @"openGroupsFolder:"],
+    @[@"一键备份", @"备份所有已安装分组的数据和图标", @(360), @(100), [NSColor systemPurpleColor], @"backupGroupsClicked:"],
+    @[@"一键删除", @"删除勾选的分组；会先要求备份并二次确认", @(468), @(100), [NSColor systemRedColor], @"deleteGroupsClicked:"],
+    @[@"一键恢复", @"从最近一次删除备份恢复分组", @(576), @(100), [NSColor systemOrangeColor], @"restoreGroupsClicked:"]];
+  for (NSArray *d in toolDefs) {
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([d[2] doubleValue], 540, [d[3] doubleValue], 32)];
+    b.title = d[0]; b.toolTip = d[1]; b.hoverColor = d[4];
+    b.target = self; b.action = NSSelectorFromString(d[5]);
+    [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [v addSubview:b];
+  }
 
-  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 20, 710, 500)];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 60, 710, 460)];
   sv.hasVerticalScroller = YES;
   sv.drawsBackground = NO;
   self.groupsList = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,690,10)];
   sv.documentView = self.groupsList;
   self.groupsScroll = sv;
   [v addSubview:sv];
+  self.groupsPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(566, 24, 34, 26)];
+  self.groupsPrevButton.title = @"‹"; self.groupsPrevButton.hoverColor = [NSColor systemGreenColor];
+  self.groupsPrevButton.target = self; self.groupsPrevButton.action = @selector(groupsPrevPage:);
+  [self.groupsPrevButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:self.groupsPrevButton];
+  self.groupsPageLabel = [self label:@"1/1" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+  self.groupsPageLabel.alignment = NSTextAlignmentCenter;
+  self.groupsPageLabel.frame = NSMakeRect(604, 30, 44, 16); [v addSubview:self.groupsPageLabel];
+  self.groupsNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(652, 24, 34, 26)];
+  self.groupsNextButton.title = @"›"; self.groupsNextButton.hoverColor = [NSColor systemGreenColor];
+  self.groupsNextButton.target = self; self.groupsNextButton.action = @selector(groupsNextPage:);
+  [self.groupsNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:self.groupsNextButton];
   self.groupsView = v;
 }
 
@@ -1591,46 +2464,175 @@ static NSDate *InstallDateForPath(NSString *path) {
     [gs addObject:@{@"name": [f stringByDeletingPathExtension], @"display": name, @"path": p}];
   }
   self.groups = gs;
+  if (self.groupsSelectedName.length) {
+    BOOL exists = NO;
+    for (NSDictionary *g in gs) if ([g[@"name"] isEqualToString:self.groupsSelectedName]) { exists = YES; break; }
+    if (!exists) self.groupsSelectedName = nil;
+  }
+  NSMutableArray *filtered = [NSMutableArray array];
+  NSString *q = self.groupsFilter.lowercaseString;
+  BOOL exactExists = NO;
+  if (q.length) {
+    for (NSDictionary *g in gs) {
+      if ([[(NSString *)(g[@"name"] ?: @"") lowercaseString] isEqualToString:q] || [[(NSString *)(g[@"display"] ?: @"") lowercaseString] isEqualToString:q]) { exactExists = YES; break; }
+    }
+  }
+  for (NSInteger i = 0; i < (NSInteger)gs.count; i++) {
+    NSDictionary *g = gs[i];
+    if (q.length) {
+      NSString *name = [(NSString *)(g[@"name"] ?: @"") lowercaseString];
+      NSString *display = [(NSString *)(g[@"display"] ?: @"") lowercaseString];
+      if (exactExists) {
+        if (![name isEqualToString:q] && ![display isEqualToString:q]) continue;
+      } else {
+        NSString *hay = [NSString stringWithFormat:@"%@ %@", name, display];
+        if ([hay rangeOfString:q].location == NSNotFound) continue;
+      }
+    }
+    [filtered addObject:@{@"group": g, @"index": @(i)}];
+  }
+  self.groupsFiltered = filtered;
+  NSInteger total = filtered.count;
+  NSInteger pages = MAX(1, (total + 3) / 4);
+  if (self.groupsPage >= pages) self.groupsPage = pages - 1;
+  if (self.groupsPage < 0) self.groupsPage = 0;
+  NSInteger startIdx = self.groupsPage * 4;
+  NSInteger endIdx = MIN(total, startIdx + 4);
+  self.groupsPageLabel.stringValue = [NSString stringWithFormat:@"%ld/%ld", (long)(self.groupsPage + 1), (long)pages];
+  self.groupsPrevButton.enabled = self.groupsPage > 0;
+  self.groupsNextButton.enabled = self.groupsPage < pages - 1;
+  self.groupsPrevButton.alphaValue = self.groupsPrevButton.enabled ? 1.0 : 0.4;
+  self.groupsNextButton.alphaValue = self.groupsNextButton.enabled ? 1.0 : 0.4;
+
   for (NSView *x in [self.groupsList.subviews copy]) [x removeFromSuperview];
-  CGFloat y = 10;
-  NSInteger idx = 0;
-  for (NSDictionary *g in gs) {
-    NSView *row = [[NSView alloc] initWithFrame:NSMakeRect(6, y, 670, 58)];
+  NSInteger visibleCount = MAX(1, endIdx - startIdx);
+  CGFloat listH = MAX(300, self.groupsScroll.contentView.bounds.size.height);
+  CGFloat rowGap = 8;
+  // 始终按每页 4 行的尺寸布局，搜索结果不足 4 行时不会把单行拉成整屏
+  CGFloat rowH = (listH - rowGap * 5) / 4.0;
+  rowH = MAX(64, rowH);
+  CGFloat y = rowGap;
+  for (NSInteger k = startIdx; k < endIdx; k++) {
+    NSDictionary *g = filtered[k][@"group"];
+    NSInteger idx = [filtered[k][@"index"] integerValue];
+    NSView *row = [[NSView alloc] initWithFrame:NSMakeRect(6, y, 670, rowH)];
     row.wantsLayer = YES;
-    row.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.975 alpha:1.0].CGColor;
-    row.layer.cornerRadius = 10;
+    BOOL sel = self.groupsSelectedName.length && [g[@"name"] isEqualToString:self.groupsSelectedName];
+    BOOL hl = self.groupsHighlightedName.length && [g[@"name"] isEqualToString:self.groupsHighlightedName];
+    CGColorRef bg = sel ? [[NSColor systemOrangeColor] colorWithAlphaComponent:0.18].CGColor : (hl ? [[NSColor systemYellowColor] colorWithAlphaComponent:0.20].CGColor : DLRowBackground().CGColor);
+    row.layer.backgroundColor = bg;
+    row.layer.cornerRadius = 12;
+    row.layer.borderWidth = (sel || hl) ? 2 : 0;
+    row.layer.borderColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.65].CGColor;
+    NSClickGestureRecognizer *rowClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(groupRowClicked:)];
+    rowClick.numberOfClicksRequired = 1;
+    objc_setAssociatedObject(row, "GroupRowName", g[@"name"], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [row addGestureRecognizer:rowClick];
     if (!self.selectedGroups) self.selectedGroups = [NSMutableSet set];
     NSButton *cb = [NSButton checkboxWithTitle:@"" target:self action:@selector(toggleGroupSelection:)];
-    cb.frame = NSMakeRect(8, 18, 18, 18);
+    cb.frame = NSMakeRect(8, (rowH - 18) / 2.0, 18, 18);
     cb.tag = idx;
     cb.state = [self.selectedGroups containsObject:g[@"name"]] ? NSControlStateValueOn : NSControlStateValueOff;
     [row addSubview:cb];
-    NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(32, 9, 40, 40)];
+    NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(32, (rowH - 48) / 2.0, 48, 48)];
     icon.image = [[NSWorkspace sharedWorkspace] iconForFile:g[@"path"]];
     [row addSubview:icon];
-    NSTextField *nm = [self label:g[@"display"] size:14 bold:YES color:nil];
-    nm.frame = NSMakeRect(84, 30, 240, 18); [row addSubview:nm];
+    NSTextField *nm = [self label:g[@"display"] size:16 bold:YES color:nil];
+    nm.frame = NSMakeRect(94, rowH / 2.0 + 3, 130, 20); [row addSubview:nm];
     NSTextField *pt = [self label:g[@"path"] size:10 bold:NO color:[NSColor secondaryLabelColor]];
-    pt.frame = NSMakeRect(84, 10, 300, 16); [row addSubview:pt];
-    NSButton *open = [NSButton buttonWithTitle:@"打开" target:self action:@selector(openGroupRow:)];
-    open.frame = NSMakeRect(352, 14, 56, 30); open.bezelStyle = NSBezelStyleRounded; open.tag = idx;
-    [row addSubview:open];
-    NSButton *edit = [NSButton buttonWithTitle:@"编辑" target:self action:@selector(editGroupRow:)];
-    edit.frame = NSMakeRect(414, 14, 56, 30); edit.bezelStyle = NSBezelStyleRounded; edit.tag = idx;
-    [row addSubview:edit];
-    NSButton *bk = [NSButton buttonWithTitle:@"备份" target:self action:@selector(backupGroupRow:)];
-    bk.frame = NSMakeRect(476, 14, 56, 30); bk.bezelStyle = NSBezelStyleRounded; bk.tag = idx;
-    [row addSubview:bk];
-    NSButton *del = [NSButton buttonWithTitle:@"删除" target:self action:@selector(deleteGroupRow:)];
-    del.frame = NSMakeRect(538, 14, 56, 30); del.bezelStyle = NSBezelStyleRounded; del.tag = idx;
-    [row addSubview:del];
+    pt.frame = NSMakeRect(94, rowH / 2.0 - 19, 130, 16); [row addSubview:pt];
+    NSArray *rowDefs = @[
+      @[@"打开", @"打开该分组的启动器窗口", @(236), [NSColor systemGreenColor], @"openGroupRow:"],
+      @[@"编辑", @"修改该分组的名称、图标和应用列表", @(352), [NSColor systemYellowColor], @"editGroupRow:"],
+      @[@"备份", @"备份该分组的数据和图标", @(468), [NSColor systemBlueColor], @"backupGroupRow:"],
+      @[@"删除", @"删除该分组；删除前会要求备份并二次确认", @(584), [NSColor systemRedColor], @"deleteGroupRow:"]];
+    for (NSArray *d in rowDefs) {
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([d[2] doubleValue], (rowH - 30) / 2.0, 86, 30)];
+      b.title = d[0]; b.toolTip = d[1]; b.hoverColor = d[3];
+      b.target = self; b.action = NSSelectorFromString(d[4]); b.tag = idx;
+      [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      [row addSubview:b];
+    }
     [self.groupsList addSubview:row];
-    y += 66;
-    idx++;
+    y += rowH + rowGap;
   }
-  self.groupsList.frame = NSMakeRect(0,0,690,MAX(y+10,10));
+  self.groupsList.frame = NSMakeRect(0,0,690,MAX(listH, y+rowGap));
+  [self.groupsScroll.contentView scrollToPoint:NSMakePoint(0, 0)];
   [self applyFlatButtonsInView:self.groupsView];
   [self.groupsScroll.contentView scrollToPoint:NSMakePoint(0, 0)];
+}
+
+- (void)groupsSearchChanged:(id)sender {
+  NSString *q = [self.groupsSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  self.groupsFilter = q;
+  self.groupsPage = 0;
+  self.groupsHighlightedName = nil;
+  self.groupsSelectedName = nil;
+  if (q.length) {
+    NSString *ql = q.lowercaseString;
+    for (NSDictionary *g in self.groups) {
+      if ([[(NSString *)(g[@"name"] ?: @"") lowercaseString] isEqualToString:ql] || [[(NSString *)(g[@"display"] ?: @"") lowercaseString] isEqualToString:ql]) { self.groupsHighlightedName = g[@"name"]; break; }
+    }
+    if (!self.groupsHighlightedName) {
+      for (NSDictionary *g in self.groups) {
+        NSString *hay = [[NSString stringWithFormat:@"%@ %@", g[@"name"] ?: @"", g[@"display"] ?: @""] lowercaseString];
+        if ([hay rangeOfString:ql].location != NSNotFound) { self.groupsHighlightedName = g[@"name"]; break; }
+      }
+    }
+    if (!self.groupsHighlightedName) [self showToast:@"未找到匹配的分组"];
+    self.groupsSelectedName = self.groupsHighlightedName;
+  }
+  [self refreshGroups];
+}
+
+- (void)groupRowClicked:(NSClickGestureRecognizer *)g {
+  NSString *name = objc_getAssociatedObject(g.view, "GroupRowName");
+  if (!name.length) return;
+  self.groupsSelectedName = name;
+  [self refreshGroups];
+}
+
+- (void)moveGroupSelectionBy:(NSInteger)delta {
+  NSArray *list = self.groupsFiltered ?: @[];
+  if (!list.count) return;
+  NSInteger pos = -1;
+  for (NSInteger i = 0; i < (NSInteger)list.count; i++) {
+    NSDictionary *g = list[i][@"group"];
+    if ([g[@"name"] isEqualToString:self.groupsSelectedName]) { pos = i; break; }
+  }
+  if (pos < 0) pos = delta > 0 ? -1 : 0;
+  NSInteger next = pos + delta;
+  if (next < 0) next = 0;
+  if (next >= (NSInteger)list.count) next = list.count - 1;
+  NSDictionary *g = list[next][@"group"];
+  self.groupsSelectedName = g[@"name"];
+  self.groupsPage = next / 4;
+  [self refreshGroups];
+}
+
+- (void)installGroupsKeyMonitor {
+  if (self.groupsKeyMonitor) return;
+  __weak typeof(self) weakSelf = self;
+  self.groupsKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    if (!weakSelf.window.isKeyWindow || weakSelf.popover.isShown) return e;
+    if (weakSelf.section != 1) return e;
+    if (e.keyCode == 126 || e.keyCode == 125) {
+      [weakSelf moveGroupSelectionBy:(e.keyCode == 125 ? 1 : -1)];
+      return nil;
+    }
+    return e;
+  }];
+}
+
+- (void)groupsPrevPage:(id)sender {
+  if (self.groupsPage <= 0) return;
+  self.groupsPage--;
+  [self refreshGroups];
+}
+
+- (void)groupsNextPage:(id)sender {
+  self.groupsPage++;
+  [self refreshGroups];
 }
 
 - (void)openGroupRow:(NSButton *)b {
@@ -2216,165 +3218,1870 @@ static BOOL ValidGroupName(NSString *raw) {
   return total;
 }
 
-- (void)buildDiskView {
-  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
-  NSTextField *h = [self label:@"磁盘分析" size:24 bold:YES color:nil];
+- (NSString *)aiStorePath {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:@"ai_entries.json"];
+}
+- (void)loadAIEntries {
+  NSData *d = [NSData dataWithContentsOfFile:[self aiStorePath]];
+  self.aiEntries = d ? ([[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] mutableCopy] ?: [NSMutableArray array]) : [NSMutableArray array];
+  if (!self.aiSelected) self.aiSelected = [NSMutableSet set];
+  if (!self.aiRevealedNames) self.aiRevealedNames = [NSMutableSet set];
+}
+- (void)saveAIEntries {
+  NSData *d = [NSJSONSerialization dataWithJSONObject:self.aiEntries options:NSJSONWritingPrettyPrinted error:NULL];
+  [d writeToFile:[self aiStorePath] atomically:YES];
+}
+- (void)buildAIView {
+  AIDropView *v = [[AIDropView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
+  v.dropTarget = self;
+  v.dropAction = @selector(aiHandleDroppedFiles:);
+  NSTextField *h = [self label:@"AI 管理" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
-  NSTextField *sub = [self label:@"查看容量分布与大体积应用，扫描在后台进行" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *sub = [self label:@"集中管理 AI 服务、API 地址与密钥" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 500, 18); [v addSubview:sub];
 
-  self.diskVolumePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24, 560, 230, 28) pullsDown:NO];
+  [self loadAIEntries];
+  ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 540, 120, 30)];
+  add.title = @"+ 新增 AI 服务"; add.hoverColor = [NSColor systemBlueColor];
+  add.target = self; add.action = @selector(aiAddEntry:);
+  [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:add];
+  ColorHoverButton *all = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(182, 540, 70, 30)];
+  all.title = @"全选"; all.hoverColor = [NSColor systemOrangeColor]; all.target = self; all.action = @selector(aiSelectAll:);
+  [all applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:all];
+  ColorHoverButton *none = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(290, 540, 70, 30)];
+  none.title = @"全不选"; none.hoverColor = [NSColor systemYellowColor]; none.target = self; none.action = @selector(aiSelectNone:);
+  [none applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:none];
+  ColorHoverButton *backupAll = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(398, 540, 90, 30)];
+  backupAll.title = @"一键备份"; backupAll.hoverColor = [NSColor systemPurpleColor]; backupAll.target = self; backupAll.action = @selector(aiBackupAll:);
+  [backupAll applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:backupAll];
+  ColorHoverButton *delAll = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(526, 540, 90, 30)];
+  delAll.title = @"一键删除"; delAll.hoverColor = [NSColor systemRedColor]; delAll.target = self; delAll.action = @selector(aiDeleteSelected:);
+  [delAll applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:delAll];
+  ColorHoverButton *refreshAll = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(654, 540, 70, 30)];
+  refreshAll.title = @"刷新"; refreshAll.hoverColor = [NSColor systemGreenColor]; refreshAll.target = self; refreshAll.action = @selector(aiReload:);
+  [refreshAll applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:refreshAll];
+
+  NSView *card = [self cardAt:NSMakeRect(24, 70, 700, 450)];
+  [v addSubview:card];
+  self.aiCategoryButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(8, 410, 170, 28)];
+  self.aiCategoryButton.title = @"分类：全部";
+  self.aiCategoryButton.hoverColor = [NSColor systemBlueColor];
+  self.aiCategoryButton.target = self;
+  self.aiCategoryButton.action = @selector(aiCategoryClicked:);
+  [self.aiCategoryButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [card addSubview:self.aiCategoryButton];
+  self.aiSearchField = [[NSSearchField alloc] initWithFrame:NSMakeRect(190, 410, 300, 28)];
+  self.aiSearchField.placeholderString = @"搜索名称、备注、链接或分类";
+  self.aiSearchField.font = [NSFont systemFontOfSize:11.5];
+  self.aiSearchField.appearance = NSApp.effectiveAppearance;
+  self.aiSearchField.target = self;
+  self.aiSearchField.action = @selector(aiSearchChanged:);
+  [self.aiSearchField setContinuous:YES];
+  [card addSubview:self.aiSearchField];
+  self.aiCategory = @"全部";
+  self.aiTable = [[NSTableView alloc] initWithFrame:NSMakeRect(8, 8, 814, 390)];
+  self.aiTable.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance);
+  self.aiTable.rowHeight = 56;
+  self.aiTable.usesAlternatingRowBackgroundColors = NO;
+  self.aiTable.selectionHighlightStyle = NSTableViewSelectionHighlightStyleNone;
+  self.aiTable.dataSource = self;
+  self.aiTable.delegate = self;
+  NSArray *cols = @[@[@"sel", @"", @24], @[@"ainame", @"名称", @140], @[@"quota", @"余量", @90],
+                    @[@"endpoint", @"链接地址(API)", @120], @[@"api", @"API Key", @100],
+                    @[@"note", @"备注(用途)", @150], @[@"aiactions", @"操作", @160]];
+  for (NSArray *c in cols) {
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+    col.title = c[1]; col.width = [c[2] doubleValue];
+    [self.aiTable addTableColumn:col];
+  }
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(8, 8, 684, 434)];
+  sv.documentView = self.aiTable;
+  sv.hasVerticalScroller = YES;
+  sv.hasHorizontalScroller = YES;
+  sv.autohidesScrollers = YES;
+  sv.drawsBackground = NO;
+  [card addSubview:sv];
+  NSScrollView *aiScroll = sv;
+  aiScroll.frame = NSMakeRect(8, 8, 684, 390);
+
+  ColorHoverButton *decrypt = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 26, 140, 30)];
+  decrypt.title = @"解密备份…"; decrypt.hoverColor = [NSColor systemTealColor];
+  decrypt.target = self; decrypt.action = @selector(aiDecryptBackup:);
+  [decrypt applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:decrypt];
+  ColorHoverButton *importBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(174, 26, 110, 30)];
+  importBtn.title = @"导入数据…"; importBtn.hoverColor = [NSColor systemBlueColor];
+  importBtn.target = self; importBtn.action = @selector(aiImportData:);
+  [importBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:importBtn];
+  ColorHoverButton *exportBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(294, 26, 110, 30)];
+  exportBtn.title = @"导出数据…"; exportBtn.hoverColor = [NSColor systemPurpleColor];
+  exportBtn.target = self; exportBtn.action = @selector(aiExportData:);
+  [exportBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:exportBtn];
+  ColorHoverButton *quotaBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(414, 26, 110, 30)];
+  quotaBtn.title = @"刷新余量"; quotaBtn.hoverColor = [NSColor systemGreenColor];
+  quotaBtn.target = self; quotaBtn.action = @selector(refreshAIQuotas:);
+  [quotaBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:quotaBtn];
+  self.aiPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(540, 26, 40, 30)];
+  self.aiPrevButton.title = @"‹"; self.aiPrevButton.hoverColor = [NSColor systemBlueColor];
+  self.aiPrevButton.target = self; self.aiPrevButton.action = @selector(aiPrevPage:);
+  [self.aiPrevButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:self.aiPrevButton];
+  self.aiPageLabel = [self label:@"第 1/1 页" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  self.aiPageLabel.alignment = NSTextAlignmentCenter;
+  self.aiPageLabel.frame = NSMakeRect(584, 32, 80, 18); [v addSubview:self.aiPageLabel];
+  self.aiNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(668, 26, 40, 30)];
+  self.aiNextButton.title = @"›"; self.aiNextButton.hoverColor = [NSColor systemBlueColor];
+  self.aiNextButton.target = self; self.aiNextButton.action = @selector(aiNextPage:);
+  [self.aiNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:self.aiNextButton];
+
+  self.aiView = v;
+}
+
+- (NSString *)quotaProviderKeyForEntry:(NSDictionary *)e {
+  NSString *hay = [NSString stringWithFormat:@"%@ %@", e[@"name"] ?: @"", e[@"endpoint"] ?: @""].lowercaseString;
+  if ([hay containsString:@"deepseek"]) return @"deepseek";
+  if ([hay containsString:@"moonshot"] || [hay containsString:@"kimi"]) return @"kimi";
+  if ([hay containsString:@"siliconflow"]) return @"siliconflow";
+  if ([hay containsString:@"openrouter"]) return @"openrouter";
+  return nil;
+}
+
+- (void)autoRefreshAIQuotas {
+  if (self.aiQuotaRefreshing) return;
+  if (self.lastAIQuotaRefresh && -[self.lastAIQuotaRefresh timeIntervalSinceNow] < 300) return;
+  BOOL has = NO;
+  for (NSDictionary *e in self.aiEntries) if ([e[@"api"] length] && [self quotaProviderKeyForEntry:e]) { has = YES; break; }
+  if (has) [self refreshAIQuotas:nil];
+}
+
+- (void)refreshAIQuotas:(id)sender {
+  if (self.aiQuotaRefreshing) return;
+  NSMutableArray *targets = [NSMutableArray array];
+  for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
+    NSDictionary *e = self.aiEntries[i];
+    NSString *key = [self quotaProviderKeyForEntry:e];
+    if (key && [e[@"api"] length]) [targets addObject:@[@(i), key]];
+  }
+  if (!targets.count) { [self showToast:@"没有可自动查询余额的服务，请先填写 API Key"]; return; }
+  self.aiQuotaRefreshing = YES;
+  self.lastAIQuotaRefresh = [NSDate date];
+  NSMutableDictionary *quotaMap = [NSMutableDictionary dictionary];
+  dispatch_group_t group = dispatch_group_create();
+  for (NSArray *pair in targets) {
+    NSInteger idx = [pair[0] integerValue];
+    NSString *provider = pair[1];
+    NSDictionary *e = self.aiEntries[idx];
+    NSString *apiKey = e[@"api"];
+    NSString *url = nil;
+    if ([provider isEqualToString:@"deepseek"]) url = @"https://api.deepseek.com/user/balance";
+    else if ([provider isEqualToString:@"kimi"]) url = @"https://api.moonshot.cn/v1/users/me/balance";
+    else if ([provider isEqualToString:@"siliconflow"]) url = @"https://api.siliconflow.cn/v1/user/info";
+    else if ([provider isEqualToString:@"openrouter"]) url = @"https://openrouter.ai/api/v1/credits";
+    if (!url) continue;
+    dispatch_group_enter(group);
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+    [req setValue:[@"Bearer " stringByAppendingString:apiKey] forHTTPHeaderField:@"Authorization"];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+      NSString *quota = nil;
+      if (data.length && !err) {
+        id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+        if ([provider isEqualToString:@"deepseek"] && [obj isKindOfClass:[NSDictionary class]]) {
+          NSArray *infos = obj[@"balance_infos"];
+          if ([infos isKindOfClass:[NSArray class]] && infos.count) {
+            NSDictionary *b = infos.firstObject;
+            quota = [NSString stringWithFormat:@"%@ %@", b[@"total_balance"] ?: @"", b[@"currency"] ?: @""];
+          }
+        } else if ([provider isEqualToString:@"kimi"] && [obj isKindOfClass:[NSDictionary class]]) {
+          NSDictionary *d = obj[@"data"];
+          if ([d isKindOfClass:[NSDictionary class]]) quota = [NSString stringWithFormat:@"¥%@", d[@"available_balance"] ?: @"?"];
+        } else if ([provider isEqualToString:@"siliconflow"] && [obj isKindOfClass:[NSDictionary class]]) {
+          NSDictionary *d = obj[@"data"];
+          if ([d isKindOfClass:[NSDictionary class]]) quota = [NSString stringWithFormat:@"¥%@", d[@"balance"] ?: d[@"chargeBalance"] ?: @"?"];
+        } else if ([provider isEqualToString:@"openrouter"] && [obj isKindOfClass:[NSDictionary class]]) {
+          NSDictionary *d = obj[@"data"];
+          if ([d isKindOfClass:[NSDictionary class]]) {
+            double credits = [d[@"total_credits"] doubleValue];
+            double usage = [d[@"total_usage"] doubleValue];
+            quota = [NSString stringWithFormat:@"$%.2f", MAX(0, credits - usage)];
+          }
+        }
+      }
+      if (quota.length) @synchronized (quotaMap) { quotaMap[@(idx)] = quota; }
+      dispatch_group_leave(group);
+    }];
+    [task resume];
+  }
+  dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+    for (NSNumber *n in quotaMap) {
+      NSInteger i = n.integerValue;
+      if (i >= 0 && i < (NSInteger)self.aiEntries.count) {
+        NSMutableDictionary *m = [self.aiEntries[i] mutableCopy];
+        m[@"quota"] = quotaMap[n];
+        self.aiEntries[i] = m;
+      }
+    }
+    self.aiQuotaRefreshing = NO;
+    for (NSArray *pair in targets) {
+      NSInteger i = [pair[0] integerValue];
+      if (quotaMap[@(i)] || i >= (NSInteger)self.aiEntries.count) continue;
+      NSMutableDictionary *m = [self.aiEntries[i] mutableCopy];
+      NSString *old = m[@"quota"] ?: @"";
+      if (!old.length || [old isEqualToString:@"未填写"]) m[@"quota"] = @"查询失败";
+      self.aiEntries[i] = m;
+    }
+    [self saveAIEntries];
+    [self rebuildAIDisplay];
+    if (quotaMap.count) {
+      [self showToast:[NSString stringWithFormat:@"已更新 %ld 个服务的余量", (long)quotaMap.count]];
+    } else {
+      [self showToast:@"未查询到余量，请检查 Key 或该服务是否支持余额接口"];
+    }
+  });
+}
+
+- (NSString *)aiCategoryForEntry:(NSDictionary *)e {
+  NSString *hay = [NSString stringWithFormat:@"%@ %@ %@", e[@"name"] ?: @"", e[@"note"] ?: @"", e[@"endpoint"] ?: @""].lowercaseString;
+  if ([hay containsString:@"视频"]) return @"视频";
+  if ([hay containsString:@"图像"] || [hay containsString:@"图片"]) return @"图像";
+  if ([hay containsString:@"语音"]) return @"语音";
+  if ([hay containsString:@"多模态"]) return @"多模态";
+  if ([hay containsString:@"聚合"] || [hay containsString:@"路由"] || [hay containsString:@"模型托管"]) return @"聚合";
+  if ([hay containsString:@"代码"]) return @"代码";
+  if ([hay containsString:@"对话"] || [hay containsString:@"推理"]) return @"对话";
+  return @"其他";
+}
+
+- (void)aiSearchChanged:(id)sender {
+  self.aiPage = 0;
+  [self rebuildAIDisplay];
+}
+
+- (void)rebuildAIDisplay {
+  NSString *query = [self.aiSearchField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  NSString *q = query.lowercaseString;
+  NSMutableArray *filtered = [NSMutableArray array];
+  for (NSDictionary *e in self.aiEntries) {
+    if (self.aiCategory.length && ![self.aiCategory isEqualToString:@"全部"]) {
+      if (![[self aiCategoryForEntry:e] isEqualToString:self.aiCategory]) continue;
+    }
+    if (q.length) {
+      NSString *hay = [NSString stringWithFormat:@"%@ %@ %@ %@ %@", e[@"name"] ?: @"", e[@"quota"] ?: @"", e[@"endpoint"] ?: @"", e[@"note"] ?: @"", [self aiCategoryForEntry:e]].lowercaseString;
+      if ([hay rangeOfString:q].location == NSNotFound) continue;
+    }
+    [filtered addObject:e];
+  }
+  NSInteger total = filtered.count;
+  NSInteger maxPage = MAX(0, (total - 1) / 8);
+  if (self.aiPage > maxPage) self.aiPage = maxPage;
+  if (self.aiPage < 0) self.aiPage = 0;
+  NSInteger start = self.aiPage * 8;
+  NSInteger len = MIN(8, MAX(0, total - start));
+  self.aiVisibleEntries = len > 0 ? [filtered subarrayWithRange:NSMakeRange(start, len)] : @[];
+  [self.aiTable reloadData];
+  NSInteger pages = MAX(1, (total + 7) / 8);
+  self.aiPageLabel.stringValue = [NSString stringWithFormat:@"第 %ld/%ld 页", (long)(self.aiPage + 1), (long)pages];
+  self.aiPrevButton.enabled = self.aiPage > 0;
+  self.aiNextButton.enabled = self.aiPage < maxPage;
+  self.aiPrevButton.alphaValue = self.aiPrevButton.enabled ? 1.0 : 0.4;
+  self.aiNextButton.alphaValue = self.aiNextButton.enabled ? 1.0 : 0.4;
+  if (self.liveAIBoard) [self rebuildLiveAIBoard];
+}
+
+- (void)aiPrevPage:(id)sender {
+  if (self.aiPage <= 0) return;
+  self.aiPage--;
+  [self rebuildAIDisplay];
+}
+
+- (void)aiNextPage:(id)sender {
+  self.aiPage++;
+  [self rebuildAIDisplay];
+}
+
+- (void)aiCategoryClicked:(id)sender {
+  NSArray *cats = @[@"全部", @"对话", @"多模态", @"图像", @"视频", @"语音", @"聚合", @"代码", @"其他"];
+  NSMenu *menu = [[NSMenu alloc] initWithTitle:@"分类"];
+  for (NSString *c in cats) {
+    NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:c action:@selector(aiCategoryChosen:) keyEquivalent:@""];
+    it.target = self; it.representedObject = c;
+    [menu addItem:it];
+  }
+  [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, self.aiCategoryButton.bounds.size.height + 2) inView:self.aiCategoryButton];
+}
+
+- (void)aiCategoryChosen:(NSMenuItem *)item {
+  self.aiCategory = item.representedObject ?: @"全部";
+  self.aiCategoryButton.title = [NSString stringWithFormat:@"分类：%@", self.aiCategory];
+  self.aiPage = 0;
+  [self rebuildAIDisplay];
+}
+
+- (void)applyAISearchHighlight:(NSTextField *)label text:(NSString *)text baseColor:(NSColor *)base {
+  NSString *q = self.aiSearchField.stringValue;
+  if (!q.length || !text.length) return;
+  NSRange r = [text rangeOfString:q options:NSCaseInsensitiveSearch];
+  if (r.location == NSNotFound) return;
+  NSFont *font = label.font ?: [NSFont systemFontOfSize:11];
+  NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+  ps.lineBreakMode = NSLineBreakByTruncatingMiddle;
+  NSMutableAttributedString *as = [[NSMutableAttributedString alloc] initWithString:text attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: base ?: [NSColor labelColor], NSParagraphStyleAttributeName: ps}];
+  [as addAttribute:NSBackgroundColorAttributeName value:[[NSColor systemYellowColor] colorWithAlphaComponent:0.35] range:r];
+  [as addAttribute:NSForegroundColorAttributeName value:[NSColor labelColor] range:r];
+  label.attributedStringValue = as;
+}
+
+- (void)aiSelectAll:(id)sender {
+  [self.aiSelected removeAllObjects];
+  for (NSDictionary *e in self.aiEntries) if (e[@"name"]) [self.aiSelected addObject:e[@"name"]];
+  [self rebuildAIDisplay];
+}
+- (void)aiSelectNone:(id)sender {
+  [self.aiSelected removeAllObjects];
+  [self rebuildAIDisplay];
+}
+- (void)aiRowToggle:(NSButton *)b {
+  NSInteger row = b.tag;
+  if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
+  NSString *name = self.aiVisibleEntries[row][@"name"] ?: @"";
+  if ([self.aiSelected containsObject:name]) [self.aiSelected removeObject:name]; else [self.aiSelected addObject:name];
+  [self rebuildAIDisplay];
+}
+- (BOOL)requestAdminAuthentication {
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/osascript";
+  t.arguments = @[@"-e", @"do shell script \"exit 0\" with administrator privileges"];
+  t.standardOutput = [NSPipe pipe];
+  t.standardError = [NSPipe pipe];
+  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) { return NO; }
+  return t.terminationStatus == 0;
+}
+
+- (void)aiToggleReveal:(NSButton *)b {
+  NSInteger row = b.tag;
+  if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
+  NSString *name = self.aiVisibleEntries[row][@"name"] ?: @"";
+  if ([self.aiRevealedNames containsObject:name]) {
+    [self.aiRevealedNames removeObject:name];
+    [self rebuildAIDisplay];
+    return;
+  }
+  if (![self requestAdminAuthentication]) return;
+  [self.aiRevealedNames addObject:name];
+  [self rebuildAIDisplay];
+  [self showToast:@"已验证管理员身份，API Key 临时显示"];
+}
+
+- (NSInteger)showChoiceDialogTitle:(NSString *)title message:(NSString *)message options:(NSArray *)options colors:(NSArray *)colors {
+  CGFloat h = 110 + options.count * 46;
+  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 460, h)
+                                            styleMask:(NSWindowStyleMaskTitled)
+                                              backing:NSBackingStoreBuffered defer:NO];
+  w.title = title;
+  w.backgroundColor = [NSColor windowBackgroundColor];
+  NSView *cv = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 460, h)];
+  w.contentView = cv;
+  NSTextField *t = [self label:title size:17 bold:YES color:nil];
+  t.frame = NSMakeRect(24, h - 44, 412, 24); [cv addSubview:t];
+  NSTextField *m = [self label:message size:11.5 bold:NO color:[NSColor secondaryLabelColor]];
+  m.frame = NSMakeRect(24, h - 100, 412, 48);
+  m.maximumNumberOfLines = 3; m.lineBreakMode = NSLineBreakByWordWrapping;
+  [cv addSubview:m];
+  for (NSInteger i = 0; i < (NSInteger)options.count; i++) {
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, h - 120 - i*42, 412, 34)];
+    b.title = options[i];
+    b.hoverColor = i < (NSInteger)colors.count ? colors[i] : [NSColor systemGrayColor];
+    b.tag = i;
+    b.target = self;
+    b.action = @selector(choiceDialogClicked:);
+    [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:b];
+  }
+  NSModalResponse r = [NSApp runModalForWindow:w];
+  [w orderOut:nil];
+  return r;
+}
+
+- (void)choiceDialogClicked:(NSButton *)b {
+  [NSApp stopModalWithCode:b.tag];
+}
+
+- (NSString *)localizedAppNameForURL:(NSURL *)u {
+  NSString *p = u.path;
+  NSBundle *b = [NSBundle bundleWithURL:u];
+  NSDictionary *loc = b.localizedInfoDictionary;
+  NSString *name = loc[@"CFBundleDisplayName"] ?: loc[@"CFBundleName"];
+  if (!name.length) {
+    for (NSString *lang in @[@"zh-Hans", @"zh_CN", @"zh-Hant", @"zh-HK"]) {
+      NSString *sp = [p stringByAppendingPathComponent:[NSString stringWithFormat:@"Contents/Resources/%@.lproj/InfoPlist.strings", lang]];
+      NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:sp];
+      name = d[@"CFBundleDisplayName"] ?: d[@"CFBundleName"];
+      if (name.length) break;
+    }
+  }
+  if (!name.length) {
+    name = [[NSFileManager defaultManager] displayNameAtPath:p];
+    if ([name.pathExtension.lowercaseString isEqualToString:@"app"]) name = [name stringByDeletingPathExtension];
+  }
+  if (!name.length) {
+    NSDictionary *info = b.infoDictionary;
+    name = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [p.lastPathComponent stringByDeletingPathExtension];
+  }
+  return name ?: @"";
+}
+
+- (NSArray *)compatibleAppsForTextFile:(NSString *)path {
+  CFArrayRef urls = LSCopyApplicationURLsForURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], kLSRolesViewer | kLSRolesEditor);
+  NSArray *list = urls ? CFBridgingRelease(urls) : @[];
+  NSMutableArray *out = [NSMutableArray array];
+  NSMutableSet *seen = [NSMutableSet set];
+  NSMutableSet *seenNames = [NSMutableSet set];
+  NSString *selfPath = [[[NSBundle mainBundle] bundlePath] stringByStandardizingPath];
+  for (NSURL *u in list) {
+    NSString *p = u.path;
+    if (!p.length || [p isEqualToString:selfPath]) continue;
+    if ([seen containsObject:p]) continue;
+    [seen addObject:p];
+    NSString *name = [self localizedAppNameForURL:u];
+    if (!name.length) continue;
+    if ([seenNames containsObject:name]) continue;
+    [seenNames addObject:name];
+    [out addObject:@{@"name": name, @"url": u}];
+  }
+  [out sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+    return [a[@"name"] localizedStandardCompare:b[@"name"]];
+  }];
+  return out;
+}
+
+- (NSURL *)chooseBackupApplicationFrom:(NSArray *)apps {
+  if (!apps.count) return nil;
+  CGFloat rowsH = apps.count * 40.0;
+  CGFloat h = MIN(600, 150 + rowsH);
+  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 480, h)
+                                            styleMask:NSWindowStyleMaskTitled
+                                              backing:NSBackingStoreBuffered defer:NO];
+  w.title = @"选择备份目标应用";
+  w.backgroundColor = [NSColor windowBackgroundColor];
+  NSView *cv = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 480, h)];
+  w.contentView = cv;
+  NSTextField *t = [self label:@"选择备份目标应用" size:17 bold:YES color:nil];
+  t.frame = NSMakeRect(24, h - 44, 432, 24); [cv addSubview:t];
+  NSTextField *m = [self label:@"以下应用支持打开备份 txt；音乐类等不支持文本的应用不会出现。" size:11.5 bold:NO color:[NSColor secondaryLabelColor]];
+  m.frame = NSMakeRect(24, h - 72, 432, 20); [cv addSubview:m];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, 70, 432, h - 150)];
+  sv.hasVerticalScroller = YES; sv.drawsBackground = NO;
+  NSView *doc = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 416, MAX(rowsH, 1))];
+  for (NSInteger i = 0; i < (NSInteger)apps.count; i++) {
+    NSDictionary *d = apps[i];
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(0, rowsH - (i+1)*38, 410, 34)];
+    b.title = d[@"name"]; b.hoverColor = [NSColor systemBlueColor];
+    b.image = [[NSWorkspace sharedWorkspace] iconForFile:[d[@"url"] path]];
+    b.imageScaling = NSImageScaleProportionallyDown;
+    b.imagePosition = NSImageLeft;
+    b.tag = i;
+    b.target = self; b.action = @selector(backupAppChoiceClicked:);
+    [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [doc addSubview:b];
+  }
+  sv.documentView = doc;
+  [cv addSubview:sv];
+  ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 22, 432, 34)];
+  cancel.title = @"取消"; cancel.hoverColor = [NSColor systemGrayColor];
+  cancel.tag = -1; cancel.target = self; cancel.action = @selector(backupAppChoiceClicked:);
+  [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [cv addSubview:cancel];
+  self.backupAppChoices = apps;
+  NSModalResponse r = [NSApp runModalForWindow:w];
+  [w orderOut:nil];
+  if (r < 0 || r >= (NSInteger)apps.count) return nil;
+  return apps[r][@"url"];
+}
+
+- (void)backupAppChoiceClicked:(NSButton *)b {
+  [NSApp stopModalWithCode:b.tag];
+}
+
+- (BOOL)backupAIEntriesToOtherApp:(NSArray *)entries singleName:(NSString *)singleName {
+  NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyy-MM-dd HH:mm";
+  NSMutableString *txt = [NSMutableString string];
+  [txt appendFormat:@"DockLaunchers AI 备份\n时间：%@\n\n", [df stringFromDate:[NSDate date]]];
+  for (NSDictionary *e in entries) {
+    [txt appendFormat:@"名称：%@\n余量：%@\n链接地址：%@\nAPI Key：%@\n备注：%@\n------------\n",
+     e[@"name"] ?: @"", e[@"quota"] ?: @"", e[@"endpoint"] ?: @"", e[@"api"] ?: @"", e[@"note"] ?: @""];
+  }
+  NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"DockLaunchers-AI备份.txt"];
+  [txt writeToFile:tmp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  NSArray *apps = [self compatibleAppsForTextFile:tmp];
+  if (!apps.count) {
+    [self showToast:@"没有找到可打开 txt 的应用"];
+    return NO;
+  }
+  NSURL *appURL = [self chooseBackupApplicationFrom:apps];
+  if (!appURL) return NO;
+
+  [[NSWorkspace sharedWorkspace] openURLs:@[[NSURL fileURLWithPath:tmp]]
+                 withApplicationAtURL:appURL
+                        configuration:[NSWorkspaceOpenConfiguration configuration]
+                    completionHandler:^(NSRunningApplication *app, NSError *error) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (error) {
+        [[NSPasteboard generalPasteboard] clearContents];
+        [[NSPasteboard generalPasteboard] setString:txt forType:NSPasteboardTypeString];
+        [self showToast:@"应用打开失败，已复制备份内容到剪贴板"];
+      } else {
+        [[NSPasteboard generalPasteboard] clearContents];
+        [[NSPasteboard generalPasteboard] setString:txt forType:NSPasteboardTypeString];
+        NSAlert *hint = [[NSAlert alloc] init];
+        hint.messageText = [NSString stringWithFormat:@"已用「%@」打开备份", app.localizedName ?: @"所选应用"];
+        hint.informativeText = @"备份内容已复制到剪贴板。如果应用没有自动导入，请在应用内粘贴或导入打开的 txt 文件。";
+        [hint addButtonWithTitle:@"好"];
+        [hint addButtonWithTitle:@"在访达中显示文件"];
+        if ([hint runModal] == NSAlertSecondButtonReturn) {
+          [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:tmp]]];
+        }
+      }
+    });
+  }];
+  return YES;
+}
+
+- (void)backupAIEntriesToNotes:(NSArray *)entries singleName:(NSString *)singleName {
+  NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyy-MM-dd HH:mm";
+  NSString *title = [NSString stringWithFormat:@"DockLaunchers AI 备份 %@", [df stringFromDate:[NSDate date]]];
+  NSMutableString *bodyText = [NSMutableString string];
+  for (NSDictionary *e in entries) {
+    [bodyText appendFormat:@"名称：%@\n余量：%@\n链接地址：%@\nAPI Key：%@\n备注：%@\n------------\n",
+     e[@"name"] ?: @"", e[@"quota"] ?: @"", e[@"endpoint"] ?: @"", e[@"api"] ?: @"", e[@"note"] ?: @""];
+  }
+  // 优先使用系统共享服务「备忘录」，无需自动化权限
+  NSArray *services = [NSSharingService sharingServicesForItems:@[bodyText]];
+  for (NSSharingService *svc in services) {
+    if ([svc.title isEqualToString:@"Notes"] || [svc.title containsString:@"备忘录"]) {
+      if ([svc canPerformWithItems:@[bodyText]]) {
+        [svc performWithItems:@[bodyText]];
+        [self showToast:@"已发送到备忘录"];
+        return;
+      }
+    }
+  }
+  NSString *escaped = [bodyText stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"];
+  escaped = [escaped stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+  escaped = [escaped stringByReplacingOccurrencesOfString:@"\n" withString:@"<br>"];
+  NSString *source = [NSString stringWithFormat:@"tell application \"Notes\"\nset theTitle to \"%@\"\nset theBody to \"%@\"\nmake new note with properties {name:theTitle, body:theBody}\nend tell", title, escaped];
+  NSAppleScript *script = [[NSAppleScript alloc] initWithSource:source];
+  NSDictionary *error = nil;
+  NSAppleEventDescriptor *result = [script executeAndReturnError:&error];
+  if (!result) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"需要「备忘录」自动化权限";
+    a.informativeText = [NSString stringWithFormat:@"控制台没有控制「备忘录」的权限。\n\n请打开：系统设置 → 隐私与安全性 → 自动化，找到「DockLaunchers 控制台」，勾选「备忘录」。\n\n系统返回：%@", error[NSAppleScriptErrorMessage] ?: @"未授权"];
+    [a addButtonWithTitle:@"打开系统设置"];
+    [a addButtonWithTitle:@"重试"];
+    [a addButtonWithTitle:@"取消"];
+    NSModalResponse r = [a runModal];
+    if (r == NSAlertFirstButtonReturn) {
+      [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"]];
+    } else if (r == NSAlertSecondButtonReturn) {
+      [self backupAIEntriesToNotes:entries singleName:singleName];
+    }
+    return;
+  }
+  [self showToast:@"已备份到备忘录"];
+}
+
+- (void)runAIBackupForEntries:(NSArray *)entries singleName:(NSString *)singleName {
+  if (!entries.count) { [self showToast:@"暂无可备份数据"]; return; }
+  while (YES) {
+  NSInteger choice = [self showChoiceDialogTitle:@"选择 AI 备份方式"
+                                       message:@"普通备份会写入可读 txt；加密备份生成 .enc；也可以写入「备忘录」。备份内容可能包含明文 API Key。"
+                                       options:@[@"普通备份", @"加密备份", @"备份到备忘录", @"取消"]
+                                        colors:@[[NSColor systemBlueColor], [NSColor systemPurpleColor], [NSColor systemOrangeColor], [NSColor systemGrayColor]]];
+  if (choice < 0 || choice == 3) return;
+  if (choice == 2) { [self backupAIEntriesToNotes:entries singleName:singleName]; return; }
+  BOOL encrypt = (choice == 1);
+  NSString *password = nil;
+  if (encrypt) {
+    NSAlert *pwd = [[NSAlert alloc] init];
+    pwd.messageText = @"设置备份密码";
+    pwd.informativeText = @"密码不会保存，遗失后无法恢复备份。";
+    [pwd addButtonWithTitle:@"确定"];
+    [pwd addButtonWithTitle:@"取消"];
+    NSView *pv = [[NSView alloc] initWithFrame:NSMakeRect(0,0,360,90)];
+    NSTextField *l1 = [self label:@"密码" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    l1.frame = NSMakeRect(4, 56, 60, 18); [pv addSubview:l1];
+    NSSecureTextField *f1 = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(70, 52, 270, 24)];
+    [pv addSubview:f1];
+    NSTextField *l2 = [self label:@"再次输入" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    l2.frame = NSMakeRect(4, 18, 60, 18); [pv addSubview:l2];
+    NSSecureTextField *f2 = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(70, 14, 270, 24)];
+    [pv addSubview:f2];
+    pwd.accessoryView = pv;
+    if ([pwd runModal] != NSAlertFirstButtonReturn) continue;
+    if (f1.stringValue.length < 4) { [self showToast:@"密码至少 4 位"]; continue; }
+    if (![f1.stringValue isEqualToString:f2.stringValue]) { [self showToast:@"两次密码不一致"]; continue; }
+    password = f1.stringValue;
+  }
+
+  NSAlert *pick = [[NSAlert alloc] init];
+  pick.messageText = @"选择备份位置";
+  pick.informativeText = @"接下来会打开访达选择文件夹，并在其中创建备份文件夹和文件。";
+  [pick addButtonWithTitle:@"选择文件夹"];
+  [pick addButtonWithTitle:@"取消"];
+  if ([pick runModal] != NSAlertFirstButtonReturn) continue;
+  NSOpenPanel *panel = [NSOpenPanel openPanel];
+  panel.canChooseDirectories = YES; panel.canChooseFiles = NO; panel.allowsMultipleSelection = NO;
+  panel.prompt = @"选择此文件夹"; panel.message = @"选择 AI 备份保存位置";
+  if ([panel runModal] != NSModalResponseOK) continue;
+
+  NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyyMMdd-HHmmss";
+  NSString *folderName = [NSString stringWithFormat:@"DockLaunchers-AI备份-%@", [df stringFromDate:[NSDate date]]];
+  NSString *destDir = [panel.URL.path stringByAppendingPathComponent:folderName];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSError *err = nil;
+  if (![fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:&err]) {
+    [self showToast:@"创建备份文件夹失败"]; continue;
+  }
+  NSMutableString *txt = [NSMutableString string];
+  [txt appendFormat:@"DockLaunchers AI 备份\n时间：%@\n\n", [NSDate date]];
+  for (NSDictionary *e in entries) {
+    [txt appendFormat:@"名称：%@\n余量：%@\n链接地址：%@\nAPI Key：%@\n备注：%@\n------------\n",
+     e[@"name"] ?: @"", e[@"quota"] ?: @"", e[@"endpoint"] ?: @"", e[@"api"] ?: @"", e[@"note"] ?: @""];
+  }
+  NSString *baseName = singleName.length ? singleName : @"ai-backup";
+  NSString *finalPath = nil;
+  NSString *shownPath = nil;
+  if (encrypt) {
+    NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dl-ai-%d.txt", arc4random()]];
+    [txt writeToFile:tmp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    shownPath = [destDir stringByAppendingPathComponent:[baseName stringByAppendingString:@".enc"]];
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/bin/openssl";
+    t.arguments = @[@"enc", @"-aes-256-cbc", @"-pbkdf2", @"-salt", @"-in", tmp, @"-out", shownPath, @"-pass", @"stdin"];
+    NSPipe *inPipe = [NSPipe pipe];
+    t.standardInput = inPipe;
+    t.standardError = [NSPipe pipe];
+    @try {
+      [t launch];
+      NSData *pd = [[password stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding];
+      [inPipe.fileHandleForWriting writeData:pd];
+      [inPipe.fileHandleForWriting closeFile];
+      [t waitUntilExit];
+    } @catch (NSException *e) {}
+    int status = t.isRunning ? -1 : t.terminationStatus;
+    [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+    if (status != 0 || ![[NSFileManager defaultManager] fileExistsAtPath:shownPath]) {
+      [self showToast:@"加密备份失败"]; return;
+    }
+    finalPath = shownPath;
+  } else {
+    shownPath = [destDir stringByAppendingPathComponent:[baseName stringByAppendingString:@".txt"]];
+    [txt writeToFile:shownPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    finalPath = shownPath;
+  }
+
+  NSAlert *done = [[NSAlert alloc] init];
+  done.messageText = encrypt ? @"加密备份完成" : @"备份完成";
+  NSString *extra = encrypt ? [NSString stringWithFormat:@"\n\n解密命令：\nopenssl enc -d -aes-256-cbc -pbkdf2 -in \"%@\" -out \"%@\"", finalPath, [finalPath stringByDeletingPathExtension]] : @"";
+  done.informativeText = [NSString stringWithFormat:@"已写入 %ld 条数据：\n%@%@", (long)entries.count, finalPath, extra];
+  [done addButtonWithTitle:@"在访达中显示"];
+  [done addButtonWithTitle:@"好"];
+  if ([done runModal] == NSAlertFirstButtonReturn) {
+    [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:finalPath]]];
+  }
+  return;
+  }
+}
+
+- (void)aiDecryptBackup:(id)sender {
+  NSOpenPanel *panel = [NSOpenPanel openPanel];
+  panel.canChooseFiles = YES; panel.canChooseDirectories = NO; panel.allowsMultipleSelection = NO;
+  panel.message = @"选择加密备份文件（.enc）";
+  panel.prompt = @"解密";
+  if ([panel runModal] != NSModalResponseOK) return;
+  NSString *encPath = panel.URL.path;
+
+  NSAlert *pwd = [[NSAlert alloc] init];
+  pwd.messageText = @"输入备份密码";
+  pwd.informativeText = @"用于解密所选备份文件，密码不会保存。";
+  [pwd addButtonWithTitle:@"解密"];
+  [pwd addButtonWithTitle:@"取消"];
+  NSSecureTextField *f = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(0, 0, 320, 24)];
+  pwd.accessoryView = f;
+  if ([pwd runModal] != NSAlertFirstButtonReturn || !f.stringValue.length) return;
+
+  NSString *outPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dl-ai-decrypt-%d.txt", arc4random()]];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/openssl";
+  t.arguments = @[@"enc", @"-d", @"-aes-256-cbc", @"-pbkdf2", @"-in", encPath, @"-out", outPath, @"-pass", @"stdin"];
+  NSPipe *inPipe = [NSPipe pipe];
+  t.standardInput = inPipe;
+  t.standardError = [NSPipe pipe];
+  @try {
+    [t launch];
+    NSData *pd = [[f.stringValue stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding];
+    [inPipe.fileHandleForWriting writeData:pd];
+    [inPipe.fileHandleForWriting closeFile];
+    [t waitUntilExit];
+  } @catch (NSException *e) { [self showToast:@"解密失败"]; return; }
+  NSString *text = [NSString stringWithContentsOfFile:outPath encoding:NSUTF8StringEncoding error:NULL];
+  [[NSFileManager defaultManager] removeItemAtPath:outPath error:NULL];
+  if (!text.length) {
+    NSAlert *bad = [[NSAlert alloc] init];
+    bad.messageText = @"解密失败";
+    bad.informativeText = @"密码错误或文件不是有效的加密备份。";
+    [bad runModal];
+    return;
+  }
+  NSAlert *show = [[NSAlert alloc] init];
+  show.messageText = @"解密完成";
+  show.informativeText = @"下方是解密后的备份内容：";
+  [show addButtonWithTitle:@"保存为 txt"];
+  [show addButtonWithTitle:@"关闭"];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 520, 300)];
+  sv.hasVerticalScroller = YES;
+  NSTextView *tv = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 520, 300)];
+  tv.editable = NO; tv.string = text;
+  tv.font = [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular];
+  sv.documentView = tv;
+  show.accessoryView = sv;
+  if ([show runModal] == NSAlertFirstButtonReturn) {
+    NSSavePanel *sp = [NSSavePanel savePanel];
+    sp.nameFieldStringValue = @"ai-backup-decrypted.txt";
+    if ([sp runModal] == NSModalResponseOK) {
+      [text writeToFile:sp.URL.path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+      [self showToast:@"解密内容已保存"];
+    }
+  }
+}
+
+- (NSString *)csvEscaped:(NSString *)v {
+  NSString *s = v ?: @"";
+  s = [s stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""];
+  s = [s stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+  return [NSString stringWithFormat:@"\"%@\"", s];
+}
+
+- (void)aiExportData:(id)sender {
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  sp.nameFieldStringValue = @"ai-services.json";
+  sp.allowedFileTypes = @[@"json", @"csv"];
+  if ([sp runModal] != NSModalResponseOK) return;
+  NSString *path = sp.URL.path;
+  if ([path.pathExtension.lowercaseString isEqualToString:@"csv"]) {
+    NSMutableString *csv = [NSMutableString stringWithString:@"名称,余量,链接地址(API),API Key,备注\n"];
+    for (NSDictionary *e in self.aiEntries) {
+      [csv appendFormat:@"%@,%@,%@,%@,%@\n", [self csvEscaped:e[@"name"]], [self csvEscaped:e[@"quota"]],
+       [self csvEscaped:e[@"endpoint"]], [self csvEscaped:e[@"api"]], [self csvEscaped:e[@"note"]]];
+    }
+    [csv writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  } else {
+    NSData *d = [NSJSONSerialization dataWithJSONObject:self.aiEntries options:NSJSONWritingPrettyPrinted error:NULL];
+    [d writeToFile:path atomically:YES];
+  }
+  [self showToast:@"已导出 AI 数据"];
+}
+
+- (NSArray<NSString *> *)parseCSVLine:(NSString *)line {
+  NSMutableArray *out = [NSMutableArray array];
+  NSMutableString *cur = [NSMutableString string];
+  BOOL inQ = NO;
+  for (NSUInteger i = 0; i < line.length; i++) {
+    unichar c = [line characterAtIndex:i];
+    if (c == '"') {
+      if (inQ && i + 1 < line.length && [line characterAtIndex:i+1] == '"') { [cur appendString:@"\""]; i++; }
+      else inQ = !inQ;
+    } else if (c == ',' && !inQ) {
+      [out addObject:[cur copy]]; [cur setString:@""];
+    } else {
+      [cur appendFormat:@"%C", c];
+    }
+  }
+  [out addObject:[cur copy]];
+  return out;
+}
+
+- (void)aiEndpointDoubleClicked:(NSClickGestureRecognizer *)g {
+  NSString *url = objc_getAssociatedObject(g.view, "AILinkURL");
+  if (!url.length) return;
+  if (![url hasPrefix:@"http://"] && ![url hasPrefix:@"https://"]) url = [@"https://" stringByAppendingString:url];
+  NSURL *u = [NSURL URLWithString:url];
+  if (u) [[NSWorkspace sharedWorkspace] openURL:u];
+}
+
+- (void)aiHandleDroppedFiles:(NSArray<NSURL *> *)urls {
+  if (!urls.count) return;
+  for (NSURL *u in urls) [self importAIDataFromPath:u.path];
+}
+
+- (void)aiImportData:(id)sender {
+  NSOpenPanel *op = [NSOpenPanel openPanel];
+  op.canChooseFiles = YES; op.canChooseDirectories = NO; op.allowsMultipleSelection = NO;
+  op.allowedFileTypes = @[@"json", @"csv", @"txt"];
+  op.message = @"选择要导入的 AI 数据（JSON / CSV）";
+  if ([op runModal] != NSModalResponseOK) return;
+  [self importAIDataFromPath:op.URL.path];
+}
+
+- (void)importAIDataFromPath:(NSString *)path {
+  NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
+  if (!content.length) { [self showToast:@"文件为空或无法读取"]; return; }
+  NSMutableArray *incoming = [NSMutableArray array];
+  NSString *trimmed = [content stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  NSData *jsonData = [trimmed dataUsingEncoding:NSUTF8StringEncoding];
+  id obj = nil;
+  if ([trimmed hasPrefix:@"["] || [trimmed hasPrefix:@"{"]) {
+    obj = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:NULL];
+  }
+  if ([obj isKindOfClass:[NSArray class]]) {
+    for (id item in obj) {
+      if (![item isKindOfClass:[NSDictionary class]]) continue;
+      NSDictionary *d = item;
+      NSString *name = d[@"name"] ?: d[@"名称"];
+      if (!name.length) continue;
+      [incoming addObject:@{@"name": name,
+                            @"quota": d[@"quota"] ?: d[@"余量"] ?: @"",
+                            @"endpoint": d[@"endpoint"] ?: d[@"链接地址(API)"] ?: d[@"链接地址"] ?: @"",
+                            @"api": d[@"api"] ?: d[@"API Key"] ?: d[@"apikey"] ?: @"",
+                            @"note": d[@"note"] ?: d[@"备注"] ?: @""}];
+    }
+  } else {
+    NSArray *lines = [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    BOOL first = YES;
+    for (NSString *line in lines) {
+      if (!line.length) continue;
+      NSArray *cols = [self parseCSVLine:line];
+      if (first && cols.count && ([cols[0] containsString:@"名称"] || [[cols[0] lowercaseString] containsString:@"name"])) { first = NO; continue; }
+      first = NO;
+      if (cols.count < 2) continue;
+      NSString *name = [cols[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if (!name.length) continue;
+      [incoming addObject:@{@"name": name,
+                            @"quota": cols.count > 1 ? cols[1] : @"",
+                            @"endpoint": cols.count > 2 ? cols[2] : @"",
+                            @"api": cols.count > 3 ? cols[3] : @"",
+                            @"note": cols.count > 4 ? cols[4] : @""}];
+    }
+  }
+  if (!incoming.count) { [self showToast:@"没有识别到可导入的数据"]; return; }
+  NSInteger added = 0, updated = 0;
+  for (NSDictionary *e in incoming) {
+    NSInteger idx = NSNotFound;
+    for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
+      if ([self.aiEntries[i][@"name"] ?: @"" isEqualToString:e[@"name"]]) { idx = i; break; }
+    }
+    if (idx == NSNotFound) { [self.aiEntries addObject:e]; added++; }
+    else { self.aiEntries[idx] = e; updated++; }
+  }
+  [self saveAIEntries];
+  self.aiPage = 0;
+  [self rebuildAIDisplay];
+  [self showToast:[NSString stringWithFormat:@"导入完成：新增 %ld，更新 %ld", (long)added, (long)updated]];
+}
+
+- (NSArray *)aiPresets {
+  static NSArray *presets;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    presets = @[
+      @{@"name":@"DeepSeek 深度求索", @"aliases":@[@"deepseek", @"深度求索", @"深度探索"], @"url":@"https://platform.deepseek.com/api_keys", @"type":@"通用对话/推理/代码"},
+      @{@"name":@"OpenAI ChatGPT", @"aliases":@[@"openai", @"chatgpt", @"gpt", @"奥尔特曼"], @"url":@"https://platform.openai.com/api-keys", @"type":@"通用对话/多模态/推理"},
+      @{@"name":@"Anthropic Claude", @"aliases":@[@"claude", @"anthropic", @"克劳德"], @"url":@"https://console.anthropic.com/settings/keys", @"type":@"长文本/推理/代码/多模态"},
+      @{@"name":@"Google Gemini", @"aliases":@[@"gemini", @"谷歌", @"google ai", @"巴德"], @"url":@"https://aistudio.google.com/app/apikey", @"type":@"多模态/长上下文/推理"},
+      @{@"name":@"xAI Grok", @"aliases":@[@"grok", @"xai", @"马斯克ai"], @"url":@"https://console.x.ai", @"type":@"通用对话/推理/实时信息"},
+      @{@"name":@"Mistral AI", @"aliases":@[@"mistral", @"米斯特拉尔"], @"url":@"https://console.mistral.ai/api-keys", @"type":@"通用对话/代码/多模态"},
+      @{@"name":@"Moonshot Kimi", @"aliases":@[@"kimi", @"moonshot", @"月之暗面"], @"url":@"https://platform.moonshot.cn/console/api-keys", @"type":@"长文本/中文对话/文件理解"},
+      @{@"name":@"智谱 GLM", @"aliases":@[@"智谱", @"glm", @"chatglm", @"bigmodel"], @"url":@"https://bigmodel.cn/usercenter/apikeys", @"type":@"中文对话/推理/多模态/Agent"},
+      @{@"name":@"通义千问 Qwen", @"aliases":@[@"通义千问", @"千问", @"qwen", @"通义", @"百炼", @"dashscope"], @"url":@"https://bailian.console.aliyun.com/?apiKey=1#/api-key", @"type":@"中文对话/多模态/代码/Agent"},
+      @{@"name":@"文心一言 百度千帆", @"aliases":@[@"文心", @"文心一言", @"百度千帆", @"千帆", @"ernie"], @"url":@"https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application", @"type":@"中文对话/知识问答/多模态"},
+      @{@"name":@"腾讯混元", @"aliases":@[@"混元", @"腾讯混元", @"hunyuan"], @"url":@"https://console.cloud.tencent.com/hunyuan/api-key", @"type":@"中文对话/多模态/图像生成"},
+      @{@"name":@"豆包 火山方舟", @"aliases":@[@"豆包", @"火山方舟", @"火山", @"方舟", @"doubao", @"volcengine"], @"url":@"https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey", @"type":@"中文对话/多模态/语音/视频"},
+      @{@"name":@"MiniMax 海螺", @"aliases":@[@"minimax", @"海螺", @"海螺ai"], @"url":@"https://platform.minimaxi.com/user-center/basic-information/interface-key", @"type":@"中文对话/语音/视频生成"},
+      @{@"name":@"百川智能", @"aliases":@[@"百川", @"baichuan"], @"url":@"https://platform.baichuan-ai.com/console/apikey", @"type":@"中文对话/医疗/推理"},
+      @{@"name":@"零一万物 Yi", @"aliases":@[@"零一万物", @"yi", @"01.ai", @"lingyiwanwu"], @"url":@"https://platform.lingyiwanwu.com/apikeys", @"type":@"通用对话/长文本/代码"},
+      @{@"name":@"阶跃星辰 StepFun", @"aliases":@[@"阶跃", @"阶跃星辰", @"stepfun"], @"url":@"https://platform.stepfun.com/interface-key", @"type":@"多模态/语音/图像生成"},
+      @{@"name":@"讯飞星火", @"aliases":@[@"讯飞", @"星火", @"讯飞星火", @"iflytek", @"spark"], @"url":@"https://console.xfyun.cn/services/bmx1", @"type":@"中文对话/语音/教育"},
+      @{@"name":@"商汤日日新", @"aliases":@[@"商汤", @"日日新", @"sensenova"], @"url":@"https://console.sensecore.cn", @"type":@"中文对话/多模态/视觉"},
+      @{@"name":@"SiliconFlow 硅基流动", @"aliases":@[@"硅基流动", @"siliconflow"], @"url":@"https://cloud.siliconflow.cn/account/ak", @"type":@"模型聚合/开源模型/图像/语音"},
+      @{@"name":@"OpenRouter", @"aliases":@[@"openrouter"], @"url":@"https://openrouter.ai/keys", @"type":@"多模型聚合/路由/比价"},
+      @{@"name":@"Groq", @"aliases":@[@"groq"], @"url":@"https://console.groq.com/keys", @"type":@"超高速推理/开源模型"},
+      @{@"name":@"Together AI", @"aliases":@[@"together"], @"url":@"https://api.together.xyz/settings/api-keys", @"type":@"开源模型/微调/图像生成"},
+      @{@"name":@"Fireworks AI", @"aliases":@[@"fireworks"], @"url":@"https://fireworks.ai/account/api-keys", @"type":@"高性能推理/开源模型"},
+      @{@"name":@"Cohere", @"aliases":@[@"cohere"], @"url":@"https://dashboard.cohere.com/api-keys", @"type":@"企业检索/RAG/多语言"},
+      @{@"name":@"Perplexity", @"aliases":@[@"perplexity", @"困惑度"], @"url":@"https://www.perplexity.ai/settings/api", @"type":@"联网搜索问答/研究"},
+      @{@"name":@"Hugging Face", @"aliases":@[@"huggingface", @"hugging face", @"hf"], @"url":@"https://huggingface.co/settings/tokens", @"type":@"开源模型/推理/数据集"},
+      @{@"name":@"Replicate", @"aliases":@[@"replicate"], @"url":@"https://replicate.com/account/api-tokens", @"type":@"模型托管/图像/视频"},
+      @{@"name":@"Stability AI", @"aliases":@[@"stability", @"stable diffusion", @"sd"], @"url":@"https://platform.stability.ai/account/keys", @"type":@"图像生成/编辑/3D"},
+      @{@"name":@"Runway", @"aliases":@[@"runway"], @"url":@"https://dev.runwayml.com", @"type":@"视频生成/图像编辑"},
+      @{@"name":@"Luma AI", @"aliases":@[@"luma"], @"url":@"https://lumalabs.ai/dashboard/api-keys", @"type":@"视频生成/3D"},
+      @{@"name":@"可灵 Kling", @"aliases":@[@"可灵", @"kling"], @"url":@"https://klingai.com/dev", @"type":@"视频生成/图像生成"},
+      @{@"name":@"即梦 Jimeng", @"aliases":@[@"即梦", @"jimeng"], @"url":@"https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey", @"type":@"图像生成/视频生成"},
+      @{@"name":@"Azure OpenAI", @"aliases":@[@"azure", @"azure openai"], @"url":@"https://portal.azure.com", @"type":@"企业部署/通用对话/多模态"},
+      @{@"name":@"AWS Bedrock", @"aliases":@[@"bedrock", @"aws"], @"url":@"https://console.aws.amazon.com/bedrock", @"type":@"企业部署/多模型/Agent"},
+      @{@"name":@"GitHub Models", @"aliases":@[@"github models", @"github"], @"url":@"https://github.com/settings/tokens", @"type":@"开发者模型试用/通用对话"},
+      @{@"name":@"Cloudflare Workers AI", @"aliases":@[@"cloudflare", @"workers ai"], @"url":@"https://dash.cloudflare.com/profile/api-tokens", @"type":@"边缘推理/开源模型/图像"},
+      @{@"name":@"Novita AI", @"aliases":@[@"novita"], @"url":@"https://novita.ai/settings/key-management", @"type":@"模型聚合/图像/视频"},
+      @{@"name":@"DeepInfra", @"aliases":@[@"deepinfra"], @"url":@"https://deepinfra.com/dash/api_keys", @"type":@"开源模型推理/图像"}
+    ];
+  });
+  return presets;
+}
+
+- (NSDictionary *)aiPresetForName:(NSString *)raw {
+  NSString *n = [[raw lowercaseString] stringByReplacingOccurrencesOfString:@" " withString:@""];
+  if (n.length < 2) return nil;
+  NSDictionary *best = nil; NSUInteger bestLen = 0;
+  for (NSDictionary *p in [self aiPresets]) {
+    for (NSString *alias in p[@"aliases"]) {
+      if ([n containsString:alias] && alias.length > bestLen) { best = p; bestLen = alias.length; }
+    }
+  }
+  return best;
+}
+
+- (void)applyAIPresetAutofill {
+  if (!self.dialogAIName) return;
+  NSString *name = self.dialogAIName.stringValue ?: @"";
+  NSDictionary *preset = nil;
+  for (NSDictionary *p in [self aiPresets]) {
+    if ([p[@"name"] isEqualToString:name]) { preset = p; break; }
+  }
+  if (!preset) preset = [self aiPresetForName:name];
+  if (!preset) { self.dialogAIStatus.stringValue = @"未识别到预设服务，可手动填写地址"; return; }
+  self.dialogAIEndpoint.stringValue = preset[@"url"] ?: @"";
+  if (!self.dialogAINote.stringValue.length) self.dialogAINote.stringValue = preset[@"type"] ?: @"";
+  self.dialogAIStatus.stringValue = [NSString stringWithFormat:@"已识别：%@ · 已自动填写 Key 获取地址", preset[@"name"]];
+}
+
+- (void)controlTextDidChange:(NSNotification *)note {
+  if (note.object != self.dialogAIName) return;
+  [self applyAIPresetAutofill];
+}
+
+- (void)comboBoxSelectionDidChange:(NSNotification *)note {
+  if (note.object != self.dialogAIName) return;
+  NSComboBox *cb = note.object;
+  NSInteger idx = cb.indexOfSelectedItem;
+  if (idx >= 0 && idx < cb.numberOfItems) {
+    cb.stringValue = [cb itemObjectValueAtIndex:idx];
+  }
+  [self applyAIPresetAutofill];
+}
+
+- (void)aiAddEntry:(id)sender { [self aiShowEntryDialogForIndex:-1]; }
+
+- (void)aiShowEntryDialogForIndex:(NSInteger)idx {
+  BOOL editing = idx >= 0 && idx < (NSInteger)self.aiEntries.count;
+  NSDictionary *old = editing ? self.aiEntries[idx] : @{};
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = editing ? @"编辑 AI 服务" : @"新增 AI 服务";
+  a.informativeText = @"输入 AI 名称即可自动识别并填写 API Key 获取地址；支持官方名和常用别名，例如千问 / Qwen / 通义千问。";
+  [a addButtonWithTitle:@"保存"];
+  [a addButtonWithTitle:@"取消"];
+  NSView *av = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 500, 250)];
+  NSArray *labels = @[@"名称", @"余量", @"链接地址", @"API Key", @"备注"];
+  NSArray *keys = @[@"name", @"quota", @"endpoint", @"api", @"note"];
+  NSMutableArray *fields = [NSMutableArray array];
+  for (NSInteger i = 0; i < labels.count; i++) {
+    NSTextField *lab = [self label:labels[i] size:11.5 bold:NO color:[NSColor secondaryLabelColor]];
+    lab.frame = NSMakeRect(8, 214 - i*38, 100, 18); [av addSubview:lab];
+    NSTextField *tf;
+    if (i == 0) {
+      NSComboBox *cb = [[NSComboBox alloc] initWithFrame:NSMakeRect(112, 208 - i*38, 370, 26)];
+      for (NSDictionary *p in [self aiPresets]) [cb addItemWithObjectValue:p[@"name"]];
+      cb.editable = YES; cb.completes = YES; cb.delegate = self;
+      tf = cb; self.dialogAIName = cb;
+    } else {
+      tf = [[NSTextField alloc] initWithFrame:NSMakeRect(112, 208 - i*38, 370, 26)];
+      if (i == 1) self.dialogAIQuota = tf;
+      if (i == 2) self.dialogAIEndpoint = tf;
+      if (i == 3) self.dialogAIApi = tf;
+      if (i == 4) self.dialogAINote = tf;
+    }
+    tf.stringValue = old[keys[i]] ?: @"";
+    [av addSubview:tf]; [fields addObject:tf];
+  }
+  self.dialogAIStatus = [self label:@"" size:10.5 bold:NO color:[NSColor systemGreenColor]];
+  self.dialogAIStatus.frame = NSMakeRect(8, 4, 480, 16);
+  [av addSubview:self.dialogAIStatus];
+  a.accessoryView = av;
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSMutableDictionary *entry = [NSMutableDictionary dictionary];
+  for (NSInteger i = 0; i < keys.count; i++) entry[keys[i]] = ((NSTextField *)fields[i]).stringValue ?: @"";
+  if (![entry[@"name"] length]) { [self showToast:@"名称不能为空"]; return; }
+  if (![entry[@"endpoint"] length]) {
+    NSDictionary *preset = [self aiPresetForName:entry[@"name"]];
+    if (preset) {
+      entry[@"endpoint"] = preset[@"url"] ?: @"";
+      if (![entry[@"note"] length]) entry[@"note"] = preset[@"type"] ?: @"";
+    }
+  }
+  if (editing) self.aiEntries[idx] = entry;
+  else {
+    NSInteger exist = NSNotFound;
+    for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) if ([self.aiEntries[i][@"name"] ?: @"" isEqualToString:entry[@"name"]]) { exist = i; break; }
+    if (exist == NSNotFound) [self.aiEntries addObject:entry]; else self.aiEntries[exist] = entry;
+  }
+  [self saveAIEntries];
+  self.aiPage = 0;
+  [self rebuildAIDisplay];
+  [self showToast:editing ? @"AI 服务已更新" : @"AI 服务已添加"];
+  if ([entry[@"api"] length]) {
+    [self performSelector:@selector(refreshAIQuotas:) withObject:nil afterDelay:0.4];
+  }
+}
+
+- (void)aiBackupRow:(NSButton *)b {
+  NSInteger row = b.tag;
+  if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
+  NSDictionary *entry = self.aiVisibleEntries[row];
+  NSString *name = entry[@"name"] ?: @"AI备份";
+  [self runAIBackupForEntries:@[entry] singleName:name];
+}
+
+- (void)aiDeleteSelected:(id)sender {
+  NSMutableArray *targets = [NSMutableArray array];
+  for (NSDictionary *e in self.aiEntries) {
+    NSString *name = e[@"name"] ?: @"";
+    if ([self.aiSelected containsObject:name]) [targets addObject:name];
+  }
+  if (!targets.count) { [self showToast:@"请先勾选要删除的服务"]; return; }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"删除 %ld 条 AI 服务？", (long)targets.count];
+  a.informativeText = [targets componentsJoinedByString:@"、"];
+  [a addButtonWithTitle:@"删除"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  if (![self requestAdminAuthentication]) {
+    [self showToast:@"管理员验证失败，已取消删除"];
+    return;
+  }
+  for (NSString *n in targets) {
+    for (NSInteger i = (NSInteger)self.aiEntries.count - 1; i >= 0; i--) {
+      if ([self.aiEntries[i][@"name"] ?: @"" isEqualToString:n]) [self.aiEntries removeObjectAtIndex:i];
+    }
+    [self removeAIBackupsForName:n];
+  }
+  [self.aiSelected removeAllObjects];
+  [self saveAIEntries];
+  self.aiPage = 0;
+  [self rebuildAIDisplay];
+  [self showToast:@"已删除所选数据与本地备份"];
+}
+
+- (void)aiReload:(id)sender {
+  [self loadAIEntries];
+  [self.aiSelected removeAllObjects];
+  [self.aiRevealedNames removeAllObjects];
+  self.aiPage = 0;
+  [self rebuildAIDisplay];
+  [self showToast:@"已刷新 AI 服务数据"];
+}
+
+- (void)aiBackupAll:(id)sender {
+  [self runAIBackupForEntries:self.aiEntries singleName:nil];
+}
+
+- (void)removeAIBackupsForName:(NSString *)name {
+  if (!name.length) return;
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/backup/ai"];
+  NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+  for (NSString *f in files) {
+    if ([f hasPrefix:[name stringByAppendingString:@"-"]]) {
+      [[NSFileManager defaultManager] removeItemAtPath:[dir stringByAppendingPathComponent:f] error:NULL];
+    }
+  }
+}
+
+- (void)aiDeleteRow:(NSButton *)b {
+  NSInteger row = b.tag;
+  if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
+  NSString *name = self.aiVisibleEntries[row][@"name"] ?: @"";
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"删除该 AI 服务？";
+  a.informativeText = [NSString stringWithFormat:@"将删除控制台中的数据，并清理本地备份：%@", name];
+  [a addButtonWithTitle:@"删除"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  if (![self requestAdminAuthentication]) {
+    [self showToast:@"管理员验证失败，已取消删除"];
+    return;
+  }
+  for (NSInteger i = (NSInteger)self.aiEntries.count - 1; i >= 0; i--) {
+    if ([self.aiEntries[i][@"name"] ?: @"" isEqualToString:name]) [self.aiEntries removeObjectAtIndex:i];
+  }
+  [self.aiSelected removeObject:name];
+  [self saveAIEntries];
+  [self removeAIBackupsForName:name];
+  [self rebuildAIDisplay];
+  [self showToast:@"已删除数据与本地备份"];
+}
+
+- (void)buildDiskView {
+  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
+  NSTextField *h = [self label:@"文件管理" size:24 bold:YES color:nil];
+  h.frame = NSMakeRect(24, 600, 300, 32); [v addSubview:h];
+
+  self.diskVolumePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(154, 560, 150, 28) pullsDown:NO];
+  [self.diskVolumePopup addItemsWithTitles:@[@"本地磁盘", @"外部磁盘", @"相册"]];
   self.diskVolumePopup.target = self;
   self.diskVolumePopup.action = @selector(diskVolumeChanged:);
+  self.diskVolumePopup.toolTip = @"外部磁盘扫描需要「可移除宗卷」访问权限";
   [v addSubview:self.diskVolumePopup];
-  NSButton *refresh = [NSButton buttonWithTitle:@"重新分析" target:self action:@selector(runDiskAnalysis)];
-  refresh.frame = NSMakeRect(262, 560, 100, 28);
+
+  self.diskDateButton = [NSButton buttonWithTitle:@"选择日期" target:self action:@selector(showDatePopover:)];
+  self.diskDateButton.frame = NSMakeRect(329, 560, 150, 28);
+  [v addSubview:self.diskDateButton];
+
+  NSButton *clearDate = [NSButton buttonWithTitle:@"全部日期" target:self action:@selector(diskClearDate:)];
+  clearDate.frame = NSMakeRect(504, 560, 86, 28);
+  [v addSubview:clearDate];
+
+  NSButton *refresh = [NSButton buttonWithTitle:@"刷新分析" target:self action:@selector(refreshDiskAnalysis)];
+  refresh.frame = NSMakeRect(615, 560, 110, 28);
   [v addSubview:refresh];
-  self.diskStatus = [self label:@"等待扫描" size:10.5 bold:NO color:[NSColor tertiaryLabelColor]];
-  self.diskStatus.alignment = NSTextAlignmentRight;
-  self.diskStatus.frame = NSMakeRect(380, 565, 346, 18);
+  self.diskBackButton = [[NSButton alloc] initWithFrame:NSMakeRect(24, 560, 40, 32)];
+  self.diskBackButton.bordered = NO;
+  self.diskBackButton.wantsLayer = YES;
+  self.diskBackButton.layer.cornerRadius = 9;
+  self.diskBackButton.layer.backgroundColor = [NSColor quaternaryLabelColor].CGColor;
+  NSImage *backImg = [NSImage imageWithSystemSymbolName:@"chevron.backward" accessibilityDescription:@"后退"];
+  backImg = [backImg imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:18 weight:NSFontWeightSemibold]];
+  self.diskBackButton.image = backImg;
+  self.diskBackButton.imageScaling = NSImageScaleProportionallyUpOrDown;
+  self.diskBackButton.contentTintColor = [NSColor systemYellowColor];
+  self.diskBackButton.toolTip = @"后退";
+  self.diskBackButton.target = self;
+  self.diskBackButton.action = @selector(diskGoBack:);
+  [v addSubview:self.diskBackButton];
+
+  self.diskForwardButton = [[NSButton alloc] initWithFrame:NSMakeRect(89, 560, 40, 32)];
+  self.diskForwardButton.bordered = NO;
+  self.diskForwardButton.wantsLayer = YES;
+  self.diskForwardButton.layer.cornerRadius = 9;
+  self.diskForwardButton.layer.backgroundColor = [NSColor quaternaryLabelColor].CGColor;
+  NSImage *fwdImg = [NSImage imageWithSystemSymbolName:@"chevron.forward" accessibilityDescription:@"前进"];
+  fwdImg = [fwdImg imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:18 weight:NSFontWeightSemibold]];
+  self.diskForwardButton.image = fwdImg;
+  self.diskForwardButton.imageScaling = NSImageScaleProportionallyUpOrDown;
+  self.diskForwardButton.contentTintColor = [NSColor systemGreenColor];
+  self.diskForwardButton.toolTip = @"前进";
+  self.diskForwardButton.target = self;
+  self.diskForwardButton.action = @selector(diskGoForward:);
+  [v addSubview:self.diskForwardButton];
+  self.diskBackStack = [NSMutableArray array];
+  self.diskForwardStack = [NSMutableArray array];
+
+  self.diskSpinner = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(24, 538, 16, 16)];
+  self.diskSpinner.style = NSProgressIndicatorStyleSpinning;
+  self.diskSpinner.controlSize = NSControlSizeSmall;
+  self.diskSpinner.displayedWhenStopped = NO;
+  [v addSubview:self.diskSpinner];
+  self.diskStatus = [self label:@"请选择来源后点击刷新分析" size:10.5 bold:NO color:[NSColor tertiaryLabelColor]];
+  self.diskStatus.frame = NSMakeRect(46, 538, 678, 18);
   [v addSubview:self.diskStatus];
 
-  self.diskSummary = [self label:@"" size:12 bold:NO color:[NSColor secondaryLabelColor]];
-  self.diskSummary.frame = NSMakeRect(24, 530, 700, 20);
-  [v addSubview:self.diskSummary];
+  NSView *card = [self cardAt:NSMakeRect(24, 64, 700, 452)];
+  [v addSubview:card];
+  self.diskCard = card;
 
-  self.diskSegmentBar = [[DiskSegmentBar alloc] initWithFrame:NSMakeRect(24, 496, 700, 22)];
-  [v addSubview:self.diskSegmentBar];
+  DiskTypeControl *seg = [[DiskTypeControl alloc] initWithFrame:NSMakeRect(16, 408, 240, 28) target:self action:@selector(diskFilterChanged:)];
+  self.diskTypeSegment = seg;
+  seg.selectedSegment = -1;
+  [card addSubview:seg];
+  NSTextField *readonly = [self label:@"只读浏览 · 不会修改或删除文件" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+  readonly.frame = NSMakeRect(270, 414, 260, 16);
+  [card addSubview:readonly];
 
-  NSView *left = [self cardAt:NSMakeRect(24, 96, 340, 380)];
-  [v addSubview:left];
-  NSTextField *lt = [self label:@"空间分布" size:13 bold:YES color:nil];
-  lt.frame = NSMakeRect(16, 344, 200, 20); [left addSubview:lt];
-  self.diskCategoryLabel = [self label:@"" size:12 bold:NO color:[NSColor labelColor]];
-  self.diskCategoryLabel.maximumNumberOfLines = 12;
-  self.diskCategoryLabel.frame = NSMakeRect(16, 14, 308, 320);
-  [left addSubview:self.diskCategoryLabel];
+  self.diskHintLabel = [self label:@"选择磁盘并点击「刷新分析」后显示文件" size:12 bold:NO color:[NSColor tertiaryLabelColor]];
+  self.diskHintLabel.alignment = NSTextAlignmentCenter;
+  self.diskHintLabel.frame = NSMakeRect(16, 190, 668, 24);
+  [card addSubview:self.diskHintLabel];
 
-  NSView *right = [self cardAt:NSMakeRect(384, 96, 340, 380)];
-  [v addSubview:right];
-  NSTextField *rt = [self label:@"大应用 Top 10" size:13 bold:YES color:nil];
-  rt.frame = NSMakeRect(16, 344, 220, 20); [right addSubview:rt];
-  self.diskAppsLabel = [self label:@"" size:11 bold:NO color:[NSColor labelColor]];
-  self.diskAppsLabel.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular];
-  self.diskAppsLabel.maximumNumberOfLines = 12;
-  self.diskAppsLabel.frame = NSMakeRect(16, 14, 308, 320);
-  [right addSubview:self.diskAppsLabel];
+  self.diskTable = [[NSTableView alloc] initWithFrame:NSMakeRect(16, 40, 668, 360)];
+  self.diskTable.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance);
+  self.diskTable.rowHeight = 26;
+  self.diskTable.usesAlternatingRowBackgroundColors = NO;
+  self.diskTable.gridStyleMask = NSTableViewSolidHorizontalGridLineMask;
+  self.diskTable.dataSource = self;
+  self.diskTable.delegate = self;
+  self.diskTable.target = self;
+  self.diskTable.doubleAction = @selector(diskRowDoubleClicked:);
+  for (NSArray *c in @[@[@"名称", @230, @"name"], @[@"日期", @130, @"date"], @[@"大小", @80, @"size"], @[@"类型", @60, @"kind"], @[@"路径", @168, @"path"]]) {
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[2]];
+    col.title = c[0];
+    col.width = [c[1] doubleValue];
+    BOOL numeric = [c[2] isEqualToString:@"size"];
+    col.sortDescriptorPrototype = [NSSortDescriptor sortDescriptorWithKey:c[2] ascending:!numeric];
+    [self.diskTable addTableColumn:col];
+  }
+  self.diskScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 40, 668, 360)];
+  self.diskScroll.documentView = self.diskTable;
+  self.diskScroll.hasVerticalScroller = YES;
+  self.diskScroll.borderType = NSNoBorder;
+  self.diskScroll.drawsBackground = NO;
+  [card addSubview:self.diskScroll];
 
-  self.diskPersonalCheck = [NSButton checkboxWithTitle:@"包含个人文件夹（文档 / 下载 / 桌面 / 图片，可能触发系统授权）" target:self action:@selector(diskPersonalToggled:)];
-  self.diskPersonalCheck.frame = NSMakeRect(24, 58, 620, 24);
-  [v addSubview:self.diskPersonalCheck];
+  NSCollectionViewFlowLayout *layout = [[NSCollectionViewFlowLayout alloc] init];
+  layout.itemSize = NSMakeSize(200, 200);
+  layout.minimumInteritemSpacing = 10;
+  layout.minimumLineSpacing = 10;
+  layout.sectionInset = NSEdgeInsetsMake(10, 10, 10, 10);
+  self.diskFlowLayout = layout;
+  self.diskCollection = [[NSCollectionView alloc] initWithFrame:NSMakeRect(0, 0, 668, 388)];
+  self.diskCollection.collectionViewLayout = layout;
+  self.diskCollection.dataSource = self;
+  self.diskCollection.delegate = self;
+  self.diskCollection.wantsLayer = YES;
+  self.diskCollection.layer.backgroundColor = [NSColor whiteColor].CGColor;
+  self.diskCollection.selectable = YES;
+  self.diskCollection.allowsMultipleSelection = NO;
+  [self.diskCollection registerClass:[DiskGalleryItem class] forItemWithIdentifier:@"galleryItem"];
+  self.diskCollectionScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 40, 668, 360)];
+  self.diskCollectionScroll.documentView = self.diskCollection;
+  self.diskCollectionScroll.hasVerticalScroller = YES;
+  self.diskCollectionScroll.borderType = NSNoBorder;
+  self.diskCollectionScroll.drawsBackground = NO;
+  self.diskCollectionScroll.hidden = YES;
+  [card addSubview:self.diskCollectionScroll];
+  NSClickGestureRecognizer *dbl = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(diskGalleryDoubleClick:)];
+  dbl.numberOfClicksRequired = 2;
+  [self.diskCollection addGestureRecognizer:dbl];
+  self.diskPathControl = [[NSPathControl alloc] initWithFrame:NSMakeRect(16, 8, 668, 24)];
+  self.diskPathControl.pathStyle = NSPathStyleStandard;
+  self.diskPathControl.target = self;
+  self.diskPathControl.action = @selector(diskPathControlClicked:);
+  self.diskPathControl.hidden = YES;
+  [card addSubview:self.diskPathControl];
 
+  self.diskPrevPageButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(566, 26, 34, 26)];
+  self.diskPrevPageButton.title = @"‹"; self.diskPrevPageButton.hoverColor = [NSColor systemGreenColor];
+  self.diskPrevPageButton.target = self; self.diskPrevPageButton.action = @selector(diskPrevGalleryPage:);
+  [self.diskPrevPageButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  self.diskPrevPageButton.hidden = YES; [v addSubview:self.diskPrevPageButton];
+  self.diskPageLabel = [self label:@"1/1" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+  self.diskPageLabel.alignment = NSTextAlignmentCenter;
+  self.diskPageLabel.frame = NSMakeRect(604, 32, 44, 16);
+  self.diskPageLabel.hidden = YES; [v addSubview:self.diskPageLabel];
+  self.diskNextPageButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(652, 26, 34, 26)];
+  self.diskNextPageButton.title = @"›"; self.diskNextPageButton.hoverColor = [NSColor systemGreenColor];
+  self.diskNextPageButton.target = self; self.diskNextPageButton.action = @selector(diskNextGalleryPage:);
+  [self.diskNextPageButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  self.diskNextPageButton.hidden = YES; [v addSubview:self.diskNextPageButton];
+  self.diskSelectedIndex = -1;
+  self.diskScroll.hidden = YES;
+
+  self.diskFileData = @[];
+  self.diskFileFiltered = @[];
   self.diskView = v;
   [self refreshDiskVolumes];
 }
 
 - (void)refreshDiskVolumes {
-  if (!self.diskVolumePopup) return;
-  NSString *keep = self.diskSelectedMount ?: @"/";
-  self.diskVolumes = [self diskMountList];
-  [self.diskVolumePopup removeAllItems];
-  for (NSDictionary *v in self.diskVolumes) {
-    [self.diskVolumePopup addItemWithTitle:v[@"name"]];
-    self.diskVolumePopup.lastItem.representedObject = v[@"mount"];
-    if ([v[@"mount"] isEqualToString:keep]) [self.diskVolumePopup selectItem:self.diskVolumePopup.lastItem];
-  }
-  if (!self.diskSelectedMount && self.diskVolumePopup.numberOfItems) {
-    self.diskSelectedMount = @"/";
-    [self.diskVolumePopup selectItemAtIndex:0];
-  }
+  [self styleDiskSource];
+}
+
+- (void)styleDiskSource {
+  NSInteger idx = MAX(0, self.diskVolumePopup.indexOfSelectedItem);
+  NSArray *names = @[@"本地磁盘", @"外部磁盘", @"相册"];
+  NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+  ps.alignment = NSTextAlignmentLeft;
+  NSColor *textColor = self.diskSourcePicked ? [NSColor systemIndigoColor] : [NSColor labelColor];
+  self.diskVolumePopup.attributedTitle = [[NSAttributedString alloc] initWithString:names[idx] attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:(self.diskSourcePicked ? NSFontWeightSemibold : NSFontWeightRegular)], NSForegroundColorAttributeName: textColor, NSParagraphStyleAttributeName: ps}];
+  self.diskVolumePopup.wantsLayer = YES;
+  self.diskVolumePopup.layer.cornerRadius = 6;
+  self.diskVolumePopup.layer.backgroundColor = (self.diskSourcePicked ? [[NSColor systemIndigoColor] colorWithAlphaComponent:0.12] : [NSColor clearColor]).CGColor;
 }
 
 - (void)diskVolumeChanged:(id)sender {
-  self.diskSelectedMount = self.diskVolumePopup.selectedItem.representedObject ?: @"/";
-  [self runDiskAnalysis];
+  self.diskSourcePicked = YES;
+  [self styleDiskSource];
+  self.diskCurrentPath = nil;
+  [self.diskBackStack removeAllObjects];
+  [self.diskForwardStack removeAllObjects];
+  self.diskFileData = @[];
+  self.diskFileFiltered = @[];
+  self.diskGalleryItems = @[];
+  self.diskAllGalleryItems = @[];
+  self.diskGalleryPage = 0;
+  [self applyDiskGalleryPage];
+  [self.diskCollection reloadData];
+  [self.diskTable reloadData];
+  self.diskCollectionScroll.hidden = YES;
+  self.diskScroll.hidden = YES;
+  self.diskPathControl.hidden = YES;
+  self.diskHintLabel.hidden = NO;
+  self.diskHintLabel.stringValue = @"点击「刷新分析」开始浏览";
+  self.diskTypeSegment.hidden = NO;
+  self.diskStatus.stringValue = [NSString stringWithFormat:@"已选择 %@，点击「刷新分析」", self.diskVolumePopup.titleOfSelectedItem ?: @"来源"];
+  self.diskStatus.textColor = [NSColor tertiaryLabelColor];
+  [self updateDiskNavButtons];
 }
 
-- (void)diskPersonalToggled:(id)sender {
-  [self runDiskAnalysis];
+- (NSString *)diskKindForPath:(NSString *)path {
+  NSString *ext = path.pathExtension.lowercaseString;
+  NSSet *imgs = [NSSet setWithObjects:@"jpg",@"jpeg",@"png",@"heic",@"heif",@"gif",@"tiff",@"tif",@"webp",@"bmp",@"raw",@"dng",@"cr2",@"nef",nil];
+  NSSet *vids = [NSSet setWithObjects:@"mp4",@"mov",@"mkv",@"avi",@"m4v",@"webm",@"wmv",@"flv",@"mpg",@"mpeg",nil];
+  if ([imgs containsObject:ext]) return @"图片";
+  if ([vids containsObject:ext]) return @"视频";
+  return @"文件";
 }
 
-- (void)runDiskAnalysis {
-  if (!self.diskView) return;
-  NSString *mount = self.diskSelectedMount ?: @"/";
-  NSDictionary *vol = nil;
-  for (NSDictionary *v in self.diskVolumes) if ([v[@"mount"] isEqualToString:mount]) { vol = v; break; }
-  unsigned long long total = [vol[@"total"] unsignedLongLongValue];
-  unsigned long long freeB = [vol[@"free"] unsignedLongLongValue];
-  unsigned long long used = total > freeB ? total - freeB : 0;
-  self.diskSummary.stringValue = [NSString stringWithFormat:@"总容量 %@     已用 %@     可用 %@     使用率 %.0f%%", [self gbString:total], [self gbString:used], [self gbString:freeB], total ? (double)used/total*100.0 : 0];
-  self.diskStatus.stringValue = @"正在分析…";
+- (void)updateDiskNavButtons {
+  self.diskBackButton.enabled = self.diskBackStack.count > 0;
+  self.diskForwardButton.enabled = self.diskForwardStack.count > 0;
+}
+
+- (void)loadDiskDirectory:(NSString *)path recordHistory:(BOOL)record {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  BOOL isDir = NO;
+  if (![fm fileExistsAtPath:path isDirectory:&isDir] || !isDir) return;
+  if ([self isProtectedUserPath:path]) {
+    [self showToast:@"该目录受系统保护，已跳过以避免授权弹窗"];
+    return;
+  }
+  if (record && self.diskCurrentPath.length) [self.diskBackStack addObject:self.diskCurrentPath];
+  if (record) [self.diskForwardStack removeAllObjects];
+  self.diskCurrentPath = path;
+  [self updateDiskNavButtons];
+  self.diskPathControl.URL = [NSURL fileURLWithPath:path];
+  self.diskPathControl.hidden = NO;
+  NSArray *names = [[fm contentsOfDirectoryAtPath:path error:NULL] ?: @[] sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) { return [a localizedStandardCompare:b]; }];
+  NSMutableArray *items = [NSMutableArray array];
+  for (NSString *name in names) {
+    if ([name hasPrefix:@"."]) continue;
+    NSString *full = [path stringByAppendingPathComponent:name];
+    if ([self isProtectedUserPath:full]) {
+      // 受保护目录不读取内容、不统计数量，避免触发系统授权弹窗
+      [items addObject:@{@"name": name, @"path": full, @"isDir": @YES, @"count": @0, @"browser": @YES, @"kind": @"文件夹", @"date": [NSDate date], @"size": @0}];
+      continue;
+    }
+    BOOL d = NO;
+    [fm fileExistsAtPath:full isDirectory:&d];
+    NSInteger count = 0;
+    if (d) count = (NSInteger)(([fm contentsOfDirectoryAtPath:full error:NULL] ?: @[]).count);
+    [items addObject:@{@"name": name, @"path": full, @"isDir": @(d), @"count": @(count), @"browser": @YES, @"kind": d ? @"文件夹" : [self diskKindForPath:full], @"date": [NSDate date], @"size": @0}];
+  }
+  [items sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+    if ([a[@"isDir"] boolValue] != [b[@"isDir"] boolValue]) return [a[@"isDir"] boolValue] ? NSOrderedAscending : NSOrderedDescending;
+    return [a[@"name"] localizedStandardCompare:b[@"name"]];
+  }];
+  self.diskFileData = items;
+  self.diskAllGalleryItems = items;
+  self.diskGalleryPage = 0;
+  self.diskFileFiltered = items;
+  self.diskScroll.hidden = YES;
+  self.diskCollectionScroll.hidden = NO;
+  self.diskTypeSegment.hidden = YES;
+  self.diskHintLabel.hidden = items.count > 0;
+  self.diskHintLabel.stringValue = items.count ? @"" : @"文件夹为空";
+  [self applyDiskGalleryPage];
+  [self updateDiskGalleryLayout];
+  [self.diskCollection.window makeFirstResponder:self.diskCollection];
+  self.diskStatus.stringValue = [NSString stringWithFormat:@"%@ · %ld 个项目", path.lastPathComponent.length ? path.lastPathComponent : path, (long)items.count];
   self.diskStatus.textColor = [NSColor secondaryLabelColor];
-  self.diskCategoryLabel.stringValue = @"正在扫描…";
-  self.diskAppsLabel.stringValue = @"正在扫描…";
+  [self.diskSpinner stopAnimation:nil];
+}
+
+- (void)diskGoBack:(id)sender {
+  if (!self.diskBackStack.count) return;
+  NSString *p = self.diskBackStack.lastObject;
+  [self.diskBackStack removeLastObject];
+  if (self.diskCurrentPath.length) [self.diskForwardStack addObject:self.diskCurrentPath];
+  [self loadDiskDirectory:p recordHistory:NO];
+}
+
+- (void)diskGoForward:(id)sender {
+  if (!self.diskForwardStack.count) return;
+  NSString *p = self.diskForwardStack.lastObject;
+  [self.diskForwardStack removeLastObject];
+  if (self.diskCurrentPath.length) [self.diskBackStack addObject:self.diskCurrentPath];
+  [self loadDiskDirectory:p recordHistory:NO];
+}
+
+- (void)diskPathControlClicked:(NSPathControl *)sender {
+  NSURL *url = sender.clickedPathItem.URL;
+  if (url.isFileURL && ![url.path isEqualToString:self.diskCurrentPath]) {
+    [self loadDiskDirectory:url.path recordHistory:YES];
+  }
+}
+
+- (void)refreshDiskAnalysis {
+  if (!self.diskTable) return;
+  NSInteger src = self.diskVolumePopup.indexOfSelectedItem;
+  if (src == 1) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"扫描外部磁盘";
+    a.informativeText = @"外部磁盘需要「可移除宗卷」访问权限。如果结果为空或很少，请到系统设置 → 隐私与安全性 → 文件与文件夹中允许。\n\n是否继续扫描？";
+    [a addButtonWithTitle:@"继续扫描"];
+    [a addButtonWithTitle:@"打开设置"];
+    [a addButtonWithTitle:@"取消"];
+    NSModalResponse r = [a runModal];
+    if (r == NSAlertSecondButtonReturn) {
+      [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders"]];
+      return;
+    }
+    if (r == NSAlertThirdButtonReturn) return;
+  }
+  if (src == 0 || src == 1) {
+    NSString *start = self.diskCurrentPath;
+    if (!start.length) {
+      if (src == 0) start = NSHomeDirectory();
+      else {
+        NSArray *ext = [self scanExternalVolumes];
+        start = ext.count ? [ext.firstObject[@"url"] path] : @"/Volumes";
+      }
+    }
+    [self loadDiskDirectory:start recordHistory:YES];
+    return;
+  }
+  NSMutableArray *roots = [NSMutableArray array];
+  NSString *label = @"";
+  if (src == 0) {
+    label = @"本地磁盘";
+    [roots addObject:@"/Applications"];
+    [roots addObject:@"/Library"];
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerScanPersonalMedia"]) {
+      [roots addObject:[NSHomeDirectory() stringByAppendingPathComponent:@"Music"]];
+      [roots addObject:[NSHomeDirectory() stringByAppendingPathComponent:@"Movies"]];
+      [roots addObject:[NSHomeDirectory() stringByAppendingPathComponent:@"Library"]];
+    }
+  } else if (src == 1) {
+    NSArray *ext = [self scanExternalVolumes];
+    if (!ext.count) {
+      self.diskStatus.stringValue = @"未检测到外部磁盘";
+      self.diskStatus.textColor = [NSColor systemRedColor];
+      [self.diskSpinner stopAnimation:nil];
+      return;
+    }
+    NSMutableArray *names = [NSMutableArray array];
+    for (NSDictionary *vol in ext) {
+      [roots addObject:[vol[@"url"] path]];
+      if (vol[@"name"]) [names addObject:vol[@"name"]];
+    }
+    label = names.count ? [names componentsJoinedByString:@" + "] : @"外部磁盘";
+  } else {
+    label = @"相册";
+    BOOL fullAlbum = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAlbumFullLibrary"];
+    if (fullAlbum) {
+      // PhotoKit 分支在后台处理，这里不预扫描路径
+    } else {
+    NSArray *items = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Pictures"] error:NULL] ?: @[];
+    for (NSString *it in items) {
+      if (![it.pathExtension.lowercaseString isEqualToString:@"photoslibrary"]) continue;
+      NSString *orig = [[[NSHomeDirectory() stringByAppendingPathComponent:@"Pictures"] stringByAppendingPathComponent:it] stringByAppendingPathComponent:@"originals"];
+      if ([[NSFileManager defaultManager] fileExistsAtPath:orig]) [roots addObject:orig];
+    }
+    if (!roots.count) {
+      self.diskStatus.stringValue = @"未找到照片图库";
+      [self.diskSpinner stopAnimation:nil];
+      return;
+    }
+    }
+  }
+  self.diskStatus.stringValue = [NSString stringWithFormat:@"正在分析 %@…", label];
+  self.diskStatus.textColor = [NSColor secondaryLabelColor];
+  [self.diskSpinner startAnimation:nil];
+  self.diskHintLabel.stringValue = @"正在扫描，请稍候…";
+  self.diskHintLabel.hidden = NO;
+  self.diskFileFiltered = @[];
+  [self.diskTable reloadData];
   self.diskGeneration++;
   NSInteger gen = self.diskGeneration;
-  BOOL includePersonal = (self.diskPersonalCheck.state == NSControlStateValueOn);
-  NSString *home = NSHomeDirectory();
   __weak typeof(self) weakSelf = self;
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-    NSMutableArray *cats = [NSMutableArray array];
-    NSArray *colors = @[[NSColor systemBlueColor], [NSColor systemPurpleColor], [NSColor systemGrayColor], [NSColor systemPinkColor], [NSColor systemOrangeColor], [NSColor colorWithCalibratedWhite:0.78 alpha:1.0]];
-    if ([mount isEqualToString:@"/"]) {
-      [cats addObject:@{@"name": @"应用", @"paths": @[@"/Applications"], @"color": colors[0]}];
-      [cats addObject:@{@"name": @"用户资源库", @"paths": @[[home stringByAppendingPathComponent:@"Library"]], @"color": colors[1]}];
-      [cats addObject:@{@"name": @"系统资源库", @"paths": @[@"/Library"], @"color": colors[2]}];
-      [cats addObject:@{@"name": @"影音", @"paths": @[[home stringByAppendingPathComponent:@"Movies"], [home stringByAppendingPathComponent:@"Music"]], @"color": colors[3]}];
-      if (includePersonal) {
-        [cats addObject:@{@"name": @"个人文件", @"paths": @[[home stringByAppendingPathComponent:@"Downloads"], [home stringByAppendingPathComponent:@"Documents"], [home stringByAppendingPathComponent:@"Desktop"], [home stringByAppendingPathComponent:@"Pictures"]], @"color": colors[4]}];
+    NSMutableArray *files = [NSMutableArray array];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL fullAlbum = (src == 2 && [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAlbumFullLibrary"]);
+    if (fullAlbum) {
+      dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+      [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) { dispatch_semaphore_signal(sem); }];
+      dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)));
+      PHAuthorizationStatus auth = [PHPhotoLibrary authorizationStatusForAccessLevel:PHAccessLevelReadWrite];
+      if (auth != PHAuthorizationStatusAuthorized && auth != PHAuthorizationStatusLimited) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          [weakSelf.diskSpinner stopAnimation:nil];
+          weakSelf.diskStatus.stringValue = @"未授权照片图库，请在系统设置中允许访问";
+          weakSelf.diskStatus.textColor = [NSColor systemRedColor];
+        });
+        return;
       }
-    } else {
-      NSArray *children = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:mount error:NULL] ?: @[];
-      NSInteger idx = 0;
-      for (NSString *child in children) {
-        if ([child hasPrefix:@"."]) continue;
-        NSString *p = [mount stringByAppendingPathComponent:child];
-        [cats addObject:@{@"name": child, @"paths": @[p], @"color": colors[idx % colors.count]}];
-        idx++;
-        if (idx >= 8) break;
+      PHFetchOptions *opts = [[PHFetchOptions alloc] init];
+      opts.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:NO]];
+      PHFetchResult<PHAsset *> *result = [PHAsset fetchAssetsWithOptions:opts];
+      for (PHAsset *asset in result) {
+        NSString *kind = asset.mediaType == PHAssetMediaTypeVideo ? @"视频" : @"图片";
+        NSString *name = asset.localIdentifier;
+        PHAssetResource *res = [PHAssetResource assetResourcesForAsset:asset].firstObject;
+        if (res.originalFilename.length) name = res.originalFilename;
+        NSDate *d = asset.creationDate ?: [NSDate date];
+        [files addObject:@{@"name": name, @"path": @"", @"size": @0, @"kind": kind, @"date": d, @"assetID": asset.localIdentifier}];
       }
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (gen != weakSelf.diskGeneration) return;
+        weakSelf.diskFileData = files;
+        weakSelf.diskFileFiltered = @[];
+        weakSelf.diskTypeSegment.selectedSegment = -1;
+        [weakSelf.diskTable reloadData];
+        NSInteger ni = 0, nv = 0;
+        for (NSDictionary *d in files) { if ([d[@"kind"] isEqualToString:@"图片"]) ni++; else nv++; }
+        [weakSelf.diskSpinner stopAnimation:nil];
+        weakSelf.diskHintLabel.hidden = NO;
+        weakSelf.diskHintLabel.stringValue = @"刷新完成，点击上方「图片 / 视频」查看相册";
+        weakSelf.diskScroll.hidden = YES;
+        weakSelf.diskCollectionScroll.hidden = YES;
+        weakSelf.diskStatus.stringValue = [NSString stringWithFormat:@"分析完成 · 相册 · 图片 %ld · 视频 %ld", (long)ni, (long)nv];
+        weakSelf.diskStatus.textColor = [NSColor systemGreenColor];
+      });
+      return;
     }
-    NSMutableArray *sized = [NSMutableArray array];
-    unsigned long long sum = 0;
-    for (NSDictionary *c in cats) {
-      unsigned long long sz = [weakSelf diskSizeOfPaths:c[@"paths"]];
-      sum += sz;
-      [sized addObject:@{@"name": c[@"name"], @"size": @(sz), @"color": c[@"color"]}];
-    }
-    unsigned long long other = used > sum ? used - sum : 0;
-    if (other > 0) [sized addObject:@{@"name": @"其他", @"size": @(other), @"color": colors[5]}];
-    NSMutableArray *apps = [NSMutableArray array];
-    if ([mount isEqualToString:@"/"]) {
-      NSString *appDir = @"/Applications";
-      for (NSString *f in ([[NSFileManager defaultManager] contentsOfDirectoryAtPath:appDir error:NULL] ?: @[])) {
-        if (![f hasSuffix:@".app"]) continue;
-        unsigned long long sz = [weakSelf diskSizeOfPaths:@[[appDir stringByAppendingPathComponent:f]]];
-        [apps addObject:@{@"name": [f stringByDeletingPathExtension], @"size": @(sz)}];
+    for (NSString *root in roots) {
+      if ([self isProtectedUserPath:root]) continue;
+      if (![fm fileExistsAtPath:root]) continue;
+      NSURL *url = [NSURL fileURLWithPath:root];
+      NSDirectoryEnumerator *en = [fm enumeratorAtURL:url includingPropertiesForKeys:@[NSURLIsRegularFileKey, NSURLFileSizeKey, NSURLFileAllocatedSizeKey] options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:^BOOL(NSURL *u, NSError *e) { return YES; }];
+      for (NSURL *u in en) {
+        id isReg = nil;
+        if (![u getResourceValue:&isReg forKey:NSURLIsRegularFileKey error:NULL] || ![isReg boolValue]) continue;
+        id sz = nil; unsigned long long size = 0;
+        if ([u getResourceValue:&sz forKey:NSURLFileAllocatedSizeKey error:NULL] && [sz isKindOfClass:[NSNumber class]]) size = [sz unsignedLongLongValue];
+        if (!size) { if ([u getResourceValue:&sz forKey:NSURLFileSizeKey error:NULL] && [sz isKindOfClass:[NSNumber class]]) size = [sz unsignedLongLongValue]; }
+        NSString *path = u.path;
+        NSString *kind = [weakSelf diskKindForPath:path];
+        if (src == 2 && ![kind isEqualToString:@"图片"] && ![kind isEqualToString:@"视频"]) continue;
+        id dval = nil; NSDate *fdate = nil;
+        if ([u getResourceValue:&dval forKey:NSURLContentModificationDateKey error:NULL] && [dval isKindOfClass:[NSDate class]]) fdate = dval;
+        if (!fdate) fdate = [NSDate date];
+        [files addObject:@{@"name": path.lastPathComponent, @"path": path, @"size": @(size), @"kind": kind, @"date": fdate}];
+        if (files.count % 100 == 0) {
+          NSInteger scanned = files.count;
+          dispatch_async(dispatch_get_main_queue(), ^{
+            if (gen != weakSelf.diskGeneration) return;
+            weakSelf.diskStatus.stringValue = [NSString stringWithFormat:@"正在分析 %@… 已扫描 %ld 个文件", label, (long)scanned];
+          });
+        }
       }
-      [apps sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"size"] compare:a[@"size"]]; }];
-      if (apps.count > 10) apps = [[apps subarrayWithRange:NSMakeRange(0,10)] mutableCopy];
-    } else {
-      NSArray *sorted = [sized sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"size"] compare:a[@"size"]]; }];
-      apps = [[sorted subarrayWithRange:NSMakeRange(0, MIN(10, sorted.count))] mutableCopy];
     }
     dispatch_async(dispatch_get_main_queue(), ^{
       if (gen != weakSelf.diskGeneration) return;
-      NSMutableString *text = [NSMutableString string];
-      for (NSDictionary *c in sized) [text appendFormat:@"%@  %@\n", c[@"name"], [weakSelf gbString:[c[@"size"] unsignedLongLongValue]]];
-      weakSelf.diskCategoryLabel.stringValue = text;
-      NSMutableString *appText = [NSMutableString string];
-      for (NSDictionary *a in apps) {
-        NSString *name = a[@"name"] ?: @"--";
-        if (name.length > 22) name = [[name substringToIndex:22] stringByAppendingString:@"…"];
-        [appText appendFormat:@"%@\t%@\n", name, [weakSelf gbString:[a[@"size"] unsignedLongLongValue]]];
+      weakSelf.diskFileData = files;
+      weakSelf.diskFileFiltered = @[];
+      weakSelf.diskTypeSegment.selectedSegment = -1;
+      [weakSelf.diskTable reloadData];
+      NSInteger nf = 0, ni = 0, nv = 0;
+      for (NSDictionary *d in files) {
+        if ([d[@"kind"] isEqualToString:@"图片"]) ni++;
+        else if ([d[@"kind"] isEqualToString:@"视频"]) nv++;
+        else nf++;
       }
-      weakSelf.diskAppsLabel.stringValue = appText.length ? appText : @"未找到可分析内容";
-      weakSelf.diskSegmentBar.segments = sized;
-      [weakSelf.diskSegmentBar setNeedsDisplay:YES];
-      NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"HH:mm";
-      weakSelf.diskStatus.stringValue = [NSString stringWithFormat:@"分析完成 · %@", [df stringFromDate:[NSDate date]]];
+      weakSelf.diskHintLabel.hidden = NO;
+      weakSelf.diskHintLabel.stringValue = @"刷新完成，点击上方「文件 / 图片 / 视频」查看";
+      weakSelf.diskScroll.hidden = YES;
+      weakSelf.diskCollectionScroll.hidden = YES;
+      [weakSelf.diskSpinner stopAnimation:nil];
+      weakSelf.diskStatus.stringValue = [NSString stringWithFormat:@"分析完成 · %@ · 文件 %ld · 图片 %ld · 视频 %ld", label, (long)nf, (long)ni, (long)nv];
+      weakSelf.diskStatus.textColor = [NSColor systemGreenColor];
     });
   });
+}
+
+- (void)applyDiskGalleryPage {
+  NSInteger total = self.diskAllGalleryItems.count;
+  NSInteger pages = MAX(1, (total + 5) / 6);
+  if (self.diskGalleryPage >= pages) self.diskGalleryPage = pages - 1;
+  if (self.diskGalleryPage < 0) self.diskGalleryPage = 0;
+  NSInteger start = self.diskGalleryPage * 6;
+  NSInteger len = MIN(6, MAX(0, total - start));
+  self.diskGalleryItems = len > 0 ? [self.diskAllGalleryItems subarrayWithRange:NSMakeRange(start, len)] : @[];
+  [self.diskCollection reloadData];
+  self.diskPageLabel.stringValue = [NSString stringWithFormat:@"%ld/%ld", (long)(self.diskGalleryPage + 1), (long)pages];
+  BOOL show = self.diskCollectionScroll.hidden == NO && total > 0;
+  self.diskPrevPageButton.hidden = !show; self.diskNextPageButton.hidden = !show; self.diskPageLabel.hidden = !show;
+  self.diskPrevPageButton.enabled = self.diskGalleryPage > 0;
+  self.diskNextPageButton.enabled = self.diskGalleryPage < pages - 1;
+  self.diskPrevPageButton.alphaValue = self.diskPrevPageButton.enabled ? 1.0 : 0.4;
+  self.diskNextPageButton.alphaValue = self.diskNextPageButton.enabled ? 1.0 : 0.4;
+}
+
+- (void)diskPrevGalleryPage:(id)sender {
+  if (self.diskGalleryPage <= 0) return;
+  self.diskGalleryPage--;
+  [self applyDiskGalleryPage];
+}
+
+- (void)diskNextGalleryPage:(id)sender {
+  self.diskGalleryPage++;
+  [self applyDiskGalleryPage];
+}
+
+- (void)updateDiskGalleryLayout {
+  if (!self.diskView || !self.diskFlowLayout || self.section != 3 || !self.diskCollectionScroll) return;
+  CGFloat viewW = self.diskView.bounds.size.width;
+  CGFloat cardW = MAX(620, viewW - 48);
+  self.diskCard.frame = NSMakeRect(24, 64, cardW, 452);
+  CGFloat scrollW = cardW - 32;
+  self.diskScroll.frame = NSMakeRect(16, 40, scrollW, 360);
+  self.diskCollectionScroll.frame = NSMakeRect(16, 40, scrollW, 360);
+  self.diskHintLabel.frame = NSMakeRect(16, 190, scrollW, 24);
+  self.diskCollection.frame = NSMakeRect(0, 0, scrollW, 360);
+  NSInteger cols = scrollW < 660 ? 2 : (scrollW < 980 ? 3 : 4);
+  CGFloat gap = 10;
+  CGFloat itemW = floor((scrollW - 20 - gap * (cols - 1)) / cols);
+  self.diskFlowLayout.itemSize = NSMakeSize(itemW, itemW);
+  self.diskFlowLayout.minimumInteritemSpacing = gap;
+  self.diskFlowLayout.minimumLineSpacing = gap;
+  [self.diskFlowLayout invalidateLayout];
+  [self.diskCollection reloadData];
+}
+
+- (void)showDatePopover:(id)sender {
+  if (!self.diskDatePopover) {
+    self.diskDatePicker = [[NSDatePicker alloc] init];
+    self.diskDatePicker.datePickerStyle = NSDatePickerStyleClockAndCalendar;
+    self.diskDatePicker.datePickerElements = NSDatePickerElementFlagYearMonthDay;
+    self.diskDatePicker.dateValue = [NSDate date];
+    self.diskDatePicker.translatesAutoresizingMaskIntoConstraints = NO;
+    NSViewController *vc = [[NSViewController alloc] init];
+    NSView *pv = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 300, 340)];
+    [pv addSubview:self.diskDatePicker];
+    NSButton *cancel = [NSButton buttonWithTitle:@"取消" target:self action:@selector(diskDateCancel:)];
+    cancel.translatesAutoresizingMaskIntoConstraints = NO;
+    NSButton *ok = [NSButton buttonWithTitle:@"确定" target:self action:@selector(diskDateConfirm:)];
+    ok.translatesAutoresizingMaskIntoConstraints = NO;
+    [pv addSubview:cancel];
+    [pv addSubview:ok];
+    [NSLayoutConstraint activateConstraints:@[
+      [self.diskDatePicker.topAnchor constraintEqualToAnchor:pv.topAnchor constant:8],
+      [self.diskDatePicker.leadingAnchor constraintEqualToAnchor:pv.leadingAnchor constant:8],
+      [self.diskDatePicker.trailingAnchor constraintEqualToAnchor:pv.trailingAnchor constant:-8],
+      [cancel.bottomAnchor constraintEqualToAnchor:pv.bottomAnchor constant:-8],
+      [cancel.trailingAnchor constraintEqualToAnchor:pv.trailingAnchor constant:-8],
+      [cancel.widthAnchor constraintEqualToConstant:70],
+      [cancel.heightAnchor constraintEqualToConstant:28],
+      [ok.bottomAnchor constraintEqualToAnchor:pv.bottomAnchor constant:-8],
+      [ok.trailingAnchor constraintEqualToAnchor:cancel.leadingAnchor constant:-8],
+      [ok.widthAnchor constraintEqualToConstant:70],
+      [ok.heightAnchor constraintEqualToConstant:28],
+      [self.diskDatePicker.bottomAnchor constraintEqualToAnchor:cancel.topAnchor constant:-8]
+    ]];
+    vc.view = pv;
+    [pv layoutSubtreeIfNeeded];
+    NSSize fit = [pv fittingSize];
+    if (fit.width < 280 || fit.height < 280) fit = NSMakeSize(300, 340);
+    vc.preferredContentSize = fit;
+    self.diskDatePopover = [[NSPopover alloc] init];
+    self.diskDatePopover.contentViewController = vc;
+    self.diskDatePopover.contentSize = fit;
+    self.diskDatePopover.behavior = NSPopoverBehaviorTransient;
+  }
+  if (self.diskDatePopover.isShown) {
+    [self.diskDatePopover close];
+  } else {
+    [self.diskDatePopover showRelativeToRect:self.diskDateButton.bounds ofView:self.diskDateButton preferredEdge:NSRectEdgeMaxY];
+  }
+}
+
+- (void)diskDateCancel:(id)sender {
+  [self.diskDatePopover close];
+}
+
+- (void)diskDateConfirm:(id)sender {
+  NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyy/MM/dd";
+  self.diskDateButton.title = [df stringFromDate:self.diskDatePicker.dateValue];
+  self.diskDateFilter = self.diskDatePicker.dateValue;
+  self.diskTypeSegment.selectedSegment = -1;
+  [self.diskDatePopover close];
+  [self diskFilterChanged:nil];
+}
+
+- (void)diskClearDate:(id)sender {
+  self.diskDateFilter = nil;
+  self.diskDateButton.title = @"选择日期";
+  [self.diskDatePopover close];
+  self.diskTypeSegment.selectedSegment = -1;
+  self.diskFileFiltered = @[];
+  [self.diskTable reloadData];
+  self.diskScroll.hidden = YES;
+  self.diskCollectionScroll.hidden = YES;
+  self.diskHintLabel.hidden = NO;
+  self.diskHintLabel.stringValue = @"已清除日期筛选，请点击上方「文件 / 图片 / 视频」查看";
+  self.diskStatus.stringValue = @"已清除日期筛选";
+}
+
+- (void)diskFilterChanged:(id)sender {
+  if (!self.diskFileData.count) {
+    self.diskStatus.stringValue = @"请先选择来源并点击「刷新分析」";
+    return;
+  }
+  NSArray *base = self.diskFileData;
+  if (self.diskDateFilter) {
+    NSCalendar *cal = [NSCalendar currentCalendar];
+    NSDate *day = self.diskDateFilter;
+    NSMutableArray *byDate = [NSMutableArray array];
+    for (NSDictionary *d in base) {
+      NSDate *fd = d[@"date"];
+      if (fd && [cal isDate:fd inSameDayAsDate:day]) [byDate addObject:d];
+    }
+    base = byDate;
+  }
+  NSInteger idx = self.diskTypeSegment.selectedSegment;
+  NSMutableArray *a = [NSMutableArray array];
+  if (idx == 0 || idx == 1 || idx == 2) {
+    NSString *want = idx == 0 ? @"文件" : (idx == 1 ? @"图片" : @"视频");
+    for (NSDictionary *d in base) if ([d[@"kind"] isEqualToString:want]) [a addObject:d];
+  } else {
+    [a addObjectsFromArray:base];
+  }
+  self.diskFileFiltered = [self diskSortedArray:a];
+  if ((idx == 1 || idx == 2) && self.diskFileFiltered.count) {
+    self.diskAllGalleryItems = self.diskFileFiltered;
+    self.diskGalleryPage = 0;
+    self.diskScroll.hidden = YES;
+    self.diskCollectionScroll.hidden = NO;
+    [self applyDiskGalleryPage];
+    [self updateDiskGalleryLayout];
+    [self.diskCollection.window makeFirstResponder:self.diskCollection];
+  } else {
+    self.diskScroll.hidden = NO;
+    self.diskCollectionScroll.hidden = YES;
+    self.diskPrevPageButton.hidden = YES;
+    self.diskNextPageButton.hidden = YES;
+    self.diskPageLabel.hidden = YES;
+    [self.diskTable reloadData];
+  }
+  self.diskHintLabel.hidden = (self.diskFileFiltered.count > 0);
+  if (!self.diskHintLabel.hidden) self.diskHintLabel.stringValue = @"当前筛选条件下暂无文件";
+  NSString *dateText = @"";
+  if (self.diskDateFilter) {
+    NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyy/MM/dd";
+    dateText = [NSString stringWithFormat:@"%@ · ", [df stringFromDate:self.diskDateFilter]];
+  }
+  self.diskStatus.stringValue = [NSString stringWithFormat:@"%@%ld 个 · 按时间降序", dateText, (long)self.diskFileFiltered.count];
+}
+
+- (NSArray *)diskSortedArray:(NSArray *)arr {
+  NSSortDescriptor *sd = self.diskTable.sortDescriptors.firstObject;
+  if (!sd) sd = [NSSortDescriptor sortDescriptorWithKey:@"date" ascending:NO];
+  return [arr sortedArrayUsingDescriptors:@[sd]];
+}
+
+- (void)collectionView:(NSCollectionView *)collectionView didSelectItemsAtIndexPaths:(NSSet<NSIndexPath *> *)indexPaths {
+  NSIndexPath *ip = indexPaths.anyObject;
+  self.diskSelectedIndex = ip ? ip.item : -1;
+}
+- (void)galleryItemClicked:(DiskGalleryItem *)item {
+  NSInteger idx = [self.diskGalleryItems indexOfObject:item.file];
+  if (idx == NSNotFound) return;
+  self.diskSelectedIndex = idx;
+  NSIndexPath *ip = [NSIndexPath indexPathForItem:idx inSection:0];
+  [self.diskCollection selectItemsAtIndexPaths:[NSSet setWithObject:ip] scrollPosition:NSCollectionViewScrollPositionNone];
+}
+- (void)galleryItemDoubleClicked:(DiskGalleryItem *)item {
+  NSInteger idx = [self.diskGalleryItems indexOfObject:item.file];
+  if (idx == NSNotFound) return;
+  self.diskSelectedIndex = idx;
+  [self diskGalleryDoubleClick:nil];
+}
+- (void)exportAlbumAssetID:(NSString *)assetID completion:(void (^)(NSString *path))completion {
+  PHAsset *asset = [PHAsset fetchAssetsWithLocalIdentifiers:@[assetID] options:nil].firstObject;
+  if (!asset) { completion(nil); return; }
+  PHAssetResource *res = [PHAssetResource assetResourcesForAsset:asset].firstObject;
+  if (!res) { completion(nil); return; }
+  NSString *name = res.originalFilename.length ? res.originalFilename : [assetID stringByAppendingString:@".jpg"];
+  NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"DockLaunchersPreview"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSURL *dst = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:name]];
+  [[PHAssetResourceManager defaultManager] writeDataForAssetResource:res toFile:dst options:nil completionHandler:^(NSError *error) {
+    dispatch_async(dispatch_get_main_queue(), ^{ completion(error ? nil : dst.path); });
+  }];
+}
+
+- (void)previewSelectedDiskFile {
+  if (self.diskSelectedIndex < 0 || self.diskSelectedIndex >= (NSInteger)self.diskGalleryItems.count) return;
+  NSDictionary *item = self.diskGalleryItems[self.diskSelectedIndex];
+  NSString *path = item[@"path"];
+  NSString *assetID = item[@"assetID"];
+  if (!path.length && assetID.length) {
+    __weak typeof(self) weakSelf = self;
+    [self exportAlbumAssetID:assetID completion:^(NSString *exported) {
+      if (!exported.length) return;
+      weakSelf.userFilesPreviewPath = exported;
+      weakSelf.diskPreviewMode = NO;
+      QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
+      panel.dataSource = weakSelf;
+      panel.delegate = weakSelf;
+      [panel makeKeyAndOrderFront:nil];
+      [panel reloadData];
+    }];
+    return;
+  }
+  if (!path) return;
+  self.userFilesPreviewPath = path;
+  self.diskPreviewMode = YES;
+  QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
+  panel.dataSource = self;
+  panel.delegate = self;
+  [panel makeKeyAndOrderFront:nil];
+  [panel reloadData];
+  panel.currentPreviewItemIndex = self.diskSelectedIndex;
+}
+- (void)diskGalleryDoubleClick:(id)sender {
+  NSInteger row = self.diskSelectedIndex;
+  if (row < 0 || row >= (NSInteger)self.diskGalleryItems.count) return;
+  NSDictionary *item = self.diskGalleryItems[row];
+  NSString *path = item[@"path"];
+  NSString *assetID = item[@"assetID"];
+  if (!path.length && assetID.length) {
+    __weak typeof(self) weakSelf = self;
+    [self exportAlbumAssetID:assetID completion:^(NSString *exported) {
+      if (!exported.length) return;
+      [weakSelf showOpenWithForPath:exported];
+    }];
+    return;
+  }
+  if (!path) return;
+  [self showOpenWithForPath:path];
+}
+- (void)showOpenWithForPath:(NSString *)path {
+  NSURL *url = [NSURL fileURLWithPath:path];
+  NSArray *apps = CFBridgingRelease(LSCopyApplicationURLsForURL((__bridge CFURLRef)url, kLSRolesAll));
+  if (!apps.count) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"没有可用于打开该文件的应用";
+    [a runModal];
+    return;
+  }
+  NSAlert *alert = [[NSAlert alloc] init];
+  alert.messageText = @"选择打开方式";
+  alert.informativeText = [NSString stringWithFormat:@"%@", path.lastPathComponent];
+  [alert addButtonWithTitle:@"打开"];
+  [alert addButtonWithTitle:@"取消"];
+  NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 320, 28) pullsDown:NO];
+  [popup addItemWithTitle:@"请选择应用…"];
+  for (NSURL *app in apps) {
+    NSString *name = [[NSFileManager defaultManager] displayNameAtPath:app.path] ?: app.lastPathComponent;
+    [popup addItemWithTitle:name];
+    popup.lastItem.representedObject = app;
+  }
+  popup.frame = NSMakeRect(0, 0, 320, 28);
+  alert.accessoryView = popup;
+  NSModalResponse resp = [alert runModal];
+  if (resp != NSAlertFirstButtonReturn || popup.indexOfSelectedItem <= 0) return;
+  NSURL *appURL = popup.selectedItem.representedObject;
+  if (appURL) [[NSWorkspace sharedWorkspace] openURLs:@[url] withApplicationAtURL:appURL configuration:[NSWorkspaceOpenConfiguration configuration] completionHandler:nil];
+}
+- (void)diskRowDoubleClicked:(id)sender {
+  NSInteger row = self.diskTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.diskFileFiltered.count) return;
+  NSString *path = self.diskFileFiltered[row][@"path"];
+  if (path) [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];
 }
 
 - (void)buildUninstallView {
@@ -2384,17 +5091,18 @@ static BOOL ValidGroupName(NSString *raw) {
   NSTextField *sub = [self label:@"扫描本机应用（全部应用）或仅分组内；已排除本程序自身的 Dock 分组应用" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 550, 18); [v addSubview:sub];
 
-  self.uninstallScopeCtl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(24, 540, 180, 28)];
-  [self.uninstallScopeCtl setSegmentCount:2];
-  [self.uninstallScopeCtl setLabel:@"全部应用" forSegment:0];
-  [self.uninstallScopeCtl setLabel:@"仅分组内" forSegment:1];
-  self.uninstallScopeCtl.selectedSegment = 0;
-  self.uninstallScopeCtl.target = self;
-  self.uninstallScopeCtl.action = @selector(uninstallScopeChanged:);
+  self.uninstallScopeCtl = [[ScopeColorControl alloc] initWithFrame:NSMakeRect(24, 540, 180, 28)
+                                                             title0:@"全部应用" color0:[NSColor systemBlueColor]
+                                                             title1:@"仅分组内" color1:[NSColor systemPurpleColor]
+                                                             target:self action:@selector(uninstallScopeChanged:)];
   [v addSubview:self.uninstallScopeCtl];
   self.uninstallGroupPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(210, 540, 122, 28) pullsDown:NO];
   self.uninstallGroupPopup.target = self;
   self.uninstallGroupPopup.action = @selector(uninstallGroupChanged:);
+  self.uninstallGroupPopup.wantsLayer = YES;
+  self.uninstallGroupPopup.layer.cornerRadius = 7;
+  self.uninstallGroupPopup.layer.backgroundColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.16].CGColor;
+  self.uninstallGroupPopup.contentTintColor = [NSColor systemOrangeColor];
   [v addSubview:self.uninstallGroupPopup];
   self.uninstallSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(340, 540, 196, 28)];
   self.uninstallSearch.placeholderString = @"搜索应用、Bundle ID 或路径";
@@ -2402,14 +5110,16 @@ static BOOL ValidGroupName(NSString *raw) {
   self.uninstallSearch.action = @selector(uninstallFilterChanged:);
   [self.uninstallSearch setContinuous:YES];
   [v addSubview:self.uninstallSearch];
-  NSButton *all = [NSButton buttonWithTitle:@"全选" target:self action:@selector(uninstallSelectAll:)];
-  all.frame = NSMakeRect(544, 540, 50, 30); all.bezelStyle = NSBezelStyleRounded; [v addSubview:all];
-  NSButton *none = [NSButton buttonWithTitle:@"全不选" target:self action:@selector(uninstallSelectNone:)];
-  none.frame = NSMakeRect(596, 540, 56, 30); none.bezelStyle = NSBezelStyleRounded; [v addSubview:none];
-  NSButton *refresh = [NSButton buttonWithTitle:@"刷新" target:self action:@selector(forceRefreshUninstall:)];
-  refresh.keyEquivalent = @"r";
-  refresh.keyEquivalentModifierMask = NSEventModifierFlagCommand;
-  refresh.frame = NSMakeRect(656, 540, 56, 30); refresh.bezelStyle = NSBezelStyleRounded; [v addSubview:refresh];
+  ColorHoverButton *all = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(544, 540, 50, 30)];
+  all.title = @"全选"; all.hoverColor = [NSColor systemOrangeColor]; all.target = self; all.action = @selector(uninstallSelectAll:);
+  [all applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:all];
+  ColorHoverButton *none = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(596, 540, 56, 30)];
+  none.title = @"全不选"; none.hoverColor = [NSColor systemYellowColor]; none.target = self; none.action = @selector(uninstallSelectNone:);
+  [none applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:none];
+  ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(656, 540, 56, 30)];
+  refresh.title = @"刷新"; refresh.hoverColor = [NSColor systemGreenColor]; refresh.target = self; refresh.action = @selector(forceRefreshUninstall:);
+  refresh.keyEquivalent = @"r"; refresh.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+  [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:refresh];
 
   self.letterIndex = [[LetterIndexView alloc] initWithFrame:NSMakeRect(18, 76, 26, 450)];
   self.letterIndex.target = self;
@@ -2419,10 +5129,11 @@ static BOOL ValidGroupName(NSString *raw) {
   sv.hasVerticalScroller = YES;
   sv.drawsBackground = NO;
   self.uninstallTable = [[NSTableView alloc] initWithFrame:NSMakeRect(0,0,710,450)];
+  self.uninstallTable.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance);
   self.uninstallTable.dataSource = self;
   self.uninstallTable.delegate = self;
   self.uninstallTable.rowHeight = 52;
-  self.uninstallTable.usesAlternatingRowBackgroundColors = YES;
+  self.uninstallTable.usesAlternatingRowBackgroundColors = NO;
   NSArray *cols = @[@[@"app", @"应用", @(330)], @[@"group", @"来源", @(120)],
                     @[@"size", @"大小", @(90)], @[@"installed", @"安装日期", @(100)]];
   for (NSArray *c in cols) {
@@ -2443,8 +5154,10 @@ static BOOL ValidGroupName(NSString *raw) {
   self.uninstallFooter = [self label:@"" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   self.uninstallFooter.frame = NSMakeRect(24, 34, 380, 18);
   [v addSubview:self.uninstallFooter];
-  self.uninstallGo = [NSButton buttonWithTitle:@"卸载所选应用" target:self action:@selector(confirmUninstallApps:)];
-  self.uninstallGo.frame = NSMakeRect(580, 26, 120, 32); self.uninstallGo.bezelStyle = NSBezelStyleRounded; [v addSubview:self.uninstallGo];
+  ColorHoverButton *go = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(580, 26, 120, 32)];
+  go.title = @"卸载所选应用"; go.hoverColor = [NSColor systemRedColor]; go.target = self; go.action = @selector(confirmUninstallApps:);
+  [go applyColor:[NSColor systemRedColor] textColor:[NSColor whiteColor]];
+  [v addSubview:go]; self.uninstallGo = go;
   self.uninstallView = v;
 }
 
@@ -2723,6 +5436,15 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)tableView:(NSTableView *)tableView sortDescriptorsDidChange:(NSArray<NSSortDescriptor *> *)oldDescriptors {
+  if (tableView == self.diskTable) {
+    self.diskFileFiltered = [self diskSortedArray:self.diskFileFiltered];
+    [self.diskTable reloadData];
+    if (self.diskTypeSegment.selectedSegment >= 0 && self.diskFileFiltered.count) {
+      NSSortDescriptor *sd = self.diskTable.sortDescriptors.firstObject;
+      self.diskStatus.stringValue = [NSString stringWithFormat:@"%ld 个 · 按%@%@排序", (long)self.diskFileFiltered.count, sd.key ?: @"大小", sd.ascending ? @"升序" : @"降序"];
+    }
+    return;
+  }
   if (tableView != self.uninstallTable) return;
   NSSortDescriptor *sd = tableView.sortDescriptors.firstObject;
   if (!sd) return;
@@ -2747,11 +5469,147 @@ static BOOL ValidGroupName(NSString *raw) {
   [self rebuildLetterIndex];
 }
 
+- (CGFloat)aspectForGalleryFile:(NSDictionary *)file {
+  NSString *path = file[@"path"];
+  if (![file[@"kind"] isEqualToString:@"图片"]) return 16.0/9.0;
+  static NSCache *cache = nil;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ cache = [[NSCache alloc] init]; });
+  NSNumber *cached = [cache objectForKey:path];
+  if (cached) return cached.doubleValue;
+  CGFloat aspect = 16.0/9.0;
+  CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], NULL);
+  if (src) {
+    CFDictionaryRef props = CGImageSourceCopyPropertiesAtIndex(src, 0, NULL);
+    if (props) {
+      NSDictionary *d = CFBridgingRelease(props);
+      double pw = [d[(id)kCGImagePropertyPixelWidth] doubleValue];
+      double ph = [d[(id)kCGImagePropertyPixelHeight] doubleValue];
+      if (pw > 0 && ph > 0) aspect = pw / ph;
+    }
+    CFRelease(src);
+  }
+  aspect = MAX(0.35, MIN(3.5, aspect));
+  [cache setObject:@(aspect) forKey:path];
+  return aspect;
+}
+
+- (NSInteger)collectionView:(NSCollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
+  return self.diskGalleryItems.count;
+}
+- (NSCollectionViewItem *)collectionView:(NSCollectionView *)collectionView itemForRepresentedObjectAtIndexPath:(NSIndexPath *)indexPath {
+  DiskGalleryItem *item = (DiskGalleryItem *)[collectionView makeItemWithIdentifier:@"galleryItem" forIndexPath:indexPath];
+  item.owner = self;
+  if (indexPath.item < (NSInteger)self.diskGalleryItems.count) item.file = self.diskGalleryItems[indexPath.item];
+  return item;
+}
+
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.aiTable) return self.aiVisibleEntries.count;
+  if (tableView == self.diskTable) return self.diskFileFiltered.count;
   if (tableView == self.userFilesTable) return self.userFilesForUninstall.count;
   return self.uninstallFiltered.count;
 }
+- (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row {
+  NSTableRowView *rv = [[NSTableRowView alloc] init];
+  if ([tableView isEqual:self.aiTable] && self.aiSearchField.stringValue.length) {
+    rv.backgroundColor = [[NSColor controlAccentColor] colorWithAlphaComponent:0.10];
+  }
+  return rv;
+}
+
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.aiTable) {
+    if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return nil;
+    NSDictionary *e = self.aiVisibleEntries[row];
+    NSString *ident = col.identifier;
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,52)];
+    if ([ident isEqualToString:@"sel"]) {
+      NSButton *cb = [NSButton checkboxWithTitle:@"" target:self action:@selector(aiRowToggle:)];
+      cb.tag = row; cb.frame = NSMakeRect(4, 17, 18, 18);
+      cb.state = [self.aiSelected containsObject:e[@"name"] ?: @""] ? NSControlStateValueOn : NSControlStateValueOff;
+      [v addSubview:cb];
+    } else if ([ident isEqualToString:@"aiactions"]) {
+      NSArray *titles = @[@"复制", @"备份", @"删除"];
+      NSArray *colors = @[[NSColor systemGreenColor], [NSColor systemBlueColor], [NSColor systemRedColor]];
+      NSArray *sels = @[@"aiCopyRow:", @"aiBackupRow:", @"aiDeleteRow:"];
+      for (NSInteger i = 0; i < 3; i++) {
+        ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(i*42, 14, 40, 26)];
+        b.title = titles[i]; b.hoverColor = colors[i]; b.tag = row;
+        b.target = self; b.action = NSSelectorFromString(sels[i]);
+        [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+        b.font = [NSFont systemFontOfSize:9.5];
+        [v addSubview:b];
+      }
+    } else {
+      NSString *text = @"";
+      if ([ident isEqualToString:@"ainame"]) text = e[@"name"] ?: @"";
+      else if ([ident isEqualToString:@"quota"]) text = e[@"quota"] ?: @"";
+      else if ([ident isEqualToString:@"endpoint"]) text = e[@"endpoint"] ?: @"";
+      else if ([ident isEqualToString:@"note"]) text = e[@"note"] ?: @"";
+      NSTextField *l = [self label:text size:11 bold:([ident isEqualToString:@"ainame"]) color:nil];
+      l.toolTip = text;
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      if ([ident isEqualToString:@"api"]) {
+        NSString *key = e[@"api"] ?: @"";
+        if (![self.aiRevealedNames containsObject:e[@"name"] ?: @""]) key = key.length ? @"••••••••" : @"";
+        l.stringValue = key;
+        l.frame = NSMakeRect(2, 16, col.width-34, 20);
+        NSButton *eye = [[NSButton alloc] initWithFrame:NSMakeRect(col.width-30, 14, 26, 26)];
+        eye.bordered = NO;
+        BOOL revealed = [self.aiRevealedNames containsObject:e[@"name"] ?: @""];
+        NSImage *icon = [NSImage imageWithSystemSymbolName:(revealed ? @"eye.slash" : @"eye") accessibilityDescription:@"显示 API Key"];
+        eye.image = icon;
+        eye.contentTintColor = [NSColor secondaryLabelColor];
+        eye.toolTip = revealed ? @"隐藏 API Key" : @"显示 API Key（需要管理员密码）";
+        eye.tag = row;
+        eye.target = self;
+        eye.action = @selector(aiToggleReveal:);
+        [v addSubview:eye];
+      } else {
+        l.frame = NSMakeRect(2, 16, col.width-6, 20);
+      }
+      [self applyAISearchHighlight:l text:text baseColor:l.textColor];
+      if ([ident isEqualToString:@"ainame"]) {
+        NSString *url = e[@"endpoint"] ?: @"";
+        if (url.length) {
+          l.toolTip = @"双击打开登录 / 获取 API Key 页面";
+          NSClickGestureRecognizer *g = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(aiEndpointDoubleClicked:)];
+          g.numberOfClicksRequired = 2;
+          [l addGestureRecognizer:g];
+          objc_setAssociatedObject(l, "AILinkURL", url, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+      }
+      if ([ident isEqualToString:@"endpoint"]) {
+        l.textColor = [NSColor controlAccentColor];
+        l.toolTip = @"双击直接打开该链接";
+        NSClickGestureRecognizer *g = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(aiEndpointDoubleClicked:)];
+        g.numberOfClicksRequired = 2;
+        [l addGestureRecognizer:g];
+        objc_setAssociatedObject(l, "AILinkURL", text, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+      }
+      [v addSubview:l];
+    }
+    return v;
+  }
+  if (tableView == self.diskTable) {
+    if (row < 0 || row >= (NSInteger)self.diskFileFiltered.count) return nil;
+    NSDictionary *d = self.diskFileFiltered[row];
+    NSString *ident = col.identifier;
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,24)];
+    NSTextField *l = nil;
+    if ([ident isEqualToString:@"name"]) l = [self label:d[@"name"] size:11.5 bold:NO color:nil];
+    else if ([ident isEqualToString:@"size"]) l = [self label:[self fmtSize:[d[@"size"] unsignedLongLongValue]] size:11 bold:NO color:nil];
+    else if ([ident isEqualToString:@"kind"]) l = [self label:d[@"kind"] size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    else if ([ident isEqualToString:@"date"]) {
+      NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyy/MM/dd HH:mm";
+      l = [self label:[df stringFromDate:d[@"date"] ?: [NSDate date]] size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    }
+    else if ([ident isEqualToString:@"path"]) l = [self label:d[@"path"] size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    l.frame = NSMakeRect(2, 3, col.width-6, 18);
+    [v addSubview:l];
+    return v;
+  }
   if (tableView == self.userFilesTable) {
     if (row < 0 || row >= (NSInteger)self.userFilesForUninstall.count) return nil;
     NSDictionary *d = self.userFilesForUninstall[row];
@@ -2985,8 +5843,12 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 - (void)toggleActivityRecorder:(id)sender {
   BOOL on = (self.activityCheck.state == NSControlStateValueOn);
+  if (on && ![self confirmPermissionAction:@"开启后会监听应用保存文件的活动，可能涉及文件访问权限。是否继续？"]) {
+    self.activityCheck.state = NSControlStateValueOff; return;
+  }
   [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerFileActivity"];
   if (on) [self startActivityRecorder]; else [self stopActivityRecorder];
+  [self showToast:on ? @"已开始记录应用保存的文件" : @"已停止记录文件活动"];
 }
 
 - (NSArray<NSString *> *)recordedFilesForBids:(NSSet<NSString *> *)bids {
@@ -3033,7 +5895,7 @@ static BOOL ValidGroupName(NSString *raw) {
         if ([key isKindOfClass:[NSString class]] && [val isKindOfClass:[NSString class]]) {
           NSString *str = val;
           BOOL isDir = NO;
-          if ([str hasPrefix:@"/"] && [[NSFileManager defaultManager] fileExistsAtPath:str isDirectory:&isDir] && isDir) {
+          if ([str hasPrefix:@"/"] && ![self isProtectedUserPath:str] && [[NSFileManager defaultManager] fileExistsAtPath:str isDirectory:&isDir] && isDir) {
             if ([str containsString:@"/Documents"] || [str containsString:@"/Downloads"] || [str containsString:@"/Desktop"] || [str containsString:@"/Pictures"] || [str containsString:@"/Movies"] || [str containsString:@"/Music"] || [str containsString:@"/Users/"]) {
               [roots addObject:str];
             }
@@ -3042,6 +5904,7 @@ static BOOL ValidGroupName(NSString *raw) {
       }
     }
     for (NSString *root in roots) {
+      if ([self isProtectedUserPath:root]) continue;
       if (![fm fileExistsAtPath:root]) continue;
       NSDirectoryEnumerator *en = [fm enumeratorAtPath:root];
       for (NSString *rel in en) {
@@ -3170,6 +6033,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.userFilesForUninstall[row][@"path"]]]];
 }
 - (void)previewUserFile {
+  self.diskPreviewMode = NO;
   NSInteger row = self.userFilesTable.selectedRow;
   if (row < 0 || row >= (NSInteger)self.userFilesForUninstall.count) return;
   self.userFilesPreviewPath = self.userFilesForUninstall[row][@"path"];
@@ -3180,9 +6044,13 @@ static BOOL ValidGroupName(NSString *raw) {
   [panel reloadData];
 }
 - (NSInteger)numberOfPreviewItemsInPreviewPanel:(QLPreviewPanel *)panel {
+  if (self.diskPreviewMode) return self.diskGalleryItems.count;
   return self.userFilesPreviewPath.length ? 1 : 0;
 }
 - (id<QLPreviewItem>)previewPanel:(QLPreviewPanel *)panel previewItemAtIndex:(NSInteger)index {
+  if (self.diskPreviewMode && index >= 0 && index < (NSInteger)self.diskGalleryItems.count) {
+    return [NSURL fileURLWithPath:self.diskGalleryItems[index][@"path"]];
+  }
   return [NSURL fileURLWithPath:self.userFilesPreviewPath ?: @"/"];
 }
 
@@ -3228,6 +6096,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(10, 50, 740, 320)];
   sv.hasVerticalScroller = YES;
   NSTableView *table = [[NSTableView alloc] initWithFrame:NSMakeRect(0,0,740,320)];
+  table.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance);
   table.dataSource = self;
   table.delegate = self;
   table.rowHeight = 26;
@@ -3428,59 +6297,195 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 // ---------------- 设置 ----------------
+- (void)showToast:(NSString *)msg {
+  if (!self.window.contentView) return;
+  for (NSView *sv in [self.window.contentView.subviews copy]) {
+    if ([sv.identifier isEqualToString:@"DLToast"]) [sv removeFromSuperview];
+  }
+  NSView *toast = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 320, 36)];
+  toast.identifier = @"DLToast";
+  toast.wantsLayer = YES;
+  toast.layer.cornerRadius = 10;
+  toast.layer.backgroundColor = [[NSColor labelColor] colorWithAlphaComponent:0.86].CGColor;
+  NSTextField *l = [self label:msg size:12.5 bold:YES color:[NSColor whiteColor]];
+  l.alignment = NSTextAlignmentCenter;
+  l.frame = NSMakeRect(8, 8, 304, 20);
+  [toast addSubview:l];
+  NSView *cv = self.window.contentView;
+  toast.frame = NSMakeRect((cv.bounds.size.width - 320)/2.0, 22, 320, 36);
+  [cv addSubview:toast];
+  toast.alphaValue = 0;
+  [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+    ctx.duration = 0.18;
+    toast.animator.alphaValue = 1;
+  } completionHandler:^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+        ctx.duration = 0.25;
+        toast.animator.alphaValue = 0;
+      } completionHandler:^{ [toast removeFromSuperview]; }];
+    });
+  }];
+}
+
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"设置" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
+  NSTextField *sub = [self label:@"常用、同步、相册与磁盘相关选项集中管理" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  sub.frame = NSMakeRect(24, 584, 500, 18); [v addSubview:sub];
 
-  NSView *card = [self cardAt:NSMakeRect(24, 360, 700, 240)];
-  [v addSubview:card];
-  self.menuBarCheck = [NSButton checkboxWithTitle:@"在菜单栏显示 CPU / 内存数字" target:self action:@selector(toggleMenuBarText:)];
-  self.menuBarCheck.state = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerMenuText"] ? ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerMenuText"] ? NSControlStateValueOn : NSControlStateValueOff) : NSControlStateValueOn;
-  self.menuBarCheck.frame = NSMakeRect(20, 208, 400, 24); [card addSubview:self.menuBarCheck];
-  NSTextField *il = [self label:@"采样间隔" size:13 bold:NO color:nil];
-  il.frame = NSMakeRect(20, 168, 100, 20); [card addSubview:il];
-  self.intervalPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(120, 162, 140, 28) pullsDown:NO];
+  NSView *c1 = [self cardAt:NSMakeRect(24, 430, 700, 150)]; [v addSubview:c1];
+  NSTextField *t1 = [self label:@"常规" size:13 bold:YES color:nil]; t1.frame = NSMakeRect(20, 116, 200, 20); [c1 addSubview:t1];
+  NSTextField *themeLabel = [self label:@"显示主题" size:12.5 bold:NO color:nil];
+  themeLabel.frame = NSMakeRect(320, 116, 70, 20); [c1 addSubview:themeLabel];
+  self.themePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(392, 110, 110, 28) pullsDown:NO];
+  [self.themePopup addItemsWithTitles:@[@"跟随系统", @"亮色", @"暗色"]];
+  NSInteger tv = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerTheme"];
+  [self.themePopup selectItemAtIndex:(tv >= 0 && tv <= 2 ? tv : 0)];
+  self.themePopup.target = self; self.themePopup.action = @selector(themeChanged:);
+  self.themePopup.toolTip = @"切换控制台整体外观：跟随系统 / 亮色 / 暗色";
+  [c1 addSubview:self.themePopup];
+  NSTextField *zoomLabel = [self label:@"界面缩放" size:12.5 bold:NO color:nil];
+  zoomLabel.frame = NSMakeRect(510, 116, 70, 20); [c1 addSubview:zoomLabel];
+  NSPopUpButton *zoomPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(582, 110, 110, 28) pullsDown:NO];
+  [zoomPopup addItemsWithTitles:@[@"100%", @"110%", @"120%", @"135%", @"150%", @"175%"]];
+  [zoomPopup selectItemAtIndex:0];
+  zoomPopup.target = self; zoomPopup.action = @selector(uiZoomChanged:);
+  zoomPopup.toolTip = @"放大或缩小整个页面的文字和控件";
+  [c1 addSubview:zoomPopup];
+  self.menuBarCheck = [NSButton checkboxWithTitle:@"菜单栏仅显示图标（文字已移除）" target:nil action:nil];
+  self.menuBarCheck.state = NSControlStateValueOff;
+  self.menuBarCheck.enabled = NO;
+  self.menuBarCheck.frame = NSMakeRect(20, 82, 520, 24); self.menuBarCheck.toolTip = @"菜单栏不再显示 CPU / 内存数字"; [c1 addSubview:self.menuBarCheck];
+  NSTextField *il = [self label:@"采样间隔" size:12.5 bold:NO color:nil];
+  il.frame = NSMakeRect(20, 44, 90, 20); [c1 addSubview:il];
+  self.intervalPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(112, 38, 140, 28) pullsDown:NO];
   [self.intervalPopup addItemsWithTitles:@[@"1 秒", @"2 秒", @"5 秒", @"10 秒"]];
   NSInteger saved = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerInterval"];
   NSArray *secs = @[@1,@2,@5,@10];
   NSInteger sel = [secs indexOfObject:@(saved)];
   [self.intervalPopup selectItemAtIndex:(sel == NSNotFound ? 1 : sel)];
-  self.intervalPopup.target = self; self.intervalPopup.action = @selector(intervalChanged:);
-  [card addSubview:self.intervalPopup];
+  self.intervalPopup.target = self; self.intervalPopup.action = @selector(intervalChanged:); self.intervalPopup.toolTip = @"实时数据刷新间隔，越短越及时但更耗电";
+  [c1 addSubview:self.intervalPopup];
+  self.loginCheck = [NSButton checkboxWithTitle:@"开机自动启动控制台" target:self action:@selector(toggleLoginItem:)];
+  self.loginCheck.state = [[NSFileManager defaultManager] fileExistsAtPath:[self loginPlistPath]] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.loginCheck.frame = NSMakeRect(20, 8, 520, 24); self.loginCheck.toolTip = @"登录 macOS 时自动启动控制台"; [c1 addSubview:self.loginCheck];
 
+  NSView *c2 = [self cardAt:NSMakeRect(24, 270, 700, 146)]; [v addSubview:c2];
+  NSTextField *t2 = [self label:@"同步与文件" size:13 bold:YES color:nil]; t2.frame = NSMakeRect(20, 112, 220, 20); [c2 addSubview:t2];
   self.autoSyncCheck = [NSButton checkboxWithTitle:@"自动同步（外部卸载应用后清理分组）" target:self action:@selector(toggleAutoSync:)];
   id autoSyncVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerAutoSync"];
   self.autoSyncCheck.state = (autoSyncVal ? [autoSyncVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
-  self.autoSyncCheck.frame = NSMakeRect(20, 90, 420, 24); [card addSubview:self.autoSyncCheck];
-  self.loginCheck = [NSButton checkboxWithTitle:@"开机自动启动控制台" target:self action:@selector(toggleLoginItem:)];
-  self.loginCheck.state = [[NSFileManager defaultManager] fileExistsAtPath:[self loginPlistPath]] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.loginCheck.frame = NSMakeRect(20, 128, 400, 24); [card addSubview:self.loginCheck];
-
-  self.activityCheck = [NSButton checkboxWithTitle:@"记录应用保存的文件（卸载候选，默认关）" target:self action:@selector(toggleActivityRecorder:)];
+  self.autoSyncCheck.frame = NSMakeRect(20, 78, 560, 24); self.autoSyncCheck.toolTip = @"应用被卸载后自动清理分组中的失效条目"; [c2 addSubview:self.autoSyncCheck];
+  self.activityCheck = [NSButton checkboxWithTitle:@"记录应用保存的文件（卸载候选）" target:self action:@selector(toggleActivityRecorder:)];
   self.activityCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerFileActivity"] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.activityCheck.frame = NSMakeRect(20, 52, 500, 24); [card addSubview:self.activityCheck];
-  self.protectedDirsCheck = [NSButton checkboxWithTitle:@"扫描受保护目录（文档 / 下载 / 桌面，默认关）" target:self action:@selector(toggleProtectedDirs:)];
-  id pd = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerScanProtectedDirs"];
-  self.protectedDirsCheck.state = (pd ? [pd boolValue] : NO) ? NSControlStateValueOn : NSControlStateValueOff;
-  self.protectedDirsCheck.frame = NSMakeRect(20, 18, 520, 24);
-  [card addSubview:self.protectedDirsCheck];
-  NSButton *openGrp = [NSButton buttonWithTitle:@"打开分组文件夹" target:self action:@selector(openGroupsFolder:)];
-  openGrp.frame = NSMakeRect(24, 300, 160, 34); openGrp.bezelStyle = NSBezelStyleRounded; [v addSubview:openGrp];
-  NSButton *remember = [NSButton buttonWithTitle:@"管理已记住的保存目录…" target:self action:@selector(showRememberedSaveDirs:)];
-  remember.frame = NSMakeRect(24, 250, 220, 34); remember.bezelStyle = NSBezelStyleRounded; [v addSubview:remember];
-  NSButton *quit = [NSButton buttonWithTitle:@"退出控制台" target:self action:@selector(quitApp:)];
-  quit.frame = NSMakeRect(196, 300, 140, 34); quit.bezelStyle = NSBezelStyleRounded; [v addSubview:quit];
+  self.activityCheck.frame = NSMakeRect(20, 44, 560, 24); self.activityCheck.toolTip = @"记录应用保存文件的位置，卸载时作为清理候选"; [c2 addSubview:self.activityCheck];
+  self.protectedDirsCheck = [NSButton checkboxWithTitle:@"扫描受保护目录（已禁用：避免重复授权弹窗）" target:self action:nil];
+  self.protectedDirsCheck.state = NSControlStateValueOff;
+  self.protectedDirsCheck.enabled = NO;
+  self.protectedDirsCheck.frame = NSMakeRect(20, 10, 560, 24); self.protectedDirsCheck.toolTip = @"为彻底避免系统授权弹窗，已禁用文档 / 下载 / 桌面扫描"; [c2 addSubview:self.protectedDirsCheck];
 
-  NSTextField *about = [self label:@"DockLaunchers 控制台 · 菜单栏常驻\nDock 分组启动器与卸载管理" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  about.frame = NSMakeRect(24, 120, 600, 40); about.maximumNumberOfLines = 2;
-  [v addSubview:about];
+  NSView *c3 = [self cardAt:NSMakeRect(24, 112, 700, 154)]; [v addSubview:c3];
+  NSTextField *t3 = [self label:@"相册与磁盘" size:13 bold:YES color:nil]; t3.frame = NSMakeRect(20, 102, 220, 20); [c3 addSubview:t3];
+  self.albumModeCheck = [NSButton checkboxWithTitle:@"相册使用完整图库（首次需授权）" target:self action:@selector(toggleAlbumMode:)];
+  self.albumModeCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAlbumFullLibrary"] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.albumModeCheck.frame = NSMakeRect(20, 68, 600, 24); self.albumModeCheck.toolTip = @"使用照片图库读取全部资源，首次需授权；关闭只读本机原文件"; [c3 addSubview:self.albumModeCheck];
+  self.mediaModeCheck = [NSButton checkboxWithTitle:@"包含个人媒体目录（音乐 / 影片 / 用户资源库，会授权）" target:self action:@selector(togglePersonalMedia:)];
+  self.mediaModeCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerScanPersonalMedia"] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.mediaModeCheck.frame = NSMakeRect(20, 34, 620, 24); self.mediaModeCheck.toolTip = @"扫描音乐 / 影片 / 用户资源库，会触发系统隐私授权"; [c3 addSubview:self.mediaModeCheck];
+  NSButton *removable = [NSButton buttonWithTitle:@"可移除宗卷权限…" target:self action:@selector(showRemovableVolumeHelp:)];
+  removable.frame = NSMakeRect(20, 4, 170, 24);
+  removable.toolTip = @"外部磁盘扫描需要允许访问「可移除宗卷」，点击查看开启方法";
+  [c3 addSubview:removable];
+  ColorHoverButton *fullDisk = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(200, 4, 200, 24)];
+  fullDisk.title = @"完全磁盘访问权限…"; fullDisk.hoverColor = [NSColor systemPurpleColor];
+  fullDisk.target = self; fullDisk.action = @selector(showFullDiskAccessHelp:);
+  fullDisk.toolTip = @"最高权限读取本机存储，需要到系统设置的「完全磁盘访问权限」中手动开启";
+  [fullDisk applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [c3 addSubview:fullDisk];
+
+  ColorHoverButton *about = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 24, 90, 32)];
+  about.title = @"关于"; about.hoverColor = [NSColor systemGreenColor];
+  about.target = self; about.action = @selector(showAbout:);
+  about.toolTip = @"查看版本和项目信息"; [v addSubview:about];
+
+  ColorHoverButton *openGrp = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(161, 24, 150, 32)];
+  openGrp.title = @"打开分组文件夹"; openGrp.hoverColor = [NSColor systemBlueColor];
+  openGrp.target = self; openGrp.action = @selector(openGroupsFolder:);
+  openGrp.toolTip = @"在 Finder 中打开分组 App 所在的文件夹"; [v addSubview:openGrp];
+
+  ColorHoverButton *remember = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(357, 24, 210, 32)];
+  remember.title = @"管理已记住的保存目录…"; remember.hoverColor = [NSColor systemYellowColor];
+  remember.target = self; remember.action = @selector(showRememberedSaveDirs:);
+  remember.toolTip = @"管理卸载时记住的应用保存目录"; [v addSubview:remember];
+
+  ColorHoverButton *quit = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(614, 24, 110, 32)];
+  quit.title = @"退出控制台"; quit.hoverColor = [NSColor systemRedColor];
+  quit.target = self; quit.action = @selector(quitApp:);
+  quit.toolTip = @"退出控制台，不会删除分组和数据"; [v addSubview:quit];
+  [about applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [openGrp applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [remember applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [quit applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+
   self.settingsView = v;
+}
+- (void)applyAppearanceRecursively:(NSView *)view appearance:(NSAppearance *)ap {
+  if (!view) return;
+  if ([view.identifier isEqualToString:@"MetricCard"]) {
+    view.layer.backgroundColor = CardBackgroundForAppearance(ap).CGColor;
+    view.layer.borderColor = CardBorderForAppearance(ap).CGColor;
+  }
+  if ([view.identifier isEqualToString:@"DLCard"]) {
+    view.layer.backgroundColor = CardBackgroundForAppearance(ap).CGColor;
+    view.layer.borderColor = CardBorderForAppearance(ap).CGColor;
+  }
+  view.needsDisplay = YES;
+  for (NSView *sub in view.subviews) [self applyAppearanceRecursively:sub appearance:ap];
+}
+
+- (void)applyThemeFromDefaults {
+  NSInteger tv = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerTheme"];
+  NSAppearance *ap = nil;
+  if (tv == 1) ap = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+  else if (tv == 2) ap = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+  NSApp.appearance = ap;
+  self.window.appearance = ap;
+  [self applyAppearanceRecursively:self.window.contentView appearance:ap];
+  if (self.popover.contentViewController.view) [self applyAppearanceRecursively:self.popover.contentViewController.view appearance:ap];
+  [self refreshThemeColors];
+}
+
+- (void)refreshThemeColors {
+  self.window.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance);
+  if (self.contentScroll) self.contentScroll.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance);
+  if (self.content) self.content.layer.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance).CGColor;
+  if (self.sideView) self.sideView.layer.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance).CGColor;
+  if (self.statusItem.button) self.statusItem.button.contentTintColor = [NSColor labelColor];
+}
+
+- (void)uiZoomChanged:(NSPopUpButton *)sender {
+  NSArray *vals = @[@1.0, @1.1, @1.2, @1.35, @1.5, @1.75];
+  NSInteger idx = sender.indexOfSelectedItem;
+  self.uiZoom = idx >= 0 && idx < (NSInteger)vals.count ? [vals[idx] doubleValue] : 1.2;
+  [self layoutPageView:self.content.subviews.firstObject];
+  [self showToast:[NSString stringWithFormat:@"界面缩放：%@", sender.titleOfSelectedItem]];
+}
+
+- (void)themeChanged:(id)sender {
+  NSInteger tv = self.themePopup.indexOfSelectedItem;
+  [[NSUserDefaults standardUserDefaults] setInteger:tv forKey:@"centerTheme"];
+  [self applyThemeFromDefaults];
+  NSArray *names = @[@"跟随系统", @"亮色", @"暗色"];
+  [self showToast:[NSString stringWithFormat:@"显示主题：%@", names[tv]]];
 }
 
 - (void)toggleMenuBarText:(id)sender {
-  [[NSUserDefaults standardUserDefaults] setBool:(self.menuBarCheck.state == NSControlStateValueOn) forKey:@"centerMenuText"];
+  BOOL on = (self.menuBarCheck.state == NSControlStateValueOn);
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerMenuText"];
   [self sample];
+  [self showToast:on ? @"菜单栏数字已开启" : @"菜单栏数字已隐藏"];
 }
 
 - (void)intervalChanged:(id)sender {
@@ -3490,6 +6495,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [[NSUserDefaults standardUserDefaults] setInteger:s forKey:@"centerInterval"];
   [self.timer invalidate];
   self.timer = [NSTimer scheduledTimerWithTimeInterval:s target:self selector:@selector(sample) userInfo:nil repeats:YES];
+  [self showToast:[NSString stringWithFormat:@"采样间隔已设为 %ld 秒", (long)s]];
 }
 
 - (NSString *)loginPlistPath { return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/LaunchAgents/com.docklaunchers.center.plist"]; }
@@ -3510,7 +6516,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSDictionary *pl = @{@"Label": @"com.docklaunchers.center",
                          @"ProgramArguments": @[exe],
                          @"RunAtLoad": @YES,
-                         @"KeepAlive": @YES};
+                         @"KeepAlive": @NO};
     [pl writeToFile:path atomically:YES];
     NSTask *t = [[NSTask alloc] init];
     t.launchPath = @"/bin/launchctl";
@@ -3523,6 +6529,7 @@ static BOOL ValidGroupName(NSString *raw) {
     @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
     [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
   }
+  [self showToast:(self.loginCheck.state == NSControlStateValueOn ? @"已开启开机自启" : @"已关闭开机自启")];
 }
 
 - (void)quitApp:(id)sender { [self unloadLoginAgent]; [NSApp terminate:nil]; }
@@ -3532,29 +6539,377 @@ static BOOL ValidGroupName(NSString *raw) {
   pop.behavior = NSPopoverBehaviorTransient;
   self.popover = pop;
   NSViewController *vc = [[NSViewController alloc] init];
-  NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0,0,360,460)];
+  NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0,0,420,620)];
   vc.view = root;
 
-  NSTextField *title = [self label:@"DockLaunchers" size:15 bold:YES color:nil];
-  title.frame = NSMakeRect(16, 424, 200, 20); [root addSubview:title];
-  self.quickCPU = [self label:@"CPU --" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  self.quickCPU.frame = NSMakeRect(16, 400, 100, 18); [root addSubview:self.quickCPU];
-  self.quickMem = [self label:@"内存 --" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  self.quickMem.frame = NSMakeRect(130, 400, 100, 18); [root addSubview:self.quickMem];
-  self.quickBat = [self label:@"电池 --" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  self.quickBat.frame = NSMakeRect(244, 400, 110, 18); [root addSubview:self.quickBat];
+  self.quickTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(12, 574, 396, 28)];
+  self.quickTabs.segmentCount = 9;
+  NSArray *tabs = @[@"概览", @"分组", @"AI", @"CPU", @"GPU", @"内存", @"磁盘", @"网络", @"电源"];
+  for (NSInteger i = 0; i < tabs.count; i++) [self.quickTabs setLabel:tabs[i] forSegment:i];
+  self.quickTabs.controlSize = NSControlSizeSmall;
+  self.quickTabs.trackingMode = NSSegmentSwitchTrackingSelectOne;
+  self.quickTabs.selectedSegment = 0;
+  self.quickTabs.target = self;
+  self.quickTabs.action = @selector(quickTabChanged:);
+  [root addSubview:self.quickTabs];
 
-  NSTextField *gl = [self label:@"分组快捷启动" size:11 bold:YES color:nil];
-  gl.frame = NSMakeRect(16, 372, 200, 18); [root addSubview:gl];
-  self.quickGroups = [[NSView alloc] initWithFrame:NSMakeRect(10, 110, 340, 258)];
-  [root addSubview:self.quickGroups];
+  NSView *ov = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
+  self.quickOverview = ov;
+  [root addSubview:ov];
 
-  NSButton *open = [NSButton buttonWithTitle:@"打开控制台" target:self action:@selector(openConsoleFromPopover:)];
-  open.frame = NSMakeRect(16, 60, 150, 32); open.bezelStyle = NSBezelStyleRounded; [root addSubview:open];
-  NSButton *quit = [NSButton buttonWithTitle:@"退出" target:self action:@selector(quitFromPopover:)];
-  quit.frame = NSMakeRect(270, 60, 74, 32); quit.bezelStyle = NSBezelStyleRounded; [root addSubview:quit];
+  NSView *cpuCard = [self cardAt:NSMakeRect(12, 388, 192, 132)];
+  [ov addSubview:cpuCard];
+  NSTextField *ct = [self label:@"CPU ›" size:12 bold:YES color:nil]; ct.frame = NSMakeRect(14, 106, 90, 18); [cpuCard addSubview:ct];
+  self.quickCPU = [self label:@"--" size:22 bold:NO color:nil];
+  self.quickCPU.alignment = NSTextAlignmentRight; self.quickCPU.frame = NSMakeRect(100, 100, 78, 28); [cpuCard addSubview:self.quickCPU];
+  self.quickCPUSub = [self label:@"实时处理器占用" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; self.quickCPUSub.frame = NSMakeRect(14, 12, 164, 16); [cpuCard addSubview:self.quickCPUSub];
+  self.quickCPUSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(14, 34, 164, 56)];
+  self.quickCPUSpark.lineColor = [NSColor systemOrangeColor]; [cpuCard addSubview:self.quickCPUSpark];
+
+  NSView *gpuCard = [self cardAt:NSMakeRect(216, 388, 192, 132)];
+  [ov addSubview:gpuCard];
+  NSTextField *gt = [self label:@"GPU ›" size:12 bold:YES color:nil]; gt.frame = NSMakeRect(14, 106, 90, 18); [gpuCard addSubview:gt];
+  self.quickGPU = [self label:@"--" size:22 bold:NO color:nil];
+  self.quickGPU.alignment = NSTextAlignmentRight; self.quickGPU.frame = NSMakeRect(100, 100, 78, 28); [gpuCard addSubview:self.quickGPU];
+  self.quickGPUSub = [self label:@"图形处理器" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; self.quickGPUSub.frame = NSMakeRect(14, 12, 164, 16); [gpuCard addSubview:self.quickGPUSub];
+  self.quickGPUSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(14, 34, 164, 56)];
+  self.quickGPUSpark.lineColor = [NSColor systemTealColor]; [gpuCard addSubview:self.quickGPUSpark];
+
+  NSView *memCard = [self cardAt:NSMakeRect(12, 258, 396, 118)];
+  [ov addSubview:memCard];
+  NSTextField *mt = [self label:@"内存 ›" size:12 bold:YES color:nil]; mt.frame = NSMakeRect(14, 92, 90, 18); [memCard addSubview:mt];
+  self.quickMem = [self label:@"--" size:22 bold:NO color:nil];
+  self.quickMem.alignment = NSTextAlignmentRight; self.quickMem.frame = NSMakeRect(300, 86, 80, 28); [memCard addSubview:self.quickMem];
+  self.quickMemBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(14, 68, 366, 8)];
+  self.quickMemBar.barColor = [NSColor systemOrangeColor]; [memCard addSubview:self.quickMemBar];
+  self.quickMemSub = [self label:@"--" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; self.quickMemSub.frame = NSMakeRect(14, 40, 366, 16); [memCard addSubview:self.quickMemSub];
+
+  NSView *diskCard = [self cardAt:NSMakeRect(12, 140, 396, 106)];
+  [ov addSubview:diskCard];
+  NSTextField *dt = [self label:@"磁盘 › 系统盘" size:12 bold:YES color:nil]; dt.frame = NSMakeRect(14, 80, 160, 18); [diskCard addSubview:dt];
+  self.quickDisk = [self label:@"--" size:22 bold:NO color:nil];
+  self.quickDisk.alignment = NSTextAlignmentRight; self.quickDisk.frame = NSMakeRect(300, 74, 80, 28); [diskCard addSubview:self.quickDisk];
+  self.quickDiskBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(14, 56, 366, 8)];
+  self.quickDiskBar.barColor = [NSColor systemBlueColor]; [diskCard addSubview:self.quickDiskBar];
+  self.quickDiskSub = [self label:@"--" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; self.quickDiskSub.frame = NSMakeRect(14, 28, 366, 16); [diskCard addSubview:self.quickDiskSub];
+
+  NSView *netCard = [self cardAt:NSMakeRect(12, 20, 396, 108)];
+  [ov addSubview:netCard];
+  NSTextField *nt = [self label:@"网络 ›" size:12 bold:YES color:nil]; nt.frame = NSMakeRect(14, 82, 80, 18); [netCard addSubview:nt];
+  self.quickNet = [self label:@"--" size:11.5 bold:NO color:nil];
+  self.quickNet.alignment = NSTextAlignmentRight; self.quickNet.frame = NSMakeRect(90, 82, 290, 18); [netCard addSubview:self.quickNet];
+  self.quickNetSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(14, 34, 366, 40)];
+  self.quickNetSpark.lineColor = [NSColor systemOrangeColor]; [netCard addSubview:self.quickNetSpark];
+  self.quickNetSub = [self label:@"最近一分钟" size:9 bold:NO color:[NSColor tertiaryLabelColor]]; self.quickNetSub.frame = NSMakeRect(14, 12, 366, 14); [netCard addSubview:self.quickNetSub];
+
+  NSView *groupPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
+  groupPage.hidden = YES; self.quickGroupPage = groupPage; [root addSubview:groupPage];
+  NSTextField *gtitle = [self label:@"Dock 栏分组" size:18 bold:YES color:nil];
+  gtitle.frame = NSMakeRect(16, 480, 250, 26); [groupPage addSubview:gtitle];
+  self.quickGroupContainer = [[NSView alloc] initWithFrame:NSMakeRect(10, 10, 400, 462)];
+  [groupPage addSubview:self.quickGroupContainer];
+
+  NSView *aiPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
+  aiPage.hidden = YES; self.quickAIPage = aiPage; [root addSubview:aiPage];
+  NSTextField *atitle = [self label:@"AI 管理" size:18 bold:YES color:nil];
+  atitle.frame = NSMakeRect(16, 480, 250, 26); [aiPage addSubview:atitle];
+  NSTextField *aempty = [self label:@"AI 管理暂未开放" size:13 bold:NO color:[NSColor tertiaryLabelColor]];
+  aempty.alignment = NSTextAlignmentCenter;
+  aempty.frame = NSMakeRect(16, 240, 388, 24); [aiPage addSubview:aempty];
+
+  NSView *detail = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
+  detail.hidden = YES; self.quickDetail = detail; [root addSubview:detail];
+  self.quickDetailTitle = [self label:@"" size:18 bold:YES color:nil];
+  self.quickDetailTitle.frame = NSMakeRect(24, 430, 370, 30); [detail addSubview:self.quickDetailTitle];
+  self.quickDetailValue = [self label:@"" size:44 bold:YES color:[NSColor systemOrangeColor]];
+  self.quickDetailValue.frame = NSMakeRect(24, 350, 370, 60); [detail addSubview:self.quickDetailValue];
+  self.quickDetailSub = [self label:@"" size:12 bold:NO color:[NSColor secondaryLabelColor]];
+  self.quickDetailSub.frame = NSMakeRect(24, 318, 370, 20); [detail addSubview:self.quickDetailSub];
+  self.quickDetailChart = [[Sparkline alloc] initWithFrame:NSMakeRect(24, 150, 372, 140)];
+  self.quickDetailChart.lineColor = [NSColor systemOrangeColor]; [detail addSubview:self.quickDetailChart];
+  self.quickDetailBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(24, 130, 372, 10)];
+  self.quickDetailBar.barColor = [NSColor systemOrangeColor]; [detail addSubview:self.quickDetailBar];
+  self.quickDetailExtra = [self label:@"" size:12 bold:NO color:[NSColor secondaryLabelColor]];
+  self.quickDetailExtra.maximumNumberOfLines = 5;
+  self.quickDetailExtra.frame = NSMakeRect(24, 30, 372, 88); [detail addSubview:self.quickDetailExtra];
+
+  ColorHoverButton *settings = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 6, 70, 28)];
+  settings.title = @"退出"; settings.hoverColor = [NSColor systemGreenColor];
+  settings.target = self; settings.action = @selector(closePopover:);
+  settings.toolTip = @"关闭菜单栏面板，不退出应用";
+  [settings applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [root addSubview:settings];
+  ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(146, 6, 128, 28)];
+  open.title = @"打开控制台"; open.hoverColor = [NSColor systemGreenColor];
+  open.target = self; open.action = @selector(openConsoleFromPopover:);
+  [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [root addSubview:open];
+  ColorHoverButton *quit = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(338, 6, 70, 28)];
+  quit.title = @"刷新"; quit.hoverColor = [NSColor systemGreenColor];
+  quit.target = self; quit.action = @selector(refreshPopover:);
+  quit.toolTip = @"刷新菜单栏数据";
+  [quit applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [root addSubview:quit];
 
   pop.contentViewController = vc;
+  pop.contentSize = NSMakeSize(420, 620);
+}
+
+- (void)syncAIQuotaAtIndex:(NSInteger)idx completion:(void (^)(NSString *quota))completion {
+  if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) { if (completion) completion(nil); return; }
+  NSDictionary *e = self.aiEntries[idx];
+  NSString *provider = [self quotaProviderKeyForEntry:e];
+  NSString *apiKey = e[@"api"] ?: @"";
+  if (!provider || !apiKey.length) { if (completion) completion(nil); return; }
+  NSString *url = nil;
+  if ([provider isEqualToString:@"deepseek"]) url = @"https://api.deepseek.com/user/balance";
+  else if ([provider isEqualToString:@"kimi"]) url = @"https://api.moonshot.cn/v1/users/me/balance";
+  else if ([provider isEqualToString:@"siliconflow"]) url = @"https://api.siliconflow.cn/v1/user/info";
+  else if ([provider isEqualToString:@"openrouter"]) url = @"https://api.openrouter.ai/api/v1/credits";
+  if ([provider isEqualToString:@"openrouter"]) url = @"https://openrouter.ai/api/v1/credits";
+  if (!url) { if (completion) completion(nil); return; }
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  [req setValue:[@"Bearer " stringByAppendingString:apiKey] forHTTPHeaderField:@"Authorization"];
+  [req setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    NSString *quota = nil;
+    if (data.length && !err) {
+      id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+      if ([provider isEqualToString:@"deepseek"] && [obj isKindOfClass:[NSDictionary class]]) {
+        NSArray *infos = obj[@"balance_infos"];
+        if ([infos isKindOfClass:[NSArray class]] && infos.count) {
+          NSDictionary *b = infos.firstObject;
+          quota = [NSString stringWithFormat:@"%@ %@", b[@"total_balance"] ?: @"", b[@"currency"] ?: @""];
+        }
+      } else if ([provider isEqualToString:@"kimi"] && [obj isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *d = obj[@"data"];
+        if ([d isKindOfClass:[NSDictionary class]]) quota = [NSString stringWithFormat:@"¥%@", d[@"available_balance"] ?: @"?"];
+      } else if ([provider isEqualToString:@"siliconflow"] && [obj isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *d = obj[@"data"];
+        if ([d isKindOfClass:[NSDictionary class]]) quota = [NSString stringWithFormat:@"¥%@", d[@"balance"] ?: d[@"chargeBalance"] ?: @"?"];
+      } else if ([provider isEqualToString:@"openrouter"] && [obj isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *d = obj[@"data"];
+        if ([d isKindOfClass:[NSDictionary class]]) {
+          double credits = [d[@"total_credits"] doubleValue];
+          double usage = [d[@"total_usage"] doubleValue];
+          quota = [NSString stringWithFormat:@"$%.2f", MAX(0, credits - usage)];
+        }
+      }
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (quota.length && idx < (NSInteger)self.aiEntries.count) {
+        NSMutableDictionary *m = [self.aiEntries[idx] mutableCopy];
+        m[@"quota"] = quota;
+        self.aiEntries[idx] = m;
+        [self saveAIEntries];
+      }
+      if (completion) completion(quota);
+    });
+  }] resume];
+}
+
+- (void)quickAIRowClicked:(NSClickGestureRecognizer *)g {
+  NSNumber *idxNum = objc_getAssociatedObject(g.view, "QuickAIRowIndex");
+  self.quickAISelectedRow = idxNum ? idxNum.integerValue : -1;
+  for (NSInteger i = 0; i < (NSInteger)self.quickAIRowViews.count; i++) {
+    NSView *row = self.quickAIRowViews[i];
+    row.layer.backgroundColor = (i == self.quickAISelectedRow) ? [[NSColor systemGreenColor] colorWithAlphaComponent:0.16].CGColor : [NSColor clearColor].CGColor;
+  }
+}
+
+- (void)quickAIBalanceClicked:(NSButton *)b {
+  NSInteger idx = b.tag;
+  if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
+  self.quickAISelectedRow = idx;
+  for (NSInteger i = 0; i < (NSInteger)self.quickAIRowViews.count; i++) {
+    NSView *row = self.quickAIRowViews[i];
+    row.layer.backgroundColor = (i == idx) ? [[NSColor systemGreenColor] colorWithAlphaComponent:0.16].CGColor : [NSColor clearColor].CGColor;
+  }
+  b.enabled = NO;
+  b.title = @"同步中…";
+  __weak typeof(self) weakSelf = self;
+  __weak NSButton *weakBtn = b;
+  [self syncAIQuotaAtIndex:idx completion:^(NSString *quota) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      weakBtn.enabled = YES;
+      weakBtn.title = quota.length ? quota : @"不可用";
+      if (!quota.length) weakBtn.toolTip = @"该服务不支持自动查询，或未填写 API Key";
+      [weakSelf.aiTable reloadData];
+    });
+  }];
+}
+
+- (void)rebuildQuickAITab {
+  NSView *page = self.quickAIPage;
+  if (!page) return;
+  for (NSView *sub in [page.subviews copy]) [sub removeFromSuperview];
+  NSTextField *title = [self label:@"AI 管理" size:18 bold:YES color:nil];
+  title.frame = NSMakeRect(16, 480, 250, 26); [page addSubview:title];
+  NSTextField *sub = [self label:@"点击 \"***\" 同步并显示实时余量" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+  sub.frame = NSMakeRect(16, 456, 388, 18); [page addSubview:sub];
+  NSTextField *hName = [self label:@"名称" size:12 bold:YES color:nil];
+  hName.frame = NSMakeRect(22, 428, 220, 18); [page addSubview:hName];
+  NSTextField *hQuota = [self label:@"余量" size:12 bold:YES color:nil];
+  hQuota.alignment = NSTextAlignmentRight;
+  hQuota.frame = NSMakeRect(312, 428, 80, 18); [page addSubview:hQuota];
+
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(12, 16, 396, 400)];
+  sv.hasVerticalScroller = YES; sv.drawsBackground = NO;
+  CGFloat rowH = 44;
+  CGFloat docH = MAX(400, self.aiEntries.count * rowH);
+  NSView *doc = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 380, docH)];
+  NSInteger n = self.aiEntries.count;
+  self.quickAIRowViews = [NSMutableArray array];
+  for (NSInteger i = 0; i < n; i++) {
+    NSDictionary *e = self.aiEntries[i];
+    CGFloat y = docH - (i + 1) * rowH;
+    NSView *row = [[NSView alloc] initWithFrame:NSMakeRect(4, y, 372, rowH)];
+    row.wantsLayer = YES;
+    row.layer.cornerRadius = 8;
+    BOOL sel = (i == self.quickAISelectedRow);
+    row.layer.backgroundColor = sel ? [[NSColor systemGreenColor] colorWithAlphaComponent:0.16].CGColor : [NSColor clearColor].CGColor;
+    NSClickGestureRecognizer *g = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(quickAIRowClicked:)];
+    objc_setAssociatedObject(row, "QuickAIRowIndex", @(i), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    g.numberOfClicksRequired = 1;
+    [row addGestureRecognizer:g];
+    [doc addSubview:row];
+    [self.quickAIRowViews addObject:row];
+    NSTextField *nm = [self label:e[@"name"] ?: @"" size:12 bold:YES color:nil];
+    nm.lineBreakMode = NSLineBreakByTruncatingTail;
+    nm.frame = NSMakeRect(8, 13, 260, 18); [row addSubview:nm];
+    NSButton *qb = [NSButton buttonWithTitle:@"***" target:self action:@selector(quickAIBalanceClicked:)];
+    qb.tag = i;
+    qb.bordered = NO;
+    qb.alignment = NSTextAlignmentRight;
+    qb.font = [NSFont systemFontOfSize:12.5 weight:NSFontWeightBold];
+    qb.contentTintColor = [NSColor controlAccentColor];
+    qb.frame = NSMakeRect(274, 8, 94, 26);
+    qb.toolTip = @"点击同步余额";
+    [row addSubview:qb];
+    NSBox *line = [[NSBox alloc] initWithFrame:NSMakeRect(8, 0, 356, 1)];
+    line.boxType = NSBoxSeparator; [row addSubview:line];
+  }
+  sv.documentView = doc;
+  [page addSubview:sv];
+  if (!n) {
+    NSTextField *empty = [self label:@"暂无 AI 服务，请先在控制台添加" size:11.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    empty.alignment = NSTextAlignmentCenter;
+    empty.frame = NSMakeRect(16, 240, 388, 20); [page addSubview:empty];
+  }
+}
+
+- (void)quickTabChanged:(id)sender {
+  NSInteger idx = self.quickTabs.selectedSegment;
+  self.quickOverview.hidden = (idx != 0);
+  self.quickDetail.hidden = (idx < 3);
+  if (self.quickGroupPage) self.quickGroupPage.hidden = (idx != 1);
+  if (self.quickAIPage) self.quickAIPage.hidden = (idx != 2);
+  if (idx == 1) { [self rebuildQuickGroupTab]; return; }
+  if (idx == 2) { [self rebuildQuickAITab]; return; }
+  if (idx < 3) return;
+  NSArray *titles = @[@"", @"", @"", @"CPU", @"GPU", @"内存", @"磁盘", @"网络", @"电源"];
+  self.quickDetailTitle.stringValue = titles[idx];
+  NSString *value = @"--", *sub = @"";
+  self.quickDetailChart.hidden = YES;
+  self.quickDetailBar.hidden = YES;
+  self.quickDetailExtra.stringValue = @"";
+  if (idx == 3) {
+    value = self.quickCPU.stringValue; sub = self.quickCPUSub.stringValue;
+    self.quickDetailChart.values = [self.quickCPUSpark.values mutableCopy];
+    self.quickDetailChart.lineColor = [NSColor systemOrangeColor];
+    self.quickDetailChart.hidden = NO;
+    self.quickDetailExtra.stringValue = @"实时处理器占用\n数据每 2 秒刷新一次";
+  } else if (idx == 4) {
+    value = self.quickGPU.stringValue; sub = self.quickGPUSub.stringValue;
+    self.quickDetailChart.values = [self.quickGPUSpark.values mutableCopy];
+    self.quickDetailChart.lineColor = [NSColor systemTealColor];
+    self.quickDetailChart.hidden = NO;
+    self.quickDetailExtra.stringValue = @"图形处理器实时占用\n数据每 2 秒刷新一次";
+  } else if (idx == 5) {
+    value = self.quickMem.stringValue; sub = self.quickMemSub.stringValue;
+    self.quickDetailBar.value = self.quickMemBar.value;
+    self.quickDetailBar.barColor = [NSColor systemOrangeColor];
+    self.quickDetailBar.hidden = NO;
+    self.quickDetailExtra.stringValue = self.quickMemSub.stringValue;
+  } else if (idx == 6) {
+    value = self.quickDisk.stringValue; sub = self.quickDiskSub.stringValue;
+    self.quickDetailBar.value = self.quickDiskBar.value;
+    self.quickDetailBar.barColor = [NSColor systemBlueColor];
+    self.quickDetailBar.hidden = NO;
+    self.quickDetailExtra.stringValue = self.quickDiskSub.stringValue;
+  } else if (idx == 7) {
+    value = self.quickNet.stringValue; sub = @"实时上下行速率";
+    self.quickDetailChart.values = [self.quickNetSpark.values mutableCopy];
+    self.quickDetailChart.lineColor = [NSColor systemGreenColor];
+    self.quickDetailChart.hidden = NO;
+    self.quickDetailExtra.stringValue = @"最近一分钟网络速率\n↑ 上行   ↓ 下行";
+  } else if (idx == 8) {
+    value = self.quickBat.stringValue; sub = self.quickBatteryState ?: @"电池状态";
+    self.quickDetailBar.value = self.quickBat.stringValue.doubleValue;
+    self.quickDetailBar.barColor = [NSColor systemPinkColor];
+    self.quickDetailBar.hidden = NO;
+    self.quickDetailExtra.stringValue = [NSString stringWithFormat:@"循环 %ld 次 · 健康 %.0f%%\n%@", (long)self.quickBatteryCycles, self.quickBatteryHealth, self.quickBatteryState ?: @""];
+  }
+  self.quickDetailValue.stringValue = value;
+  self.quickDetailSub.stringValue = sub;
+  [self.quickDetailChart setNeedsDisplay:YES];
+  [self.quickDetailBar setNeedsDisplay:YES];
+}
+
+- (void)rebuildQuickGroupTab {
+  if (!self.quickGroupContainer) return;
+  for (NSView *v in [self.quickGroupContainer.subviews copy]) [v removeFromSuperview];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSArray *items = [[fm contentsOfDirectoryAtPath:GroupDir() error:NULL] sortedArrayUsingComparator:^NSComparisonResult(id a, id b) { return [[a description] compare:[b description] options:NSCaseInsensitiveSearch]; }];
+  NSMutableArray *apps = [NSMutableArray array];
+  for (NSString *f in items) if ([f hasSuffix:@".app"]) [apps addObject:f];
+  CGFloat width = 400, gap = 10;
+  NSInteger cols = 3;
+  CGFloat bw = (width - gap * (cols - 1)) / cols;
+  CGFloat bh = 132;
+  CGFloat y = 462 - bh;
+  NSInteger col = 0;
+  for (NSString *f in apps) {
+    NSString *path = [GroupDir() stringByAppendingPathComponent:f];
+    NSString *name = [f stringByDeletingPathExtension];
+    name = [name stringByReplacingOccurrencesOfString:@"DockLaunchers" withString:@""];
+    NSView *cell = [[NSView alloc] initWithFrame:NSMakeRect(col * (bw + gap), y, bw, bh)];
+    cell.wantsLayer = YES;
+    cell.layer.cornerRadius = 12;
+    cell.layer.backgroundColor = [NSColor controlBackgroundColor].CGColor;
+    cell.layer.borderWidth = 1;
+    cell.layer.borderColor = [NSColor separatorColor].CGColor;
+    cell.toolTip = path;
+    NSImage *icon = [[NSImage alloc] initWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"]];
+    if (!icon) icon = [[NSImage alloc] initWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Resources/AppIcon2.icns"]];
+    if (!icon) icon = [NSImage imageNamed:NSImageNameApplicationIcon];
+    NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect((bw - 56)/2, 54, 56, 56)];
+    iv.image = icon; iv.imageScaling = NSImageScaleProportionallyUpOrDown;
+    [cell addSubview:iv];
+    NSTextField *lb = [NSTextField labelWithString:name];
+    lb.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightMedium];
+    lb.alignment = NSTextAlignmentCenter;
+    lb.lineBreakMode = NSLineBreakByTruncatingTail;
+    lb.frame = NSMakeRect(6, 22, bw - 12, 20);
+    [cell addSubview:lb];
+    NSClickGestureRecognizer *click = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openGroupFromMenuBarGesture:)];
+    [cell addGestureRecognizer:click];
+    [self.quickGroupContainer addSubview:cell];
+    col++;
+    if (col % cols == 0) { col = 0; y -= bh + gap; }
+  }
+}
+
+- (void)openGroupFromMenuBarGesture:(NSClickGestureRecognizer *)g {
+  NSString *path = g.view.toolTip;
+  if (path) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+  [self.popover performClose:nil];
+}
+
+- (void)openGroupFromMenuBar:(NSButton *)sender {
+  NSString *path = sender.toolTip;
+  if (path) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+  [self.popover performClose:nil];
 }
 
 - (void)rebuildQuickGroups {
@@ -3568,7 +6923,10 @@ static BOOL ValidGroupName(NSString *raw) {
     NSString *path = [GroupDir() stringByAppendingPathComponent:f];
     NSString *name = [f stringByDeletingPathExtension];
     NSButton *b = [[NSButton alloc] initWithFrame:NSMakeRect(x, y, bw, bh)];
-    b.image = [[NSWorkspace sharedWorkspace] iconForFile:path];
+    NSImage *icon = [[NSImage alloc] initWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"]];
+    if (!icon) icon = [[NSImage alloc] initWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Resources/AppIcon2.icns"]];
+    if (!icon) icon = [NSImage imageNamed:NSImageNameApplicationIcon];
+    b.image = icon;
     b.imageScaling = NSImageScaleProportionallyUpOrDown;
     b.imagePosition = NSImageAbove;
     b.title = name;
@@ -3600,7 +6958,17 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showWindow:nil];
 }
 
-- (void)quitFromPopover:(id)sender { [self unloadLoginAgent]; [NSApp terminate:nil]; }
+- (void)closePopover:(id)sender {
+  [self.popover performClose:nil];
+}
+
+- (void)refreshPopover:(id)sender {
+  [self sample];
+  [self refreshExternalVolumes];
+  if (self.quickTabs.selectedSegment == 1) [self rebuildQuickGroupTab];
+  if (self.quickTabs.selectedSegment == 2) [self rebuildQuickAITab];
+  [self showToast:@"菜单栏数据已刷新"];
+}
 
 - (NSString *)batteryText {
   CFTypeRef blob = IOPSCopyPowerSourcesInfo();
@@ -3676,15 +7044,131 @@ static BOOL ValidGroupName(NSString *raw) {
   id v = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerScanProtectedDirs"];
   return v ? [v boolValue] : NO;
 }
-- (NSArray<NSString *> *)scanSubdirs {
-  NSMutableArray *a = [NSMutableArray arrayWithObjects:@"Movies", @"Music", nil];
-  if ([self scanProtectedDirsEnabled]) [a addObjectsFromArray:@[@"Documents", @"Downloads", @"Desktop"]];
-  return a;
+- (BOOL)isProtectedUserPath:(NSString *)path {
+  NSString *home = NSHomeDirectory();
+  NSString *p = path.stringByStandardizingPath;
+  for (NSString *sub in @[@"Desktop", @"Documents", @"Downloads"]) {
+    NSString *dir = [[home stringByAppendingPathComponent:sub] stringByStandardizingPath];
+    if ([p isEqualToString:dir] || [p hasPrefix:[dir stringByAppendingString:@"/"]]) return YES;
+  }
+  return NO;
 }
+
+- (NSArray<NSString *> *)scanSubdirs {
+  // 为避免重复触发系统隐私授权，默认永不扫描受保护目录
+  return @[@"Movies", @"Music"];
+}
+- (void)requestProtectedDirsAccess {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *n in @[@"Documents", @"Downloads", @"Desktop"]) {
+      [fm contentsOfDirectoryAtPath:[NSHomeDirectory() stringByAppendingPathComponent:n] error:NULL];
+    }
+  });
+}
+
+- (void)requestMediaDirsAccess {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *n in @[@"Music", @"Movies", @"Library"]) {
+      [fm contentsOfDirectoryAtPath:[NSHomeDirectory() stringByAppendingPathComponent:n] error:NULL];
+    }
+  });
+}
+
+- (void)requestRemovableVolumeAccess {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *vols = [fm contentsOfDirectoryAtPath:@"/Volumes" error:NULL] ?: @[];
+    for (NSString *v in vols) {
+      [fm contentsOfDirectoryAtPath:[@"/Volumes" stringByAppendingPathComponent:v] error:NULL];
+    }
+  });
+}
+
+- (void)requestPhotoLibraryAccess {
+  [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (status == PHAuthorizationStatusAuthorized || status == PHAuthorizationStatusLimited) {
+        [self showToast:@"照片图库已授权"];
+      } else {
+        self.albumModeCheck.state = NSControlStateValueOff;
+        [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"centerAlbumFullLibrary"];
+        [self showToast:@"未授权照片图库，已切回本机原文件"];
+      }
+    });
+  }];
+}
+
+- (BOOL)confirmPermissionAction:(NSString *)message {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"需要系统授权";
+  a.informativeText = message;
+  [a addButtonWithTitle:@"继续"];
+  [a addButtonWithTitle:@"取消"];
+  return [a runModal] == NSAlertFirstButtonReturn;
+}
+
+- (void)showFullDiskAccessHelp:(id)sender {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"完全磁盘访问权限（最高权限）";
+  a.informativeText = @"开启后控制台可读取本机所有存储位置，包括其他应用的数据和受保护目录。\n\n开启方法：\n系统设置 → 隐私与安全性 → 完全磁盘访问权限 → 点「+」添加 DockLaunchers 控制台，然后重新启动控制台。\n\n这是 macOS 最高级别文件权限，请确认后再开启。";
+  [a addButtonWithTitle:@"打开系统设置"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] == NSAlertFirstButtonReturn) {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"]];
+  }
+}
+
+- (void)showRemovableVolumeHelp:(id)sender {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"可移除宗卷访问权限";
+  a.informativeText = @"扫描外部磁盘需要允许本应用访问「可移除宗卷」。\n\n打开：系统设置 → 隐私与安全性 → 文件与文件夹，找到 DockLaunchers 控制台，勾选「可移除宗卷」。\n\n如果列表里没有本应用，先在「文件管理」中选择外部磁盘并刷新一次，触发授权请求后再回来开启。";
+  [a addButtonWithTitle:@"请求访问"];
+  [a addButtonWithTitle:@"打开系统设置"];
+  [a addButtonWithTitle:@"取消"];
+  NSModalResponse r = [a runModal];
+  if (r == NSAlertFirstButtonReturn) {
+    [self requestRemovableVolumeAccess];
+    [self showToast:@"已请求可移除宗卷访问权限"];
+  } else if (r == NSAlertSecondButtonReturn) {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders"]];
+  }
+}
+
+- (void)showAbout:(id)sender {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"DockLaunchers 控制台";
+  NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.0";
+  a.informativeText = [NSString stringWithFormat:@"版本 %@\n\nDock 分组启动器与卸载管理工具\n菜单栏常驻 · 实时状态 · 文件管理\n\n所有数据保存在本机，不上传云端。", ver];
+  [a addButtonWithTitle:@"好"];
+  [a runModal];
+}
+
+- (void)togglePersonalMedia:(id)sender {
+  BOOL on = (self.mediaModeCheck.state == NSControlStateValueOn);
+  if (on && ![self confirmPermissionAction:@"开启后控制台会扫描音乐 / 影片 / 用户资源库，可能触发系统隐私授权。是否继续？"]) {
+    self.mediaModeCheck.state = NSControlStateValueOff; return;
+  }
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerScanPersonalMedia"];
+  if (on) [self requestMediaDirsAccess];
+  [self showToast:on ? @"已请求媒体目录访问权限" : @"已排除个人媒体目录"];
+}
+
+- (void)toggleAlbumMode:(id)sender {
+  BOOL on = (self.albumModeCheck.state == NSControlStateValueOn);
+  if (on && ![self confirmPermissionAction:@"完整图库模式会请求访问照片图库，以显示包含 iCloud 在内的全部照片和视频。是否继续？"]) {
+    self.albumModeCheck.state = NSControlStateValueOff; return;
+  }
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerAlbumFullLibrary"];
+  if (on) [self requestPhotoLibraryAccess];
+  [self showToast:on ? @"正在请求照片图库权限…" : @"相册已切换为本机原文件"];
+}
+
 - (void)toggleProtectedDirs:(id)sender {
-  BOOL on = (self.protectedDirsCheck.state == NSControlStateValueOn);
-  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerScanProtectedDirs"];
-  if (self.activityStream) { [self stopActivityRecorder]; [self startActivityRecorder]; }
+  [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"centerScanProtectedDirs"];
+  self.protectedDirsCheck.state = NSControlStateValueOff;
+  [self showToast:@"受保护目录扫描已禁用，避免系统授权弹窗"];
 }
 
 - (void)probeBatteryFromProfiler {
@@ -3836,7 +7320,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [cpuCol setValueText:[NSString stringWithFormat:@"%.0f%%", cpuPct] detail:@"实时处理器占用" bar:cpuPct];
     self.gpuPercent = [self gpuUsagePercent];
     MetricColumnView *gpuCol = self.metricColumns[3];
-    [gpuCol setValueText:(self.gpuPercent > 0 ? [NSString stringWithFormat:@"%.0f%%", self.gpuPercent] : @"--") detail:@"图形处理器实时占用" bar:self.gpuPercent];
+    [gpuCol setValueText:(self.gpuPercent > 0 ? [NSString stringWithFormat:@"%.0f%%", self.gpuPercent] : @"--") detail:@"图形处理器占用" bar:self.gpuPercent];
     if ([NSDate timeIntervalSinceReferenceDate] - self.lastBatteryProbe > 60) [self probeBatteryFromProfiler];
     NSDictionary *bat = [self batteryInfo];
     MetricColumnView *pwrCol = self.metricColumns[4];
@@ -3852,6 +7336,10 @@ static BOOL ValidGroupName(NSString *raw) {
       if (self.batteryHealthFromProfiler > 0) health = self.batteryHealthFromProfiler;
       NSInteger cycles = self.batteryCyclesFromProfiler > 0 ? self.batteryCyclesFromProfiler : [bat[@"CycleCount"] integerValue];
       NSString *state = [bat[@"ExternalConnected"] boolValue] ? ([bat[@"IsCharging"] boolValue] ? @"充电中" : @"已接通电源") : @"使用电池";
+      self.quickBatteryCycles = cycles;
+      self.quickBatteryHealth = health;
+      self.quickBatteryState = state;
+      self.quickBat.stringValue = [NSString stringWithFormat:@"%.0f%%", pct];
       [pwrCol setValueText:[NSString stringWithFormat:@"%.0f%%", pct]
                     detail:[NSString stringWithFormat:@"%@\n循环 %ld 次\n健康 %.0f%%", state, (long)cycles, health]
                        bar:pct];
@@ -3860,6 +7348,7 @@ static BOOL ValidGroupName(NSString *raw) {
     }
     MetricColumnView *netCol = self.metricColumns[5];
     double rateKB = (inRate + outRate) / 1024.0;
+    [netCol setValueFontSize:15];
     [netCol setValueText:[NSString stringWithFormat:@"%.0f KB/s", rateKB]
                   detail:[NSString stringWithFormat:@"↓ %@/s\n↑ %@/s", [self rate:inRate], [self rate:outRate]]
                      bar:MIN(100.0, rateKB * 2.0)];
@@ -3867,14 +7356,25 @@ static BOOL ValidGroupName(NSString *raw) {
   [self updateExternalColumnDisplay];
   self.uptimeLabel.stringValue = [NSString stringWithFormat:@"系统启动 %@", [self uptimeString]];
   if (self.popover.isShown) {
-    self.quickCPU.stringValue = [NSString stringWithFormat:@"CPU %.0f%%", cpuPct];
-    self.quickMem.stringValue = [NSString stringWithFormat:@"内存 %.0f%%", memPct];
-    self.quickBat.stringValue = [self batteryText];
+    self.quickCPU.stringValue = [NSString stringWithFormat:@"%.0f%%", cpuPct];
+    self.quickGPU.stringValue = self.gpuPercent > 0 ? [NSString stringWithFormat:@"%.0f%%", self.gpuPercent] : @"--";
+    self.quickMem.stringValue = [NSString stringWithFormat:@"%.0f%%", memPct];
+    self.quickDisk.stringValue = [NSString stringWithFormat:@"%.0f%%", diskPct];
+    self.quickNet.stringValue = [NSString stringWithFormat:@"↑ %@/s   ↓ %@/s", [self rate:outRate], [self rate:inRate]];
+    [self.quickCPUSpark addValue:cpuPct];
+    [self.quickGPUSpark addValue:self.gpuPercent];
+    [self.quickNetSpark addValue:MIN(100.0, (inRate+outRate)/1024.0/10.24)];
+    self.quickMemBar.value = memPct;
+    self.quickDiskBar.value = diskPct;
+    self.quickCPUSub.stringValue = @"实时处理器占用";
+    self.quickGPUSub.stringValue = @"图形处理器";
+    self.quickMemSub.stringValue = [NSString stringWithFormat:@"%@ / %@ · 压力正常", [self gbString:memUsed], [self gbString:memTotal]];
+    self.quickDiskSub.stringValue = [NSString stringWithFormat:@"可用 %@ / 总计 %@", [self gbString:diskFree], [self gbString:diskTotal]];
+    if (self.quickTabs.selectedSegment >= 3) [self quickTabChanged:nil];
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TRACE")) fprintf(stderr, "TRACE cpu=%.0f mem=%.0f cols=%ld\n", cpuPct, memPct, (long)self.metricColumns.count);
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-  id mt = [ud objectForKey:@"centerMenuText"];
-  BOOL showText = mt ? [mt boolValue] : YES;
-  self.statusItem.button.title = showText ? [NSString stringWithFormat:@" %.0f%% · %.0f%%", cpuPct, memPct] : @"";
+  self.statusItem.button.title = @"";
 }
 
 - (NSString *)rate:(double)bps {

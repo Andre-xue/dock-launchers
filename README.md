@@ -4,6 +4,8 @@
 
 纯原生 Objective-C / AppKit 实现，无 Electron、无 Python、无 Tk，单进程、启动快、关窗即退出。
 
+另外包含 **DockLaunchers 控制台**：菜单栏实时监控（CPU / GPU / 内存 / 磁盘 / 网络 / 电源）、AI 服务余量管理、磁盘与文件浏览、应用卸载、主题与权限设置。
+
 ![分组图标预览](docs/icons-preview.png)
 
 ## 特性
@@ -28,7 +30,8 @@
 
 ### 方式一：使用发布包（推荐）
 
-1. 下载 `DockLaunchers-portable.zip`（Releases 页面）
+1. 下载 `DockLaunchers控制台-*.dmg` 或 `DockLaunchers-portable.zip`（Releases 页面）
+   - DMG 内直接把 `DockLaunchers控制台.app` 拖入「应用程序」即可
 2. 解压后双击 `install.command`
    - 提示「无法验证开发者」时：右键 → 打开 → 仍要打开
    - 或终端执行：`bash 路径/DockLaunchers/install.command`
@@ -37,7 +40,7 @@
 ### 方式二：从源码构建
 
 ```bash
-git clone https://github.com/<你的用户名>/dock-launchers.git
+git clone https://github.com/Andre-xue/dock-launchers.git
 cd dock-launchers
 bash build.sh        # 需要 Xcode Command Line Tools
 bash install.command
@@ -293,3 +296,13 @@ bash tools/bench.sh
 ## License
 
 MIT
+
+
+## 构建控制台与 DMG
+
+```bash
+./build_center.sh   # 构建 DockLaunchers控制台.app
+./make_dmg.sh       # 生成 DockLaunchers控制台-<版本>.dmg
+```
+
+控制台使用本机固定证书签名（`DockLaunchers Local Code Signing`），没有该证书时自动退回临时签名。DMG 未经过 Apple 公证，其他 Mac 首次打开需要右键 → 打开。

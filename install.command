@@ -6,6 +6,15 @@ SRC="$ROOT/build/DockLaunchers"
 [ -d "$SRC" ] || { echo "未找到构建产物，先执行 build.sh"; exit 1; }
 DEST="$HOME/Applications/DockLaunchers"
 BACKUP="$HOME/Library/Application Support/DockLaunchers/backup/DockLaunchers"
+SIGN_ID="DockLaunchers Local Code Signing"
+sign_app() {
+  local app="$1"
+  if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
+    codesign --force --deep --sign "$SIGN_ID" "$app" >/dev/null 2>&1 || codesign --force --deep --sign - "$app" >/dev/null 2>&1 || true
+  else
+    codesign --force --deep --sign - "$app" >/dev/null 2>&1 || true
+  fi
+}
 echo "==> 安装到 $DEST"
 mkdir -p "$DEST"
 
@@ -22,7 +31,7 @@ done
 
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 for app in "$DEST"/*.app; do
-  codesign --force --deep --sign - "$app" >/dev/null 2>&1 || true
+  sign_app "$app"
 done
 mdimport "$DEST" 2>/dev/null || true
 
@@ -62,7 +71,7 @@ cp -R "$SRC"/*.app "$DST"/ 2>/dev/null
 [ -d "$SRC/lists" ] && cp -R "$SRC/lists" "$DST/"
 mdimport "$DST" 2>/dev/null
 for app in "$DST"/*.app; do
-  codesign --force --deep --sign - "$app" >/dev/null 2>&1
+  sign_app "$app"
 done
 if [ -d "$SRC/prefs" ]; then
   for f in "$SRC/prefs"/*.plist; do
@@ -111,7 +120,7 @@ pkill -f "/DockLaunchers/.*/Contents/MacOS/ui" 2>/dev/null
 cp -R "$SRC"/*.app "$DST"/ 2>/dev/null
 [ -d "$SRC/lists" ] && cp -R "$SRC/lists" "$DST/"
 mdimport "$DST" 2>/dev/null
-for app in "$DST"/*.app; do codesign --force --deep --sign - "$app" >/dev/null 2>&1; done
+for app in "$DST"/*.app; do sign_app "$app"; done
 if [ -d "$SRC/prefs" ]; then
   for f in "$SRC/prefs"/*.plist; do
     [ -f "$f" ] || continue
@@ -126,13 +135,13 @@ killall -KILL Dock 2>/dev/null
 osascript -e 'display dialog "已恢复全部 Dock 分组图标。" with title "恢复Dock分组" buttons {"好"} default button 1'
 EOR
 chmod +x "$RECOVER_APP/Contents/MacOS/run"
-codesign --force --deep --sign - "$RECOVER_APP" >/dev/null 2>&1 || true
+sign_app "$RECOVER_APP"
 
 # 安装菜单栏控制台（若已构建）
 if [ -d "$ROOT/build/DockLaunchers控制台.app" ]; then
   rm -rf "$HOME/Applications/DockLaunchers控制台.app"
   cp -R "$ROOT/build/DockLaunchers控制台.app" "$HOME/Applications/"
-  codesign --force --deep --sign - "$HOME/Applications/DockLaunchers控制台.app" >/dev/null 2>&1 || true
+  sign_app "$HOME/Applications/DockLaunchers控制台.app"
   # 开机自动启动控制台（写入 LaunchAgent）
   AGENT="$HOME/Library/LaunchAgents/com.docklaunchers.center.plist"
   mkdir -p "$HOME/Library/LaunchAgents"
@@ -141,9 +150,9 @@ if [ -d "$ROOT/build/DockLaunchers控制台.app" ]; then
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>com.docklaunchers.center</string>
-<key>ProgramArguments</key><array><string>$HOME/Applications/DockLaunchers控制台.app/Contents/MacOS/menu</string></array>
+<key>ProgramArguments</key><array><string>$HOME/Applications/DockLaunchers控制台.app/Contents/MacOS/DockLaunchers</string></array>
 <key>RunAtLoad</key><true/>
-<key>KeepAlive</key><true/>
+<key>KeepAlive</key><false/>
 </dict></plist>
 PLIST
   launchctl unload "$AGENT" 2>/dev/null || true
