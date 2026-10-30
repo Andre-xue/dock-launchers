@@ -146,6 +146,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property NSInteger dialogSelectedBuiltin;
 @property (strong) NSString *dialogCustomIcon;
 @property NSInteger dialogEditIndex;
+@property (strong) NSImage *dialogFirstIconImage;
 @property (strong) NSScrollView *groupsScroll;
 // uninstall
 @property (strong) NSMutableArray<NSDictionary *> *uninstallData;
@@ -221,6 +222,17 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   [self killDock];
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
     [self deleteGroupNames:@[[NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")]]];
+    exit(0);
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_CUSTOM_APPLY")) {
+    NSString *arg = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_CUSTOM_APPLY")];
+    NSArray *parts = [arg componentsSeparatedByString:@"|"];
+    if (parts.count == 2) {
+      self.dialogCustomIcon = parts[1];
+      self.dialogSelectedBuiltin = -1;
+      BOOL ok = [self applyIconToApp:parts[0]];
+      fprintf(stderr, "CUSTOM_APPLY ok=%d\n", ok);
+    }
     exit(0);
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_RENAME")) {
@@ -897,7 +909,8 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 
 - (void)refreshDialogIconSelection {
   for (NSButton *b in self.dialogIconButtons) {
-    BOOL sel = (b.tag == self.dialogSelectedBuiltin) || (self.dialogSelectedBuiltin == -2 && b.tag == 98);
+    BOOL sel = (b.tag == self.dialogSelectedBuiltin)
+            || ((self.dialogSelectedBuiltin == -2 || self.dialogCustomIcon.length) && b.tag == 98);
     b.layer.borderWidth = sel ? 3.0 : 1.0;
     b.layer.borderColor = (sel ? [NSColor controlAccentColor] : [NSColor colorWithCalibratedWhite:0.85 alpha:1.0]).CGColor;
     b.layer.cornerRadius = 12;
@@ -907,6 +920,9 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 - (void)dialogIconClicked:(NSButton *)b {
   if (b.tag == 99) { self.dialogSelectedBuiltin = -1; self.dialogCustomIcon = nil; }
   else { self.dialogSelectedBuiltin = b.tag; self.dialogCustomIcon = nil; }
+  if (self.dialogIconButtons.count && self.dialogFirstIconImage && b.tag != 98) {
+    ((NSButton *)self.dialogIconButtons.firstObject).image = self.dialogFirstIconImage;
+  }
   [self refreshDialogIconSelection];
 }
 
@@ -914,10 +930,22 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   NSOpenPanel *panel = [NSOpenPanel openPanel];
   panel.canChooseFiles = YES; panel.canChooseDirectories = NO; panel.allowsMultipleSelection = NO;
   panel.allowedFileTypes = @[@"icns", @"png", @"jpg", @"jpeg", @"tiff"];
-  if ([panel runModal] != NSModalResponseOK) return;
-  self.dialogCustomIcon = panel.URL.path;
-  self.dialogSelectedBuiltin = -1;
-  [self refreshDialogIconSelection];
+  void (^apply)(NSURL *url) = ^(NSURL *url) {
+    if (!url) return;
+    self.dialogCustomIcon = url.path;
+    self.dialogSelectedBuiltin = -1;
+    NSImage *img = [[NSImage alloc] initWithContentsOfFile:url.path];
+    if (img && self.dialogIconButtons.count) ((NSButton *)self.dialogIconButtons.firstObject).image = img;
+    [self refreshDialogIconSelection];
+  };
+  NSWindow *modalWin = [NSApp modalWindow];
+  if (modalWin) {
+    [panel beginSheetModalForWindow:modalWin completionHandler:^(NSModalResponse r) {
+      if (r == NSModalResponseOK) apply(panel.URL);
+    }];
+  } else {
+    if ([panel runModal] == NSModalResponseOK) apply(panel.URL);
+  }
 }
 
 - (BOOL)applyIconToApp:(NSString *)app {
@@ -1021,6 +1049,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   cur.wantsLayer = YES;
   [v addSubview:cur];
   [self.dialogIconButtons addObject:cur];
+  self.dialogFirstIconImage = cur.image;
   NSArray *names = @[@"工作组", @"聊天组", @"外网组", @"影音组", @"Ai组", @"Docker组", @"工具组"];
   for (NSInteger i = 0; i < names.count; i++) {
     NSButton *b = [[NSButton alloc] initWithFrame:NSMakeRect(94 + i * 72, 170, 64, 64)];
@@ -1035,6 +1064,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     [v addSubview:b];
     [self.dialogIconButtons addObject:b];
   }
+  self.dialogFirstIconImage = ((NSButton *)self.dialogIconButtons.firstObject).image;
   NSButton *custom = [NSButton buttonWithTitle:@"自定义图标…" target:self action:@selector(dialogChooseCustomIcon:)];
   custom.frame = NSMakeRect(10, 120, 140, 32);
   custom.bezelStyle = NSBezelStyleRounded;
@@ -1115,6 +1145,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     [v addSubview:b];
     [self.dialogIconButtons addObject:b];
   }
+  self.dialogFirstIconImage = ((NSButton *)self.dialogIconButtons.firstObject).image;
   NSButton *custom = [NSButton buttonWithTitle:@"自定义图标…" target:self action:@selector(dialogChooseCustomIcon:)];
   custom.frame = NSMakeRect(10, 120, 140, 32);
   custom.bezelStyle = NSBezelStyleRounded;
