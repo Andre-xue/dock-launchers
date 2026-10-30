@@ -253,6 +253,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) id recordingMonitor;
 @property (strong) id activityMonitor;
 @property (strong) NSTimer *idleExitTimer;
+@property (strong) NSTimer *syncTimer;
 @property (strong) NSPanel *settingsPanel;
 @property (strong) NSView *settingsContent;
 @property (strong) NSScrollView *settingsScroll;
@@ -1184,9 +1185,36 @@ static NSString *ResolveAppPath(NSString *target) {
   [self updatePinAppearance];
   [self resetIdleTimer];
   [self.window makeFirstResponder:cv];
+  [self.syncTimer invalidate];
+  self.syncTimer = [NSTimer scheduledTimerWithTimeInterval:15.0 target:self selector:@selector(syncTick:) userInfo:nil repeats:YES];
+}
+
+- (NSInteger)pruneStaleListEntries {
+  if (!gListFile.length) return 0;
+  NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL];
+  if (!content) return 0;
+  NSMutableArray *keep = [NSMutableArray array];
+  NSInteger removed = 0;
+  for (NSString *raw in [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+    NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (!line.length) continue;
+    if ([line hasPrefix:@"#"]) { [keep addObject:raw]; continue; }
+    NSString *target = line;
+    NSRange r = [line rangeOfString:@"|"];
+    if (r.location != NSNotFound) target = [[line substringFromIndex:r.location+1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (ResolveAppPath(target).length == 0) { removed++; continue; }
+    [keep addObject:raw];
+  }
+  if (removed) [[keep componentsJoinedByString:@"\n"] writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  return removed;
+}
+
+- (void)syncTick:(NSTimer *)t {
+  if ([self pruneStaleListEntries] > 0) [self reload];
 }
 
 - (void)reload {
+  [self pruneStaleListEntries];
   NSArray *allItems = [self loadItems];
   if (self.searchQuery.length > 0) {
     NSPredicate *p = [NSPredicate predicateWithFormat:@"label CONTAINS[cd] %@ OR target CONTAINS[cd] %@", self.searchQuery, self.searchQuery];

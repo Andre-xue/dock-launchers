@@ -135,6 +135,8 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property (strong) NSTextField *cpuLabel, *memLabel, *diskLabel, *netLabel, *uptimeLabel;
 @property (strong) Sparkline *cpuSpark, *memSpark;
 @property (strong) NSTimer *timer;
+@property (strong) NSTimer *autoSyncTimer;
+@property (strong) NSButton *autoSyncCheck;
 @property NSInteger sampleSeconds;
 @property (strong) NSButton *menuBarCheck;
 @property (strong) NSPopUpButton *intervalPopup;
@@ -341,6 +343,9 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   }
   self.timer = [NSTimer scheduledTimerWithTimeInterval:self.sampleSeconds target:self selector:@selector(sample) userInfo:nil repeats:YES];
   [self sample];
+  id autoSyncVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerAutoSync"];
+  BOOL autoSync = autoSyncVal ? [autoSyncVal boolValue] : YES;
+  if (autoSync) [self startAutoSyncTimer];
   [self showWindow:nil];
   if (getenv("DOCKLAUNCHERS_CENTER_SECTION")) {
     [self showSection:atoi(getenv("DOCKLAUNCHERS_CENTER_SECTION"))];
@@ -428,6 +433,27 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 }
 
 - (void)sideClicked:(NSButton *)b { [self showSection:b.tag]; }
+
+- (void)startAutoSyncTimer {
+  [self.autoSyncTimer invalidate];
+  self.autoSyncTimer = [NSTimer scheduledTimerWithTimeInterval:30.0 target:self selector:@selector(autoSyncTick:) userInfo:nil repeats:YES];
+}
+- (void)autoSyncTick:(NSTimer *)t {
+  NSInteger pruned = [self pruneStaleGroupListEntries];
+  [self pruneStaleDockEntries];
+  if (pruned > 0) {
+    if (self.section == 1) [self refreshGroups];
+    if (self.section == 2) [self reloadUninstallData];
+    if (self.popover.isShown) [self rebuildQuickGroups];
+  }
+}
+- (void)toggleAutoSync:(id)sender {
+  BOOL on = (self.autoSyncCheck.state == NSControlStateValueOn);
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerAutoSync"];
+  [self.autoSyncTimer invalidate];
+  self.autoSyncTimer = nil;
+  if (on) [self startAutoSyncTimer];
+}
 
 - (void)showSection:(NSInteger)idx {
   self.section = idx;
@@ -2340,6 +2366,10 @@ static BOOL ValidGroupName(NSString *raw) {
   self.intervalPopup.target = self; self.intervalPopup.action = @selector(intervalChanged:);
   [card addSubview:self.intervalPopup];
 
+  self.autoSyncCheck = [NSButton checkboxWithTitle:@"自动同步（外部卸载应用后清理分组）" target:self action:@selector(toggleAutoSync:)];
+  id autoSyncVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerAutoSync"];
+  self.autoSyncCheck.state = (autoSyncVal ? [autoSyncVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
+  self.autoSyncCheck.frame = NSMakeRect(20, 28, 420, 24); [card addSubview:self.autoSyncCheck];
   self.loginCheck = [NSButton checkboxWithTitle:@"开机自动启动控制台" target:self action:@selector(toggleLoginItem:)];
   self.loginCheck.state = [[NSFileManager defaultManager] fileExistsAtPath:[self loginPlistPath]] ? NSControlStateValueOn : NSControlStateValueOff;
   self.loginCheck.frame = NSMakeRect(20, 66, 400, 24); [card addSubview:self.loginCheck];
