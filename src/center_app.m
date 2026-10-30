@@ -367,7 +367,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSTextField *quickCPU, *quickMem, *quickBat;
 @property (strong) NSTextField *quickGPU, *quickDisk, *quickNet;
 @property (strong) NSTextField *quickCPUSub, *quickGPUSub, *quickMemSub, *quickDiskSub, *quickNetSub, *quickPowerSub;
-@property (strong) QuickBarView *quickMemBar, *quickDiskBar;
+@property (strong) QuickBarView *quickCPUBar, *quickGPUBar, *quickMemBar, *quickDiskBar;
 @property (strong) Sparkline *quickCPUSpark, *quickGPUSpark, *quickNetSpark;
 @property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage;
 @property (strong) NSMutableArray *quickAIRowViews;
@@ -6836,8 +6836,8 @@ static BOOL ValidGroupName(NSString *raw) {
     sub.maximumNumberOfLines = 3;
     sub.lineBreakMode = NSLineBreakByWordWrapping;
     sub.frame = NSMakeRect(10, 8, cw - 20, 36); [card addSubview:sub];
-    if (i == 0) { self.quickCPU = val; self.quickCPUSub = sub; self.quickCPUSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(10, 50, cw - 20, 110)]; self.quickCPUSpark.lineColor = ccolors[i]; [card addSubview:self.quickCPUSpark]; }
-    else if (i == 1) { self.quickGPU = val; self.quickGPUSub = sub; self.quickGPUSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(10, 50, cw - 20, 110)]; self.quickGPUSpark.lineColor = ccolors[i]; [card addSubview:self.quickGPUSpark]; }
+    if (i == 0) { self.quickCPU = val; self.quickCPUSub = sub; self.quickCPUBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(10, 70, cw - 20, 8)]; self.quickCPUBar.barColor = ccolors[i]; [card addSubview:self.quickCPUBar]; }
+    else if (i == 1) { self.quickGPU = val; self.quickGPUSub = sub; self.quickGPUBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(10, 70, cw - 20, 8)]; self.quickGPUBar.barColor = ccolors[i]; [card addSubview:self.quickGPUBar]; }
     else if (i == 2) { self.quickMem = val; self.quickMemSub = sub; self.quickMemBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(10, 70, cw - 20, 8)]; self.quickMemBar.barColor = ccolors[i]; [card addSubview:self.quickMemBar]; }
     else if (i == 3) { self.quickDisk = val; self.quickDiskSub = sub; self.quickDiskBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(10, 70, cw - 20, 8)]; self.quickDiskBar.barColor = ccolors[i]; [card addSubview:self.quickDiskBar]; }
     else if (i == 4) { self.quickNet = val; val.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold]; val.maximumNumberOfLines = 2; val.lineBreakMode = NSLineBreakByWordWrapping; self.quickNetSub = sub; self.quickNetSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(10, 50, cw - 20, 110)]; self.quickNetSpark.lineColor = ccolors[i]; [card addSubview:self.quickNetSpark]; }
@@ -7507,7 +7507,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (BOOL)showTranslateConfirmWindow:(NSString *)text origin:(NSString *)origin {
-  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,250) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,220) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
   w.title = @"翻译确认";
   w.level = NSFloatingWindowLevel;
   w.releasedWhenClosed = NO;
@@ -7515,18 +7515,20 @@ static BOOL ValidGroupName(NSString *raw) {
   self.translateConfirmYes = NO;
   NSView *cv = w.contentView;
   NSTextField *title = [self label:[NSString stringWithFormat:@"是否翻译%@？", origin ?: @"这段文字"] size:15 bold:YES color:nil];
-  title.frame = NSMakeRect(24, 200, 430, 24); [cv addSubview:title];
+  title.frame = NSMakeRect(24, 172, 430, 24); [cv addSubview:title];
   NSTextField *preview = [self label:(text.length > 160 ? [[text substringToIndex:160] stringByAppendingString:@"…"] : text) size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   preview.maximumNumberOfLines = 4;
   preview.lineBreakMode = NSLineBreakByTruncatingTail;
-  preview.frame = NSMakeRect(24, 92, 430, 90); [cv addSubview:preview];
+  preview.frame = NSMakeRect(24, 70, 430, 82); [cv addSubview:preview];
   ColorHoverButton *no = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(300, 28, 70, 32)];
   no.title = @"取消"; no.hoverColor = [NSColor systemGrayColor]; no.tag = 0;
+  no.frame = NSMakeRect(300, 18, 70, 32);
   no.target = self; no.action = @selector(translateConfirmButton:);
   [no applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [cv addSubview:no];
   ColorHoverButton *yes = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(378, 28, 78, 32)];
   yes.title = @"翻译"; yes.hoverColor = [NSColor systemTealColor]; yes.tag = 1;
+  yes.frame = NSMakeRect(378, 18, 78, 32);
   yes.target = self; yes.action = @selector(translateConfirmButton:);
   [yes applyColor:[NSColor controlAccentColor] textColor:[NSColor whiteColor]];
   [cv addSubview:yes];
@@ -8461,6 +8463,8 @@ static BOOL ValidGroupName(NSString *raw) {
     self.quickDiskBar.value = diskPct;
     self.quickCPUSub.stringValue = @"实时处理器占用";
     self.quickGPUSub.stringValue = @"图形处理器";
+    self.quickCPUBar.value = cpuPct;
+    self.quickGPUBar.value = self.gpuPercent;
     self.quickMemSub.stringValue = [NSString stringWithFormat:@"%@ / %@ · 压力正常", [self gbString:memUsed], [self gbString:memTotal]];
     self.quickDiskSub.stringValue = [NSString stringWithFormat:@"可用 %@ / 总计 %@", [self gbString:diskFree], [self gbString:diskTotal]];
   }
