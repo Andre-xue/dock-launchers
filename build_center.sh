@@ -12,6 +12,9 @@ for ic in 工作组 聊天组 外网组 影音组 Ai组 Docker组 工具组; do
   cp "$ROOT/resources/icons/$ic.icns" "$OUT/Contents/Resources/GroupIcons/$ic.icns"
 done
 cp "$ROOT/resources/icons/控制台-menubar.png" "$OUT/Contents/Resources/menubar.png"
+PLVER=$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null || true)
+PLVER=${PLVER#v}
+PLVER=${PLVER:-1.70.0}
 cat > "$OUT/Contents/Info.plist" <<'PL'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -28,5 +31,6 @@ cat > "$OUT/Contents/Info.plist" <<'PL'
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PL
+sed -i '' "s|<string>0.1</string>|<string>${PLVER}</string>|" "$OUT/Contents/Info.plist"
 codesign --force --deep --sign - "$OUT" >/dev/null 2>&1
 echo "built $OUT"

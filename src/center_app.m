@@ -149,6 +149,10 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSStatusItem *statusItem;
 @property (strong) NSWindow *window;
 @property (strong) NSTextField *centerTitleLabel;
+@property (strong) NSView *sideView;
+@property (strong) NSButton *sidebarToggle;
+@property (strong) NSButton *sidebarExpand;
+@property BOOL sidebarCollapsed;
 @property (strong) NSView *content;
 @property (strong) NSButton *sideLive, *sideGroups, *sideUninstall, *sideSettings;
 @property NSInteger section;
@@ -408,6 +412,29 @@ static NSDate *InstallDateForPath(NSString *path) {
 }
 @end
 
+
+@interface SidebarToggleButton : NSButton
+@end
+@implementation SidebarToggleButton
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    self.bordered = NO;
+    self.imagePosition = NSImageOnly;
+    self.image = [NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:@"侧边栏"];
+    self.contentTintColor = [NSColor whiteColor];
+    self.toolTip = @"收起 / 展开侧边栏";
+    self.wantsLayer = YES;
+    self.layer.cornerRadius = 10;
+  }
+  return self;
+}
+- (void)drawRect:(NSRect)dirtyRect {
+  NSGradient *g = [[NSGradient alloc] initWithColors:@[[NSColor systemPinkColor], [NSColor systemOrangeColor]]];
+  [g drawInBezierPath:[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:10 yRadius:10] angle:-45];
+  [super drawRect:dirtyRect];
+}
+@end
+
 @implementation Controller
 
 - (NSImage *)characterImage:(CGFloat)size {
@@ -603,12 +630,29 @@ static NSDate *InstallDateForPath(NSString *path) {
   }
 }
 
+- (void)toggleSidebar:(id)sender {
+  BOOL collapse = !self.sidebarCollapsed;
+  self.sidebarCollapsed = collapse;
+  self.sidebarToggle.image = [NSImage imageWithSystemSymbolName:(collapse ? @"sidebar.right" : @"sidebar.left") accessibilityDescription:@"侧边栏"];
+  self.sidebarExpand.image = [NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:@"展开侧边栏"];
+  self.sidebarExpand.hidden = !collapse;
+  self.sidebarToggle.hidden = collapse;
+  if (!collapse) self.sideView.hidden = NO;
+  [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+    ctx.duration = 0.22;
+    self.sideView.animator.alphaValue = collapse ? 0 : 1;
+    self.content.animator.frame = collapse ? NSMakeRect(0, 0, 960, 660) : NSMakeRect(210, 0, 750, 660);
+  } completionHandler:^{
+    if (collapse) self.sideView.hidden = YES;
+  }];
+}
+
 - (void)layoutCenterTitle {
   NSView *frameView = self.window.contentView.superview;
   if (!frameView || !self.centerTitleLabel) return;
   CGFloat w = frameView.bounds.size.width;
   CGFloat h = frameView.bounds.size.height;
-  self.centerTitleLabel.frame = NSMakeRect((w - 380)/2.0, h - 30, 380, 24);
+  self.centerTitleLabel.frame = NSMakeRect((w - 440)/2.0, h - 30, 440, 24);
 }
 - (void)windowDidResize:(NSNotification *)notification { [self layoutCenterTitle]; }
 
@@ -619,7 +663,7 @@ static NSDate *InstallDateForPath(NSString *path) {
   self.window.title = @"DockLaunchers 控制台";
   self.window.titleVisibility = NSWindowTitleHidden;
   self.window.delegate = self;
-  self.centerTitleLabel = [self label:@"DockLaunchers 控制台" size:16 bold:YES color:[NSColor systemOrangeColor]];
+  self.centerTitleLabel = [self label:[NSString stringWithFormat:@"DockLaunchers 控制台  v%@", [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.0"] size:16 bold:YES color:[NSColor systemOrangeColor]];
   self.centerTitleLabel.alignment = NSTextAlignmentCenter;
   [self.window.contentView.superview addSubview:self.centerTitleLabel];
   [self layoutCenterTitle];
@@ -664,11 +708,18 @@ static NSDate *InstallDateForPath(NSString *path) {
   }
   self.sideLive = btns[0]; self.sideGroups = btns[1]; self.sideUninstall = btns[2]; self.sideSettings = btns[3];
 
-  NSTextField *ver = [self label:@"v1.0 · 菜单栏常驻" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
-  ver.frame = NSMakeRect(20, 20, 170, 16);
-  [side addSubview:ver];
 
+  self.sideView = side;
   self.content = [[NSView alloc] initWithFrame:NSMakeRect(210, 0, 750, 660)];
+  self.sidebarToggle = [[SidebarToggleButton alloc] initWithFrame:NSMakeRect(20, 24, 32, 32)];
+  self.sidebarToggle.target = self;
+  self.sidebarToggle.action = @selector(toggleSidebar:);
+  [side addSubview:self.sidebarToggle];
+  self.sidebarExpand = [[SidebarToggleButton alloc] initWithFrame:NSMakeRect(10, 24, 34, 34)];
+  self.sidebarExpand.target = self;
+  self.sidebarExpand.action = @selector(toggleSidebar:);
+  self.sidebarExpand.hidden = YES;
+  [self.content addSubview:self.sidebarExpand];
   self.content.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
   [root addSubview:self.content];
 
@@ -777,16 +828,17 @@ static NSDate *InstallDateForPath(NSString *path) {
   [hide applyTitleColor:hide.normalColor];
   [v addSubview:hide];
 
-  self.uptimeLabel = [self label:@"" size:10.5 bold:NO color:[NSColor tertiaryLabelColor]];
+  self.uptimeLabel = [self label:@"" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
   self.uptimeLabel.alignment = NSTextAlignmentRight;
-  self.uptimeLabel.frame = NSMakeRect(470, 46, 254, 16);
+  self.uptimeLabel.maximumNumberOfLines = 2;
+  self.uptimeLabel.frame = NSMakeRect(648, 312, 90, 34);
   [v addSubview:self.uptimeLabel];
 
   NSArray *titles = @[@"内存", @"磁盘", @"CPU", @"GPU", @"电源", @"网络"];
   NSArray *keys = @[@"memory", @"disk", @"cpu", @"gpu", @"power", @"network"];
   NSArray *colors = @[[NSColor systemGreenColor], [NSColor systemOrangeColor], [NSColor systemBlueColor],
                       [NSColor systemPurpleColor], [NSColor systemPinkColor], [NSColor systemTealColor]];
-  CGFloat gap = 8, left = 20, width = (750 - left*2 - gap*5) / 6.0;
+  CGFloat gap = 6, left = 18, width = 100;
   NSMutableArray *cols = [NSMutableArray array];
   for (NSInteger i = 0; i < 6; i++) {
     MetricColumnView *c = [[MetricColumnView alloc] initWithFrame:NSMakeRect(left + i*(width+gap), 255, width, 320)
@@ -3390,7 +3442,7 @@ static BOOL ValidGroupName(NSString *raw) {
                   detail:[NSString stringWithFormat:@"↓ %@/s\n↑ %@/s", [self rate:inRate], [self rate:outRate]]
                      bar:MIN(100.0, rateKB * 2.0)];
   }
-  self.uptimeLabel.stringValue = [NSString stringWithFormat:@"系统启动：%@", [self uptimeString]];
+  self.uptimeLabel.stringValue = [NSString stringWithFormat:@"系统启动\n%@", [self uptimeString]];
   if (self.popover.isShown) {
     self.quickCPU.stringValue = [NSString stringWithFormat:@"CPU %.0f%%", cpuPct];
     self.quickMem.stringValue = [NSString stringWithFormat:@"内存 %.0f%%", memPct];
