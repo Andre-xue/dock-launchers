@@ -145,6 +145,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property (strong) NSMutableArray *dialogIconButtons;
 @property NSInteger dialogSelectedBuiltin;
 @property (strong) NSString *dialogCustomIcon;
+@property NSInteger dialogEditIndex;
 @property (strong) NSScrollView *groupsScroll;
 // uninstall
 @property (strong) NSMutableArray<NSDictionary *> *uninstallData;
@@ -221,6 +222,24 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
     [self deleteGroupNames:@[[NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")]]];
     exit(0);
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_RENAME")) {
+    NSString *arg = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_RENAME")];
+    NSArray *parts = [arg componentsSeparatedByString:@"|"];
+    if (parts.count == 2) {
+      NSString *err = nil;
+      BOOL ok = [self renameGroupFrom:parts[0] to:parts[1] error:&err];
+      fprintf(stderr, "RENAME_TEST ok=%d err=%s\n", ok, [(err ?: @"") UTF8String]);
+    }
+    exit(0);
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_EDIT")) {
+    [self showSection:1];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.9 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      NSButton *b = [[NSButton alloc] init];
+      b.tag = 0;
+      [self editGroupRow:b];
+    });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_REFRESH")) {
     [self showSection:1];
@@ -823,13 +842,16 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     NSTextField *pt = [self label:g[@"path"] size:10 bold:NO color:[NSColor secondaryLabelColor]];
     pt.frame = NSMakeRect(84, 10, 300, 16); [row addSubview:pt];
     NSButton *open = [NSButton buttonWithTitle:@"打开" target:self action:@selector(openGroupRow:)];
-    open.frame = NSMakeRect(406, 14, 62, 30); open.bezelStyle = NSBezelStyleRounded; open.tag = idx;
+    open.frame = NSMakeRect(352, 14, 56, 30); open.bezelStyle = NSBezelStyleRounded; open.tag = idx;
     [row addSubview:open];
+    NSButton *edit = [NSButton buttonWithTitle:@"编辑" target:self action:@selector(editGroupRow:)];
+    edit.frame = NSMakeRect(414, 14, 56, 30); edit.bezelStyle = NSBezelStyleRounded; edit.tag = idx;
+    [row addSubview:edit];
     NSButton *bk = [NSButton buttonWithTitle:@"备份" target:self action:@selector(backupGroupRow:)];
-    bk.frame = NSMakeRect(474, 14, 62, 30); bk.bezelStyle = NSBezelStyleRounded; bk.tag = idx;
+    bk.frame = NSMakeRect(476, 14, 56, 30); bk.bezelStyle = NSBezelStyleRounded; bk.tag = idx;
     [row addSubview:bk];
     NSButton *del = [NSButton buttonWithTitle:@"删除" target:self action:@selector(deleteGroupRow:)];
-    del.frame = NSMakeRect(542, 14, 62, 30); del.bezelStyle = NSBezelStyleRounded; del.tag = idx;
+    del.frame = NSMakeRect(538, 14, 56, 30); del.bezelStyle = NSBezelStyleRounded; del.tag = idx;
     [row addSubview:del];
     [self.groupsList addSubview:row];
     y += 66;
@@ -875,7 +897,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 
 - (void)refreshDialogIconSelection {
   for (NSButton *b in self.dialogIconButtons) {
-    BOOL sel = (b.tag == self.dialogSelectedBuiltin);
+    BOOL sel = (b.tag == self.dialogSelectedBuiltin) || (self.dialogSelectedBuiltin == -2 && b.tag == 98);
     b.layer.borderWidth = sel ? 3.0 : 1.0;
     b.layer.borderColor = (sel ? [NSColor controlAccentColor] : [NSColor colorWithCalibratedWhite:0.85 alpha:1.0]).CGColor;
     b.layer.cornerRadius = 12;
@@ -926,6 +948,144 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   info[@"CFBundleIconFile"] = @"AppIcon";
   [info writeToFile:plist atomically:YES];
   return YES;
+}
+
+- (BOOL)renameGroupFrom:(NSString *)oldName to:(NSString *)newName error:(NSString **)err {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *oldApp = [[GroupDir() stringByAppendingPathComponent:oldName] stringByAppendingPathExtension:@"app"];
+  NSString *newApp = [[GroupDir() stringByAppendingPathComponent:newName] stringByAppendingPathExtension:@"app"];
+  if (![fm fileExistsAtPath:oldApp]) { if (err) *err = @"原分组不存在"; return NO; }
+  if ([fm fileExistsAtPath:newApp]) { if (err) *err = @"同名分组已存在"; return NO; }
+  NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[oldApp stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+  NSString *bid = info[@"CFBundleIdentifier"];
+  for (NSRunningApplication *ra in [[NSWorkspace sharedWorkspace] runningApplications]) {
+    if ([ra.bundleIdentifier isEqualToString:bid]) [ra forceTerminate];
+  }
+  [self removeDockEntry:oldApp];
+  if (![fm moveItemAtPath:oldApp toPath:newApp error:NULL]) {
+    if (err) *err = @"重命名分组 App 失败";
+    [self addDockEntry:oldApp label:oldName];
+    return NO;
+  }
+  NSString *oldList = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[oldName stringByAppendingPathExtension:@"txt"]];
+  NSString *newList = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[newName stringByAppendingPathExtension:@"txt"]];
+  if ([fm fileExistsAtPath:oldList]) [fm moveItemAtPath:oldList toPath:newList error:NULL];
+  NSString *oldBk = [[self groupBackupRoot] stringByAppendingPathComponent:oldName];
+  NSString *newBk = [[self groupBackupRoot] stringByAppendingPathComponent:newName];
+  if ([fm fileExistsAtPath:oldBk] && ![fm fileExistsAtPath:newBk]) [fm moveItemAtPath:oldBk toPath:newBk error:NULL];
+  NSString *plist = [newApp stringByAppendingPathComponent:@"Contents/Info.plist"];
+  NSMutableDictionary *ni = [[NSDictionary dictionaryWithContentsOfFile:plist] mutableCopy];
+  ni[@"CFBundleName"] = newName;
+  ni[@"CFBundleDisplayName"] = newName;
+  [ni writeToFile:plist atomically:YES];
+  NSTask *sign = [[NSTask alloc] init];
+  sign.launchPath = @"/usr/bin/codesign";
+  sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", newApp];
+  @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
+  NSTask *reg = [[NSTask alloc] init];
+  reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+  reg.arguments = @[@"-f", newApp];
+  @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
+  return YES;
+}
+
+- (void)editGroupRow:(NSButton *)sender {
+  NSInteger idx = sender.tag;
+  if (idx < 0 || idx >= (NSInteger)self.groups.count) return;
+  NSDictionary *g = self.groups[idx];
+  NSString *oldName = g[@"name"];
+  NSString *display = g[@"display"];
+  NSString *appPath = g[@"path"];
+  self.dialogEditIndex = idx;
+  self.dialogSelectedBuiltin = -2;
+  self.dialogCustomIcon = nil;
+  self.dialogIconButtons = [NSMutableArray array];
+
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"编辑分组";
+  a.informativeText = @"修改分组名称或 Dock 图标。";
+  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 620, 330)];
+  NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(10, 290, 600, 26)];
+  tf.stringValue = display;
+  [v addSubview:tf];
+  NSTextField *l1 = [self label:@"Dock 图标（默认保持当前图标）" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  l1.frame = NSMakeRect(10, 264, 600, 16); [v addSubview:l1];
+  NSButton *cur = [[NSButton alloc] initWithFrame:NSMakeRect(10, 170, 74, 74)];
+  cur.image = [[NSWorkspace sharedWorkspace] iconForFile:appPath];
+  cur.imageScaling = NSImageScaleProportionallyUpOrDown;
+  cur.bordered = NO;
+  cur.tag = 98;
+  cur.toolTip = @"当前图标";
+  cur.target = self;
+  cur.action = @selector(dialogIconClicked:);
+  cur.wantsLayer = YES;
+  [v addSubview:cur];
+  [self.dialogIconButtons addObject:cur];
+  NSArray *names = @[@"工作组", @"聊天组", @"外网组", @"影音组", @"Ai组", @"Docker组", @"工具组"];
+  for (NSInteger i = 0; i < names.count; i++) {
+    NSButton *b = [[NSButton alloc] initWithFrame:NSMakeRect(94 + i * 72, 170, 64, 64)];
+    b.image = [self groupIconImage:names[i]];
+    b.imageScaling = NSImageScaleProportionallyUpOrDown;
+    b.bordered = NO;
+    b.tag = i;
+    b.toolTip = names[i];
+    b.target = self;
+    b.action = @selector(dialogIconClicked:);
+    b.wantsLayer = YES;
+    [v addSubview:b];
+    [self.dialogIconButtons addObject:b];
+  }
+  NSButton *custom = [NSButton buttonWithTitle:@"自定义图标…" target:self action:@selector(dialogChooseCustomIcon:)];
+  custom.frame = NSMakeRect(10, 120, 140, 32);
+  custom.bezelStyle = NSBezelStyleRounded;
+  [v addSubview:custom];
+  [self refreshDialogIconSelection];
+  a.accessoryView = v;
+  [a addButtonWithTitle:@"保存"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+
+  NSString *newName = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  while ([newName hasSuffix:@"组"] && newName.length > 1) newName = [newName substringToIndex:newName.length-1];
+  if (!newName.length) { NSAlert *e = [[NSAlert alloc] init]; e.messageText = @"分组名不能为空"; [e runModal]; return; }
+  BOOL nameChanged = ![newName isEqualToString:oldName];
+  BOOL iconChanged = (self.dialogSelectedBuiltin >= 0) || self.dialogCustomIcon.length > 0;
+  if (!nameChanged && !iconChanged) {
+    NSAlert *e = [[NSAlert alloc] init]; e.icon = [self characterImage:64];
+    e.messageText = @"没有修改"; e.informativeText = @"名称和图标都没有变化。"; [e runModal]; return;
+  }
+  NSString *err = nil;
+  NSString *targetApp = appPath;
+  if (nameChanged) {
+    if (![self renameGroupFrom:oldName to:newName error:&err]) {
+      NSAlert *e = [[NSAlert alloc] init]; e.icon = [self characterImage:64];
+      e.messageText = @"编辑失败"; e.informativeText = err ?: @"请重试"; [e runModal]; return;
+    }
+    targetApp = [[GroupDir() stringByAppendingPathComponent:newName] stringByAppendingPathExtension:@"app"];
+    display = newName;
+  }
+  if (iconChanged) {
+    if (![self applyIconToApp:targetApp]) {
+      NSAlert *e = [[NSAlert alloc] init]; e.icon = [self characterImage:64];
+      e.messageText = @"图标更新失败"; e.informativeText = @"分组名称已保存，图标未更新。"; [e runModal];
+    }
+    NSTask *sign = [[NSTask alloc] init];
+    sign.launchPath = @"/usr/bin/codesign";
+    sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", targetApp];
+    @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
+  }
+  [self removeDockEntry:targetApp];
+  [self addDockEntry:targetApp label:display];
+  [self killDock];
+  [self refreshGroups];
+  if (self.popover.isShown) [self rebuildQuickGroups];
+  NSAlert *done = [[NSAlert alloc] init];
+  done.icon = [self characterImage:64];
+  done.messageText = @"编辑完成";
+  done.informativeText = [NSString stringWithFormat:@"分组：%@%@%@", display,
+                          nameChanged ? @"\n名称已更新，列表与备份目录已同步" : @"",
+                          iconChanged ? @"\nDock 图标已更新" : @""];
+  [done runModal];
 }
 
 - (void)createGroup:(id)sender {
