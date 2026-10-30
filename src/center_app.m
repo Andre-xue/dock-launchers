@@ -1149,11 +1149,13 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
     return e;
   }];
   // 确保控制台自己出现在 Dock，并刷新图标缓存（先删后加）
-  NSString *selfPath = [[NSBundle mainBundle] bundlePath];
-  [self removeDockEntry:selfPath];
-  [self addDockEntry:selfPath label:@"DockLaunchers控制台"];
-  [self ensureGroupDockEntries];
-  [self killDock];
+  if (!getenv("DOCKLAUNCHERS_CENTER_SKIP_DOCK")) {
+    NSString *selfPath = [[NSBundle mainBundle] bundlePath];
+    [self removeDockEntry:selfPath];
+    [self addDockEntry:selfPath label:@"DockLaunchers控制台"];
+    [self ensureGroupDockEntries];
+    [self killDock];
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")) {
     NSString *arg = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")];
     NSMutableArray *names = [NSMutableArray array];
@@ -1218,6 +1220,26 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
       b.tag = 0;
       [self editGroupRow:b];
     });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_GROUP_SEARCH")) {
+    [self showSection:1];
+    [self showWindow:nil];
+    self.groupsSearch.stringValue = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_GROUP_SEARCH")];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self groupsSearchChanged:nil];
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DISK")) {
+    [self showSection:3];
+    [self showWindow:nil];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self refreshDiskAnalysis];
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_SECTION")) {
+    int sec = atoi(getenv("DOCKLAUNCHERS_CENTER_TEST_SECTION"));
+    if (sec >= 0 && sec <= 5) [self showSection:sec];
+    [self showWindow:nil];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_AI")) {
     [self showSection:2];
@@ -1415,7 +1437,7 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
 }
 
 - (void)buildWindow {
-  self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,960,660)
+  self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,990,660)
                                             styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable)
                                               backing:NSBackingStoreBuffered defer:NO];
   self.window.title = @"DockLaunchers 控制台";
@@ -1427,10 +1449,10 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
   [self.window.contentView.superview addSubview:self.centerTitleLabel];
   [self layoutCenterTitle];
   self.window.styleMask &= ~NSWindowStyleMaskResizable;
-  self.window.contentMinSize = NSMakeSize(960, 660);
-  self.window.contentMaxSize = NSMakeSize(960, 660);
-  self.window.minSize = NSMakeSize(960, 688);
-  self.window.maxSize = NSMakeSize(960, 688);
+  self.window.contentMinSize = NSMakeSize(990, 660);
+  self.window.contentMaxSize = NSMakeSize(990, 660);
+  self.window.minSize = NSMakeSize(990, 688);
+  self.window.maxSize = NSMakeSize(990, 688);
   self.window.releasedWhenClosed = NO;
   self.window.titlebarAppearsTransparent = NO;
   NSView *root = self.window.contentView;
@@ -1473,7 +1495,7 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
 
 
   self.sideView = side;
-  self.contentScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(240, 0, 720, 660)];
+  self.contentScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(240, 0, 750, 660)];
   self.contentScroll.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
   self.contentScroll.hasVerticalScroller = YES;
   self.contentScroll.hasHorizontalScroller = YES;
@@ -1571,11 +1593,13 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
     NSButton *b = btns[i];
     BOOL on = (i == idx);
     NSColor *accent = navColors[i];
+    BOOL darkNav = ThemeIsDark(NSApp.effectiveAppearance);
+    NSColor *normalText = darkNav ? [NSColor colorWithCalibratedWhite:0.92 alpha:1.0] : [NSColor labelColor];
     b.layer.backgroundColor = on ? [accent colorWithAlphaComponent:0.14].CGColor : [NSColor clearColor].CGColor;
-    b.contentTintColor = on ? accent : [NSColor secondaryLabelColor];
+    b.contentTintColor = on ? accent : (darkNav ? [NSColor colorWithCalibratedWhite:0.78 alpha:1.0] : [NSColor secondaryLabelColor]);
     NSFont *font = DLDisplayFont(14, on);
     NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
-    b.attributedTitle = [[NSAttributedString alloc] initWithString:b.title ?: @"" attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: (on ? accent : [NSColor labelColor]), NSParagraphStyleAttributeName: ps}];
+    b.attributedTitle = [[NSAttributedString alloc] initWithString:b.title ?: @"" attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: (on ? accent : normalText), NSParagraphStyleAttributeName: ps}];
   }
   NSView *v = @[self.liveView, self.groupsView, self.aiView, self.diskView, self.uninstallView, self.settingsView][idx];
   v.autoresizingMask = NSViewNotSizable;
@@ -1591,7 +1615,7 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
   }
   if (idx == 3) { [self refreshDiskVolumes]; [self updateDiskGalleryLayout]; }
   if (idx == 2) {
-    dispatch_async(dispatch_get_main_queue(), ^{ [self rebuildAIDisplay]; });
+    [self rebuildAIDisplay];
     [self autoRefreshAIQuotas];
   }
   if (idx == 4) [self reloadUninstallData];
@@ -2452,7 +2476,6 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 }
 
 - (void)refreshGroups {
-  [self pruneStaleDockEntries];
   NSFileManager *fm = [NSFileManager defaultManager];
   NSArray *items = [[fm contentsOfDirectoryAtPath:GroupDir() error:NULL] sortedArrayUsingSelector:@selector(localizedCompare:)];
   NSMutableArray *gs = [NSMutableArray array];
@@ -3282,16 +3305,17 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.aiSearchField setContinuous:YES];
   [card addSubview:self.aiSearchField];
   self.aiCategory = @"全部";
-  self.aiTable = [[NSTableView alloc] initWithFrame:NSMakeRect(8, 8, 814, 390)];
+  self.aiTable = [[NSTableView alloc] initWithFrame:NSMakeRect(8, 8, 684, 390)];
   self.aiTable.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance);
   self.aiTable.rowHeight = 56;
   self.aiTable.usesAlternatingRowBackgroundColors = NO;
   self.aiTable.selectionHighlightStyle = NSTableViewSelectionHighlightStyleNone;
+  self.aiTable.columnAutoresizingStyle = NSTableViewNoColumnAutoresizing;
   self.aiTable.dataSource = self;
   self.aiTable.delegate = self;
-  NSArray *cols = @[@[@"sel", @"", @24], @[@"ainame", @"名称", @140], @[@"quota", @"余量", @90],
-                    @[@"endpoint", @"链接地址(API)", @120], @[@"api", @"API Key", @100],
-                    @[@"note", @"备注(用途)", @150], @[@"aiactions", @"操作", @160]];
+  NSArray *cols = @[@[@"sel", @"", @24], @[@"ainame", @"名称", @120], @[@"quota", @"余量", @90],
+                    @[@"endpoint", @"链接地址(API)", @100], @[@"api", @"API Key", @80],
+                    @[@"note", @"备注(用途)", @100], @[@"aiactions", @"操作", @130]];
   for (NSArray *c in cols) {
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
     col.title = c[1]; col.width = [c[2] doubleValue];
@@ -3300,7 +3324,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(8, 8, 684, 434)];
   sv.documentView = self.aiTable;
   sv.hasVerticalScroller = YES;
-  sv.hasHorizontalScroller = YES;
+  sv.hasHorizontalScroller = NO;
   sv.autohidesScrollers = YES;
   sv.drawsBackground = NO;
   [card addSubview:sv];
@@ -4834,7 +4858,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger cols = scrollW < 660 ? 2 : (scrollW < 980 ? 3 : 4);
   CGFloat gap = 10;
   CGFloat itemW = floor((scrollW - 20 - gap * (cols - 1)) / cols);
-  self.diskFlowLayout.itemSize = NSMakeSize(itemW, itemW);
+  self.diskFlowLayout.itemSize = NSMakeSize(itemW, MIN(itemW, 160));
   self.diskFlowLayout.minimumInteritemSpacing = gap;
   self.diskFlowLayout.minimumLineSpacing = gap;
   [self.diskFlowLayout invalidateLayout];
@@ -5534,11 +5558,11 @@ static BOOL ValidGroupName(NSString *raw) {
       NSArray *colors = @[[NSColor systemGreenColor], [NSColor systemBlueColor], [NSColor systemRedColor]];
       NSArray *sels = @[@"aiCopyRow:", @"aiBackupRow:", @"aiDeleteRow:"];
       for (NSInteger i = 0; i < 3; i++) {
-        ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(i*42, 14, 40, 26)];
+        ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(i*38, 14, 36, 26)];
         b.title = titles[i]; b.hoverColor = colors[i]; b.tag = row;
         b.target = self; b.action = NSSelectorFromString(sels[i]);
         [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-        b.font = [NSFont systemFontOfSize:9.5];
+        b.font = [NSFont systemFontOfSize:9];
         [v addSubview:b];
       }
     } else {
@@ -6477,6 +6501,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger tv = self.themePopup.indexOfSelectedItem;
   [[NSUserDefaults standardUserDefaults] setInteger:tv forKey:@"centerTheme"];
   [self applyThemeFromDefaults];
+  [self showSection:self.section];
   NSArray *names = @[@"跟随系统", @"亮色", @"暗色"];
   [self showToast:[NSString stringWithFormat:@"显示主题：%@", names[tv]]];
 }
