@@ -922,6 +922,31 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   } @catch (NSException *e) {}
 }
 
+- (NSInteger)pruneStaleGroupListEntries {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSInteger removed = 0;
+  NSString *listsDir = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  for (NSString *f in [fm contentsOfDirectoryAtPath:listsDir error:NULL]) {
+    if (![f hasSuffix:@".txt"]) continue;
+    NSString *path = [listsDir stringByAppendingPathComponent:f];
+    NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
+    if (!content) continue;
+    NSMutableArray *keep = [NSMutableArray array];
+    for (NSString *raw in [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if (!line.length) continue;
+      if ([line hasPrefix:@"#"]) { [keep addObject:raw]; continue; }
+      NSString *target = line;
+      NSRange r = [line rangeOfString:@"|"];
+      if (r.location != NSNotFound) target = [[line substringFromIndex:r.location+1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if (ResolveAppPath(target).length == 0) { removed++; continue; }
+      [keep addObject:raw];
+    }
+    [[keep componentsJoinedByString:@"\n"] writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  }
+  return removed;
+}
+
 - (void)refreshAllGroupsClicked:(id)sender {
   NSFileManager *fm = [NSFileManager defaultManager];
   // 1) 关闭所有已打开的分组窗口（不论是否钉住）
@@ -940,6 +965,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
       if ([ra forceTerminate]) closed++;   // 强制关闭，钉住也无效
     }
   }
+  NSInteger pruned = [self pruneStaleGroupListEntries];
   // 2) 重建 Dock 条目（刷新图标）
   NSInteger icons = 0;
   for (NSString *f in items) {
@@ -975,7 +1001,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   NSAlert *a = [[NSAlert alloc] init];
   a.icon = [self characterImage:64];
   a.messageText = @"刷新完成";
-  a.informativeText = [NSString stringWithFormat:@"已关闭 %ld 个分组窗口\n已刷新 %ld 个 Dock 图标\n已清理 %ld 项缓存", (long)closed, (long)icons, (long)caches];
+  a.informativeText = [NSString stringWithFormat:@"已关闭 %ld 个分组窗口\n已刷新 %ld 个 Dock 图标\n已清理 %ld 项缓存\n已移除 %ld 个失效条目", (long)closed, (long)icons, (long)caches, (long)pruned];
   [a runModal];
 }
 
@@ -2249,7 +2275,11 @@ static BOOL ValidGroupName(NSString *raw) {
   if (t.terminationStatus != 0) return;
 
   NSMutableSet *targets = [NSMutableSet set];
-  for (NSDictionary *d in sel) [targets addObject:d[@"target"]];
+  NSMutableSet *removePaths = [NSMutableSet set];
+  for (NSDictionary *d in sel) {
+    [targets addObject:d[@"target"]];
+    if (d[@"path"]) [removePaths addObject:[d[@"path"] stringByStandardizingPath]];
+  }
   NSArray *items = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:GroupDir() error:NULL];
   for (NSString *f in items) {
     if (![f hasSuffix:@".app"]) continue;
@@ -2265,7 +2295,12 @@ static BOOL ValidGroupName(NSString *raw) {
       NSString *target = line;
       NSRange r = [line rangeOfString:@"|"];
       if (r.location != NSNotFound) target = [[line substringFromIndex:r.location+1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-      if (![targets containsObject:target]) [keep addObject:raw];
+      BOOL remove = [targets containsObject:target];
+      if (!remove && removePaths.count) {
+        NSString *resolved = ResolveAppPath(target);
+        if (resolved.length && [removePaths containsObject:[resolved stringByStandardizingPath]]) remove = YES;
+      }
+      if (!remove) [keep addObject:raw];
     }
     [[keep componentsJoinedByString:@"\n"] writeToFile:listFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
   }
