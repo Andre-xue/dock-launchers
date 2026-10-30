@@ -19,6 +19,7 @@
 #import <PDFKit/PDFKit.h>
 #import <NaturalLanguage/NaturalLanguage.h>
 #import <Carbon/Carbon.h>
+#import <ApplicationServices/ApplicationServices.h>
 
 static double gPrevCPUBusy = 0, gPrevCPUTotal = 0;
 static unsigned long long gPrevNetIn = 0, gPrevNetOut = 0;
@@ -179,7 +180,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
   return [NSFont systemFontOfSize:size + bump weight:bold ? NSFontWeightBold : NSFontWeightSemibold];
 }
 
-@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
+@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
 @property (strong) NSWindow *window;
@@ -202,9 +203,13 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSPopUpButton *translationProviderPopup, *translationTargetPopup;
 @property (strong) NSComboBox *translationModelField;
 @property (strong) NSTextField *translationStatus;
+- (void)translateSelectedText;
 @property (strong) NSTimer *translationAutoTimer;
 @property BOOL translationBusy;
-@property EventHotKeyRef translationHotKey;
+@property EventHotKeyRef translationHotKey, selectionHotKey;
+@property UInt32 selectionKeyCode, selectionModifiers;
+@property (strong) NSString *selectionShortcutDisplay;
+@property (strong) ColorHoverButton *selectionShortcutButton;
 @property EventHandlerRef translationHotKeyHandler;
 @property (strong) NSProgressIndicator *compressSpinner;
 @property NSInteger groupsPage;
@@ -1549,8 +1554,13 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
 
 static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventRef event, void *userData) {
   Controller *c = (__bridge Controller *)userData;
-  [c showTranslationWindow:nil];
-  [c translationScreenshot:nil];
+  EventHotKeyID hk = {0, 0};
+  GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID, NULL, sizeof(hk), NULL, &hk);
+  if (hk.id == 2) [c translateSelectedText];
+  else {
+    [c showTranslationWindow:nil];
+    [c translationScreenshot:nil];
+  }
   return noErr;
 }
 
@@ -1559,6 +1569,34 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   InstallEventHandler(GetApplicationEventTarget(), TranslationHotKeyHandler, 1, &es, (__bridge void *)self, &_translationHotKeyHandler);
   EventHotKeyID hid = {'DLTR', 1};
   RegisterEventHotKey(kVK_ANSI_T, controlKey | optionKey, hid, GetApplicationEventTarget(), 0, &_translationHotKey);
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  self.selectionKeyCode = (UInt32)[ud integerForKey:@"centerSelectKeyCode"];
+  self.selectionModifiers = (UInt32)[ud integerForKey:@"centerSelectModifiers"];
+  self.selectionShortcutDisplay = [ud stringForKey:@"centerSelectKeyDisplay"];
+  if (!self.selectionShortcutDisplay.length) {
+    self.selectionKeyCode = kVK_ANSI_D;
+    self.selectionModifiers = controlKey | optionKey;
+    self.selectionShortcutDisplay = @"⌃⌥D";
+  }
+  [self registerSelectionHotKeyWithCode:self.selectionKeyCode modifiers:self.selectionModifiers display:self.selectionShortcutDisplay];
+}
+
+- (BOOL)registerSelectionHotKeyWithCode:(UInt32)code modifiers:(UInt32)mods display:(NSString *)display {
+  if (self.selectionHotKey) { UnregisterEventHotKey(self.selectionHotKey); self.selectionHotKey = NULL; }
+  EventHotKeyID hid = {'DLTR', 2};
+  EventHotKeyRef ref = NULL;
+  OSStatus st = RegisterEventHotKey(code, mods, hid, GetApplicationEventTarget(), 0, &ref);
+  self.selectionHotKey = ref;
+  if (st != noErr) { self.selectionHotKey = NULL; return NO; }
+  self.selectionKeyCode = code; self.selectionModifiers = mods; self.selectionShortcutDisplay = display;
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  [ud setInteger:code forKey:@"centerSelectKeyCode"];
+  [ud setInteger:mods forKey:@"centerSelectModifiers"];
+  [ud setObject:display forKey:@"centerSelectKeyDisplay"];
+  if (self.selectionShortcutButton) {
+    self.selectionShortcutButton.title = [@"划词翻译 " stringByAppendingString:display ?: @""];
+  }
+  return YES;
 }
 
 - (void)setupMainMenu {
@@ -7297,6 +7335,14 @@ static BOOL ValidGroupName(NSString *raw) {
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
     }
+    self.selectionShortcutButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(580, 96, 208, 30)];
+    self.selectionShortcutButton.title = [@"划词翻译 " stringByAppendingString:self.selectionShortcutDisplay ?: @"⌃⌥D"];
+    self.selectionShortcutButton.hoverColor = [NSColor systemTealColor];
+    self.selectionShortcutButton.target = self;
+    self.selectionShortcutButton.action = @selector(recordSelectionShortcut:);
+    self.selectionShortcutButton.toolTip = @"选中其他应用中的文字后按此快捷键，自动读取并翻译；可点击修改";
+    [self.selectionShortcutButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:self.selectionShortcutButton];
     CompressDropView *drop = [[CompressDropView alloc] initWithFrame:NSMakeRect(24, 34, 772, 50)];
     drop.dropTarget = self; drop.dropAction = @selector(translationFilesDropped:);
     [cv addSubview:drop];
