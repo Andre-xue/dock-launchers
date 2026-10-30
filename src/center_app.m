@@ -7,6 +7,7 @@
 #include <net/if.h>
 #import <IOKit/ps/IOPowerSources.h>
 #import <IOKit/ps/IOPSKeys.h>
+#import <Quartz/Quartz.h>
 
 static double gPrevCPUBusy = 0, gPrevCPUTotal = 0;
 static unsigned long long gPrevNetIn = 0, gPrevNetOut = 0;
@@ -124,7 +125,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 }
 @end
 
-@interface Controller : NSObject <NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate>
+@interface Controller : NSObject <NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
 @property (strong) NSStatusItem *statusItem;
 @property (strong) NSWindow *window;
 @property (strong) NSView *content;
@@ -154,6 +155,10 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property BOOL dialogIconsMissing;
 @property (strong) NSMutableArray *emptyGroupCheckboxes;
 @property (strong) NSButton *emptyContinueButton;
+@property (strong) NSArray *userFilesForUninstall;
+@property (strong) NSMutableSet *userFilesSelected;
+@property (strong) NSTableView *userFilesTable;
+@property (strong) NSString *userFilesPreviewPath;
 @property BOOL dialogHighlightName;
 @property (strong) NSScrollView *groupsScroll;
 // uninstall
@@ -248,6 +253,23 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
       BOOL ok = [self applyIconToApp:parts[0]];
       fprintf(stderr, "CUSTOM_APPLY ok=%d\n", ok);
     }
+    exit(0);
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DETECT")) {
+    NSArray *files = [self userSavedFilesForApps:@[@{@"name": @"测试保存", @"bid": @"com.test.saved", @"path": @"/Applications/Calculator.app"}]];
+    fprintf(stderr, "DETECT count=%ld\n", (long)files.count);
+    for (NSDictionary *d in files) fprintf(stderr, "FILE %s\n", [d[@"path"] UTF8String]);
+    exit(0);
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_PICK")) {
+    NSMutableArray *files = [NSMutableArray array];
+    for (NSString *p in @[@"/tmp/userfiles_code.m", @"/tmp/dock.plist", @"/tmp/icon_preview4.png"]) {
+      if ([[NSFileManager defaultManager] fileExistsAtPath:p]) {
+        NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:p error:NULL];
+        [files addObject:@{@"path": p, @"name": [p lastPathComponent], @"type": [p pathExtension].uppercaseString, @"size": attr[NSFileSize] ?: @0, @"app": @"测试应用"}];
+      }
+    }
+    [self pickUserFilesToDelete:files];
     exit(0);
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_RENAME")) {
@@ -1777,8 +1799,39 @@ static BOOL ValidGroupName(NSString *raw) {
   [self updateUninstallFooter];
 }
 
-- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView { return self.uninstallFiltered.count; }
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.userFilesTable) return self.userFilesForUninstall.count;
+  return self.uninstallFiltered.count;
+}
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.userFilesTable) {
+    if (row < 0 || row >= (NSInteger)self.userFilesForUninstall.count) return nil;
+    NSDictionary *d = self.userFilesForUninstall[row];
+    NSString *ident = col.identifier;
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,26)];
+    if ([ident isEqualToString:@"sel"]) {
+      NSButton *cb = [NSButton checkboxWithTitle:@"" target:self action:@selector(userFileCheckToggled:)];
+      cb.tag = row; cb.frame = NSMakeRect(2, 4, 18, 18);
+      cb.state = [self.userFilesSelected containsObject:d[@"path"]] ? NSControlStateValueOn : NSControlStateValueOff;
+      [v addSubview:cb];
+    } else if ([ident isEqualToString:@"name"]) {
+      NSTextField *l = [self label:d[@"name"] size:11.5 bold:NO color:nil];
+      l.frame = NSMakeRect(2, 4, col.width-6, 17); [v addSubview:l];
+    } else if ([ident isEqualToString:@"type"]) {
+      NSTextField *l = [self label:d[@"type"] size:11 bold:NO color:[NSColor secondaryLabelColor]];
+      l.frame = NSMakeRect(2, 4, col.width-6, 17); [v addSubview:l];
+    } else if ([ident isEqualToString:@"size"]) {
+      NSTextField *l = [self label:[self fmtSize:[d[@"size"] unsignedLongLongValue]] size:11 bold:NO color:nil];
+      l.frame = NSMakeRect(2, 4, col.width-6, 17); [v addSubview:l];
+    } else if ([ident isEqualToString:@"app"]) {
+      NSTextField *l = [self label:d[@"app"] size:11 bold:NO color:[NSColor secondaryLabelColor]];
+      l.frame = NSMakeRect(2, 4, col.width-6, 17); [v addSubview:l];
+    } else if ([ident isEqualToString:@"path"]) {
+      NSTextField *l = [self label:d[@"path"] size:10 bold:NO color:[NSColor secondaryLabelColor]];
+      l.frame = NSMakeRect(2, 4, col.width-6, 17); [v addSubview:l];
+    }
+    return v;
+  }
   if (row < 0 || row >= (NSInteger)self.uninstallFiltered.count) return nil;
   NSDictionary *d = self.uninstallFiltered[row];
   NSString *ident = col.identifier;
@@ -1839,6 +1892,170 @@ static BOOL ValidGroupName(NSString *raw) {
   return out;
 }
 
+- (NSArray<NSDictionary *> *)userSavedFilesForApps:(NSArray<NSDictionary *> *)apps {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSMutableArray *out = [NSMutableArray array];
+  NSMutableSet *seen = [NSMutableSet set];
+  NSString *home = NSHomeDirectory();
+  NSArray *subdirs = @[@"Documents", @"Downloads", @"Desktop", @"Pictures", @"Movies", @"Music"];
+  for (NSDictionary *d in apps) {
+    NSString *name = d[@"name"] ?: @"";
+    NSString *bid = d[@"bid"] ?: @"";
+    NSMutableArray *roots = [NSMutableArray array];
+    for (NSString *sub in subdirs) {
+      if (name.length) [roots addObject:[home stringByAppendingPathComponent:[sub stringByAppendingPathComponent:name]]];
+    }
+    if (bid.length) {
+      NSString *data = [home stringByAppendingPathComponent:[@"Library/Containers" stringByAppendingPathComponent:bid]];
+      data = [data stringByAppendingPathComponent:@"Data"];
+      for (NSString *sub in subdirs) [roots addObject:[data stringByAppendingPathComponent:sub]];
+    }
+    for (NSString *root in roots) {
+      if (![fm fileExistsAtPath:root]) continue;
+      NSDirectoryEnumerator *en = [fm enumeratorAtPath:root];
+      for (NSString *rel in en) {
+        if (out.count >= 800) break;
+        NSString *full = [root stringByAppendingPathComponent:rel];
+        NSDictionary *attr = [fm attributesOfItemAtPath:full error:NULL];
+        if (![attr[NSFileType] isEqualToString:NSFileTypeRegular]) continue;
+        if ([seen containsObject:full]) continue;
+        [seen addObject:full];
+        NSString *ext = [full pathExtension].uppercaseString;
+        [out addObject:@{@"path": full, @"name": [full lastPathComponent],
+                         @"type": ext.length ? ext : @"文件",
+                         @"size": attr[NSFileSize] ?: @0,
+                         @"app": name.length ? name : @""}];
+      }
+    }
+  }
+  return out;
+}
+
+- (void)userFileCheckToggled:(NSButton *)b {
+  NSInteger row = b.tag;
+  if (row < 0 || row >= (NSInteger)self.userFilesForUninstall.count) return;
+  NSString *p = self.userFilesForUninstall[row][@"path"];
+  if (b.state == NSControlStateValueOn) [self.userFilesSelected addObject:p];
+  else [self.userFilesSelected removeObject:p];
+}
+
+- (void)userFilesSelectAll:(id)sender {
+  for (NSDictionary *d in self.userFilesForUninstall) [self.userFilesSelected addObject:d[@"path"]];
+  [self.userFilesTable reloadData];
+}
+- (void)userFilesSelectNone:(id)sender {
+  [self.userFilesSelected removeAllObjects];
+  [self.userFilesTable reloadData];
+}
+- (void)userFileDoubleClick:(id)sender {
+  NSInteger row = self.userFilesTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.userFilesForUninstall.count) return;
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.userFilesForUninstall[row][@"path"]]]];
+}
+- (void)previewUserFile {
+  NSInteger row = self.userFilesTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.userFilesForUninstall.count) return;
+  self.userFilesPreviewPath = self.userFilesForUninstall[row][@"path"];
+  QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
+  panel.dataSource = self;
+  panel.delegate = self;
+  [panel makeKeyAndOrderFront:nil];
+  [panel reloadData];
+}
+- (NSInteger)numberOfPreviewItemsInPreviewPanel:(QLPreviewPanel *)panel {
+  return self.userFilesPreviewPath.length ? 1 : 0;
+}
+- (id<QLPreviewItem>)previewPanel:(QLPreviewPanel *)panel previewItemAtIndex:(NSInteger)index {
+  return [NSURL fileURLWithPath:self.userFilesPreviewPath ?: @"/"];
+}
+
+- (NSArray<NSString *> *)pickUserFilesToDelete:(NSArray<NSDictionary *> *)files {
+  self.userFilesForUninstall = files;
+  self.userFilesSelected = [NSMutableSet set];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.icon = [self characterImage:64];
+  a.messageText = @"选择要一起删除的个人文件";
+  a.informativeText = @"默认全不选；空格预览，双击在 Finder 中显示。";
+  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 760, 380)];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(10, 50, 740, 320)];
+  sv.hasVerticalScroller = YES;
+  NSTableView *table = [[NSTableView alloc] initWithFrame:NSMakeRect(0,0,740,320)];
+  table.dataSource = self;
+  table.delegate = self;
+  table.rowHeight = 26;
+  table.doubleAction = @selector(userFileDoubleClick:);
+  table.target = self;
+  NSArray *cols = @[@[@"sel", @"", @40], @[@"name", @"文件", @220], @[@"type", @"类型", @80], @[@"size", @"大小", @90], @[@"app", @"应用", @110], @[@"path", @"路径", @290]];
+  for (NSArray *c in cols) {
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+    col.title = c[1]; col.width = [c[2] doubleValue];
+    [table addTableColumn:col];
+  }
+  sv.documentView = table;
+  [v addSubview:sv];
+  self.userFilesTable = table;
+  NSButton *all = [NSButton buttonWithTitle:@"全选" target:self action:@selector(userFilesSelectAll:)];
+  all.frame = NSMakeRect(10, 12, 70, 28); all.bezelStyle = NSBezelStyleRounded; [v addSubview:all];
+  NSButton *none = [NSButton buttonWithTitle:@"全不选" target:self action:@selector(userFilesSelectNone:)];
+  none.frame = NSMakeRect(88, 12, 78, 28); none.bezelStyle = NSBezelStyleRounded; [v addSubview:none];
+  [table reloadData];
+  a.accessoryView = v;
+  [a addButtonWithTitle:@"确定删除所选"];
+  [a addButtonWithTitle:@"取消"];
+  __block id monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    if (e.window == a.window && e.keyCode == 49) { [self previewUserFile]; return nil; }
+    return e;
+  }];
+  NSModalResponse r = [a runModal];
+  [NSEvent removeMonitor:monitor];
+  monitor = nil;
+  if (r != NSAlertFirstButtonReturn) return nil;
+  NSMutableArray *res = [NSMutableArray array];
+  for (NSDictionary *d in files) if ([self.userFilesSelected containsObject:d[@"path"]]) [res addObject:d[@"path"]];
+  return res;
+}
+
+- (void)showLeftoverAlert:(NSArray<NSString *> *)leftovers {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.icon = [self characterImage:64];
+  a.messageText = @"卸载完成，但有残留";
+  NSMutableString *info = [NSMutableString stringWithFormat:@"检测到 %ld 项未清理：\n", (long)leftovers.count];
+  NSInteger n = MIN((NSInteger)leftovers.count, 8);
+  for (NSInteger i = 0; i < n; i++) [info appendFormat:@"%@\n", leftovers[i]];
+  if (leftovers.count > n) [info appendString:@"…"];
+  a.informativeText = info;
+  [a addButtonWithTitle:@"删除残留"];
+  [a addButtonWithTitle:@"在 Finder 中显示"];
+  [a addButtonWithTitle:@"关闭"];
+  NSModalResponse r = [a runModal];
+  if (r == NSAlertFirstButtonReturn) {
+    NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\n"];
+    NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
+    NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
+    [body appendFormat:@"mkdir -p \"%@\"\n", trash];
+    NSInteger idx = 0;
+    for (NSString *p in leftovers) [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%ld-%@\"\n", p, p, trash, stamp, (long)idx++, [p lastPathComponent]];
+    NSString *sp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-leftovers.sh"];
+    [body writeToFile:sp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions:@0755} ofItemAtPath:sp error:NULL];
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/bin/osascript";
+    t.arguments = @[@"-e", [NSString stringWithFormat:@"do shell script \"/bin/sh %@\" with administrator privileges", sp]];
+    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+    NSAlert *done = [[NSAlert alloc] init];
+    done.icon = [self characterImage:64];
+    done.messageText = t.terminationStatus == 0 ? @"残留已删除" : @"残留删除失败";
+    [done runModal];
+  } else if (r == NSAlertSecondButtonReturn) {
+    NSMutableArray *urls = [NSMutableArray array];
+    for (NSString *p in leftovers) {
+      NSString *parent = [p stringByDeletingLastPathComponent];
+      if ([[NSFileManager defaultManager] fileExistsAtPath:parent]) [urls addObject:[NSURL fileURLWithPath:parent]];
+    }
+    if (urls.count) [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:urls];
+  }
+}
+
 - (void)confirmUninstallApps:(id)sender {
   NSMutableArray *sel = [NSMutableArray array];
   for (NSDictionary *d in self.uninstallData) if ([self.uninstallSelected containsObject:d[@"path"]]) [sel addObject:d];
@@ -1850,10 +2067,33 @@ static BOOL ValidGroupName(NSString *raw) {
     [e runModal];
     return;
   }
+  NSArray *userFiles = [self userSavedFilesForApps:sel];
+  NSArray *pickedUserFiles = @[];
+  if (userFiles.count) {
+    NSAlert *p = [[NSAlert alloc] init];
+    p.icon = [self characterImage:64];
+    p.messageText = @"发现个人保存文件";
+    p.informativeText = [NSString stringWithFormat:@"选中应用下检测到 %ld 个个人保存文件。是否一起删除？选择「否」将保留这些文件。", (long)userFiles.count];
+    [p addButtonWithTitle:@"是"];
+    [p addButtonWithTitle:@"否"];
+    if ([p runModal] == NSAlertFirstButtonReturn) {
+      NSArray *picked = [self pickUserFilesToDelete:userFiles];
+      if (!picked) return;
+      pickedUserFiles = picked;
+    }
+  }
+  NSMutableArray *removals = [NSMutableArray array];
+  for (NSDictionary *d in sel) {
+    [removals addObject:d[@"path"]];
+    for (NSString *dp in [self relatedDataPaths:d]) if (![removals containsObject:dp]) [removals addObject:dp];
+  }
+  for (NSString *p in pickedUserFiles) if (![removals containsObject:p]) [removals addObject:p];
+  NSMutableString *confirm = [NSMutableString stringWithFormat:@"将卸载应用本体并清理用户数据，不可恢复。5 秒后可点击「是」。"];
+  if (pickedUserFiles.count) [confirm appendFormat:@"\n同时删除 %ld 个个人文件。", (long)pickedUserFiles.count];
   NSAlert *c = [[NSAlert alloc] init];
   c.icon = [self characterImage:64];
   c.messageText = [NSString stringWithFormat:@"确认卸载 %ld 个应用？", (long)sel.count];
-  c.informativeText = @"将卸载应用本体并清理用户数据，不可恢复。5 秒后可点击「是」。";
+  c.informativeText = confirm;
   [c addButtonWithTitle:@"是（5）"];
   [c addButtonWithTitle:@"否"];
   NSButton *yes = c.buttons[0]; yes.enabled = NO;
@@ -1866,11 +2106,6 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   if ([c runModal] != NSAlertFirstButtonReturn) return;
 
-  NSMutableArray *removals = [NSMutableArray array];
-  for (NSDictionary *d in sel) {
-    [removals addObject:d[@"path"]];
-    for (NSString *dp in [self relatedDataPaths:d]) if (![removals containsObject:dp]) [removals addObject:dp];
-  }
   NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\n"];
   NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
   NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
@@ -1908,13 +2143,17 @@ static BOOL ValidGroupName(NSString *raw) {
     [[keep componentsJoinedByString:@"\n"] writeToFile:listFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
   }
   [self reloadUninstallData];
-  NSAlert *done = [[NSAlert alloc] init];
-  done.icon = [self characterImage:64];
-  done.messageText = @"卸载完成";
-  NSInteger left = 0;
-  for (NSString *p in removals) if ([[NSFileManager defaultManager] fileExistsAtPath:p]) left++;
-  done.informativeText = left == 0 ? [NSString stringWithFormat:@"已卸载 %ld 个应用并清理 %ld 项数据，已验证全部清除。", (long)sel.count, (long)removals.count] : [NSString stringWithFormat:@"已卸载 %ld 个应用，检测到 %ld 项残留。", (long)sel.count, (long)left];
-  [done runModal];
+  NSMutableArray *leftovers = [NSMutableArray array];
+  for (NSString *p in removals) if ([[NSFileManager defaultManager] fileExistsAtPath:p]) [leftovers addObject:p];
+  if (leftovers.count) {
+    [self showLeftoverAlert:leftovers];
+  } else {
+    NSAlert *done = [[NSAlert alloc] init];
+    done.icon = [self characterImage:64];
+    done.messageText = @"卸载完成";
+    done.informativeText = [NSString stringWithFormat:@"已卸载 %ld 个应用并清理 %ld 项数据%@，已验证全部清除。", (long)sel.count, (long)removals.count, pickedUserFiles.count ? [NSString stringWithFormat:@"（含 %ld 个个人文件）", (long)pickedUserFiles.count] : @""];
+    [done runModal];
+  }
 }
 
 // ---------------- 设置 ----------------
