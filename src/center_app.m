@@ -1909,6 +1909,21 @@ static BOOL ValidGroupName(NSString *raw) {
       NSString *data = [home stringByAppendingPathComponent:[@"Library/Containers" stringByAppendingPathComponent:bid]];
       data = [data stringByAppendingPathComponent:@"Data"];
       for (NSString *sub in subdirs) [roots addObject:[data stringByAppendingPathComponent:sub]];
+      // 尝试从应用偏好里找自定义保存路径
+      NSUserDefaults *ud = [[NSUserDefaults alloc] initWithSuiteName:bid];
+      NSDictionary *prefs = [ud dictionaryRepresentation];
+      for (id key in prefs) {
+        id val = prefs[key];
+        if ([key isKindOfClass:[NSString class]] && [val isKindOfClass:[NSString class]]) {
+          NSString *str = val;
+          BOOL isDir = NO;
+          if ([str hasPrefix:@"/"] && [[NSFileManager defaultManager] fileExistsAtPath:str isDirectory:&isDir] && isDir) {
+            if ([str containsString:@"/Documents"] || [str containsString:@"/Downloads"] || [str containsString:@"/Desktop"] || [str containsString:@"/Pictures"] || [str containsString:@"/Movies"] || [str containsString:@"/Music"] || [str containsString:@"/Users/"]) {
+              [roots addObject:str];
+            }
+          }
+        }
+      }
     }
     for (NSString *root in roots) {
       if (![fm fileExistsAtPath:root]) continue;
@@ -1969,6 +1984,35 @@ static BOOL ValidGroupName(NSString *raw) {
   return [NSURL fileURLWithPath:self.userFilesPreviewPath ?: @"/"];
 }
 
+- (void)userFilesAddFolder:(id)sender {
+  NSOpenPanel *panel = [NSOpenPanel openPanel];
+  panel.canChooseFiles = NO;
+  panel.canChooseDirectories = YES;
+  panel.allowsMultipleSelection = NO;
+  if ([panel runModal] != NSModalResponseOK) return;
+  NSString *root = panel.URL.path;
+  NSMutableArray *add = [NSMutableArray array];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSDirectoryEnumerator *en = [fm enumeratorAtPath:root];
+  for (NSString *rel in en) {
+    if (add.count >= 300) break;
+    NSString *full = [root stringByAppendingPathComponent:rel];
+    NSDictionary *attr = [fm attributesOfItemAtPath:full error:NULL];
+    if (![attr[NSFileType] isEqualToString:NSFileTypeRegular]) continue;
+    NSString *ext = [full pathExtension].uppercaseString;
+    [add addObject:@{@"path": full, @"name": [full lastPathComponent],
+                     @"type": ext.length ? ext : @"文件",
+                     @"size": attr[NSFileSize] ?: @0,
+                     @"app": @"手动选择"}];
+  }
+  NSMutableArray *merged = [self.userFilesForUninstall mutableCopy] ?: [NSMutableArray array];
+  NSMutableSet *seen = [NSMutableSet set];
+  for (NSDictionary *d in merged) [seen addObject:d[@"path"]];
+  for (NSDictionary *d in add) if (![seen containsObject:d[@"path"]]) [merged addObject:d];
+  self.userFilesForUninstall = merged;
+  [self.userFilesTable reloadData];
+}
+
 - (NSArray<NSString *> *)pickUserFilesToDelete:(NSArray<NSDictionary *> *)files {
   self.userFilesForUninstall = files;
   self.userFilesSelected = [NSMutableSet set];
@@ -1998,6 +2042,8 @@ static BOOL ValidGroupName(NSString *raw) {
   all.frame = NSMakeRect(10, 12, 70, 28); all.bezelStyle = NSBezelStyleRounded; [v addSubview:all];
   NSButton *none = [NSButton buttonWithTitle:@"全不选" target:self action:@selector(userFilesSelectNone:)];
   none.frame = NSMakeRect(88, 12, 78, 28); none.bezelStyle = NSBezelStyleRounded; [v addSubview:none];
+  NSButton *addFolder = [NSButton buttonWithTitle:@"添加文件夹…" target:self action:@selector(userFilesAddFolder:)];
+  addFolder.frame = NSMakeRect(174, 12, 120, 28); addFolder.bezelStyle = NSBezelStyleRounded; [v addSubview:addFolder];
   [table reloadData];
   a.accessoryView = v;
   [a addButtonWithTitle:@"确定删除所选"];
