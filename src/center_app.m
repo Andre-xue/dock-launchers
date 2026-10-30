@@ -187,6 +187,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSButton *sideLive, *sideGroups, *sideAI, *sideDisk, *sideUninstall, *sideSettings;
 @property NSInteger section;
 @property (strong) NSView *liveView, *groupsView, *uninstallView, *settingsView;
+@property (strong) NSMutableSet *builtSections;
 @property NSInteger groupsPage;
 @property (strong) NSString *groupsFilter, *groupsHighlightedName, *groupsSelectedName;
 @property (strong) NSArray *groupsFiltered;
@@ -1518,11 +1519,6 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
   [side addSubview:self.sidebarToggle];
 
   [self buildLiveView];
-  [self buildGroupsView];
-  [self buildAIView];
-  [self buildDiskView];
-  [self buildUninstallView];
-  [self buildSettingsView];
   [self showSection:0];
   [self installGroupsKeyMonitor];
 }
@@ -1583,6 +1579,31 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
   }
 }
 
+- (NSView *)viewForSection:(NSInteger)idx {
+  if (!self.builtSections) self.builtSections = [NSMutableSet set];
+  switch (idx) {
+    case 0:
+      if (!self.liveView) { [self buildLiveView]; [self.builtSections addObject:@0]; }
+      return self.liveView;
+    case 1:
+      if (!self.groupsView) { [self buildGroupsView]; [self.builtSections addObject:@1]; }
+      return self.groupsView;
+    case 2:
+      if (!self.aiView) { [self buildAIView]; [self.builtSections addObject:@2]; }
+      return self.aiView;
+    case 3:
+      if (!self.diskView) { [self buildDiskView]; [self.builtSections addObject:@3]; }
+      return self.diskView;
+    case 4:
+      if (!self.uninstallView) { [self buildUninstallView]; [self.builtSections addObject:@4]; }
+      return self.uninstallView;
+    case 5:
+      if (!self.settingsView) { [self buildSettingsView]; [self.builtSections addObject:@5]; }
+      return self.settingsView;
+  }
+  return nil;
+}
+
 - (void)showSection:(NSInteger)idx {
   self.section = idx;
   for (NSView *v in self.content.subviews) [v removeFromSuperview];
@@ -1601,7 +1622,7 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
     NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
     b.attributedTitle = [[NSAttributedString alloc] initWithString:b.title ?: @"" attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: (on ? accent : normalText), NSParagraphStyleAttributeName: ps}];
   }
-  NSView *v = @[self.liveView, self.groupsView, self.aiView, self.diskView, self.uninstallView, self.settingsView][idx];
+  NSView *v = [self viewForSection:idx];
   v.autoresizingMask = NSViewNotSizable;
   [self.content addSubview:v];
   [self layoutPageView:v];
