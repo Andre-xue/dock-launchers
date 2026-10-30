@@ -204,12 +204,14 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSComboBox *translationModelField;
 @property (strong) NSTextField *translationStatus;
 - (void)translateSelectedText;
+- (void)translateCurrentText;
 @property (strong) NSTimer *translationAutoTimer;
 @property BOOL translationBusy;
-@property EventHotKeyRef translationHotKey, selectionHotKey;
-@property UInt32 selectionKeyCode, selectionModifiers;
-@property (strong) NSString *selectionShortcutDisplay;
-@property (strong) ColorHoverButton *selectionShortcutButton;
+@property EventHotKeyRef translationHotKey, selectionHotKey, translateHotKey;
+@property UInt32 shotKeyCode, shotModifiers, selectionKeyCode, selectionModifiers, translateKeyCode, translateModifiers;
+@property (strong) NSString *shotShortcutDisplay, *selectionShortcutDisplay, *translateShortcutDisplay;
+@property (strong) NSMutableArray *shortcutButtons;
+@property (strong) NSWindow *shortcutSettingsWindow;
 @property EventHandlerRef translationHotKeyHandler;
 @property (strong) NSProgressIndicator *compressSpinner;
 @property NSInteger groupsPage;
@@ -1354,6 +1356,12 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
       [self togglePopover:nil];
     });
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_SHORTCUT")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self showTranslationWindow:nil];
+      [self openShortcutSettings:nil];
+    });
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_TRANSLATE")) {
     [self showTranslationWindow:nil];
   }
@@ -1556,47 +1564,64 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   Controller *c = (__bridge Controller *)userData;
   EventHotKeyID hk = {0, 0};
   GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID, NULL, sizeof(hk), NULL, &hk);
-  if (hk.id == 2) [c translateSelectedText];
-  else {
+  if (hk.id == 1) {
     [c showTranslationWindow:nil];
     [c translationScreenshot:nil];
-  }
+  } else if (hk.id == 2) [c translateSelectedText];
+  else if (hk.id == 3) [c translateCurrentText];
   return noErr;
+}
+
+- (BOOL)registerHotKeyForAction:(NSInteger)action code:(UInt32)code modifiers:(UInt32)mods display:(NSString *)display {
+  EventHotKeyRef old = action == 0 ? self.translationHotKey : (action == 1 ? self.selectionHotKey : self.translateHotKey);
+  if (old) UnregisterEventHotKey(old);
+  EventHotKeyID hid = {'DLTR', (UInt32)(action + 1)};
+  EventHotKeyRef ref = NULL;
+  OSStatus st = RegisterEventHotKey(code, mods, hid, GetApplicationEventTarget(), 0, &ref);
+  if (st != noErr) return NO;
+  if (action == 0) { self.translationHotKey = ref; self.shotKeyCode = code; self.shotModifiers = mods; self.shotShortcutDisplay = display; }
+  else if (action == 1) { self.selectionHotKey = ref; self.selectionKeyCode = code; self.selectionModifiers = mods; self.selectionShortcutDisplay = display; }
+  else { self.translateHotKey = ref; self.translateKeyCode = code; self.translateModifiers = mods; self.translateShortcutDisplay = display; }
+  NSArray *kc = @[@"centerShotKeyCode", @"centerSelectKeyCode", @"centerTranslateKeyCode"];
+  NSArray *km = @[@"centerShotModifiers", @"centerSelectModifiers", @"centerTranslateModifiers"];
+  NSArray *kd = @[@"centerShotKeyDisplay", @"centerSelectKeyDisplay", @"centerTranslateKeyDisplay"];
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  [ud setInteger:code forKey:kc[action]];
+  [ud setInteger:mods forKey:km[action]];
+  [ud setObject:display forKey:kd[action]];
+  [self refreshShortcutButtons];
+  return YES;
 }
 
 - (void)installTranslationHotKey {
   EventTypeSpec es = {kEventClassKeyboard, kEventHotKeyPressed};
   InstallEventHandler(GetApplicationEventTarget(), TranslationHotKeyHandler, 1, &es, (__bridge void *)self, &_translationHotKeyHandler);
-  EventHotKeyID hid = {'DLTR', 1};
-  RegisterEventHotKey(kVK_ANSI_T, controlKey | optionKey, hid, GetApplicationEventTarget(), 0, &_translationHotKey);
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  self.shotKeyCode = (UInt32)[ud integerForKey:@"centerShotKeyCode"];
+  self.shotModifiers = (UInt32)[ud integerForKey:@"centerShotModifiers"];
+  self.shotShortcutDisplay = [ud stringForKey:@"centerShotKeyDisplay"];
+  if (!self.shotShortcutDisplay.length) { self.shotKeyCode = kVK_ANSI_T; self.shotModifiers = controlKey | optionKey; self.shotShortcutDisplay = @"⌃⌥T"; }
   self.selectionKeyCode = (UInt32)[ud integerForKey:@"centerSelectKeyCode"];
   self.selectionModifiers = (UInt32)[ud integerForKey:@"centerSelectModifiers"];
   self.selectionShortcutDisplay = [ud stringForKey:@"centerSelectKeyDisplay"];
-  if (!self.selectionShortcutDisplay.length) {
-    self.selectionKeyCode = kVK_ANSI_D;
-    self.selectionModifiers = controlKey | optionKey;
-    self.selectionShortcutDisplay = @"⌃⌥D";
-  }
-  [self registerSelectionHotKeyWithCode:self.selectionKeyCode modifiers:self.selectionModifiers display:self.selectionShortcutDisplay];
+  if (!self.selectionShortcutDisplay.length) { self.selectionKeyCode = kVK_ANSI_D; self.selectionModifiers = controlKey | optionKey; self.selectionShortcutDisplay = @"⌃⌥D"; }
+  self.translateKeyCode = (UInt32)[ud integerForKey:@"centerTranslateKeyCode"];
+  self.translateModifiers = (UInt32)[ud integerForKey:@"centerTranslateModifiers"];
+  self.translateShortcutDisplay = [ud stringForKey:@"centerTranslateKeyDisplay"];
+  if (!self.translateShortcutDisplay.length) { self.translateKeyCode = kVK_Return; self.translateModifiers = controlKey | optionKey; self.translateShortcutDisplay = @"⌃⌥↩"; }
+  [self registerHotKeyForAction:0 code:self.shotKeyCode modifiers:self.shotModifiers display:self.shotShortcutDisplay];
+  [self registerHotKeyForAction:1 code:self.selectionKeyCode modifiers:self.selectionModifiers display:self.selectionShortcutDisplay];
+  [self registerHotKeyForAction:2 code:self.translateKeyCode modifiers:self.translateModifiers display:self.translateShortcutDisplay];
 }
 
-- (BOOL)registerSelectionHotKeyWithCode:(UInt32)code modifiers:(UInt32)mods display:(NSString *)display {
-  if (self.selectionHotKey) { UnregisterEventHotKey(self.selectionHotKey); self.selectionHotKey = NULL; }
-  EventHotKeyID hid = {'DLTR', 2};
-  EventHotKeyRef ref = NULL;
-  OSStatus st = RegisterEventHotKey(code, mods, hid, GetApplicationEventTarget(), 0, &ref);
-  self.selectionHotKey = ref;
-  if (st != noErr) { self.selectionHotKey = NULL; return NO; }
-  self.selectionKeyCode = code; self.selectionModifiers = mods; self.selectionShortcutDisplay = display;
-  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-  [ud setInteger:code forKey:@"centerSelectKeyCode"];
-  [ud setInteger:mods forKey:@"centerSelectModifiers"];
-  [ud setObject:display forKey:@"centerSelectKeyDisplay"];
-  if (self.selectionShortcutButton) {
-    self.selectionShortcutButton.title = [@"划词翻译 " stringByAppendingString:display ?: @""];
+- (NSString *)shortcutDisplayForAction:(NSInteger)action {
+  return action == 0 ? self.shotShortcutDisplay : (action == 1 ? self.selectionShortcutDisplay : self.translateShortcutDisplay);
+}
+
+- (void)refreshShortcutButtons {
+  for (ColorHoverButton *b in self.shortcutButtons) {
+    if (b.tag >= 0 && b.tag <= 2) b.title = [self shortcutDisplayForAction:b.tag];
   }
-  return YES;
 }
 
 - (void)setupMainMenu {
@@ -7335,14 +7360,13 @@ static BOOL ValidGroupName(NSString *raw) {
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
     }
-    self.selectionShortcutButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(580, 96, 208, 30)];
-    self.selectionShortcutButton.title = [@"划词翻译 " stringByAppendingString:self.selectionShortcutDisplay ?: @"⌃⌥D"];
-    self.selectionShortcutButton.hoverColor = [NSColor systemTealColor];
-    self.selectionShortcutButton.target = self;
-    self.selectionShortcutButton.action = @selector(recordSelectionShortcut:);
-    self.selectionShortcutButton.toolTip = @"选中其他应用中的文字后按此快捷键，自动读取并翻译；可点击修改";
-    [self.selectionShortcutButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-    [cv addSubview:self.selectionShortcutButton];
+    ColorHoverButton *shortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(580, 96, 208, 30)];
+    shortcutBtn.title = @"快捷键设置…";
+    shortcutBtn.hoverColor = [NSColor systemTealColor];
+    shortcutBtn.target = self; shortcutBtn.action = @selector(openShortcutSettings:);
+    shortcutBtn.toolTip = @"设置截图翻译、划词翻译、翻译当前文本的快捷键";
+    [shortcutBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:shortcutBtn];
     CompressDropView *drop = [[CompressDropView alloc] initWithFrame:NSMakeRect(24, 34, 772, 50)];
     drop.dropTarget = self; drop.dropAction = @selector(translationFilesDropped:);
     [cv addSubview:drop];
@@ -7445,6 +7469,143 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)textDidChange:(NSNotification *)notification {
   if (notification.object == self.translationSourceView) [self scheduleAutoTranslate];
+}
+
+- (NSString *)selectedTextFromFocusedApplication {
+  if (!AXIsProcessTrusted()) {
+    AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)@{(__bridge id)kAXTrustedCheckOptionPrompt: @YES});
+    return nil;
+  }
+  AXUIElementRef sys = AXUIElementCreateSystemWide();
+  CFTypeRef focused = NULL;
+  NSString *result = @"";
+  if (AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute, &focused) == kAXErrorSuccess && focused) {
+    CFTypeRef sel = NULL;
+    if (AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXSelectedTextAttribute, &sel) == kAXErrorSuccess && sel) {
+      if (CFGetTypeID(sel) == CFStringGetTypeID()) result = [NSString stringWithString:(__bridge NSString *)sel];
+      CFRelease(sel);
+    }
+    CFRelease(focused);
+  }
+  CFRelease(sys);
+  return result;
+}
+
+- (void)translateSelectedText {
+  NSString *text = [self selectedTextFromFocusedApplication];
+  [self showTranslationWindow:nil];
+  if (!text) {
+    self.translationStatus.stringValue = @"划词翻译需要辅助功能权限：系统设置 → 隐私与安全性 → 辅助功能";
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"需要辅助功能权限";
+    a.informativeText = @"划词翻译需要读取其他应用中的选中文本。请在系统设置 → 隐私与安全性 → 辅助功能中允许 DockLaunchers 控制台。";
+    [a addButtonWithTitle:@"打开系统设置"];
+    [a addButtonWithTitle:@"取消"];
+    if ([a runModal] == NSAlertFirstButtonReturn) {
+      [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
+    }
+    return;
+  }
+  if (!text.length) { self.translationStatus.stringValue = @"没有获取到选中文本，请先在目标应用中选中文字"; return; }
+  [self translationSetSource:text status:@"已获取选中文本，正在自动翻译…"];
+}
+
+- (void)translateCurrentText {
+  [self showTranslationWindow:nil];
+  if (!self.translationSourceView.string.length) {
+    self.translationStatus.stringValue = @"文本框为空，可先粘贴或拖入文本";
+    return;
+  }
+  [self translationTranslate:nil];
+}
+
+- (void)openShortcutSettings:(id)sender {
+  if (!self.shortcutSettingsWindow) {
+    self.shortcutSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,300) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.shortcutSettingsWindow.title = @"快捷键设置";
+    self.shortcutSettingsWindow.releasedWhenClosed = NO;
+    NSView *cv = self.shortcutSettingsWindow.contentView;
+    NSTextField *t = [self label:@"快捷键设置" size:18 bold:YES color:nil];
+    t.frame = NSMakeRect(24, 254, 300, 24); [cv addSubview:t];
+    NSTextField *h = [self label:@"点击右侧快捷键，然后按下新的组合键；Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24, 232, 430, 18); [cv addSubview:h];
+    NSArray *names = @[@"截图翻译", @"划词翻译", @"翻译当前文本"];
+    self.shortcutButtons = [NSMutableArray array];
+    for (NSInteger i = 0; i < 3; i++) {
+      NSTextField *l = [self label:names[i] size:13 bold:YES color:nil];
+      l.frame = NSMakeRect(28, 175 - i * 52, 160, 22); [cv addSubview:l];
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, 170 - i * 52, 240, 32)];
+      b.tag = i;
+      b.title = [self shortcutDisplayForAction:i];
+      b.hoverColor = [NSColor systemTealColor];
+      b.target = self; b.action = @selector(recordShortcutForAction:);
+      [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      [cv addSubview:b];
+      [self.shortcutButtons addObject:b];
+    }
+    NSTextField *note = [self label:@"修改后立即生效，并保存到偏好设置" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
+    note.frame = NSMakeRect(24, 18, 420, 16); [cv addSubview:note];
+    [self.shortcutSettingsWindow center];
+  }
+  [self refreshShortcutButtons];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.shortcutSettingsWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)recordShortcutForAction:(ColorHoverButton *)sender {
+  NSInteger action = sender.tag;
+  NSArray *names = @[@"截图翻译", @"划词翻译", @"翻译当前文本"];
+  NSWindow *rw = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,420,150) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+  rw.title = [NSString stringWithFormat:@"设置快捷键 - %@", names[action]];
+  rw.level = NSFloatingWindowLevel;
+  NSView *cv = rw.contentView;
+  NSTextField *l = [self label:@"按下新的组合键（至少包含 ⌃⌥⌘ 之一）" size:13 bold:YES color:nil];
+  l.alignment = NSTextAlignmentCenter; l.frame = NSMakeRect(20, 92, 380, 24); [cv addSubview:l];
+  NSTextField *status = [self label:@"" size:11 bold:NO color:[NSColor systemRedColor]];
+  status.alignment = NSTextAlignmentCenter; status.frame = NSMakeRect(20, 30, 380, 18); [cv addSubview:status];
+  [rw center];
+  [NSApp activateIgnoringOtherApps:YES];
+  [rw makeKeyAndOrderFront:nil];
+  UInt32 oldCode = action == 0 ? self.shotKeyCode : (action == 1 ? self.selectionKeyCode : self.translateKeyCode);
+  UInt32 oldMods = action == 0 ? self.shotModifiers : (action == 1 ? self.selectionModifiers : self.translateModifiers);
+  NSString *oldDisp = [self shortcutDisplayForAction:action];
+  __block id monitor = nil;
+  __weak typeof(self) weakSelf = self;
+  monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    if (e.keyCode == 53) { [NSApp stopModalWithCode:0]; return nil; }
+    NSEventModifierFlags f = e.modifierFlags & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift);
+    if (!(f & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption))) {
+      status.stringValue = @"请至少使用 Command / Control / Option 之一";
+      return nil;
+    }
+    UInt32 mods = 0;
+    if (f & NSEventModifierFlagControl) mods |= controlKey;
+    if (f & NSEventModifierFlagOption) mods |= optionKey;
+    if (f & NSEventModifierFlagShift) mods |= shiftKey;
+    if (f & NSEventModifierFlagCommand) mods |= cmdKey;
+    NSString *key = e.charactersIgnoringModifiers.uppercaseString;
+    if (!key.length) key = [NSString stringWithFormat:@"Key%u", (unsigned)e.keyCode];
+    if (e.keyCode == kVK_Return) key = @"↩";
+    else if (e.keyCode == kVK_Space) key = @"Space";
+    else if (e.keyCode == kVK_Tab) key = @"⇥";
+    NSMutableString *disp = [NSMutableString string];
+    if (mods & controlKey) [disp appendString:@"⌃"];
+    if (mods & optionKey) [disp appendString:@"⌥"];
+    if (mods & shiftKey) [disp appendString:@"⇧"];
+    if (mods & cmdKey) [disp appendString:@"⌘"];
+    [disp appendString:key];
+    if (![weakSelf registerHotKeyForAction:action code:(UInt32)e.keyCode modifiers:mods display:disp]) {
+      status.stringValue = @"该快捷键被占用，请换一个";
+      [weakSelf registerHotKeyForAction:action code:oldCode modifiers:oldMods display:oldDisp];
+      return nil;
+    }
+    [NSApp stopModalWithCode:1];
+    return nil;
+  }];
+  [NSApp runModalForWindow:rw];
+  if (monitor) [NSEvent removeMonitor:monitor];
+  [rw orderOut:nil];
+  [self refreshShortcutButtons];
 }
 
 - (void)translationScreenshot:(id)sender {
