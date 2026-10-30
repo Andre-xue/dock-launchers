@@ -529,13 +529,13 @@ static NSDate *InstallDateForPath(NSString *path) {
   [self layoutCenterTitle];
   self.window.minSize = NSMakeSize(820, 540);
   self.window.releasedWhenClosed = NO;
-  self.window.titlebarAppearsTransparent = YES;
+  self.window.titlebarAppearsTransparent = NO;
   NSView *root = self.window.contentView;
 
   // 侧边栏
   NSView *side = [[NSView alloc] initWithFrame:NSMakeRect(0,0,210,660)];
   side.wantsLayer = YES;
-  side.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.96 alpha:1.0].CGColor;
+  side.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.972 alpha:1.0].CGColor;
   side.autoresizingMask = NSViewHeightSizable;
   [root addSubview:side];
   NSImageView *avatar = [[NSImageView alloc] initWithFrame:NSMakeRect(20, 590, 44, 44)];
@@ -606,6 +606,32 @@ static NSDate *InstallDateForPath(NSString *path) {
   if (on) [self startAutoSyncTimer];
 }
 
+- (void)applyFlatButtonsInView:(NSView *)view {
+  NSArray *primaryTitles = @[@"创建", @"保存", @"继续删除", @"卸载所选应用", @"确定删除所选", @"删除残留", @"备份并删除"];
+  for (NSView *sub in view.subviews) {
+    if ([sub isKindOfClass:[NSButton class]]) {
+      NSButton *b = (NSButton *)sub;
+      NSButtonCell *bc = (NSButtonCell *)b.cell;
+      if (b.bezelStyle == NSBezelStyleRounded && bc.type != NSSwitchButton && bc.type != NSRadioButton) {
+        b.bordered = NO;
+        b.wantsLayer = YES;
+        b.layer.cornerRadius = 8;
+        b.font = [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium];
+        BOOL primary = [primaryTitles containsObject:b.title];
+        if (primary) {
+          b.layer.backgroundColor = [NSColor controlAccentColor].CGColor;
+          NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+          ps.alignment = NSTextAlignmentCenter;
+          b.attributedTitle = [[NSAttributedString alloc] initWithString:b.title attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: [NSColor whiteColor], NSParagraphStyleAttributeName: ps}];
+        } else {
+          b.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.945 alpha:1.0].CGColor;
+        }
+      }
+    }
+    [self applyFlatButtonsInView:sub];
+  }
+}
+
 - (void)showSection:(NSInteger)idx {
   self.section = idx;
   for (NSView *v in self.content.subviews) [v removeFromSuperview];
@@ -613,13 +639,15 @@ static NSDate *InstallDateForPath(NSString *path) {
   for (NSInteger i = 0; i < btns.count; i++) {
     NSButton *b = btns[i];
     BOOL on = (i == idx);
-    b.layer.backgroundColor = on ? [NSColor colorWithCalibratedRed:0.04 green:0.52 blue:1.0 alpha:0.14].CGColor : [NSColor clearColor].CGColor;
+    b.layer.backgroundColor = on ? [NSColor colorWithCalibratedRed:0.04 green:0.52 blue:1.0 alpha:0.10].CGColor : [NSColor clearColor].CGColor;
     b.contentTintColor = on ? [NSColor controlAccentColor] : [NSColor secondaryLabelColor];
+    b.font = [NSFont systemFontOfSize:13.5 weight:(on ? NSFontWeightSemibold : NSFontWeightMedium)];
   }
   NSView *v = @[self.liveView, self.groupsView, self.uninstallView, self.settingsView][idx];
   v.frame = self.content.bounds;
   v.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
   [self.content addSubview:v];
+  [self applyFlatButtonsInView:v];
   if (idx == 1) [self refreshGroups];
   if (idx == 2) [self reloadUninstallData];
 }
@@ -639,7 +667,7 @@ static NSDate *InstallDateForPath(NSString *path) {
 // ---------------- 实时数据 ----------------
 - (void)buildLiveView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
-  NSTextField *h = [self label:@"本机实时状态" size:22 bold:YES color:nil];
+  NSTextField *h = [self label:@"本机实时状态" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
   NSTextField *sub = [self label:@"每 2 秒采样 · 菜单栏同步显示 CPU / 内存" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 400, 18); [v addSubview:sub];
@@ -708,8 +736,8 @@ static NSDate *InstallDateForPath(NSString *path) {
   NSView *c = [[NSView alloc] initWithFrame:r];
   c.wantsLayer = YES;
   c.layer.backgroundColor = [NSColor whiteColor].CGColor;
-  c.layer.cornerRadius = 14;
-  c.layer.borderColor = [NSColor colorWithCalibratedWhite:0.9 alpha:1.0].CGColor;
+  c.layer.cornerRadius = 16;
+  c.layer.borderColor = [NSColor colorWithCalibratedWhite:0.93 alpha:1.0].CGColor;
   c.layer.borderWidth = 1;
   return c;
 }
@@ -1059,7 +1087,7 @@ static NSDate *InstallDateForPath(NSString *path) {
 
 - (void)buildGroupsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
-  NSTextField *h = [self label:@"Dock 分组" size:22 bold:YES color:nil];
+  NSTextField *h = [self label:@"Dock 分组" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
   NSTextField *sub = [self label:@"管理已安装的分组；新建/删除会同步 Dock 图标" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 500, 18); [v addSubview:sub];
@@ -1256,6 +1284,7 @@ static NSDate *InstallDateForPath(NSString *path) {
     idx++;
   }
   self.groupsList.frame = NSMakeRect(0,0,690,MAX(y+10,10));
+  [self applyFlatButtonsInView:self.groupsView];
   [self.groupsScroll.contentView scrollToPoint:NSMakePoint(0, 0)];
 }
 
@@ -1783,7 +1812,7 @@ static BOOL ValidGroupName(NSString *raw) {
 // ---------------- 应用卸载 ----------------
 - (void)buildUninstallView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
-  NSTextField *h = [self label:@"应用卸载" size:22 bold:YES color:nil];
+  NSTextField *h = [self label:@"应用卸载" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
   NSTextField *sub = [self label:@"扫描本机应用（全部应用）或仅分组内；已排除本程序自身的 Dock 分组应用" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 550, 18); [v addSubview:sub];
@@ -2838,7 +2867,7 @@ static BOOL ValidGroupName(NSString *raw) {
 // ---------------- 设置 ----------------
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
-  NSTextField *h = [self label:@"设置" size:22 bold:YES color:nil];
+  NSTextField *h = [self label:@"设置" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
 
   NSView *card = [self cardAt:NSMakeRect(24, 380, 700, 200)];
