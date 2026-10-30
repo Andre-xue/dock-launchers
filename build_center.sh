@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUT="$ROOT/build/DockLaunchers控制台.app"
-xcrun clang -O2 -fobjc-arc -framework Cocoa -framework IOKit -framework Quartz -framework CoreServices -framework QuickLookThumbnailing -framework Photos -arch arm64 -arch x86_64 -o /tmp/docklaunchers_center_ui "$ROOT/src/center_app.m"
+xcrun clang -O2 -fobjc-arc -framework Cocoa -framework IOKit -framework Quartz -framework CoreServices -framework QuickLookThumbnailing -framework Photos -framework Vision -framework PDFKit -arch arm64 -arch x86_64 -o /tmp/docklaunchers_center_ui "$ROOT/src/center_app.m"
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp /tmp/docklaunchers_center_ui "$OUT/Contents/MacOS/DockLaunchers"

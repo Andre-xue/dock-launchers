@@ -15,6 +15,8 @@
 #import <ImageIO/ImageIO.h>
 #import <QuickLookThumbnailing/QuickLookThumbnailing.h>
 #import <Photos/Photos.h>
+#import <Vision/Vision.h>
+#import <PDFKit/PDFKit.h>
 
 static double gPrevCPUBusy = 0, gPrevCPUTotal = 0;
 static unsigned long long gPrevNetIn = 0, gPrevNetOut = 0;
@@ -191,6 +193,10 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *compressWindow;
 @property (strong) NSMutableArray *compressPaths;
 @property (strong) NSTextField *compressStatus, *compressListLabel;
+@property (strong) NSWindow *translationWindow;
+@property (strong) NSTextView *translationSourceView, *translationResultView;
+@property (strong) NSPopUpButton *translationProviderPopup, *translationTargetPopup;
+@property (strong) NSTextField *translationModelField, *translationStatus;
 @property (strong) NSProgressIndicator *compressSpinner;
 @property NSInteger groupsPage;
 @property (strong) NSString *groupsFilter, *groupsHighlightedName, *groupsSelectedName;
@@ -1319,6 +1325,21 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
     [self showWindow:nil];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self refreshDiskAnalysis];
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_TRANSLATE")) {
+    [self showTranslationWindow:nil];
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_TRANSLATE_RUN")) {
+    [self showTranslationWindow:nil];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      self.translationSourceView.string = @"Hello world. This is a translation test.";
+      [self translationTranslate:nil];
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      fprintf(stderr, "TRANSLATE_RESULT: %s\n", self.translationResultView.string.UTF8String ?: "");
+      fprintf(stderr, "TRANSLATE_STATUS: %s\n", self.translationStatus.stringValue.UTF8String ?: "");
+      exit(self.translationResultView.string.length ? 0 : 1);
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_COMPRESS")) {
@@ -6778,6 +6799,12 @@ static BOOL ValidGroupName(NSString *raw) {
   compress.toolTip = @"压缩 / 解压文件与文件夹";
   [compress applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [root addSubview:compress];
+  ColorHoverButton *translate = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(64, 6, 52, 28)];
+  translate.title = @"翻译"; translate.hoverColor = [NSColor systemTealColor];
+  translate.target = self; translate.action = @selector(showTranslationWindow:);
+  translate.toolTip = @"AI 翻译 / 截图 OCR / 文档翻译";
+  [translate applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [root addSubview:translate];
   ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(146, 6, 128, 28)];
   open.title = @"打开控制台"; open.hoverColor = [NSColor systemGreenColor];
   open.target = self; open.action = @selector(openConsoleFromPopover:);
@@ -7090,6 +7117,342 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)openQuickGroup:(NSButton *)b {
   if (b.toolTip) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:b.toolTip]];
   [self.popover performClose:nil];
+}
+
+- (NSDictionary *)translationAPIConfigForEntry:(NSDictionary *)e {
+  NSString *name = [(e[@"name"] ?: @"") lowercaseString];
+  NSString *base = nil, *model = nil;
+  if ([name containsString:@"deepseek"] || [name containsString:@"深度求索"]) { base = @"https://api.deepseek.com/v1"; model = @"deepseek-chat"; }
+  else if ([name containsString:@"openai"] || [name containsString:@"chatgpt"]) { base = @"https://api.openai.com/v1"; model = @"gpt-4o-mini"; }
+  else if ([name containsString:@"gemini"] || [name containsString:@"谷歌"]) { base = @"https://generativelanguage.googleapis.com/v1beta/openai"; model = @"gemini-1.5-flash"; }
+  else if ([name containsString:@"grok"] || [name containsString:@"xai"]) { base = @"https://api.x.ai/v1"; model = @"grok-2-latest"; }
+  else if ([name containsString:@"mistral"]) { base = @"https://api.mistral.ai/v1"; model = @"mistral-small-latest"; }
+  else if ([name containsString:@"kimi"] || [name containsString:@"moonshot"] || [name containsString:@"月之暗面"]) { base = @"https://api.moonshot.cn/v1"; model = @"moonshot-v1-8k"; }
+  else if ([name containsString:@"智谱"] || [name containsString:@"glm"]) { base = @"https://open.bigmodel.cn/api/paas/v4"; model = @"glm-4-flash"; }
+  else if ([name containsString:@"千问"] || [name containsString:@"qwen"] || [name containsString:@"通义"] || [name containsString:@"百炼"]) { base = @"https://dashscope.aliyuncs.com/compatible-mode/v1"; model = @"qwen-plus"; }
+  else if ([name containsString:@"文心"] || [name containsString:@"千帆"] || [name containsString:@"ernie"]) { base = @"https://qianfan.baidubce.com/v2"; model = @"ernie-4.0-8k"; }
+  else if ([name containsString:@"豆包"] || [name containsString:@"方舟"] || [name containsString:@"doubao"] || [name containsString:@"volcengine"]) { base = @"https://ark.cn-beijing.volces.com/api/v3"; model = @"doubao-pro-32k"; }
+  else if ([name containsString:@"混元"] || [name containsString:@"hunyuan"]) { base = @"https://api.hunyuan.cloud.tencent.com/v1"; model = @"hunyuan-lite"; }
+  else if ([name containsString:@"minimax"] || [name containsString:@"海螺"]) { base = @"https://api.minimaxi.com/v1"; model = @"abab6.5s-chat"; }
+  else if ([name containsString:@"百川"] || [name containsString:@"baichuan"]) { base = @"https://api.baichuan-ai.com/v1"; model = @"Baichuan4"; }
+  else if ([name containsString:@"零一"] || [name containsString:@"yi"] || [name containsString:@"lingyiwanwu"]) { base = @"https://api.lingyiwanwu.com/v1"; model = @"yi-lightning"; }
+  else if ([name containsString:@"阶跃"] || [name containsString:@"stepfun"]) { base = @"https://api.stepfun.com/v1"; model = @"step-1-8k"; }
+  else if ([name containsString:@"硅基流动"] || [name containsString:@"siliconflow"]) { base = @"https://api.siliconflow.cn/v1"; model = @"Qwen/Qwen2.5-7B-Instruct"; }
+  else if ([name containsString:@"openrouter"]) { base = @"https://openrouter.ai/api/v1"; model = @"openai/gpt-4o-mini"; }
+  else if ([name containsString:@"groq"]) { base = @"https://api.groq.com/openai/v1"; model = @"llama-3.1-8b-instant"; }
+  else if ([name containsString:@"together"]) { base = @"https://api.together.xyz/v1"; model = @"meta-llama/Llama-3.1-8B-Instruct-Turbo"; }
+  else if ([name containsString:@"fireworks"]) { base = @"https://api.fireworks.ai/inference/v1"; model = @"accounts/fireworks/models/llama-v3p1-8b-instruct"; }
+  // 优先使用备注里的 API 地址
+  NSString *note = e[@"note"] ?: @"";
+  NSRange r = [note rangeOfString:@"API 地址："];
+  if (r.location != NSNotFound) {
+    NSString *tail = [note substringFromIndex:NSMaxRange(r)];
+    NSRange sp = [tail rangeOfCharacterFromSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (sp.location != NSNotFound) tail = [tail substringToIndex:sp.location];
+    tail = [tail stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if ([tail hasSuffix:@"/"]) tail = [tail substringToIndex:tail.length - 1];
+    if (tail.length) base = tail;
+  }
+  if (!base.length) return nil;
+  return @{@"base": base, @"model": model ?: @""};
+}
+
+- (void)reloadTranslationProviders {
+  if (!self.translationProviderPopup) return;
+  [self loadAIEntries];
+  [self.translationProviderPopup removeAllItems];
+  NSMutableArray *valid = [NSMutableArray array];
+  for (NSDictionary *e in self.aiEntries) if ([e[@"api"] length]) [valid addObject:e];
+  if (!valid.count) {
+    [self.translationProviderPopup addItemWithTitle:@"请先在 AI 管理中添加服务"];
+    self.translationProviderPopup.enabled = NO;
+    self.translationStatus.stringValue = @"没有可用的 AI 服务，请先在 AI 管理中填写 API Key";
+    return;
+  }
+  self.translationProviderPopup.enabled = YES;
+  for (NSDictionary *e in valid) {
+    [self.translationProviderPopup addItemWithTitle:e[@"name"] ?: @"AI 服务"];
+    self.translationProviderPopup.lastItem.representedObject = e;
+  }
+  [self translationProviderChanged:nil];
+}
+
+- (void)translationProviderChanged:(id)sender {
+  NSDictionary *e = self.translationProviderPopup.selectedItem.representedObject;
+  if (!e) return;
+  NSDictionary *cfg = [self translationAPIConfigForEntry:e];
+  self.translationModelField.stringValue = cfg[@"model"] ?: @"";
+  if (!cfg) self.translationStatus.stringValue = @"该服务暂无可用 API 地址，可在备注中写「API 地址：https://…」";
+  else self.translationStatus.stringValue = @"";
+}
+
+- (NSTextView *)translationTextViewAtFrame:(NSRect)frame {
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:frame];
+  sv.hasVerticalScroller = YES;
+  sv.borderType = NSBezelBorder;
+  NSTextView *tv = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+  tv.font = [NSFont systemFontOfSize:12];
+  tv.richText = NO;
+  tv.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+  sv.documentView = tv;
+  [self.translationWindow.contentView addSubview:sv];
+  return tv;
+}
+
+- (void)showTranslationWindow:(id)sender {
+  if (!self.translationWindow) {
+    self.translationWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,820,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.translationWindow.title = @"AI 翻译";
+    self.translationWindow.releasedWhenClosed = NO;
+    self.translationWindow.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance);
+    NSView *cv = self.translationWindow.contentView;
+    NSTextField *title = [self label:@"AI 翻译" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(24, 516, 300, 26); [cv addSubview:title];
+    NSTextField *sub = [self label:@"选择 AI 服务；支持截图 OCR、拖入英文文档翻译" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(24, 494, 500, 18); [cv addSubview:sub];
+
+    self.translationProviderPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(96, 458, 220, 28) pullsDown:NO];
+    self.translationProviderPopup.target = self; self.translationProviderPopup.action = @selector(translationProviderChanged:);
+    [cv addSubview:self.translationProviderPopup];
+    NSTextField *pl = [self label:@"AI 服务" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    pl.frame = NSMakeRect(24, 464, 70, 18); [cv addSubview:pl];
+    NSTextField *ml = [self label:@"模型" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    ml.frame = NSMakeRect(330, 464, 40, 18); [cv addSubview:ml];
+    self.translationModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(374, 458, 200, 28)];
+    self.translationModelField.placeholderString = @"模型名"; [cv addSubview:self.translationModelField];
+    NSTextField *tl = [self label:@"目标语言" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    tl.frame = NSMakeRect(590, 464, 60, 18); [cv addSubview:tl];
+    self.translationTargetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(654, 458, 142, 28) pullsDown:NO];
+    [self.translationTargetPopup addItemsWithTitles:@[@"中文（简体）", @"English", @"日本語", @"한국어", @"Français", @"Deutsch", @"Español", @"Русский"]];
+    [cv addSubview:self.translationTargetPopup];
+
+    NSTextField *sl = [self label:@"原文" size:11 bold:YES color:nil];
+    sl.frame = NSMakeRect(24, 426, 100, 18); [cv addSubview:sl];
+    NSTextField *rl = [self label:@"译文" size:11 bold:YES color:nil];
+    rl.frame = NSMakeRect(424, 426, 100, 18); [cv addSubview:rl];
+    self.translationSourceView = [self translationTextViewAtFrame:NSMakeRect(24, 140, 370, 276)];
+    self.translationResultView = [self translationTextViewAtFrame:NSMakeRect(424, 140, 372, 276)];
+
+    NSArray *titles = @[@"截图翻译", @"选择文档…", @"翻译", @"复制译文", @"保存译文…"];
+    NSArray *sels = @[@"translationScreenshot:", @"translationChooseDocument:", @"translationTranslate:", @"translationCopy:", @"translationSave:"];
+    NSArray *colors = @[[NSColor systemTealColor], [NSColor systemBlueColor], [NSColor systemGreenColor], [NSColor systemGrayColor], [NSColor systemPurpleColor]];
+    CGFloat xs[5] = {24, 140, 292, 390, 468};
+    CGFloat ws[5] = {108, 140, 90, 70, 100};
+    for (NSInteger i = 0; i < 5; i++) {
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(xs[i], 96, ws[i], 30)];
+      b.title = titles[i]; b.target = self; b.action = NSSelectorFromString(sels[i]); b.hoverColor = colors[i];
+      [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      [cv addSubview:b];
+    }
+    CompressDropView *drop = [[CompressDropView alloc] initWithFrame:NSMakeRect(24, 34, 772, 50)];
+    drop.dropTarget = self; drop.dropAction = @selector(translationFilesDropped:);
+    [cv addSubview:drop];
+    NSTextField *dh = [self label:@"拖入英文文档 / PDF / 图片到这里" size:11 bold:NO color:[NSColor tertiaryLabelColor]];
+    dh.alignment = NSTextAlignmentCenter;
+    dh.frame = NSMakeRect(24, 49, 772, 18); [cv addSubview:dh];
+    self.translationStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.translationStatus.frame = NSMakeRect(24, 10, 772, 18); [cv addSubview:self.translationStatus];
+    [self.translationWindow center];
+  }
+  [self reloadTranslationProviders];
+  self.translationWindow.level = NSFloatingWindowLevel;
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.translationWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)translationOCRImage:(NSString *)path completion:(void (^)(NSString *))completion {
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], NULL);
+    CGImageRef img = src ? CGImageSourceCreateImageAtIndex(src, 0, NULL) : NULL;
+    if (!img) { if (src) CFRelease(src); dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(@""); }); return; }
+    VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
+    req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
+    req.recognitionLanguages = @[@"en-US", @"zh-Hans", @"ja-JP", @"ko-KR"];
+    VNImageRequestHandler *h = [[VNImageRequestHandler alloc] initWithCGImage:img options:@{}];
+    [h performRequests:@[req] error:NULL];
+    NSMutableArray *lines = [NSMutableArray array];
+    for (VNRecognizedTextObservation *obs in req.results) {
+      VNRecognizedText *t = [obs topCandidates:1].firstObject;
+      if (t.string.length) [lines addObject:t.string];
+    }
+    CGImageRelease(img); CFRelease(src);
+    NSString *text = [lines componentsJoinedByString:@"\n"];
+    dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(text); });
+  });
+}
+
+- (void)translationExtractTextFromURL:(NSURL *)url completion:(void (^)(NSString *))completion {
+  NSString *ext = url.pathExtension.lowercaseString;
+  if ([@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"] containsObject:ext]) {
+    [self translationOCRImage:url.path completion:completion];
+    return;
+  }
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSString *text = nil;
+    if ([ext isEqualToString:@"pdf"]) {
+      PDFDocument *doc = [[PDFDocument alloc] initWithURL:url];
+      text = doc.string;
+    } else if ([@[@"doc",@"docx",@"rtf",@"rtfd",@"html",@"htm",@"odt"] containsObject:ext]) {
+      NSTask *t = [[NSTask alloc] init];
+      t.launchPath = @"/usr/bin/textutil";
+      t.arguments = @[@"-convert", @"txt", @"-stdout", url.path];
+      NSPipe *p = [NSPipe pipe]; t.standardOutput = p; t.standardError = [NSPipe pipe];
+      @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+      text = [[NSString alloc] initWithData:[p.fileHandleForReading readDataToEndOfFile] encoding:NSUTF8StringEncoding];
+    } else {
+      text = [NSString stringWithContentsOfURL:url encoding:NSUTF8StringEncoding error:NULL];
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(text ?: @""); });
+  });
+}
+
+- (void)translationSetSource:(NSString *)text status:(NSString *)status {
+  if (text.length) self.translationSourceView.string = text;
+  self.translationStatus.stringValue = status ?: @"";
+}
+
+- (void)translationScreenshot:(id)sender {
+  NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-translate-shot.png"];
+  [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+  self.translationStatus.stringValue = @"请框选要翻译的屏幕区域…";
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/sbin/screencapture";
+    t.arguments = @[@"-i", @"-x", tmp];
+    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+    if (![[NSFileManager defaultManager] fileExistsAtPath:tmp]) {
+      dispatch_async(dispatch_get_main_queue(), ^{ self.translationStatus.stringValue = @"已取消截图"; });
+      return;
+    }
+    [self translationOCRImage:tmp completion:^(NSString *text) {
+      [self translationSetSource:text status:text.length ? @"截图识别完成，请点击翻译" : @"截图中没有识别到文字"];
+    }];
+  });
+}
+
+- (void)translationChooseDocument:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = NO;
+  if ([p runModal] != NSModalResponseOK) return;
+  [self translationExtractTextFromURL:p.URL completion:^(NSString *text) {
+    [self translationSetSource:text status:text.length ? @"文档读取完成，请点击翻译" : @"没有读取到文本"];
+  }];
+}
+
+- (void)translationFilesDropped:(NSArray<NSURL *> *)urls {
+  if (!urls.count) return;
+  [self translationExtractTextFromURL:urls.firstObject completion:^(NSString *text) {
+    [self translationSetSource:text status:text.length ? [NSString stringWithFormat:@"已读取 %@", urls.firstObject.lastPathComponent] : @"没有读取到文本"];
+  }];
+}
+
+- (NSArray<NSString *> *)translationChunks:(NSString *)text {
+  NSMutableArray *chunks = [NSMutableArray array];
+  NSArray *paras = [text componentsSeparatedByString:@"\n\n"];
+  NSMutableString *cur = [NSMutableString string];
+  for (NSString *p in paras) {
+    if (cur.length + p.length > 2800) {
+      if (cur.length) [chunks addObject:cur.copy];
+      [cur setString:@""];
+      if (p.length > 2800) {
+        for (NSUInteger i = 0; i < p.length; i += 2800) {
+          [chunks addObject:[p substringWithRange:NSMakeRange(i, MIN(2800, p.length - i))]];
+        }
+        continue;
+      }
+    }
+    if (cur.length) [cur appendString:@"\n\n"];
+    [cur appendString:p];
+  }
+  if (cur.length) [chunks addObject:cur.copy];
+  return chunks;
+}
+
+- (void)translateChunks:(NSArray<NSString *> *)chunks index:(NSInteger)idx output:(NSMutableString *)output base:(NSString *)base model:(NSString *)model key:(NSString *)key target:(NSString *)target {
+  if (idx >= (NSInteger)chunks.count) {
+    self.translationResultView.string = output;
+    self.translationStatus.stringValue = @"翻译完成";
+    return;
+  }
+  self.translationStatus.stringValue = [NSString stringWithFormat:@"正在翻译 %ld/%ld…", (long)(idx+1), (long)chunks.count];
+  NSDictionary *body = @{@"model": model, @"temperature": @0.2, @"messages": @[
+    @{@"role": @"system", @"content": [NSString stringWithFormat:@"You are a professional translator. Translate the user's text into %@. Preserve Markdown, line breaks and formatting. Output only the translation.", target]},
+    @{@"role": @"user", @"content": chunks[idx]}]};
+  NSData *json = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[base stringByAppendingString:@"/chat/completions"]]];
+  req.HTTPMethod = @"POST";
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  req.HTTPBody = json;
+  req.timeoutInterval = 120;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    NSString *content = nil; NSString *errMsg = nil;
+    if (data.length) {
+      id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+      if ([obj isKindOfClass:[NSDictionary class]]) {
+        id choices = obj[@"choices"];
+        if ([choices isKindOfClass:[NSArray class]] && [choices count]) {
+          id msg = choices[0][@"message"];
+          id c = msg[@"content"];
+          if ([c isKindOfClass:[NSString class]]) content = c;
+          else if ([c isKindOfClass:[NSArray class]]) {
+            NSMutableString *m = [NSMutableString string];
+            for (id part in c) if ([part isKindOfClass:[NSDictionary class]] && [part[@"text"] isKindOfClass:[NSString class]]) [m appendString:part[@"text"]];
+            content = m;
+          }
+        }
+        if (!content) errMsg = obj[@"error"][@"message"] ?: @"API 返回格式异常";
+      }
+    }
+    if (!content.length) errMsg = errMsg ?: (err.localizedDescription ?: @"翻译请求失败");
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!content.length) {
+        self.translationStatus.stringValue = errMsg;
+      } else {
+        [output appendString:content];
+        if (idx + 1 < (NSInteger)chunks.count) [output appendString:@"\n\n"];
+        [self translateChunks:chunks index:idx+1 output:output base:base model:model key:key target:target];
+      }
+    });
+  }] resume];
+}
+
+- (void)translationTranslate:(id)sender {
+  NSString *text = self.translationSourceView.string;
+  if (!text.length) { self.translationStatus.stringValue = @"请先输入、截图或拖入要翻译的内容"; return; }
+  NSDictionary *e = self.translationProviderPopup.selectedItem.representedObject;
+  if (!e) { self.translationStatus.stringValue = @"请选择 AI 服务"; return; }
+  NSDictionary *cfg = [self translationAPIConfigForEntry:e];
+  NSString *model = [self.translationModelField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  if (!cfg) { self.translationStatus.stringValue = @"该服务没有可用 API 地址，请在备注中写「API 地址：…」"; return; }
+  if (!model.length) { self.translationStatus.stringValue = @"请填写模型名称"; return; }
+  NSString *key = e[@"api"] ?: @"";
+  if (!key.length) { self.translationStatus.stringValue = @"该服务没有 API Key"; return; }
+  NSArray *names = @[@"中文（简体）", @"English", @"日本語", @"한국어", @"Français", @"Deutsch", @"Español", @"Русский"];
+  NSInteger ti = MAX(0, self.translationTargetPopup.indexOfSelectedItem);
+  NSString *target = names[MIN(ti, (NSInteger)names.count - 1)];
+  NSArray *chunks = [self translationChunks:text];
+  if (!chunks.count) return;
+  self.translationResultView.string = @"";
+  [self translateChunks:chunks index:0 output:[NSMutableString string] base:cfg[@"base"] model:model key:key target:target];
+}
+
+- (void)translationCopy:(id)sender {
+  NSString *text = self.translationResultView.string;
+  if (!text.length) return;
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:text forType:NSPasteboardTypeString];
+  self.translationStatus.stringValue = @"译文已复制";
+}
+
+- (void)translationSave:(id)sender {
+  NSString *text = self.translationResultView.string;
+  if (!text.length) return;
+  NSSavePanel *p = [NSSavePanel savePanel];
+  p.nameFieldStringValue = @"translation.txt";
+  if ([p runModal] != NSModalResponseOK) return;
+  [text writeToFile:p.URL.path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  self.translationStatus.stringValue = @"译文已保存";
 }
 
 - (void)showCompressWindow:(id)sender {
