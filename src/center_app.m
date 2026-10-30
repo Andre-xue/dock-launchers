@@ -344,7 +344,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSView *quickGroups;
 @property (strong) NSTextField *quickCPU, *quickMem, *quickBat;
 @property (strong) NSTextField *quickGPU, *quickDisk, *quickNet;
-@property (strong) NSTextField *quickCPUSub, *quickGPUSub, *quickMemSub, *quickDiskSub, *quickNetSub;
+@property (strong) NSTextField *quickCPUSub, *quickGPUSub, *quickMemSub, *quickDiskSub, *quickNetSub, *quickPowerSub;
 @property (strong) QuickBarView *quickMemBar, *quickDiskBar;
 @property (strong) Sparkline *quickCPUSpark, *quickGPUSpark, *quickNetSpark;
 @property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage;
@@ -1325,6 +1325,11 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
     [self showWindow:nil];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self refreshDiskAnalysis];
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self togglePopover:nil];
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_TRANSLATE")) {
@@ -6696,9 +6701,9 @@ static BOOL ValidGroupName(NSString *raw) {
   NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0,0,420,620)];
   vc.view = root;
 
-  self.quickTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(12, 574, 396, 28)];
-  self.quickTabs.segmentCount = 9;
-  NSArray *tabs = @[@"概览", @"分组", @"AI", @"CPU", @"GPU", @"内存", @"磁盘", @"网络", @"电源"];
+  self.quickTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(12, 574, 240, 28)];
+  self.quickTabs.segmentCount = 3;
+  NSArray *tabs = @[@"概览", @"分组", @"AI"];
   for (NSInteger i = 0; i < tabs.count; i++) [self.quickTabs setLabel:tabs[i] forSegment:i];
   self.quickTabs.controlSize = NSControlSizeSmall;
   self.quickTabs.trackingMode = NSSegmentSwitchTrackingSelectOne;
@@ -6711,50 +6716,29 @@ static BOOL ValidGroupName(NSString *raw) {
   self.quickOverview = ov;
   [root addSubview:ov];
 
-  NSView *cpuCard = [self cardAt:NSMakeRect(12, 388, 192, 132)];
-  [ov addSubview:cpuCard];
-  NSTextField *ct = [self label:@"CPU ›" size:12 bold:YES color:nil]; ct.frame = NSMakeRect(14, 106, 90, 18); [cpuCard addSubview:ct];
-  self.quickCPU = [self label:@"--" size:22 bold:NO color:nil];
-  self.quickCPU.alignment = NSTextAlignmentRight; self.quickCPU.frame = NSMakeRect(100, 100, 78, 28); [cpuCard addSubview:self.quickCPU];
-  self.quickCPUSub = [self label:@"实时处理器占用" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; self.quickCPUSub.frame = NSMakeRect(14, 12, 164, 16); [cpuCard addSubview:self.quickCPUSub];
-  self.quickCPUSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(14, 34, 164, 56)];
-  self.quickCPUSpark.lineColor = [NSColor systemOrangeColor]; [cpuCard addSubview:self.quickCPUSpark];
-
-  NSView *gpuCard = [self cardAt:NSMakeRect(216, 388, 192, 132)];
-  [ov addSubview:gpuCard];
-  NSTextField *gt = [self label:@"GPU ›" size:12 bold:YES color:nil]; gt.frame = NSMakeRect(14, 106, 90, 18); [gpuCard addSubview:gt];
-  self.quickGPU = [self label:@"--" size:22 bold:NO color:nil];
-  self.quickGPU.alignment = NSTextAlignmentRight; self.quickGPU.frame = NSMakeRect(100, 100, 78, 28); [gpuCard addSubview:self.quickGPU];
-  self.quickGPUSub = [self label:@"图形处理器" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; self.quickGPUSub.frame = NSMakeRect(14, 12, 164, 16); [gpuCard addSubview:self.quickGPUSub];
-  self.quickGPUSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(14, 34, 164, 56)];
-  self.quickGPUSpark.lineColor = [NSColor systemTealColor]; [gpuCard addSubview:self.quickGPUSpark];
-
-  NSView *memCard = [self cardAt:NSMakeRect(12, 258, 396, 118)];
-  [ov addSubview:memCard];
-  NSTextField *mt = [self label:@"内存 ›" size:12 bold:YES color:nil]; mt.frame = NSMakeRect(14, 92, 90, 18); [memCard addSubview:mt];
-  self.quickMem = [self label:@"--" size:22 bold:NO color:nil];
-  self.quickMem.alignment = NSTextAlignmentRight; self.quickMem.frame = NSMakeRect(300, 86, 80, 28); [memCard addSubview:self.quickMem];
-  self.quickMemBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(14, 68, 366, 8)];
-  self.quickMemBar.barColor = [NSColor systemOrangeColor]; [memCard addSubview:self.quickMemBar];
-  self.quickMemSub = [self label:@"--" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; self.quickMemSub.frame = NSMakeRect(14, 40, 366, 16); [memCard addSubview:self.quickMemSub];
-
-  NSView *diskCard = [self cardAt:NSMakeRect(12, 140, 396, 106)];
-  [ov addSubview:diskCard];
-  NSTextField *dt = [self label:@"磁盘 › 系统盘" size:12 bold:YES color:nil]; dt.frame = NSMakeRect(14, 80, 160, 18); [diskCard addSubview:dt];
-  self.quickDisk = [self label:@"--" size:22 bold:NO color:nil];
-  self.quickDisk.alignment = NSTextAlignmentRight; self.quickDisk.frame = NSMakeRect(300, 74, 80, 28); [diskCard addSubview:self.quickDisk];
-  self.quickDiskBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(14, 56, 366, 8)];
-  self.quickDiskBar.barColor = [NSColor systemBlueColor]; [diskCard addSubview:self.quickDiskBar];
-  self.quickDiskSub = [self label:@"--" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; self.quickDiskSub.frame = NSMakeRect(14, 28, 366, 16); [diskCard addSubview:self.quickDiskSub];
-
-  NSView *netCard = [self cardAt:NSMakeRect(12, 20, 396, 108)];
-  [ov addSubview:netCard];
-  NSTextField *nt = [self label:@"网络 ›" size:12 bold:YES color:nil]; nt.frame = NSMakeRect(14, 82, 80, 18); [netCard addSubview:nt];
-  self.quickNet = [self label:@"--" size:11.5 bold:NO color:nil];
-  self.quickNet.alignment = NSTextAlignmentRight; self.quickNet.frame = NSMakeRect(90, 82, 290, 18); [netCard addSubview:self.quickNet];
-  self.quickNetSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(14, 34, 366, 40)];
-  self.quickNetSpark.lineColor = [NSColor systemOrangeColor]; [netCard addSubview:self.quickNetSpark];
-  self.quickNetSub = [self label:@"最近一分钟" size:9 bold:NO color:[NSColor tertiaryLabelColor]]; self.quickNetSub.frame = NSMakeRect(14, 12, 366, 14); [netCard addSubview:self.quickNetSub];
+  NSArray *ctitles = @[@"CPU", @"GPU", @"内存", @"磁盘", @"网络", @"电源"];
+  NSArray *ccolors = @[[NSColor systemOrangeColor], [NSColor systemTealColor], [NSColor systemGreenColor], [NSColor systemBlueColor], [NSColor systemMintColor], [NSColor systemPinkColor]];
+  CGFloat cw = 126, ch = 250, cgap = 8;
+  for (NSInteger i = 0; i < 6; i++) {
+    CGFloat x = 12 + (i % 3) * (cw + cgap);
+    CGFloat y = (i < 3) ? 264 : 6;
+    NSView *card = [self cardAt:NSMakeRect(x, y, cw, ch)];
+    [ov addSubview:card];
+    NSTextField *t = [self label:ctitles[i] size:11 bold:YES color:ccolors[i]];
+    t.frame = NSMakeRect(10, ch - 26, cw - 20, 16); [card addSubview:t];
+    NSTextField *val = [self label:@"--" size:19 bold:NO color:nil];
+    val.frame = NSMakeRect(10, ch - 58, cw - 20, 28); [card addSubview:val];
+    NSTextField *sub = [self label:@"" size:8.5 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.maximumNumberOfLines = 3;
+    sub.lineBreakMode = NSLineBreakByWordWrapping;
+    sub.frame = NSMakeRect(10, 8, cw - 20, 36); [card addSubview:sub];
+    if (i == 0) { self.quickCPU = val; self.quickCPUSub = sub; self.quickCPUSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(10, 50, cw - 20, 110)]; self.quickCPUSpark.lineColor = ccolors[i]; [card addSubview:self.quickCPUSpark]; }
+    else if (i == 1) { self.quickGPU = val; self.quickGPUSub = sub; self.quickGPUSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(10, 50, cw - 20, 110)]; self.quickGPUSpark.lineColor = ccolors[i]; [card addSubview:self.quickGPUSpark]; }
+    else if (i == 2) { self.quickMem = val; self.quickMemSub = sub; self.quickMemBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(10, 70, cw - 20, 8)]; self.quickMemBar.barColor = ccolors[i]; [card addSubview:self.quickMemBar]; }
+    else if (i == 3) { self.quickDisk = val; self.quickDiskSub = sub; self.quickDiskBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(10, 70, cw - 20, 8)]; self.quickDiskBar.barColor = ccolors[i]; [card addSubview:self.quickDiskBar]; }
+    else if (i == 4) { self.quickNet = val; val.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold]; val.maximumNumberOfLines = 2; val.lineBreakMode = NSLineBreakByWordWrapping; self.quickNetSub = sub; self.quickNetSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(10, 50, cw - 20, 110)]; self.quickNetSpark.lineColor = ccolors[i]; [card addSubview:self.quickNetSpark]; }
+    else { self.quickBat = val; self.quickPowerSub = sub; }
+  }
 
   NSView *groupPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   groupPage.hidden = YES; self.quickGroupPage = groupPage; [root addSubview:groupPage];
@@ -6967,59 +6951,11 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)quickTabChanged:(id)sender {
   NSInteger idx = self.quickTabs.selectedSegment;
   self.quickOverview.hidden = (idx != 0);
-  self.quickDetail.hidden = (idx < 3);
+  if (self.quickDetail) self.quickDetail.hidden = YES;
   if (self.quickGroupPage) self.quickGroupPage.hidden = (idx != 1);
   if (self.quickAIPage) self.quickAIPage.hidden = (idx != 2);
-  if (idx == 1) { [self rebuildQuickGroupTab]; return; }
-  if (idx == 2) { [self rebuildQuickAITab]; return; }
-  if (idx < 3) return;
-  NSArray *titles = @[@"", @"", @"", @"CPU", @"GPU", @"内存", @"磁盘", @"网络", @"电源"];
-  self.quickDetailTitle.stringValue = titles[idx];
-  NSString *value = @"--", *sub = @"";
-  self.quickDetailChart.hidden = YES;
-  self.quickDetailBar.hidden = YES;
-  self.quickDetailExtra.stringValue = @"";
-  if (idx == 3) {
-    value = self.quickCPU.stringValue; sub = self.quickCPUSub.stringValue;
-    self.quickDetailChart.values = [self.quickCPUSpark.values mutableCopy];
-    self.quickDetailChart.lineColor = [NSColor systemOrangeColor];
-    self.quickDetailChart.hidden = NO;
-    self.quickDetailExtra.stringValue = @"实时处理器占用\n数据每 2 秒刷新一次";
-  } else if (idx == 4) {
-    value = self.quickGPU.stringValue; sub = self.quickGPUSub.stringValue;
-    self.quickDetailChart.values = [self.quickGPUSpark.values mutableCopy];
-    self.quickDetailChart.lineColor = [NSColor systemTealColor];
-    self.quickDetailChart.hidden = NO;
-    self.quickDetailExtra.stringValue = @"图形处理器实时占用\n数据每 2 秒刷新一次";
-  } else if (idx == 5) {
-    value = self.quickMem.stringValue; sub = self.quickMemSub.stringValue;
-    self.quickDetailBar.value = self.quickMemBar.value;
-    self.quickDetailBar.barColor = [NSColor systemOrangeColor];
-    self.quickDetailBar.hidden = NO;
-    self.quickDetailExtra.stringValue = self.quickMemSub.stringValue;
-  } else if (idx == 6) {
-    value = self.quickDisk.stringValue; sub = self.quickDiskSub.stringValue;
-    self.quickDetailBar.value = self.quickDiskBar.value;
-    self.quickDetailBar.barColor = [NSColor systemBlueColor];
-    self.quickDetailBar.hidden = NO;
-    self.quickDetailExtra.stringValue = self.quickDiskSub.stringValue;
-  } else if (idx == 7) {
-    value = self.quickNet.stringValue; sub = @"实时上下行速率";
-    self.quickDetailChart.values = [self.quickNetSpark.values mutableCopy];
-    self.quickDetailChart.lineColor = [NSColor systemGreenColor];
-    self.quickDetailChart.hidden = NO;
-    self.quickDetailExtra.stringValue = @"最近一分钟网络速率\n↑ 上行   ↓ 下行";
-  } else if (idx == 8) {
-    value = self.quickBat.stringValue; sub = self.quickBatteryState ?: @"电池状态";
-    self.quickDetailBar.value = self.quickBat.stringValue.doubleValue;
-    self.quickDetailBar.barColor = [NSColor systemPinkColor];
-    self.quickDetailBar.hidden = NO;
-    self.quickDetailExtra.stringValue = [NSString stringWithFormat:@"循环 %ld 次 · 健康 %.0f%%\n%@", (long)self.quickBatteryCycles, self.quickBatteryHealth, self.quickBatteryState ?: @""];
-  }
-  self.quickDetailValue.stringValue = value;
-  self.quickDetailSub.stringValue = sub;
-  [self.quickDetailChart setNeedsDisplay:YES];
-  [self.quickDetailBar setNeedsDisplay:YES];
+  if (idx == 1) [self rebuildQuickGroupTab];
+  else if (idx == 2) [self rebuildQuickAITab];
 }
 
 - (void)rebuildQuickGroupTab {
@@ -8054,6 +7990,7 @@ static BOOL ValidGroupName(NSString *raw) {
       self.quickBatteryHealth = health;
       self.quickBatteryState = state;
       self.quickBat.stringValue = [NSString stringWithFormat:@"%.0f%%", pct];
+      self.quickPowerSub.stringValue = [NSString stringWithFormat:@"循环 %ld 次 · 健康 %.0f%%", (long)cycles, health];
       [pwrCol setValueText:[NSString stringWithFormat:@"%.0f%%", pct]
                     detail:[NSString stringWithFormat:@"%@\n循环 %ld 次\n健康 %.0f%%", state, (long)cycles, health]
                        bar:pct];
@@ -8084,7 +8021,6 @@ static BOOL ValidGroupName(NSString *raw) {
     self.quickGPUSub.stringValue = @"图形处理器";
     self.quickMemSub.stringValue = [NSString stringWithFormat:@"%@ / %@ · 压力正常", [self gbString:memUsed], [self gbString:memTotal]];
     self.quickDiskSub.stringValue = [NSString stringWithFormat:@"可用 %@ / 总计 %@", [self gbString:diskFree], [self gbString:diskTotal]];
-    if (self.quickTabs.selectedSegment >= 3) [self quickTabChanged:nil];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TRACE")) fprintf(stderr, "TRACE cpu=%.0f mem=%.0f cols=%ld\n", cpuPct, memPct, (long)self.metricColumns.count);
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
