@@ -1768,7 +1768,9 @@ static BOOL ValidGroupName(NSString *raw) {
   all.frame = NSMakeRect(544, 540, 50, 30); all.bezelStyle = NSBezelStyleRounded; [v addSubview:all];
   NSButton *none = [NSButton buttonWithTitle:@"全不选" target:self action:@selector(uninstallSelectNone:)];
   none.frame = NSMakeRect(596, 540, 56, 30); none.bezelStyle = NSBezelStyleRounded; [v addSubview:none];
-  NSButton *refresh = [NSButton buttonWithTitle:@"刷新" target:self action:@selector(reloadUninstallData)];
+  NSButton *refresh = [NSButton buttonWithTitle:@"刷新" target:self action:@selector(forceRefreshUninstall:)];
+  refresh.keyEquivalent = @"r";
+  refresh.keyEquivalentModifierMask = NSEventModifierFlagCommand;
   refresh.frame = NSMakeRect(656, 540, 56, 30); refresh.bezelStyle = NSBezelStyleRounded; [v addSubview:refresh];
 
   self.letterIndex = [[LetterIndexView alloc] initWithFrame:NSMakeRect(18, 76, 26, 450)];
@@ -1854,6 +1856,17 @@ static BOOL ValidGroupName(NSString *raw) {
   self.uninstallScope = self.uninstallScopeCtl.selectedSegment;
   self.uninstallGroupPopup.enabled = (self.uninstallScope == 1);
   self.uninstallGroupPopup.alphaValue = (self.uninstallScope == 1) ? 1.0 : 0.45;
+  [self reloadUninstallData];
+}
+
+- (void)forceRefreshUninstall:(id)sender {
+  [self cancelLetterFilter];
+  self.uninstallSearch.stringValue = @"";
+  [self.uninstallTable setSortDescriptors:@[]];
+  [self.uninstallSelected removeAllObjects];
+  self.uninstallFiltered = [NSMutableArray array];
+  [self.uninstallTable reloadData];
+  [self.uninstallFooter setStringValue:@"正在强制刷新…"];
   [self reloadUninstallData];
 }
 
