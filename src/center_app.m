@@ -142,6 +142,9 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property (strong) NSMutableArray<NSDictionary *> *groups;
 @property (strong) NSMutableSet<NSString *> *selectedGroups;
 @property (strong) NSView *groupsList;
+@property (strong) NSMutableArray *dialogIconButtons;
+@property NSInteger dialogSelectedBuiltin;
+@property (strong) NSString *dialogCustomIcon;
 @property (strong) NSScrollView *groupsScroll;
 // uninstall
 @property (strong) NSMutableArray<NSDictionary *> *uninstallData;
@@ -218,6 +221,12 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
     [self deleteGroupNames:@[[NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")]]];
     exit(0);
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_CREATE")) {
+    [self showSection:1];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self createGroup:nil];
+    });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_PROMPT")) {
     [self showSection:1];
@@ -789,27 +798,117 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   [self deleteGroupNames:@[self.groups[i][@"name"]]];
 }
 
+- (NSImage *)groupIconImage:(NSString *)file {
+  NSString *p = [[NSBundle mainBundle] pathForResource:file ofType:@"icns" inDirectory:@"GroupIcons"];
+  return p ? [[NSImage alloc] initWithContentsOfFile:p] : nil;
+}
+
+- (void)refreshDialogIconSelection {
+  for (NSButton *b in self.dialogIconButtons) {
+    BOOL sel = (b.tag == self.dialogSelectedBuiltin);
+    b.layer.borderWidth = sel ? 3.0 : 1.0;
+    b.layer.borderColor = (sel ? [NSColor controlAccentColor] : [NSColor colorWithCalibratedWhite:0.85 alpha:1.0]).CGColor;
+    b.layer.cornerRadius = 12;
+  }
+}
+
+- (void)dialogIconClicked:(NSButton *)b {
+  if (b.tag == 99) { self.dialogSelectedBuiltin = -1; self.dialogCustomIcon = nil; }
+  else { self.dialogSelectedBuiltin = b.tag; self.dialogCustomIcon = nil; }
+  [self refreshDialogIconSelection];
+}
+
+- (void)dialogChooseCustomIcon:(id)sender {
+  NSOpenPanel *panel = [NSOpenPanel openPanel];
+  panel.canChooseFiles = YES; panel.canChooseDirectories = NO; panel.allowsMultipleSelection = NO;
+  panel.allowedFileTypes = @[@"icns", @"png", @"jpg", @"jpeg", @"tiff"];
+  if ([panel runModal] != NSModalResponseOK) return;
+  self.dialogCustomIcon = panel.URL.path;
+  self.dialogSelectedBuiltin = -1;
+  [self refreshDialogIconSelection];
+}
+
+- (BOOL)applyIconToApp:(NSString *)app {
+  NSString *resDir = [app stringByAppendingPathComponent:@"Contents/Resources"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:resDir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *dst = [resDir stringByAppendingPathComponent:@"AppIcon.icns"];
+  NSString *src = nil;
+  if (self.dialogSelectedBuiltin >= 0 && self.dialogSelectedBuiltin < (NSInteger)self.dialogIconButtons.count) {
+    NSButton *b = self.dialogIconButtons[self.dialogSelectedBuiltin];
+    src = [[NSBundle mainBundle] pathForResource:b.toolTip ofType:@"icns" inDirectory:@"GroupIcons"];
+  } else if (self.dialogCustomIcon.length) {
+    if ([[self.dialogCustomIcon pathExtension].lowercaseString isEqualToString:@"icns"]) {
+      src = self.dialogCustomIcon;
+    } else {
+      NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-custom-icon.icns"];
+      NSTask *t = [[NSTask alloc] init];
+      t.launchPath = @"/usr/bin/sips";
+      t.arguments = @[@"-s", @"format", @"icns", @"--resampleHeightWidth", @"1024", @"1024", self.dialogCustomIcon, @"--out", tmp];
+      @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+      if (t.terminationStatus == 0) src = tmp;
+    }
+  }
+  if (!src) return YES;
+  [[NSFileManager defaultManager] removeItemAtPath:dst error:NULL];
+  if (![[NSFileManager defaultManager] copyItemAtPath:src toPath:dst error:NULL]) return NO;
+  NSString *plist = [app stringByAppendingPathComponent:@"Contents/Info.plist"];
+  NSMutableDictionary *info = [[NSDictionary dictionaryWithContentsOfFile:plist] mutableCopy] ?: [NSMutableDictionary dictionary];
+  info[@"CFBundleIconFile"] = @"AppIcon";
+  [info writeToFile:plist atomically:YES];
+  return YES;
+}
+
 - (void)createGroup:(id)sender {
+  self.dialogSelectedBuiltin = -1;
+  self.dialogCustomIcon = nil;
+  self.dialogIconButtons = [NSMutableArray array];
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"新建分组";
-  a.informativeText = @"输入分组名（如 设计）。会复制现有分组作为模板并加入 Dock。";
-  NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,240,24)];
-  a.accessoryView = tf;
+  a.informativeText = @"输入分组名，并选择 Dock 图标样式。";
+  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 620, 330)];
+  NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(10, 290, 600, 26)];
+  tf.placeholderString = @"分组名，如 设计";
+  [v addSubview:tf];
+  NSTextField *l1 = [self label:@"Dock 图标（可不选，默认沿用模板图标）" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  l1.frame = NSMakeRect(10, 264, 600, 16); [v addSubview:l1];
+  NSArray *names = @[@"工作组", @"聊天组", @"外网组", @"影音组", @"Ai组", @"Docker组", @"工具组"];
+  for (NSInteger i = 0; i < names.count; i++) {
+    NSButton *b = [[NSButton alloc] initWithFrame:NSMakeRect(10 + i * 86, 170, 74, 74)];
+    b.image = [self groupIconImage:names[i]];
+    b.imageScaling = NSImageScaleProportionallyUpOrDown;
+    b.bordered = NO;
+    b.tag = i;
+    b.toolTip = names[i];
+    b.target = self;
+    b.action = @selector(dialogIconClicked:);
+    b.wantsLayer = YES;
+    [v addSubview:b];
+    [self.dialogIconButtons addObject:b];
+  }
+  NSButton *def = [NSButton buttonWithTitle:@"使用默认（不选）" target:self action:@selector(dialogIconClicked:)];
+  def.tag = 99;
+  def.frame = NSMakeRect(10, 120, 160, 32);
+  def.bezelStyle = NSBezelStyleRounded;
+  [v addSubview:def];
+  NSButton *custom = [NSButton buttonWithTitle:@"自定义图标…" target:self action:@selector(dialogChooseCustomIcon:)];
+  custom.frame = NSMakeRect(180, 120, 140, 32);
+  custom.bezelStyle = NSBezelStyleRounded;
+  [v addSubview:custom];
+  a.accessoryView = v;
   [a addButtonWithTitle:@"创建"];
   [a addButtonWithTitle:@"取消"];
   if ([a runModal] != NSAlertFirstButtonReturn) return;
+
   NSString *name = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
   while ([name hasSuffix:@"组"] && name.length > 1) name = [name substringToIndex:name.length-1];
-  if (!name.length) return;
+  if (!name.length) { NSAlert *e = [[NSAlert alloc] init]; e.messageText = @"分组名不能为空"; [e runModal]; return; }
   NSFileManager *fm = [NSFileManager defaultManager];
   NSArray *items = [fm contentsOfDirectoryAtPath:GroupDir() error:NULL];
   NSString *tpl = nil;
   for (NSString *f in items) if ([f hasSuffix:@".app"]) { tpl = [GroupDir() stringByAppendingPathComponent:f]; break; }
   if (!tpl) { NSBeep(); return; }
   NSString *dst = [GroupDir() stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]];
-  if ([fm fileExistsAtPath:dst]) {
-    NSAlert *e = [[NSAlert alloc] init]; e.messageText = @"同名分组已存在"; [e runModal]; return;
-  }
+  if ([fm fileExistsAtPath:dst]) { NSAlert *e = [[NSAlert alloc] init]; e.messageText = @"同名分组已存在"; [e runModal]; return; }
   if (![fm copyItemAtPath:tpl toPath:dst error:NULL]) return;
   NSString *plist = [dst stringByAppendingPathComponent:@"Contents/Info.plist"];
   NSMutableDictionary *info = [[NSDictionary dictionaryWithContentsOfFile:plist] mutableCopy];
@@ -817,6 +916,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   info[@"CFBundleDisplayName"] = name;
   info[@"CFBundleIdentifier"] = [NSString stringWithFormat:@"com.docklaunchers.g%lu", (unsigned long)([[NSDate date] timeIntervalSince1970]*1000)];
   [info writeToFile:plist atomically:YES];
+  [self applyIconToApp:dst];
   NSString *lists = [GroupDir() stringByAppendingPathComponent:@"lists"];
   [fm createDirectoryAtPath:lists withIntermediateDirectories:YES attributes:nil error:NULL];
   NSString *listFile = [lists stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];

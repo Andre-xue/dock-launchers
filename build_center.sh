@@ -7,6 +7,10 @@ rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp /tmp/docklaunchers_center_ui "$OUT/Contents/MacOS/menu"
 cp "$ROOT/resources/icons/控制台.icns" "$OUT/Contents/Resources/AppIcon2.icns"
+mkdir -p "$OUT/Contents/Resources/GroupIcons"
+for ic in 工作组 聊天组 外网组 影音组 Ai组 Docker组 工具组; do
+  cp "$ROOT/resources/icons/$ic.icns" "$OUT/Contents/Resources/GroupIcons/$ic.icns"
+done
 cp "$ROOT/resources/icons/控制台-menubar.png" "$OUT/Contents/Resources/menubar.png"
 cat > "$OUT/Contents/Info.plist" <<'PL'
 <?xml version="1.0" encoding="UTF-8"?>
