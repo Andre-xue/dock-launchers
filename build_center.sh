@@ -6,8 +6,8 @@ xcrun clang -fobjc-arc -framework Cocoa -framework IOKit -arch arm64 -arch x86_6
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp /tmp/docklaunchers_center_ui "$OUT/Contents/MacOS/menu"
-cp "$ROOT/resources/icons/聊天组.icns" "$OUT/Contents/Resources/AppIcon.icns"
-sips -s format png --resampleHeightWidth 44 44 "$ROOT/resources/icons/聊天组.icns" --out "$OUT/Contents/Resources/menubar.png" >/dev/null 2>&1 || true
+cp "$ROOT/resources/icons/控制台.icns" "$OUT/Contents/Resources/AppIcon.icns"
+cp "$ROOT/resources/icons/控制台-menubar.png" "$OUT/Contents/Resources/menubar.png"
 cat > "$OUT/Contents/Info.plist" <<'PL'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
