@@ -657,11 +657,33 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   return (r == NSAlertFirstButtonReturn);
 }
 
+- (void)deleteEmptyGroupDirect:(NSString *)name {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *app = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
+  NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+  [self removeDockEntry:app];
+  NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
+  [fm createDirectoryAtPath:trash withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
+  NSInteger idx = 0;
+  for (NSString *p in @[app, list]) {
+    if (![fm fileExistsAtPath:p]) continue;
+    BOOL ok = [fm trashItemAtURL:[NSURL fileURLWithPath:p] resultingItemURL:nil error:NULL];
+    if (!ok) {
+      NSString *dst = [trash stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%ld-%@", stamp, (long)idx++, [p lastPathComponent]]];
+      [fm moveItemAtPath:p toPath:dst error:NULL];
+    }
+  }
+  [self killDock];
+  [self refreshGroups];
+  if (self.popover.isShown) [self rebuildQuickGroups];
+}
+
 - (void)deleteGroupNames:(NSArray<NSString *> *)names {
   if (!names.count) return;
   NSMutableArray *empty = [NSMutableArray array];
   for (NSString *n in names) if ([self groupIsEmpty:n]) [empty addObject:n];
-  if (names.count == 1 && empty.count == 1) { [self finalizeDeleteGroupNames:names backup:NO]; return; }
+  if (names.count == 1 && empty.count == 1) { [self deleteEmptyGroupDirect:names.firstObject]; return; }
   if (empty.count) {
     if (![self confirmEmptyGroups:empty]) {
       if (!self.selectedGroups) self.selectedGroups = [NSMutableSet set];
