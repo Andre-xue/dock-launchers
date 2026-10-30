@@ -1681,6 +1681,9 @@ static BOOL ValidGroupName(NSString *raw) {
   for (NSArray *c in cols) {
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
     col.title = c[1]; col.width = [c[2] doubleValue];
+    if ([c[0] isEqualToString:@"size"]) {
+      col.sortDescriptorPrototype = [NSSortDescriptor sortDescriptorWithKey:@"size" ascending:YES];
+    }
     [self.uninstallTable addTableColumn:col];
   }
   sv.documentView = self.uninstallTable;
@@ -1894,6 +1897,21 @@ static BOOL ValidGroupName(NSString *raw) {
   if ([self.uninstallSelected containsObject:p]) { [self.uninstallSelected removeObject:p]; b.state = NSControlStateValueOff; }
   else { [self.uninstallSelected addObject:p]; b.state = NSControlStateValueOn; }
   [self updateUninstallFooter];
+}
+
+- (void)tableView:(NSTableView *)tableView sortDescriptorsDidChange:(NSArray<NSSortDescriptor *> *)oldDescriptors {
+  if (tableView != self.uninstallTable) return;
+  NSSortDescriptor *sd = tableView.sortDescriptors.firstObject;
+  if (!sd) return;
+  BOOL asc = sd.ascending;
+  [self.uninstallFiltered sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+    unsigned long long sa = [a[@"size"] unsignedLongLongValue];
+    unsigned long long sb = [b[@"size"] unsignedLongLongValue];
+    NSComparisonResult r = (sa < sb) ? NSOrderedAscending : (sa > sb ? NSOrderedDescending : NSOrderedSame);
+    if (!asc) r = (r == NSOrderedAscending ? NSOrderedDescending : (r == NSOrderedDescending ? NSOrderedAscending : NSOrderedSame));
+    return r;
+  }];
+  [tableView reloadData];
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
