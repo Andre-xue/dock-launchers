@@ -1683,6 +1683,10 @@ static BOOL ValidGroupName(NSString *raw) {
     col.title = c[1]; col.width = [c[2] doubleValue];
     if ([c[0] isEqualToString:@"size"]) {
       col.sortDescriptorPrototype = [NSSortDescriptor sortDescriptorWithKey:@"size" ascending:YES];
+    } else if ([c[0] isEqualToString:@"app"]) {
+      col.sortDescriptorPrototype = [NSSortDescriptor sortDescriptorWithKey:@"name" ascending:YES];
+    } else if ([c[0] isEqualToString:@"installed"]) {
+      col.sortDescriptorPrototype = [NSSortDescriptor sortDescriptorWithKey:@"installed" ascending:YES];
     }
     [self.uninstallTable addTableColumn:col];
   }
@@ -1904,10 +1908,18 @@ static BOOL ValidGroupName(NSString *raw) {
   NSSortDescriptor *sd = tableView.sortDescriptors.firstObject;
   if (!sd) return;
   BOOL asc = sd.ascending;
+  NSString *key = sd.key ?: @"size";
   [self.uninstallFiltered sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-    unsigned long long sa = [a[@"size"] unsignedLongLongValue];
-    unsigned long long sb = [b[@"size"] unsignedLongLongValue];
-    NSComparisonResult r = (sa < sb) ? NSOrderedAscending : (sa > sb ? NSOrderedDescending : NSOrderedSame);
+    NSComparisonResult r = NSOrderedSame;
+    if ([key isEqualToString:@"name"]) {
+      r = [(a[@"label"] ?: @"") localizedCompare:(b[@"label"] ?: @"")];
+    } else if ([key isEqualToString:@"installed"]) {
+      r = [(a[@"installed"] ?: [NSDate date]) compare:(b[@"installed"] ?: [NSDate date])];
+    } else {
+      unsigned long long sa = [a[@"size"] unsignedLongLongValue];
+      unsigned long long sb = [b[@"size"] unsignedLongLongValue];
+      r = (sa < sb) ? NSOrderedAscending : (sa > sb ? NSOrderedDescending : NSOrderedSame);
+    }
     if (!asc) r = (r == NSOrderedAscending ? NSOrderedDescending : (r == NSOrderedDescending ? NSOrderedAscending : NSOrderedSame));
     return r;
   }];
