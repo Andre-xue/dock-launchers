@@ -1893,13 +1893,9 @@ static NSString *ResolveAppPath(NSString *target) {
       @{@"title":@"图标自定义", @"children":@[@{@"title":@"图标大小 / 形状 / 重命名…", @"sel":@"showAppIconPanel:"}]},
       @{@"title":@"一键恢复默认", @"sel":@"resetAllAppIcons:"}]},
     @{@"title":@"Dock 栏", @"children":@[
-      @{@"title":@"新建 Dock", @"sel":@"createGroupTapped:"},
-      @{@"title":@"移除 Dock", @"sel":@"deleteCurrentGroup:"},
       @{@"title":@"Dock 风格", @"children":@[
         @{@"title":@"更换 Dock 图标…", @"sel":@"pickIconImage:"},
         @{@"title":@"恢复分组默认图标", @"sel":@"resetCustomIcon:"}]},
-      @{@"title":@"备份到本机（一键恢复用）", @"sel":@"backupGroupsNow:"},
-      @{@"title":@"一键卸载全部（移到废纸篓）", @"sel":@"uninstallAll:"},
       @{@"title":@"一键恢复 Dock 栏", @"sel":@"repairDockMenuTapped:"}]},
     @{@"title":@"设置", @"children":@[
       @{@"title":@"快捷键映射", @"sel":@"showShortcutSettings:"},
