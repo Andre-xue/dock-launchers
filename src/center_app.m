@@ -222,6 +222,12 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     [self deleteGroupNames:@[[NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")]]];
     exit(0);
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_REFRESH")) {
+    [self showSection:1];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self refreshAllGroupsClicked:nil];
+    });
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_CREATE")) {
     [self showSection:1];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -529,7 +535,14 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 
 - (void)backupGroupsClicked:(id)sender {
   NSArray *names = [self targetGroupNamesFromSelection];
-  if (!names.count) return;
+  if (!names.count) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.icon = [self characterImage:64];
+    a.messageText = @"没有可备份的分组";
+    a.informativeText = @"当前没有已安装的 Dock 分组。";
+    [a runModal];
+    return;
+  }
   [self backupGroupNames:names];
 }
 
@@ -669,7 +682,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 
   NSButton *create = [NSButton buttonWithTitle:@"新建分组…" target:self action:@selector(createGroup:)];
   create.frame = NSMakeRect(24, 540, 120, 32); create.bezelStyle = NSBezelStyleRounded; [v addSubview:create];
-  NSButton *refresh = [NSButton buttonWithTitle:@"刷新" target:self action:@selector(refreshGroups)];
+  NSButton *refresh = [NSButton buttonWithTitle:@"刷新" target:self action:@selector(refreshAllGroupsClicked:)];
   refresh.frame = NSMakeRect(152, 540, 80, 32); refresh.bezelStyle = NSBezelStyleRounded; [v addSubview:refresh];
   NSButton *folder = [NSButton buttonWithTitle:@"打开文件夹" target:self action:@selector(openGroupsFolder:)];
   folder.frame = NSMakeRect(240, 540, 110, 32); folder.bezelStyle = NSBezelStyleRounded; [v addSubview:folder];
@@ -716,6 +729,63 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
       [self killDock];
     }
   } @catch (NSException *e) {}
+}
+
+- (void)refreshAllGroupsClicked:(id)sender {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  // 1) 关闭所有已打开的分组窗口（不论是否钉住）
+  NSMutableArray *bundleIds = [NSMutableArray array];
+  NSArray *items = [fm contentsOfDirectoryAtPath:GroupDir() error:NULL];
+  for (NSString *f in items) {
+    if (![f hasSuffix:@".app"]) continue;
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[[GroupDir() stringByAppendingPathComponent:f] stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+    if (info[@"CFBundleIdentifier"]) [bundleIds addObject:info[@"CFBundleIdentifier"]];
+  }
+  NSInteger closed = 0;
+  for (NSRunningApplication *ra in [[NSWorkspace sharedWorkspace] runningApplications]) {
+    NSString *bid = ra.bundleIdentifier ?: @"";
+    if ([bid isEqualToString:@"com.docklaunchers.center"]) continue;
+    if ([bundleIds containsObject:bid] || [[ra.bundleURL path] hasPrefix:GroupDir()]) {
+      if ([ra forceTerminate]) closed++;   // 强制关闭，钉住也无效
+    }
+  }
+  // 2) 重建 Dock 条目（刷新图标）
+  NSInteger icons = 0;
+  for (NSString *f in items) {
+    if (![f hasSuffix:@".app"]) continue;
+    NSString *p = [GroupDir() stringByAppendingPathComponent:f];
+    NSString *label = [f stringByDeletingPathExtension];
+    [self removeDockEntry:p];
+    [self addDockEntry:p label:label];
+    icons++;
+    NSTask *ls = [[NSTask alloc] init];
+    ls.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+    ls.arguments = @[@"-f", p];
+    @try { [ls launch]; } @catch (NSException *e) {}
+  }
+  // 3) 清理分组应用缓存与保存状态
+  NSInteger caches = 0;
+  NSArray *cacheRoots = @[[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches"],
+                          [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Saved Application State"]];
+  for (NSString *root in cacheRoots) {
+    for (NSString *f in [fm contentsOfDirectoryAtPath:root error:NULL]) {
+      if (![f hasPrefix:@"com.docklaunchers."]) continue;
+      if ([fm removeItemAtPath:[root stringByAppendingPathComponent:f] error:NULL]) caches++;
+    }
+  }
+  // 4) 刷新 Dock 与图标服务
+  NSTask *k1 = [[NSTask alloc] init];
+  k1.launchPath = @"/usr/bin/killall";
+  k1.arguments = @[@"iconservicesagent"];
+  @try { [k1 launch]; } @catch (NSException *e) {}
+  [self killDock];
+  [self refreshGroups];
+  if (self.popover.isShown) [self rebuildQuickGroups];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.icon = [self characterImage:64];
+  a.messageText = @"刷新完成";
+  a.informativeText = [NSString stringWithFormat:@"已关闭 %ld 个分组窗口\n已刷新 %ld 个 Dock 图标\n已清理 %ld 项缓存", (long)closed, (long)icons, (long)caches];
+  [a runModal];
 }
 
 - (void)refreshGroups {
