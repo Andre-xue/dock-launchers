@@ -144,6 +144,7 @@ static NSString *LetterSortKey(NSString *name) {
 }
 
 @class LetterIndexView;
+@class MetricColumnView;
 @interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
@@ -159,8 +160,10 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSTextField *uptimeLabel;
 @property (strong) NSArray *metricColumns;
 @property (strong) NSArray *internalColumns;
-@property (strong) NSMutableArray *externalColumns;
+@property (strong) MetricColumnView *externalColumn;
+@property (strong) NSPopUpButton *externalPopup;
 @property (strong) NSMutableArray *externalVolumes;
+@property NSInteger externalSelectedIndex;
 @property (strong) NSView *metricHostView;
 @property (strong) NSMutableString *gpuText;
 @property double gpuPercent;
@@ -367,6 +370,7 @@ static NSDate *InstallDateForPath(NSString *path) {
 @interface MetricColumnView : NSView
 @property (strong) NSString *metricKey;
 @property (strong) NSColor *accent;
+@property (strong) NSTextField *titleLabel;
 @property (strong) NSTextField *valueLabel;
 @property (strong) NSTextField *detailLabel;
 @property (strong) BarChartView *bar;
@@ -383,11 +387,11 @@ static NSDate *InstallDateForPath(NSString *path) {
     self.layer.borderWidth = 1;
     self.layer.borderColor = [NSColor colorWithCalibratedWhite:0.93 alpha:1.0].CGColor;
     CGFloat w = frame.size.width;
-    NSTextField *t = [NSTextField labelWithString:title];
-    t.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold];
-    t.textColor = [NSColor secondaryLabelColor];
-    t.frame = NSMakeRect(12, frame.size.height - 30, w - 24, 18);
-    [self addSubview:t];
+    _titleLabel = [NSTextField labelWithString:title];
+    _titleLabel.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold];
+    _titleLabel.textColor = [NSColor secondaryLabelColor];
+    _titleLabel.frame = NSMakeRect(12, frame.size.height - 30, w - 24, 18);
+    [self addSubview:_titleLabel];
     _valueLabel = [NSTextField labelWithString:@"--"];
     _valueLabel.font = [NSFont systemFontOfSize:20 weight:NSFontWeightBold];
     _valueLabel.textColor = accent;
@@ -405,6 +409,7 @@ static NSDate *InstallDateForPath(NSString *path) {
   }
   return self;
 }
+- (void)setTitleText:(NSString *)title { self.titleLabel.stringValue = title; }
 - (void)setValueText:(NSString *)value detail:(NSString *)detail bar:(double)barVal {
   self.valueLabel.stringValue = value;
   self.detailLabel.stringValue = detail;
@@ -852,8 +857,21 @@ static NSDate *InstallDateForPath(NSString *path) {
     [cols addObject:c];
   }
   self.internalColumns = cols;
-  self.externalColumns = [NSMutableArray array];
   self.externalVolumes = [NSMutableArray array];
+  self.externalSelectedIndex = 0;
+  self.externalColumn = [[MetricColumnView alloc] initWithFrame:NSMakeRect(0, 255, 100, 320)
+                                                         title:@"外接存储"
+                                                        accent:[NSColor systemIndigoColor]
+                                                           key:@""
+                                                          target:self action:@selector(metricClicked:)];
+  self.externalColumn.hidden = YES;
+  [v addSubview:self.externalColumn];
+  self.externalPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(600, 578, 126, 24) pullsDown:NO];
+  self.externalPopup.font = [NSFont systemFontOfSize:11];
+  self.externalPopup.target = self;
+  self.externalPopup.action = @selector(externalDiskChanged:);
+  self.externalPopup.hidden = YES;
+  [v addSubview:self.externalPopup];
   self.metricHostView = v;
   self.liveView = v;
   [self refreshExternalVolumes];
@@ -877,7 +895,6 @@ static NSDate *InstallDateForPath(NSString *path) {
   [out sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
     return [a[@"name"] compare:b[@"name"] options:NSCaseInsensitiveSearch];
   }];
-  if (out.count > 4) return [out subarrayWithRange:NSMakeRange(0,4)];
   return out;
 }
 
@@ -893,30 +910,78 @@ static NSDate *InstallDateForPath(NSString *path) {
   }
 }
 
+- (void)styleExternalSelection {
+  if (!self.externalVolumes.count) return;
+  NSInteger idx = self.externalSelectedIndex;
+  for (NSInteger i = 0; i < (NSInteger)self.externalPopup.numberOfItems; i++) {
+    NSMenuItem *it = [self.externalPopup itemAtIndex:i];
+    it.state = (i == idx) ? NSControlStateValueOn : NSControlStateValueOff;
+  }
+  NSString *name = self.externalVolumes[idx][@"name"] ?: @"外接存储";
+  NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+  ps.alignment = NSTextAlignmentLeft;
+  NSAttributedString *attr = [[NSAttributedString alloc] initWithString:name attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: [NSColor systemIndigoColor], NSParagraphStyleAttributeName: ps}];
+  self.externalPopup.attributedTitle = attr;
+  self.externalPopup.wantsLayer = YES;
+  self.externalPopup.layer.cornerRadius = 6;
+  self.externalPopup.layer.backgroundColor = [[NSColor systemIndigoColor] colorWithAlphaComponent:0.12].CGColor;
+  self.externalColumn.wantsLayer = YES;
+  self.externalColumn.layer.borderColor = [NSColor systemIndigoColor].CGColor;
+  self.externalColumn.layer.borderWidth = 2;
+}
+
+- (void)updateExternalColumnDisplay {
+  if (self.externalSelectedIndex < 0 || self.externalSelectedIndex >= (NSInteger)self.externalVolumes.count) return;
+  NSDictionary *vol = self.externalVolumes[self.externalSelectedIndex];
+  unsigned long long total = [vol[@"total"] unsignedLongLongValue];
+  unsigned long long freeB = [vol[@"free"] unsignedLongLongValue];
+  double pct = total ? (double)(total-freeB)/(double)total*100.0 : 0;
+  NSString *name = vol[@"name"] ?: @"外接";
+  if (name.length > 7) name = [[name substringToIndex:7] stringByAppendingString:@"…"];
+  [self.externalColumn setTitleText:[NSString stringWithFormat:@"外接·%@", name]];
+  self.externalColumn.metricKey = [NSString stringWithFormat:@"external:%@", [vol[@"url"] path]];
+  [self.externalColumn setValueText:[NSString stringWithFormat:@"%.0f%%", pct]
+                             detail:[NSString stringWithFormat:@"已用 %@\n可用 %@", [self gbString:total-freeB], [self gbString:freeB]]
+                                bar:pct];
+}
+
+- (void)externalDiskChanged:(id)sender {
+  self.externalSelectedIndex = self.externalPopup.indexOfSelectedItem;
+  [self updateExternalColumnDisplay];
+  [self styleExternalSelection];
+}
+
 - (void)refreshExternalVolumes {
   if (!self.metricHostView) return;
+  NSString *keepPath = nil;
+  if (self.externalSelectedIndex >= 0 && self.externalSelectedIndex < (NSInteger)self.externalVolumes.count)
+    keepPath = [self.externalVolumes[self.externalSelectedIndex][@"url"] path];
   NSArray *vols = [self scanExternalVolumes];
-  for (MetricColumnView *c in self.externalColumns) [c removeFromSuperview];
-  [self.externalColumns removeAllObjects];
   [self.externalVolumes removeAllObjects];
-  NSArray *extColors = @[[NSColor systemIndigoColor], [NSColor systemBrownColor], [NSColor systemMintColor], [NSColor systemYellowColor]];
-  NSMutableArray *combined = [self.internalColumns mutableCopy] ?: [NSMutableArray array];
-  for (NSInteger i = 0; i < vols.count; i++) {
-    NSDictionary *vol = vols[i];
-    NSString *name = vol[@"name"] ?: @"外接";
-    if (name.length > 8) name = [[name substringToIndex:8] stringByAppendingString:@"…"];
-    MetricColumnView *c = [[MetricColumnView alloc] initWithFrame:NSMakeRect(0, 255, 100, 320)
-                                                            title:[NSString stringWithFormat:@"外接·%@", name]
-                                                           accent:extColors[i % extColors.count]
-                                                              key:[NSString stringWithFormat:@"external:%@", [vol[@"url"] path]]
-                                                           target:self action:@selector(metricClicked:)];
-    [self.metricHostView addSubview:c];
-    [self.externalColumns addObject:c];
-    [self.externalVolumes addObject:vol];
-    [combined addObject:c];
+  [self.externalVolumes addObjectsFromArray:vols];
+  [self.externalPopup.menu removeAllItems];
+  if (!vols.count) {
+    self.externalColumn.hidden = YES;
+    self.externalPopup.hidden = YES;
+    self.metricColumns = self.internalColumns;
+    [self layoutMetricColumns];
+    return;
   }
-  self.metricColumns = combined;
+  NSInteger sel = 0;
+  for (NSInteger i = 0; i < (NSInteger)vols.count; i++) {
+    [self.externalPopup addItemWithTitle:(vols[i][@"name"] ?: @"外接存储")];
+    if (keepPath && [[vols[i][@"url"] path] isEqualToString:keepPath]) sel = i;
+  }
+  self.externalSelectedIndex = sel;
+  [self.externalPopup selectItemAtIndex:sel];
+  self.externalColumn.hidden = NO;
+  self.externalPopup.hidden = NO;
+  self.metricColumns = [self.internalColumns arrayByAddingObject:self.externalColumn];
   [self layoutMetricColumns];
+  [self updateExternalColumnDisplay];
+  [self styleExternalSelection];
+  self.externalPopup.frame = NSMakeRect(self.externalColumn.frame.origin.x, 578, self.externalColumn.frame.size.width, 24);
+  [self.metricHostView addSubview:self.externalPopup positioned:NSWindowAbove relativeTo:nil];
 }
 
 - (void)volumesChanged:(NSNotification *)note {
@@ -3521,16 +3586,7 @@ static BOOL ValidGroupName(NSString *raw) {
                   detail:[NSString stringWithFormat:@"↓ %@/s\n↑ %@/s", [self rate:inRate], [self rate:outRate]]
                      bar:MIN(100.0, rateKB * 2.0)];
   }
-  for (NSInteger i = 0; i < self.externalColumns.count && i < self.externalVolumes.count; i++) {
-    NSDictionary *vol = self.externalVolumes[i];
-    unsigned long long total = [vol[@"total"] unsignedLongLongValue];
-    unsigned long long freeB = [vol[@"free"] unsignedLongLongValue];
-    double pct = total ? (double)(total-freeB)/(double)total*100.0 : 0;
-    MetricColumnView *c = self.externalColumns[i];
-    [c setValueText:[NSString stringWithFormat:@"%.0f%%", pct]
-              detail:[NSString stringWithFormat:@"已用 %@\n可用 %@", [self gbString:total-freeB], [self gbString:freeB]]
-                 bar:pct];
-  }
+  [self updateExternalColumnDisplay];
   self.uptimeLabel.stringValue = [NSString stringWithFormat:@"系统启动 %@", [self uptimeString]];
   if (self.popover.isShown) {
     self.quickCPU.stringValue = [NSString stringWithFormat:@"CPU %.0f%%", cpuPct];
