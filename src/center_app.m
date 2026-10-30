@@ -7352,17 +7352,19 @@ static BOOL ValidGroupName(NSString *raw) {
     self.translationSourceView.delegate = self;
     self.translationResultView = [self translationTextViewAtFrame:NSMakeRect(424, 140, 372, 276)];
 
-    NSArray *titles = @[@"截图翻译", @"选择文档…", @"翻译", @"复制译文", @"保存译文…"];
-    NSArray *sels = @[@"translationScreenshot:", @"translationChooseDocument:", @"translationTranslate:", @"translationCopy:", @"translationSave:"];
-    NSArray *colors = @[[NSColor systemTealColor], [NSColor systemBlueColor], [NSColor systemGreenColor], [NSColor systemGrayColor], [NSColor systemPurpleColor]];
-    CGFloat xs[5] = {24, 140, 292, 390, 468};
-    CGFloat ws[5] = {108, 140, 90, 70, 100};
-    for (NSInteger i = 0; i < 5; i++) {
+    NSArray *titles = @[@"选择文档…", @"复制译文", @"保存译文…"];
+    NSArray *sels = @[@"translationChooseDocument:", @"translationCopy:", @"translationSave:"];
+    NSArray *colors = @[[NSColor systemBlueColor], [NSColor systemGrayColor], [NSColor systemPurpleColor]];
+    CGFloat xs[3] = {24, 180, 280};
+    CGFloat ws[3] = {140, 90, 110};
+    for (NSInteger i = 0; i < 3; i++) {
       ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(xs[i], 96, ws[i], 30)];
       b.title = titles[i]; b.target = self; b.action = NSSelectorFromString(sels[i]); b.hoverColor = colors[i];
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
     }
+    NSTextField *autoTip = [self label:@"截图 / 划词后自动翻译，无需点击按钮" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    autoTip.frame = NSMakeRect(408, 104, 160, 16); [cv addSubview:autoTip];
     ColorHoverButton *shortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(580, 96, 208, 30)];
     shortcutBtn.title = @"快捷键设置…";
     shortcutBtn.hoverColor = [NSColor systemTealColor];
@@ -7393,6 +7395,9 @@ static BOOL ValidGroupName(NSString *raw) {
   [NSApp activateIgnoringOtherApps:YES];
   [self.translationWindow makeKeyAndOrderFront:nil];
   [self.translationWindow orderFrontRegardless];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (self.translationWindow.isVisible) [self.translationWindow orderFrontRegardless];
+  });
 }
 
 - (void)translationOCRImage:(NSString *)path completion:(void (^)(NSString *))completion {
@@ -7821,6 +7826,9 @@ static BOOL ValidGroupName(NSString *raw) {
   [NSApp activateIgnoringOtherApps:YES];
   [self.compressWindow makeKeyAndOrderFront:nil];
   [self.compressWindow orderFrontRegardless];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (self.compressWindow.isVisible) [self.compressWindow orderFrontRegardless];
+  });
 }
 
 - (void)compressAddFiles:(id)sender {
