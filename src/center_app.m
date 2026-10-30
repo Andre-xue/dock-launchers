@@ -827,20 +827,10 @@ static NSDate *InstallDateForPath(NSString *path) {
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
   NSTextField *sub = [self label:@"点击任一指标可在本机查看详细报告" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 420, 18); [v addSubview:sub];
-  HoverTextButton *hide = [[HoverTextButton alloc] initWithFrame:NSMakeRect(602, 602, 124, 26)];
-  hide.title = @"隐藏主窗口";
-  hide.bordered = NO;
-  hide.target = self;
-  hide.action = @selector(hideWindow:);
-  hide.hoverColor = [NSColor systemGreenColor];
-  hide.normalColor = [NSColor secondaryLabelColor];
-  [hide applyTitleColor:hide.normalColor];
-  [v addSubview:hide];
-
   self.uptimeLabel = [self label:@"" size:9 bold:NO color:[NSColor tertiaryLabelColor]];
   self.uptimeLabel.alignment = NSTextAlignmentRight;
   self.uptimeLabel.maximumNumberOfLines = 1;
-  self.uptimeLabel.frame = NSMakeRect(500, 629, 226, 22);
+  self.uptimeLabel.frame = NSMakeRect(500, 602, 226, 22);
   [v addSubview:self.uptimeLabel];
 
   NSArray *titles = @[@"内存", @"磁盘", @"CPU", @"GPU", @"电源", @"网络"];
@@ -1031,7 +1021,6 @@ static NSDate *InstallDateForPath(NSString *path) {
   return c;
 }
 
-- (void)hideWindow:(id)sender { [self.window orderOut:nil]; }
 - (void)openGroupsFolder:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:GroupDir()]]; }
 
 // ---------------- Dock 分组 ----------------
