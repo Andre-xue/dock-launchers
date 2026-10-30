@@ -158,6 +158,10 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSView *liveView, *groupsView, *uninstallView, *settingsView;
 @property (strong) NSTextField *uptimeLabel;
 @property (strong) NSArray *metricColumns;
+@property (strong) NSArray *internalColumns;
+@property (strong) NSMutableArray *externalColumns;
+@property (strong) NSMutableArray *externalVolumes;
+@property (strong) NSView *metricHostView;
 @property (strong) NSMutableString *gpuText;
 @property double gpuPercent;
 @property NSInteger batteryHealthFromProfiler;
@@ -483,6 +487,10 @@ static NSDate *InstallDateForPath(NSString *path) {
   self.statusItem.button.title = @" --%";
   self.statusItem.button.target = self;
   self.statusItem.button.action = @selector(togglePopover:);
+  NSNotificationCenter *wsnc = [[NSWorkspace sharedWorkspace] notificationCenter];
+  for (NSString *n in @[NSWorkspaceDidMountNotification, NSWorkspaceDidUnmountNotification, NSWorkspaceDidRenameVolumeNotification]) {
+    [wsnc addObserver:self selector:@selector(volumesChanged:) name:n object:nil];
+  }
   [self buildWindow];
   [self buildPopover];
   // 确保控制台自己出现在 Dock，并刷新图标缓存（先删后加）
@@ -843,11 +851,86 @@ static NSDate *InstallDateForPath(NSString *path) {
     [v addSubview:c];
     [cols addObject:c];
   }
-  self.metricColumns = cols;
+  self.internalColumns = cols;
+  self.externalColumns = [NSMutableArray array];
+  self.externalVolumes = [NSMutableArray array];
+  self.metricHostView = v;
   self.liveView = v;
+  [self refreshExternalVolumes];
+}
+
+- (NSArray<NSDictionary *> *)scanExternalVolumes {
+  NSMutableArray *out = [NSMutableArray array];
+  NSArray *urls = [[NSFileManager defaultManager] mountedVolumeURLsIncludingResourceValuesForKeys:@[NSURLVolumeNameKey, NSURLVolumeIsInternalKey, NSURLVolumeIsBrowsableKey, NSURLVolumeTotalCapacityKey, NSURLVolumeAvailableCapacityKey] options:NSVolumeEnumerationSkipHiddenVolumes];
+  for (NSURL *url in urls) {
+    id v = nil;
+    if (![url getResourceValue:&v forKey:NSURLVolumeIsInternalKey error:NULL]) continue;
+    BOOL internal = [v boolValue];
+    if (internal) continue;
+    if (![url getResourceValue:&v forKey:NSURLVolumeIsBrowsableKey error:NULL] || ![v boolValue]) continue;
+    NSString *name = nil; [url getResourceValue:&name forKey:NSURLVolumeNameKey error:NULL];
+    NSNumber *total = nil; [url getResourceValue:&total forKey:NSURLVolumeTotalCapacityKey error:NULL];
+    NSNumber *free = nil; [url getResourceValue:&free forKey:NSURLVolumeAvailableCapacityKey error:NULL];
+    if (!total || total.longLongValue <= 0) continue;
+    [out addObject:@{@"url": url, @"name": name ?: url.lastPathComponent, @"total": total, @"free": free ?: @0}];
+  }
+  [out sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+    return [a[@"name"] compare:b[@"name"] options:NSCaseInsensitiveSearch];
+  }];
+  if (out.count > 4) return [out subarrayWithRange:NSMakeRange(0,4)];
+  return out;
+}
+
+- (void)layoutMetricColumns {
+  NSInteger n = self.metricColumns.count;
+  if (!n || !self.metricHostView) return;
+  CGFloat gap = 6, left = 18;
+  CGFloat width = MAX(62, (750 - left*2 - gap*(n-1)) / n);
+  for (NSInteger i = 0; i < n; i++) {
+    MetricColumnView *c = self.metricColumns[i];
+    c.frame = NSMakeRect(left + i*(width+gap), 255, width, 320);
+    [c.bar setNeedsDisplay:YES];
+  }
+}
+
+- (void)refreshExternalVolumes {
+  if (!self.metricHostView) return;
+  NSArray *vols = [self scanExternalVolumes];
+  for (MetricColumnView *c in self.externalColumns) [c removeFromSuperview];
+  [self.externalColumns removeAllObjects];
+  [self.externalVolumes removeAllObjects];
+  NSArray *extColors = @[[NSColor systemIndigoColor], [NSColor systemBrownColor], [NSColor systemMintColor], [NSColor systemYellowColor]];
+  NSMutableArray *combined = [self.internalColumns mutableCopy] ?: [NSMutableArray array];
+  for (NSInteger i = 0; i < vols.count; i++) {
+    NSDictionary *vol = vols[i];
+    NSString *name = vol[@"name"] ?: @"外接";
+    if (name.length > 8) name = [[name substringToIndex:8] stringByAppendingString:@"…"];
+    MetricColumnView *c = [[MetricColumnView alloc] initWithFrame:NSMakeRect(0, 255, 100, 320)
+                                                            title:[NSString stringWithFormat:@"外接·%@", name]
+                                                           accent:extColors[i % extColors.count]
+                                                              key:[NSString stringWithFormat:@"external:%@", [vol[@"url"] path]]
+                                                           target:self action:@selector(metricClicked:)];
+    [self.metricHostView addSubview:c];
+    [self.externalColumns addObject:c];
+    [self.externalVolumes addObject:vol];
+    [combined addObject:c];
+  }
+  self.metricColumns = combined;
+  [self layoutMetricColumns];
+}
+
+- (void)volumesChanged:(NSNotification *)note {
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    [self refreshExternalVolumes];
+  });
 }
 
 - (void)metricClicked:(NSString *)key {
+  if ([key hasPrefix:@"external:"]) {
+    NSString *path = [key substringFromIndex:9];
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+    return;
+  }
   NSString *url = nil;
   if ([key isEqualToString:@"memory"]) {
     [[NSWorkspace sharedWorkspace] launchApplication:@"Activity Monitor"];
@@ -3397,7 +3480,7 @@ static BOOL ValidGroupName(NSString *raw) {
     diskTotal = (unsigned long long)fs2.f_blocks * fs2.f_bsize;
     diskFree = (unsigned long long)fs2.f_bavail * fs2.f_bsize;
   }
-  if (self.metricColumns.count == 6) {
+  if (self.metricColumns.count >= 6) {
     MetricColumnView *memCol = self.metricColumns[0];
     [memCol setValueText:[NSString stringWithFormat:@"%.0f%%", memPct]
                   detail:[NSString stringWithFormat:@"%@ / %@", [self gbString:memUsed], [self gbString:memTotal]]
@@ -3437,6 +3520,16 @@ static BOOL ValidGroupName(NSString *raw) {
     [netCol setValueText:[NSString stringWithFormat:@"%.0f KB/s", rateKB]
                   detail:[NSString stringWithFormat:@"↓ %@/s\n↑ %@/s", [self rate:inRate], [self rate:outRate]]
                      bar:MIN(100.0, rateKB * 2.0)];
+  }
+  for (NSInteger i = 0; i < self.externalColumns.count && i < self.externalVolumes.count; i++) {
+    NSDictionary *vol = self.externalVolumes[i];
+    unsigned long long total = [vol[@"total"] unsignedLongLongValue];
+    unsigned long long freeB = [vol[@"free"] unsignedLongLongValue];
+    double pct = total ? (double)(total-freeB)/(double)total*100.0 : 0;
+    MetricColumnView *c = self.externalColumns[i];
+    [c setValueText:[NSString stringWithFormat:@"%.0f%%", pct]
+              detail:[NSString stringWithFormat:@"已用 %@\n可用 %@", [self gbString:total-freeB], [self gbString:freeB]]
+                 bar:pct];
   }
   self.uptimeLabel.stringValue = [NSString stringWithFormat:@"系统启动 %@", [self uptimeString]];
   if (self.popover.isShown) {
