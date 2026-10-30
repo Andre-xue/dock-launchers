@@ -706,18 +706,9 @@ static NSDate *InstallDateForPath(NSString *path) {
   self.netLabel = [self label:@"↓ --   ↑ --" size:16 bold:NO color:nil]; self.netLabel.frame = NSMakeRect(16, 44, 310, 24); [card4 addSubview:self.netLabel];
   NSTextField *nt = [self label:@"实时上下行速率" size:10 bold:NO color:[NSColor secondaryLabelColor]]; nt.frame = NSMakeRect(16, 20, 260, 16); [card4 addSubview:nt];
 
-  NSView *card5 = [self cardAt:NSMakeRect(24, 120, 700, 165)];
-  [v addSubview:card5];
-  NSTextField *pt = [self label:@"进程 TOP 5（按 CPU）" size:12 bold:YES color:nil];
-  pt.frame = NSMakeRect(16, 136, 300, 18); [card5 addSubview:pt];
-  self.processLabel = [self label:@"" size:11.5 bold:NO color:[NSColor labelColor]];
-  self.processLabel.font = [NSFont monospacedDigitSystemFontOfSize:11.5 weight:NSFontWeightRegular];
-  self.processLabel.frame = NSMakeRect(16, 14, 670, 118);
-  self.processLabel.maximumNumberOfLines = 6;
-  [card5 addSubview:self.processLabel];
-
   self.uptimeLabel = [self label:@"" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  self.uptimeLabel.frame = NSMakeRect(24, 92, 700, 18);
+  self.uptimeLabel.alignment = NSTextAlignmentRight;
+  self.uptimeLabel.frame = NSMakeRect(500, 20, 224, 18);
   [v addSubview:self.uptimeLabel];
 
   HoverTextButton *hide = [[HoverTextButton alloc] initWithFrame:NSMakeRect(602, 628, 120, 26)];
@@ -3159,7 +3150,6 @@ static BOOL ValidGroupName(NSString *raw) {
   self.uptimeLabel.stringValue = [NSString stringWithFormat:@"系统启动：%@", [self uptimeString]];
   self.batteryLabel.stringValue = [self batteryText];
   self.thermalLabel.stringValue = [self thermalText];
-  self.processLabel.stringValue = [self processTopText];
   if (self.popover.isShown) {
     self.quickCPU.stringValue = [NSString stringWithFormat:@"CPU %.0f%%", cpuPct];
     self.quickMem.stringValue = [NSString stringWithFormat:@"内存 %.0f%%", memPct];
