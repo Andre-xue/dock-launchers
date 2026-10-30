@@ -1889,7 +1889,6 @@ static NSString *ResolveAppPath(NSString *target) {
       @{@"title":@"三列布局", @"sel":@"layoutThree:"},
       @{@"title":@"四列布局", @"sel":@"layoutFour:"},
       @{@"title":@"一键恢复（单列）", @"sel":@"resetSingleLayout:"}]},
-    @{@"title":@"应用卸载"},
     @{@"title":@"图标风格", @"children":@[
       @{@"title":@"图标自定义", @"children":@[@{@"title":@"图标大小 / 形状 / 重命名…", @"sel":@"showAppIconPanel:"}]},
       @{@"title":@"一键恢复默认", @"sel":@"resetAllAppIcons:"}]},
