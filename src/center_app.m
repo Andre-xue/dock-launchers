@@ -64,6 +64,20 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
   return res;
 }
 
+
+static NSString *DockEntryPath(NSString *u) {
+  if (![u isKindOfClass:[NSString class]]) return @"";
+  NSString *p = u;
+  if ([p hasPrefix:@"file://"]) p = [[p substringFromIndex:7] stringByRemovingPercentEncoding] ?: p;
+  while ([p hasSuffix:@"/"] && p.length > 1) p = [p substringToIndex:p.length-1];
+  return [p stringByStandardizingPath];
+}
+static BOOL IsOurDockEntry(NSDictionary *item) {
+  NSString *bid = nil; NSString *label = nil;
+  @try { bid = item[@"tile-data"][@"bundle-identifier"]; label = item[@"tile-data"][@"file-label"]; } @catch (NSException *e) {}
+  return [bid hasPrefix:@"com.docklaunchers."] || [label hasPrefix:@"DockLaunchers"];
+}
+
 @interface FlippedView : NSView
 @end
 @implementation FlippedView
@@ -179,6 +193,7 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
       exit(0);
     }
   }
+  [self pruneStaleDockEntries];
   NSUserDefaults *ud0 = [NSUserDefaults standardUserDefaults];
   if (![ud0 boolForKey:@"centerMenuTextInit"]) {
     [ud0 setBool:YES forKey:@"centerMenuText"];
@@ -672,14 +687,18 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
     if (!raw) return;
     NSArray *apps = CFBridgingRelease(raw);
     NSMutableArray *keep = [NSMutableArray array];
+    NSMutableSet *seenPaths = [NSMutableSet set];
     BOOL changed = NO;
     NSString *gd = [GroupDir() stringByAppendingString:@"/"];
     for (id item in apps) {
-      NSString *u = nil, *bid = nil;
-      @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; bid = item[@"tile-data"][@"bundle-identifier"]; } @catch (NSException *e) {}
-      NSString *path = [u hasPrefix:@"file://"] ? [[u substringFromIndex:7] stringByRemovingPercentEncoding] : u;
+      NSString *u = nil;
+      @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
+      NSString *path = DockEntryPath(u);
+      BOOL ours = IsOurDockEntry(item);
       BOOL missing = (path.length && [path hasPrefix:@"/"] && ![[NSFileManager defaultManager] fileExistsAtPath:path]);
-      if (missing && ([path hasPrefix:gd] || [bid hasPrefix:@"com.docklaunchers."])) { changed = YES; continue; }
+      if (missing && ours) { changed = YES; continue; }
+      if (ours && path.length && [seenPaths containsObject:path]) { changed = YES; continue; }
+      if (path.length) [seenPaths addObject:path];
       [keep addObject:item];
     }
     if (changed) {
@@ -826,7 +845,7 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
     NSMutableArray *apps = raw ? [CFBridgingRelease(raw) mutableCopy] : [NSMutableArray array];
     for (id item in apps) {
       NSString *u = nil; @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
-      if (u && [u containsString:enc]) return;
+      if (u && [DockEntryPath(u) isEqualToString:[path stringByStandardizingPath]]) return;
     }
     [apps addObject:@{@"tile-data": @{@"file-data": @{@"_CFURLString": url, @"_CFURLStringType": @15},
                                       @"file-label": label, @"file-type": @41,
@@ -846,7 +865,7 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
     NSMutableArray *keep = [NSMutableArray array];
     for (id item in apps) {
       NSString *u = nil; @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
-      if (u && [u containsString:enc]) continue;
+      if (u && [DockEntryPath(u) isEqualToString:[path stringByStandardizingPath]]) continue;
       [keep addObject:item];
     }
     CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)keep, CFSTR("com.apple.dock"));
