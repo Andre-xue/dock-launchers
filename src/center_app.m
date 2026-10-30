@@ -157,6 +157,11 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSArray *metricColumns;
 @property (strong) NSMutableString *gpuText;
 @property double gpuPercent;
+@property NSInteger batteryHealthFromProfiler;
+@property NSInteger batteryCyclesFromProfiler;
+@property (strong) NSString *batteryConditionText;
+@property NSTimeInterval lastBatteryProbe;
+@property BOOL batteryProbeRunning;
 @property (strong) Sparkline *cpuSpark, *memSpark;
 @property (strong) NSTimer *timer;
 @property (strong) NSTimer *autoSyncTimer;
@@ -371,12 +376,12 @@ static NSDate *InstallDateForPath(NSString *path) {
     self.layer.borderColor = [NSColor colorWithCalibratedWhite:0.93 alpha:1.0].CGColor;
     CGFloat w = frame.size.width;
     NSTextField *t = [NSTextField labelWithString:title];
-    t.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
+    t.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold];
     t.textColor = [NSColor secondaryLabelColor];
     t.frame = NSMakeRect(12, frame.size.height - 30, w - 24, 18);
     [self addSubview:t];
     _valueLabel = [NSTextField labelWithString:@"--"];
-    _valueLabel.font = [NSFont systemFontOfSize:22 weight:NSFontWeightBold];
+    _valueLabel.font = [NSFont systemFontOfSize:20 weight:NSFontWeightBold];
     _valueLabel.textColor = accent;
     _valueLabel.frame = NSMakeRect(12, frame.size.height - 64, w - 24, 28);
     [self addSubview:_valueLabel];
@@ -783,7 +788,7 @@ static NSDate *InstallDateForPath(NSString *path) {
   CGFloat gap = 8, left = 20, width = (750 - left*2 - gap*5) / 6.0;
   NSMutableArray *cols = [NSMutableArray array];
   for (NSInteger i = 0; i < 6; i++) {
-    MetricColumnView *c = [[MetricColumnView alloc] initWithFrame:NSMakeRect(left + i*(width+gap), 86, width, 480)
+    MetricColumnView *c = [[MetricColumnView alloc] initWithFrame:NSMakeRect(left + i*(width+gap), 150, width, 380)
                                                             title:titles[i] accent:colors[i] key:keys[i]
                                                            target:self action:@selector(metricClicked:)];
     [v addSubview:c];
@@ -3191,6 +3196,47 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 // ---------------- 采样 ----------------
+- (void)probeBatteryFromProfiler {
+  if (self.batteryProbeRunning) return;
+  self.batteryProbeRunning = YES;
+  __weak typeof(self) weakSelf = self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/sbin/system_profiler";
+    t.arguments = @[@"SPPowerDataType"];
+    NSPipe *pipe = [NSPipe pipe];
+    t.standardOutput = pipe;
+    t.standardError = [NSPipe pipe];
+    @try { [t launch]; } @catch (NSException *e) { weakSelf.batteryProbeRunning = NO; weakSelf.lastBatteryProbe = [NSDate timeIntervalSinceReferenceDate]; return; }
+    NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
+    [t waitUntilExit];
+    NSString *out = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+    NSInteger health = 0, cycles = 0;
+    NSString *condition = @"";
+    for (NSString *line in [out componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      NSString *trim = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      NSString *lower = trim.lowercaseString;
+      NSString *value = @"";
+      NSRange colon = [trim rangeOfString:@":"];
+      if (colon.location != NSNotFound) value = [[trim substringFromIndex:colon.location+1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if ([lower containsString:@"maximum capacity"] || [trim containsString:@"最大容量"]) {
+        health = [[value componentsSeparatedByCharactersInSet:[[NSCharacterSet decimalDigitCharacterSet] invertedSet]] componentsJoinedByString:@""].integerValue;
+      } else if ([lower containsString:@"cycle count"] || [trim containsString:@"循环次数"]) {
+        cycles = value.integerValue;
+      } else if ([lower containsString:@"condition"] || [trim containsString:@"状态"]) {
+        if (value.length) condition = value;
+      }
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (health > 0) weakSelf.batteryHealthFromProfiler = health;
+      if (cycles > 0) weakSelf.batteryCyclesFromProfiler = cycles;
+      if (condition.length) weakSelf.batteryConditionText = condition;
+      weakSelf.lastBatteryProbe = [NSDate timeIntervalSinceReferenceDate];
+      weakSelf.batteryProbeRunning = NO;
+    });
+  });
+}
+
 - (double)gpuUsagePercent {
   double best = 0;
   for (NSString *cls in @[@"IOAccelerator", @"AGXAccelerator"]) {
@@ -3300,6 +3346,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.gpuPercent = [self gpuUsagePercent];
     MetricColumnView *gpuCol = self.metricColumns[3];
     [gpuCol setValueText:(self.gpuPercent > 0 ? [NSString stringWithFormat:@"%.0f%%", self.gpuPercent] : @"--") detail:@"图形处理器实时占用" bar:self.gpuPercent];
+    if ([NSDate timeIntervalSinceReferenceDate] - self.lastBatteryProbe > 60) [self probeBatteryFromProfiler];
     NSDictionary *bat = [self batteryInfo];
     MetricColumnView *pwrCol = self.metricColumns[4];
     if (bat) {
@@ -3311,9 +3358,11 @@ static BOOL ValidGroupName(NSString *raw) {
       double design = [bd[@"DesignCapacity"] doubleValue];
       if (design <= 0) design = [bat[@"DesignCapacity"] doubleValue];
       double health = (design > 0 && rawMax > 0) ? rawMax / design * 100.0 : 0;
+      if (self.batteryHealthFromProfiler > 0) health = self.batteryHealthFromProfiler;
+      NSInteger cycles = self.batteryCyclesFromProfiler > 0 ? self.batteryCyclesFromProfiler : [bat[@"CycleCount"] integerValue];
       NSString *state = [bat[@"ExternalConnected"] boolValue] ? ([bat[@"IsCharging"] boolValue] ? @"充电中" : @"已接通电源") : @"使用电池";
       [pwrCol setValueText:[NSString stringWithFormat:@"%.0f%%", pct]
-                    detail:[NSString stringWithFormat:@"%@\n循环 %@ 次\n健康 %.0f%%", state, bat[@"CycleCount"] ?: @"--", health]
+                    detail:[NSString stringWithFormat:@"%@\n循环 %ld 次\n健康 %.0f%%", state, (long)cycles, health]
                        bar:pct];
     } else {
       [pwrCol setValueText:@"--" detail:@"未检测到电池" bar:0];
