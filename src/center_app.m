@@ -204,6 +204,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSComboBox *translationModelField;
 @property (strong) NSTextField *translationStatus;
 - (void)translateSelectedText;
+- (void)beginScreenshotTranslation;
 - (void)translateCurrentText;
 @property (strong) NSTimer *translationAutoTimer;
 @property BOOL translationBusy;
@@ -215,6 +216,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) id shortcutRecordingMonitor;
 @property NSInteger shortcutRecordingAction;
 @property (strong) NSTextField *shortcutStatusLabel;
+@property (strong) NSWindow *translateConfirmWindow;
+@property BOOL translateConfirmYes;
 @property EventHandlerRef translationHotKeyHandler;
 @property (strong) NSProgressIndicator *compressSpinner;
 @property NSInteger groupsPage;
@@ -1359,6 +1362,11 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
       [self togglePopover:nil];
     });
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_CONFIRM")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self confirmTranslateText:@"Hello world. This is a test of the confirmation dialog." origin:@"选中内容"];
+    });
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_SHORTCUT")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self showTranslationWindow:nil];
@@ -1568,8 +1576,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   EventHotKeyID hk = {0, 0};
   GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID, NULL, sizeof(hk), NULL, &hk);
   if (hk.id == 1) {
-    [c showTranslationWindow:nil];
-    [c translationScreenshot:nil];
+    [c beginScreenshotTranslation];
   } else if (hk.id == 2) [c translateSelectedText];
   else if (hk.id == 3) [c translateCurrentText];
   return noErr;
@@ -7499,23 +7506,75 @@ static BOOL ValidGroupName(NSString *raw) {
   return result;
 }
 
+- (BOOL)showTranslateConfirmWindow:(NSString *)text origin:(NSString *)origin {
+  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,250) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+  w.title = @"翻译确认";
+  w.level = NSFloatingWindowLevel;
+  w.releasedWhenClosed = NO;
+  self.translateConfirmWindow = w;
+  self.translateConfirmYes = NO;
+  NSView *cv = w.contentView;
+  NSTextField *title = [self label:[NSString stringWithFormat:@"是否翻译%@？", origin ?: @"这段文字"] size:15 bold:YES color:nil];
+  title.frame = NSMakeRect(24, 200, 430, 24); [cv addSubview:title];
+  NSTextField *preview = [self label:(text.length > 160 ? [[text substringToIndex:160] stringByAppendingString:@"…"] : text) size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+  preview.maximumNumberOfLines = 4;
+  preview.lineBreakMode = NSLineBreakByTruncatingTail;
+  preview.frame = NSMakeRect(24, 92, 430, 90); [cv addSubview:preview];
+  ColorHoverButton *no = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(300, 28, 70, 32)];
+  no.title = @"取消"; no.hoverColor = [NSColor systemGrayColor]; no.tag = 0;
+  no.target = self; no.action = @selector(translateConfirmButton:);
+  [no applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [cv addSubview:no];
+  ColorHoverButton *yes = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(378, 28, 78, 32)];
+  yes.title = @"翻译"; yes.hoverColor = [NSColor systemTealColor]; yes.tag = 1;
+  yes.target = self; yes.action = @selector(translateConfirmButton:);
+  [yes applyColor:[NSColor controlAccentColor] textColor:[NSColor whiteColor]];
+  [cv addSubview:yes];
+  [w center];
+  [NSApp activateIgnoringOtherApps:YES];
+  [w makeKeyAndOrderFront:nil];
+  [w orderFrontRegardless];
+  [NSApp runModalForWindow:w];
+  [w orderOut:nil];
+  return self.translateConfirmYes;
+}
+
+- (void)translateConfirmButton:(NSButton *)b {
+  self.translateConfirmYes = (b.tag == 1);
+  [NSApp stopModal];
+}
+
+- (void)confirmTranslateText:(NSString *)text origin:(NSString *)origin {
+  if (!text.length) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = [NSString stringWithFormat:@"%@没有可翻译的文字", origin ?: @""];
+    [a addButtonWithTitle:@"好"];
+    a.window.level = NSFloatingWindowLevel;
+    [NSApp activateIgnoringOtherApps:YES];
+    [a runModal];
+    return;
+  }
+  if (![self showTranslateConfirmWindow:text origin:origin]) return;
+  [self showTranslationWindow:nil];
+  [self translationSetSource:text status:@"已获取文字，正在自动翻译…"];
+}
+
 - (void)translateSelectedText {
   NSString *text = [self selectedTextFromFocusedApplication];
-  [self showTranslationWindow:nil];
   if (!text) {
-    self.translationStatus.stringValue = @"划词翻译需要辅助功能权限：系统设置 → 隐私与安全性 → 辅助功能";
     NSAlert *a = [[NSAlert alloc] init];
     a.messageText = @"需要辅助功能权限";
     a.informativeText = @"划词翻译需要读取其他应用中的选中文本。请在系统设置 → 隐私与安全性 → 辅助功能中允许 DockLaunchers 控制台。";
     [a addButtonWithTitle:@"打开系统设置"];
     [a addButtonWithTitle:@"取消"];
+    a.window.level = NSFloatingWindowLevel;
+    [NSApp activateIgnoringOtherApps:YES];
     if ([a runModal] == NSAlertFirstButtonReturn) {
       [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
     }
     return;
   }
-  if (!text.length) { self.translationStatus.stringValue = @"没有获取到选中文本，请先在目标应用中选中文字"; return; }
-  [self translationSetSource:text status:@"已获取选中文本，正在自动翻译…"];
+  [self confirmTranslateText:text origin:@"选中内容"];
 }
 
 - (void)translateCurrentText {
@@ -7618,21 +7677,17 @@ static BOOL ValidGroupName(NSString *raw) {
   }];
 }
 
-- (void)translationScreenshot:(id)sender {
+- (void)beginScreenshotTranslation {
   NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-translate-shot.png"];
   [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
-  self.translationStatus.stringValue = @"请框选要翻译的屏幕区域…";
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSTask *t = [[NSTask alloc] init];
     t.launchPath = @"/usr/sbin/screencapture";
     t.arguments = @[@"-i", @"-x", tmp];
     @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
-    if (![[NSFileManager defaultManager] fileExistsAtPath:tmp]) {
-      dispatch_async(dispatch_get_main_queue(), ^{ self.translationStatus.stringValue = @"已取消截图"; });
-      return;
-    }
+    if (![[NSFileManager defaultManager] fileExistsAtPath:tmp]) return;
     [self translationOCRImage:tmp completion:^(NSString *text) {
-      [self translationSetSource:text status:text.length ? @"截图识别完成，请点击翻译" : @"截图中没有识别到文字"];
+      [self confirmTranslateText:text origin:@"截图"];
     }];
   });
 }
