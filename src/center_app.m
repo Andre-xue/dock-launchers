@@ -864,6 +864,24 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
     reg.arguments = @[@"-f", installed];
     @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
+    // 用当前分组的可执行文件升级恢复的旧分组，保证新逻辑生效
+    for (NSString *tf in [fm contentsOfDirectoryAtPath:GroupDir() error:NULL]) {
+      if (![tf hasSuffix:@".app"]) continue;
+      NSString *tpath = [GroupDir() stringByAppendingPathComponent:tf];
+      if ([tpath isEqualToString:installed]) continue;
+      NSString *srcUI = [tpath stringByAppendingPathComponent:@"Contents/MacOS/ui"];
+      NSString *dstUI = [installed stringByAppendingPathComponent:@"Contents/MacOS/ui"];
+      if ([fm fileExistsAtPath:srcUI]) {
+        [fm removeItemAtPath:dstUI error:NULL];
+        if ([fm copyItemAtPath:srcUI toPath:dstUI error:NULL]) {
+          NSTask *cs = [[NSTask alloc] init];
+          cs.launchPath = @"/usr/bin/codesign";
+          cs.arguments = @[@"--force", @"--deep", @"--sign", @"-", installed];
+          @try { [cs launch]; [cs waitUntilExit]; } @catch (NSException *e) {}
+        }
+        break;
+      }
+    }
     [self addDockEntry:installed label:n];
     [restored addObject:n];
   }
