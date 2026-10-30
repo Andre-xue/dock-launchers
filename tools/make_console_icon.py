@@ -61,10 +61,10 @@ def vgrad(size, top, bottom):
         arr[y,:,:] = [int(top[i]*(1-t)+bottom[i]*t) for i in range(3)]
     return Image.fromarray(arr)
 
-def make_icon(base):
+def make_icon(base, top=(214, 228, 255), bottom=(108, 132, 206)):
     S = 1024
     # 底板：蓝紫渐变
-    bg = vgrad(S, (214, 228, 255), (108, 132, 206))
+    bg = vgrad(S, top, bottom)
     # 液态色斑
     blobs = Image.new('RGB', (S,S), (0,0,0))
     bd = ImageDraw.Draw(blobs)

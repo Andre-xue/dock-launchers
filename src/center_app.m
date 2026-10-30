@@ -170,6 +170,15 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
+  // 单实例：避免重复 Dock 图标/菜单栏图标
+  NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+  pid_t me = [[NSProcessInfo processInfo] processIdentifier];
+  for (NSRunningApplication *ra in [NSRunningApplication runningApplicationsWithBundleIdentifier:bid]) {
+    if (ra.processIdentifier != me) {
+      [ra activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+      exit(0);
+    }
+  }
   NSUserDefaults *ud0 = [NSUserDefaults standardUserDefaults];
   if (![ud0 boolForKey:@"centerMenuTextInit"]) {
     [ud0 setBool:YES forKey:@"centerMenuText"];
