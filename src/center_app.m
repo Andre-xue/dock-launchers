@@ -145,6 +145,7 @@ static NSString *LetterSortKey(NSString *name) {
 
 @class LetterIndexView;
 @class MetricColumnView;
+@class DiskSegmentBar;
 @interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
@@ -154,7 +155,7 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSButton *sidebarToggle;
 @property BOOL sidebarCollapsed;
 @property (strong) NSView *content;
-@property (strong) NSButton *sideLive, *sideGroups, *sideUninstall, *sideSettings;
+@property (strong) NSButton *sideLive, *sideGroups, *sideDisk, *sideUninstall, *sideSettings;
 @property NSInteger section;
 @property (strong) NSView *liveView, *groupsView, *uninstallView, *settingsView;
 @property (strong) NSTextField *uptimeLabel;
@@ -165,6 +166,18 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSMutableArray *externalVolumes;
 @property NSInteger externalSelectedIndex;
 @property (strong) NSView *metricHostView;
+// disk analysis
+@property (strong) NSView *diskView;
+@property (strong) NSPopUpButton *diskVolumePopup;
+@property (strong) NSTextField *diskStatus;
+@property (strong) NSTextField *diskSummary;
+@property (strong) DiskSegmentBar *diskSegmentBar;
+@property (strong) NSTextField *diskCategoryLabel;
+@property (strong) NSTextField *diskAppsLabel;
+@property (strong) NSButton *diskPersonalCheck;
+@property (strong) NSArray *diskVolumes;
+@property (strong) NSString *diskSelectedMount;
+@property NSInteger diskGeneration;
 @property (strong) NSMutableString *gpuText;
 @property double gpuPercent;
 @property NSInteger batteryHealthFromProfiler;
@@ -251,6 +264,7 @@ static void ActivityStreamCallback(ConstFSEventStreamRef streamRef, void *info, 
 @property NSInteger hovered;
 @property (weak) id target;
 @property SEL action;
+@property BOOL persistentHighlight;
 @end
 @implementation LetterIndexView
 - (BOOL)isFlipped { return YES; }
@@ -376,6 +390,7 @@ static NSDate *InstallDateForPath(NSString *path) {
 @property (strong) BarChartView *bar;
 @property (weak) id target;
 @property SEL action;
+@property BOOL persistentHighlight;
 @end
 @implementation MetricColumnView
 - (instancetype)initWithFrame:(NSRect)frame title:(NSString *)title accent:(NSColor *)accent key:(NSString *)key target:(id)target action:(SEL)action {
@@ -415,6 +430,30 @@ static NSDate *InstallDateForPath(NSString *path) {
   self.detailLabel.stringValue = detail;
   [self.bar addValue:barVal];
 }
+- (void)updateTrackingAreas {
+  [super updateTrackingAreas];
+  for (NSTrackingArea *a in self.trackingAreas) [self removeTrackingArea:a];
+  NSTrackingArea *ta = [[NSTrackingArea alloc] initWithRect:self.bounds options:(NSTrackingMouseEnteredAndExited|NSTrackingActiveInKeyWindow|NSTrackingInVisibleRect) owner:self userInfo:nil];
+  [self addTrackingArea:ta];
+}
+- (void)refreshBorderForHover:(BOOL)hover {
+  self.wantsLayer = YES;
+  if (hover || self.persistentHighlight) {
+    self.layer.borderWidth = 2;
+    self.layer.borderColor = self.accent.CGColor;
+  } else {
+    self.layer.borderWidth = 1;
+    self.layer.borderColor = [NSColor colorWithCalibratedWhite:0.93 alpha:1.0].CGColor;
+  }
+}
+- (void)mouseEntered:(NSEvent *)e {
+  [self refreshBorderForHover:YES];
+  [[NSCursor pointingHandCursor] set];
+}
+- (void)mouseExited:(NSEvent *)e {
+  [self refreshBorderForHover:NO];
+  [[NSCursor arrowCursor] set];
+}
 - (void)mouseDown:(NSEvent *)e {
   if (self.target && self.action) [self.target performSelector:self.action withObject:self.metricKey];
 }
@@ -442,6 +481,33 @@ static NSDate *InstallDateForPath(NSString *path) {
   NSGradient *g = [[NSGradient alloc] initWithColors:colors];
   [g drawInBezierPath:[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:10 yRadius:10] angle:-45];
   [super drawRect:dirtyRect];
+}
+@end
+
+
+@interface DiskSegmentBar : NSView
+@property (strong) NSArray<NSDictionary *> *segments;
+@end
+@implementation DiskSegmentBar
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) self.segments = @[];
+  return self;
+}
+- (void)drawRect:(NSRect)dirtyRect {
+  NSBezierPath *bg = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:8 yRadius:8];
+  [[NSColor colorWithCalibratedWhite:0.95 alpha:1.0] setFill]; [bg fill];
+  double total = 0;
+  for (NSDictionary *d in self.segments) total += [d[@"size"] doubleValue];
+  if (total <= 0) return;
+  [bg addClip];
+  CGFloat x = 0;
+  for (NSDictionary *d in self.segments) {
+    CGFloat w = self.bounds.size.width * [d[@"size"] doubleValue] / total;
+    NSColor *c = d[@"color"] ?: [NSColor systemGrayColor];
+    [c setFill];
+    NSRectFill(NSMakeRect(x, 0, MAX(1, w - 1), self.bounds.size.height));
+    x += w;
+  }
 }
 @end
 
@@ -502,6 +568,7 @@ static NSDate *InstallDateForPath(NSString *path) {
   NSString *selfPath = [[NSBundle mainBundle] bundlePath];
   [self removeDockEntry:selfPath];
   [self addDockEntry:selfPath label:@"DockLaunchers控制台"];
+  [self ensureGroupDockEntries];
   [self killDock];
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")) {
     NSString *arg = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")];
@@ -624,12 +691,12 @@ static NSDate *InstallDateForPath(NSString *path) {
     [self showSection:atoi(getenv("DOCKLAUNCHERS_CENTER_SECTION"))];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_SEARCH")) {
-    [self showSection:2];
+    [self showSection:3];
     self.uninstallSearch.stringValue = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_SEARCH")];
     [self reloadUninstallData];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_GROUP")) {
-    [self showSection:2];
+    [self showSection:3];
     self.uninstallScope = 1;
     self.uninstallScopeCtl.selectedSegment = 1;
     [self refreshUninstallGroupPopup];
@@ -700,8 +767,8 @@ static NSDate *InstallDateForPath(NSString *path) {
   NSTextField *subtitle = [self label:@"控制台" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   subtitle.frame = NSMakeRect(74, 590, 130, 16); [side addSubview:subtitle];
 
-  NSArray *titles = @[@"实时数据", @"Dock 分组", @"应用卸载", @"设置"];
-  NSArray *symbols = @[@"gauge", @"square.grid.2x2", @"trash", @"gearshape"];
+  NSArray *titles = @[@"实时数据", @"Dock 分组", @"磁盘分析", @"应用卸载", @"设置"];
+  NSArray *symbols = @[@"gauge", @"square.grid.2x2", @"internaldrive", @"trash", @"gearshape"];
   CGFloat y = 540;
   NSMutableArray *btns = [NSMutableArray array];
   for (NSInteger i = 0; i < titles.count; i++) {
@@ -720,7 +787,7 @@ static NSDate *InstallDateForPath(NSString *path) {
     [btns addObject:b];
     y -= 46;
   }
-  self.sideLive = btns[0]; self.sideGroups = btns[1]; self.sideUninstall = btns[2]; self.sideSettings = btns[3];
+  self.sideLive = btns[0]; self.sideGroups = btns[1]; self.sideDisk = btns[2]; self.sideUninstall = btns[3]; self.sideSettings = btns[4];
 
 
   self.sideView = side;
@@ -734,6 +801,7 @@ static NSDate *InstallDateForPath(NSString *path) {
 
   [self buildLiveView];
   [self buildGroupsView];
+  [self buildDiskView];
   [self buildUninstallView];
   [self buildSettingsView];
   [self showSection:0];
@@ -791,7 +859,7 @@ static NSDate *InstallDateForPath(NSString *path) {
 - (void)showSection:(NSInteger)idx {
   self.section = idx;
   for (NSView *v in self.content.subviews) [v removeFromSuperview];
-  NSArray *btns = @[self.sideLive, self.sideGroups, self.sideUninstall, self.sideSettings];
+  NSArray *btns = @[self.sideLive, self.sideGroups, self.sideDisk, self.sideUninstall, self.sideSettings];
   for (NSInteger i = 0; i < btns.count; i++) {
     NSButton *b = btns[i];
     BOOL on = (i == idx);
@@ -799,13 +867,14 @@ static NSDate *InstallDateForPath(NSString *path) {
     b.contentTintColor = on ? [NSColor controlAccentColor] : [NSColor secondaryLabelColor];
     b.font = [NSFont systemFontOfSize:13.5 weight:(on ? NSFontWeightSemibold : NSFontWeightMedium)];
   }
-  NSView *v = @[self.liveView, self.groupsView, self.uninstallView, self.settingsView][idx];
+  NSView *v = @[self.liveView, self.groupsView, self.diskView, self.uninstallView, self.settingsView][idx];
   v.frame = self.content.bounds;
   v.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
   [self.content addSubview:v];
   [self applyFlatButtonsInView:v];
   if (idx == 1) [self refreshGroups];
-  if (idx == 2) [self reloadUninstallData];
+  if (idx == 2) { [self refreshDiskVolumes]; [self runDiskAnalysis]; }
+  if (idx == 3) [self reloadUninstallData];
 }
 
 - (void)showWindow:(id)sender {
@@ -830,7 +899,7 @@ static NSDate *InstallDateForPath(NSString *path) {
   self.uptimeLabel = [self label:@"" size:9 bold:NO color:[NSColor tertiaryLabelColor]];
   self.uptimeLabel.alignment = NSTextAlignmentRight;
   self.uptimeLabel.maximumNumberOfLines = 1;
-  self.uptimeLabel.frame = NSMakeRect(500, 602, 226, 22);
+  self.uptimeLabel.frame = NSMakeRect(500, 620, 226, 22);
   [v addSubview:self.uptimeLabel];
 
   NSArray *titles = @[@"内存", @"磁盘", @"CPU", @"GPU", @"电源", @"网络"];
@@ -869,18 +938,19 @@ static NSDate *InstallDateForPath(NSString *path) {
 
 - (NSArray<NSDictionary *> *)scanExternalVolumes {
   NSMutableArray *out = [NSMutableArray array];
-  NSArray *urls = [[NSFileManager defaultManager] mountedVolumeURLsIncludingResourceValuesForKeys:@[NSURLVolumeNameKey, NSURLVolumeIsInternalKey, NSURLVolumeIsBrowsableKey, NSURLVolumeTotalCapacityKey, NSURLVolumeAvailableCapacityKey] options:NSVolumeEnumerationSkipHiddenVolumes];
-  for (NSURL *url in urls) {
-    id v = nil;
-    if (![url getResourceValue:&v forKey:NSURLVolumeIsInternalKey error:NULL]) continue;
-    BOOL internal = [v boolValue];
-    if (internal) continue;
-    if (![url getResourceValue:&v forKey:NSURLVolumeIsBrowsableKey error:NULL] || ![v boolValue]) continue;
-    NSString *name = nil; [url getResourceValue:&name forKey:NSURLVolumeNameKey error:NULL];
-    NSNumber *total = nil; [url getResourceValue:&total forKey:NSURLVolumeTotalCapacityKey error:NULL];
-    NSNumber *free = nil; [url getResourceValue:&free forKey:NSURLVolumeAvailableCapacityKey error:NULL];
-    if (!total || total.longLongValue <= 0) continue;
-    [out addObject:@{@"url": url, @"name": name ?: url.lastPathComponent, @"total": total, @"free": free ?: @0}];
+  struct statfs *mounts = NULL;
+  int n = getmntinfo(&mounts, MNT_NOWAIT);
+  for (int i = 0; i < n; i++) {
+    struct statfs *m = &mounts[i];
+    NSString *mountPoint = [NSString stringWithUTF8String:m->f_mntonname];
+    if (![mountPoint hasPrefix:@"/Volumes/"]) continue;
+    if (!(m->f_flags & MNT_LOCAL)) continue;
+    unsigned long long total = (unsigned long long)m->f_blocks * m->f_bsize;
+    unsigned long long freeB = (unsigned long long)m->f_bavail * m->f_bsize;
+    if (total == 0) continue;
+    NSString *name = mountPoint.lastPathComponent;
+    if (!name.length) name = @"外接存储";
+    [out addObject:@{@"url": [NSURL fileURLWithPath:mountPoint], @"name": name, @"total": @(total), @"free": @(freeB)}];
   }
   [out sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
     return [a[@"name"] compare:b[@"name"] options:NSCaseInsensitiveSearch];
@@ -915,9 +985,8 @@ static NSDate *InstallDateForPath(NSString *path) {
   self.externalPopup.wantsLayer = YES;
   self.externalPopup.layer.cornerRadius = 6;
   self.externalPopup.layer.backgroundColor = [[NSColor systemIndigoColor] colorWithAlphaComponent:0.12].CGColor;
-  self.externalColumn.wantsLayer = YES;
-  self.externalColumn.layer.borderColor = [NSColor systemIndigoColor].CGColor;
-  self.externalColumn.layer.borderWidth = 2;
+  self.externalColumn.persistentHighlight = NO;
+  [self.externalColumn refreshBorderForHover:NO];
 }
 
 - (void)updateExternalColumnDisplay {
@@ -926,9 +995,7 @@ static NSDate *InstallDateForPath(NSString *path) {
   unsigned long long total = [vol[@"total"] unsignedLongLongValue];
   unsigned long long freeB = [vol[@"free"] unsignedLongLongValue];
   double pct = total ? (double)(total-freeB)/(double)total*100.0 : 0;
-  NSString *name = vol[@"name"] ?: @"外接";
-  if (name.length > 7) name = [[name substringToIndex:7] stringByAppendingString:@"…"];
-  [self.externalColumn setTitleText:[NSString stringWithFormat:@"外接·%@", name]];
+  [self.externalColumn setTitleText:@"外部磁盘"];
   self.externalColumn.metricKey = [NSString stringWithFormat:@"external:%@", [vol[@"url"] path]];
   [self.externalColumn setValueText:[NSString stringWithFormat:@"%.0f%%", pct]
                              detail:[NSString stringWithFormat:@"已用 %@\n可用 %@", [self gbString:total-freeB], [self gbString:freeB]]
@@ -2040,6 +2107,23 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 // ---------------- Dock 条目 ----------------
+- (void)ensureGroupDockEntries {
+  NSString *dir = [GroupDir() stringByAppendingPathComponent:@"DockLaunchers"];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSArray *files = [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+  for (NSString *f in files) {
+    if (![f hasSuffix:@".app"]) continue;
+    NSString *path = [dir stringByAppendingPathComponent:f];
+    if (![fm fileExistsAtPath:[path stringByAppendingPathComponent:@"Contents/Info.plist"]]) continue;
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+    NSString *bid = info[@"CFBundleIdentifier"] ?: @"";
+    if (![bid hasPrefix:@"com.docklaunchers."]) continue;
+    if ([bid isEqualToString:@"com.docklaunchers.center"]) continue;
+    NSString *label = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [[f stringByDeletingPathExtension] stringByReplacingOccurrencesOfString:@"DockLaunchers" withString:@""];
+    [self addDockEntry:path label:label];
+  }
+}
+
 - (void)addDockEntry:(NSString *)path label:(NSString *)label {
   @try {
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Info.plist"]];
@@ -2088,6 +2172,211 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 // ---------------- 应用卸载 ----------------
+- (NSArray<NSDictionary *> *)diskMountList {
+  NSMutableArray *out = [NSMutableArray array];
+  struct statfs *mounts = NULL;
+  int n = getmntinfo(&mounts, MNT_NOWAIT);
+  for (int i = 0; i < n; i++) {
+    struct statfs *m = &mounts[i];
+    if (!(m->f_flags & MNT_LOCAL)) continue;
+    NSString *mp = [NSString stringWithUTF8String:m->f_mntonname];
+    if (![mp isEqualToString:@"/"] && ![mp hasPrefix:@"/Volumes/"]) continue;
+    unsigned long long total = (unsigned long long)m->f_blocks * m->f_bsize;
+    unsigned long long freeB = (unsigned long long)m->f_bavail * m->f_bsize;
+    if (total == 0) continue;
+    NSString *name = [mp isEqualToString:@"/"] ? @"内置磁盘" : mp.lastPathComponent;
+    [out addObject:@{@"mount": mp, @"name": name, @"total": @(total), @"free": @(freeB)}];
+  }
+  [out sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+    if ([a[@"mount"] isEqualToString:@"/"]) return NSOrderedAscending;
+    if ([b[@"mount"] isEqualToString:@"/"]) return NSOrderedDescending;
+    return [a[@"name"] compare:b[@"name"]];
+  }];
+  return out;
+}
+
+- (unsigned long long)diskSizeOfPaths:(NSArray<NSString *> *)paths {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  unsigned long long total = 0;
+  for (NSString *path in paths) {
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:path isDirectory:&isDir]) continue;
+    if (!isDir) {
+      NSDictionary *attr = [fm attributesOfItemAtPath:path error:NULL];
+      if (attr) total += [attr[NSFileSize] unsignedLongLongValue];
+      continue;
+    }
+    NSURL *url = [NSURL fileURLWithPath:path];
+    NSDirectoryEnumerator *en = [fm enumeratorAtURL:url includingPropertiesForKeys:@[NSURLFileAllocatedSizeKey, NSURLIsRegularFileKey] options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:^BOOL(NSURL *u, NSError *e) { return YES; }];
+    for (NSURL *u in en) {
+      id v = nil;
+      if ([u getResourceValue:&v forKey:NSURLFileAllocatedSizeKey error:NULL] && [v isKindOfClass:[NSNumber class]]) total += [v unsignedLongLongValue];
+    }
+  }
+  return total;
+}
+
+- (void)buildDiskView {
+  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
+  NSTextField *h = [self label:@"磁盘分析" size:24 bold:YES color:nil];
+  h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
+  NSTextField *sub = [self label:@"查看容量分布与大体积应用，扫描在后台进行" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  sub.frame = NSMakeRect(24, 584, 500, 18); [v addSubview:sub];
+
+  self.diskVolumePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24, 560, 230, 28) pullsDown:NO];
+  self.diskVolumePopup.target = self;
+  self.diskVolumePopup.action = @selector(diskVolumeChanged:);
+  [v addSubview:self.diskVolumePopup];
+  NSButton *refresh = [NSButton buttonWithTitle:@"重新分析" target:self action:@selector(runDiskAnalysis)];
+  refresh.frame = NSMakeRect(262, 560, 100, 28);
+  [v addSubview:refresh];
+  self.diskStatus = [self label:@"等待扫描" size:10.5 bold:NO color:[NSColor tertiaryLabelColor]];
+  self.diskStatus.alignment = NSTextAlignmentRight;
+  self.diskStatus.frame = NSMakeRect(380, 565, 346, 18);
+  [v addSubview:self.diskStatus];
+
+  self.diskSummary = [self label:@"" size:12 bold:NO color:[NSColor secondaryLabelColor]];
+  self.diskSummary.frame = NSMakeRect(24, 530, 700, 20);
+  [v addSubview:self.diskSummary];
+
+  self.diskSegmentBar = [[DiskSegmentBar alloc] initWithFrame:NSMakeRect(24, 496, 700, 22)];
+  [v addSubview:self.diskSegmentBar];
+
+  NSView *left = [self cardAt:NSMakeRect(24, 96, 340, 380)];
+  [v addSubview:left];
+  NSTextField *lt = [self label:@"空间分布" size:13 bold:YES color:nil];
+  lt.frame = NSMakeRect(16, 344, 200, 20); [left addSubview:lt];
+  self.diskCategoryLabel = [self label:@"" size:12 bold:NO color:[NSColor labelColor]];
+  self.diskCategoryLabel.maximumNumberOfLines = 12;
+  self.diskCategoryLabel.frame = NSMakeRect(16, 14, 308, 320);
+  [left addSubview:self.diskCategoryLabel];
+
+  NSView *right = [self cardAt:NSMakeRect(384, 96, 340, 380)];
+  [v addSubview:right];
+  NSTextField *rt = [self label:@"大应用 Top 10" size:13 bold:YES color:nil];
+  rt.frame = NSMakeRect(16, 344, 220, 20); [right addSubview:rt];
+  self.diskAppsLabel = [self label:@"" size:11 bold:NO color:[NSColor labelColor]];
+  self.diskAppsLabel.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular];
+  self.diskAppsLabel.maximumNumberOfLines = 12;
+  self.diskAppsLabel.frame = NSMakeRect(16, 14, 308, 320);
+  [right addSubview:self.diskAppsLabel];
+
+  self.diskPersonalCheck = [NSButton checkboxWithTitle:@"包含个人文件夹（文档 / 下载 / 桌面 / 图片，可能触发系统授权）" target:self action:@selector(diskPersonalToggled:)];
+  self.diskPersonalCheck.frame = NSMakeRect(24, 58, 620, 24);
+  [v addSubview:self.diskPersonalCheck];
+
+  self.diskView = v;
+  [self refreshDiskVolumes];
+}
+
+- (void)refreshDiskVolumes {
+  if (!self.diskVolumePopup) return;
+  NSString *keep = self.diskSelectedMount ?: @"/";
+  self.diskVolumes = [self diskMountList];
+  [self.diskVolumePopup removeAllItems];
+  for (NSDictionary *v in self.diskVolumes) {
+    [self.diskVolumePopup addItemWithTitle:v[@"name"]];
+    self.diskVolumePopup.lastItem.representedObject = v[@"mount"];
+    if ([v[@"mount"] isEqualToString:keep]) [self.diskVolumePopup selectItem:self.diskVolumePopup.lastItem];
+  }
+  if (!self.diskSelectedMount && self.diskVolumePopup.numberOfItems) {
+    self.diskSelectedMount = @"/";
+    [self.diskVolumePopup selectItemAtIndex:0];
+  }
+}
+
+- (void)diskVolumeChanged:(id)sender {
+  self.diskSelectedMount = self.diskVolumePopup.selectedItem.representedObject ?: @"/";
+  [self runDiskAnalysis];
+}
+
+- (void)diskPersonalToggled:(id)sender {
+  [self runDiskAnalysis];
+}
+
+- (void)runDiskAnalysis {
+  if (!self.diskView) return;
+  NSString *mount = self.diskSelectedMount ?: @"/";
+  NSDictionary *vol = nil;
+  for (NSDictionary *v in self.diskVolumes) if ([v[@"mount"] isEqualToString:mount]) { vol = v; break; }
+  unsigned long long total = [vol[@"total"] unsignedLongLongValue];
+  unsigned long long freeB = [vol[@"free"] unsignedLongLongValue];
+  unsigned long long used = total > freeB ? total - freeB : 0;
+  self.diskSummary.stringValue = [NSString stringWithFormat:@"总容量 %@     已用 %@     可用 %@     使用率 %.0f%%", [self gbString:total], [self gbString:used], [self gbString:freeB], total ? (double)used/total*100.0 : 0];
+  self.diskStatus.stringValue = @"正在分析…";
+  self.diskStatus.textColor = [NSColor secondaryLabelColor];
+  self.diskCategoryLabel.stringValue = @"正在扫描…";
+  self.diskAppsLabel.stringValue = @"正在扫描…";
+  self.diskGeneration++;
+  NSInteger gen = self.diskGeneration;
+  BOOL includePersonal = (self.diskPersonalCheck.state == NSControlStateValueOn);
+  NSString *home = NSHomeDirectory();
+  __weak typeof(self) weakSelf = self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    NSMutableArray *cats = [NSMutableArray array];
+    NSArray *colors = @[[NSColor systemBlueColor], [NSColor systemPurpleColor], [NSColor systemGrayColor], [NSColor systemPinkColor], [NSColor systemOrangeColor], [NSColor colorWithCalibratedWhite:0.78 alpha:1.0]];
+    if ([mount isEqualToString:@"/"]) {
+      [cats addObject:@{@"name": @"应用", @"paths": @[@"/Applications"], @"color": colors[0]}];
+      [cats addObject:@{@"name": @"用户资源库", @"paths": @[[home stringByAppendingPathComponent:@"Library"]], @"color": colors[1]}];
+      [cats addObject:@{@"name": @"系统资源库", @"paths": @[@"/Library"], @"color": colors[2]}];
+      [cats addObject:@{@"name": @"影音", @"paths": @[[home stringByAppendingPathComponent:@"Movies"], [home stringByAppendingPathComponent:@"Music"]], @"color": colors[3]}];
+      if (includePersonal) {
+        [cats addObject:@{@"name": @"个人文件", @"paths": @[[home stringByAppendingPathComponent:@"Downloads"], [home stringByAppendingPathComponent:@"Documents"], [home stringByAppendingPathComponent:@"Desktop"], [home stringByAppendingPathComponent:@"Pictures"]], @"color": colors[4]}];
+      }
+    } else {
+      NSArray *children = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:mount error:NULL] ?: @[];
+      NSInteger idx = 0;
+      for (NSString *child in children) {
+        if ([child hasPrefix:@"."]) continue;
+        NSString *p = [mount stringByAppendingPathComponent:child];
+        [cats addObject:@{@"name": child, @"paths": @[p], @"color": colors[idx % colors.count]}];
+        idx++;
+        if (idx >= 8) break;
+      }
+    }
+    NSMutableArray *sized = [NSMutableArray array];
+    unsigned long long sum = 0;
+    for (NSDictionary *c in cats) {
+      unsigned long long sz = [weakSelf diskSizeOfPaths:c[@"paths"]];
+      sum += sz;
+      [sized addObject:@{@"name": c[@"name"], @"size": @(sz), @"color": c[@"color"]}];
+    }
+    unsigned long long other = used > sum ? used - sum : 0;
+    if (other > 0) [sized addObject:@{@"name": @"其他", @"size": @(other), @"color": colors[5]}];
+    NSMutableArray *apps = [NSMutableArray array];
+    if ([mount isEqualToString:@"/"]) {
+      NSString *appDir = @"/Applications";
+      for (NSString *f in ([[NSFileManager defaultManager] contentsOfDirectoryAtPath:appDir error:NULL] ?: @[])) {
+        if (![f hasSuffix:@".app"]) continue;
+        unsigned long long sz = [weakSelf diskSizeOfPaths:@[[appDir stringByAppendingPathComponent:f]]];
+        [apps addObject:@{@"name": [f stringByDeletingPathExtension], @"size": @(sz)}];
+      }
+      [apps sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"size"] compare:a[@"size"]]; }];
+      if (apps.count > 10) apps = [[apps subarrayWithRange:NSMakeRange(0,10)] mutableCopy];
+    } else {
+      NSArray *sorted = [sized sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"size"] compare:a[@"size"]]; }];
+      apps = [[sorted subarrayWithRange:NSMakeRange(0, MIN(10, sorted.count))] mutableCopy];
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (gen != weakSelf.diskGeneration) return;
+      NSMutableString *text = [NSMutableString string];
+      for (NSDictionary *c in sized) [text appendFormat:@"%@  %@\n", c[@"name"], [weakSelf gbString:[c[@"size"] unsignedLongLongValue]]];
+      weakSelf.diskCategoryLabel.stringValue = text;
+      NSMutableString *appText = [NSMutableString string];
+      for (NSDictionary *a in apps) {
+        NSString *name = a[@"name"] ?: @"--";
+        if (name.length > 22) name = [[name substringToIndex:22] stringByAppendingString:@"…"];
+        [appText appendFormat:@"%@\t%@\n", name, [weakSelf gbString:[a[@"size"] unsignedLongLongValue]]];
+      }
+      weakSelf.diskAppsLabel.stringValue = appText.length ? appText : @"未找到可分析内容";
+      weakSelf.diskSegmentBar.segments = sized;
+      [weakSelf.diskSegmentBar setNeedsDisplay:YES];
+      NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"HH:mm";
+      weakSelf.diskStatus.stringValue = [NSString stringWithFormat:@"分析完成 · %@", [df stringFromDate:[NSDate date]]];
+    });
+  });
+}
+
 - (void)buildUninstallView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"应用卸载" size:24 bold:YES color:nil];
