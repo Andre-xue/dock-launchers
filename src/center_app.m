@@ -151,7 +151,6 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSTextField *centerTitleLabel;
 @property (strong) NSView *sideView;
 @property (strong) NSButton *sidebarToggle;
-@property (strong) NSButton *sidebarExpand;
 @property BOOL sidebarCollapsed;
 @property (strong) NSView *content;
 @property (strong) NSButton *sideLive, *sideGroups, *sideUninstall, *sideSettings;
@@ -414,6 +413,7 @@ static NSDate *InstallDateForPath(NSString *path) {
 
 
 @interface SidebarToggleButton : NSButton
+@property BOOL collapsedStyle;
 @end
 @implementation SidebarToggleButton
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -429,7 +429,8 @@ static NSDate *InstallDateForPath(NSString *path) {
   return self;
 }
 - (void)drawRect:(NSRect)dirtyRect {
-  NSGradient *g = [[NSGradient alloc] initWithColors:@[[NSColor systemPinkColor], [NSColor systemOrangeColor]]];
+  NSArray *colors = self.collapsedStyle ? @[[NSColor systemGreenColor], [NSColor systemTealColor]] : @[[NSColor systemPinkColor], [NSColor systemOrangeColor]];
+  NSGradient *g = [[NSGradient alloc] initWithColors:colors];
   [g drawInBezierPath:[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:10 yRadius:10] angle:-45];
   [super drawRect:dirtyRect];
 }
@@ -634,14 +635,14 @@ static NSDate *InstallDateForPath(NSString *path) {
   BOOL collapse = !self.sidebarCollapsed;
   self.sidebarCollapsed = collapse;
   self.sidebarToggle.image = [NSImage imageWithSystemSymbolName:(collapse ? @"sidebar.right" : @"sidebar.left") accessibilityDescription:@"侧边栏"];
-  self.sidebarExpand.image = [NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:@"展开侧边栏"];
-  self.sidebarExpand.hidden = !collapse;
-  self.sidebarToggle.hidden = collapse;
+  ((SidebarToggleButton *)self.sidebarToggle).collapsedStyle = collapse;
+  [self.sidebarToggle setNeedsDisplay:YES];
   if (!collapse) self.sideView.hidden = NO;
   [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
     ctx.duration = 0.22;
     self.sideView.animator.alphaValue = collapse ? 0 : 1;
     self.content.animator.frame = collapse ? NSMakeRect(0, 0, 960, 660) : NSMakeRect(210, 0, 750, 660);
+    self.sidebarToggle.animator.frame = collapse ? NSMakeRect(230, 24, 32, 32) : NSMakeRect(20, 24, 32, 32);
   } completionHandler:^{
     if (collapse) self.sideView.hidden = YES;
   }];
@@ -711,17 +712,12 @@ static NSDate *InstallDateForPath(NSString *path) {
 
   self.sideView = side;
   self.content = [[NSView alloc] initWithFrame:NSMakeRect(210, 0, 750, 660)];
+  self.content.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
+  [root addSubview:self.content];
   self.sidebarToggle = [[SidebarToggleButton alloc] initWithFrame:NSMakeRect(20, 24, 32, 32)];
   self.sidebarToggle.target = self;
   self.sidebarToggle.action = @selector(toggleSidebar:);
-  [side addSubview:self.sidebarToggle];
-  self.sidebarExpand = [[SidebarToggleButton alloc] initWithFrame:NSMakeRect(10, 24, 34, 34)];
-  self.sidebarExpand.target = self;
-  self.sidebarExpand.action = @selector(toggleSidebar:);
-  self.sidebarExpand.hidden = YES;
-  [self.content addSubview:self.sidebarExpand];
-  self.content.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
-  [root addSubview:self.content];
+  [root addSubview:self.sidebarToggle];
 
   [self buildLiveView];
   [self buildGroupsView];
@@ -828,10 +824,10 @@ static NSDate *InstallDateForPath(NSString *path) {
   [hide applyTitleColor:hide.normalColor];
   [v addSubview:hide];
 
-  self.uptimeLabel = [self label:@"" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+  self.uptimeLabel = [self label:@"" size:9 bold:NO color:[NSColor tertiaryLabelColor]];
   self.uptimeLabel.alignment = NSTextAlignmentRight;
-  self.uptimeLabel.maximumNumberOfLines = 2;
-  self.uptimeLabel.frame = NSMakeRect(648, 312, 90, 34);
+  self.uptimeLabel.maximumNumberOfLines = 1;
+  self.uptimeLabel.frame = NSMakeRect(500, 629, 226, 22);
   [v addSubview:self.uptimeLabel];
 
   NSArray *titles = @[@"内存", @"磁盘", @"CPU", @"GPU", @"电源", @"网络"];
@@ -3442,7 +3438,7 @@ static BOOL ValidGroupName(NSString *raw) {
                   detail:[NSString stringWithFormat:@"↓ %@/s\n↑ %@/s", [self rate:inRate], [self rate:outRate]]
                      bar:MIN(100.0, rateKB * 2.0)];
   }
-  self.uptimeLabel.stringValue = [NSString stringWithFormat:@"系统启动\n%@", [self uptimeString]];
+  self.uptimeLabel.stringValue = [NSString stringWithFormat:@"系统启动 %@", [self uptimeString]];
   if (self.popover.isShown) {
     self.quickCPU.stringValue = [NSString stringWithFormat:@"CPU %.0f%%", cpuPct];
     self.quickMem.stringValue = [NSString stringWithFormat:@"内存 %.0f%%", memPct];
