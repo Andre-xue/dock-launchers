@@ -17,6 +17,8 @@
 #import <Photos/Photos.h>
 #import <Vision/Vision.h>
 #import <PDFKit/PDFKit.h>
+#import <NaturalLanguage/NaturalLanguage.h>
+#import <Carbon/Carbon.h>
 
 static double gPrevCPUBusy = 0, gPrevCPUTotal = 0;
 static unsigned long long gPrevNetIn = 0, gPrevNetOut = 0;
@@ -198,7 +200,12 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *translationWindow;
 @property (strong) NSTextView *translationSourceView, *translationResultView;
 @property (strong) NSPopUpButton *translationProviderPopup, *translationTargetPopup;
-@property (strong) NSTextField *translationModelField, *translationStatus;
+@property (strong) NSComboBox *translationModelField;
+@property (strong) NSTextField *translationStatus;
+@property (strong) NSTimer *translationAutoTimer;
+@property BOOL translationBusy;
+@property EventHotKeyRef translationHotKey;
+@property EventHandlerRef translationHotKeyHandler;
 @property (strong) NSProgressIndicator *compressSpinner;
 @property NSInteger groupsPage;
 @property (strong) NSString *groupsFilter, *groupsHighlightedName, *groupsSelectedName;
@@ -1231,6 +1238,7 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
   }
   [self applyThemeFromDefaults];
   [self setupMainMenu];
+  [self installTranslationHotKey];
   [self buildWindow];
   [self buildPopover];
   [self applyThemeFromDefaults];
@@ -1537,6 +1545,20 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
   [self layoutCenterTitle];
   [self layoutPageView:self.content.subviews.firstObject];
   [self updateDiskGalleryLayout];
+}
+
+static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventRef event, void *userData) {
+  Controller *c = (__bridge Controller *)userData;
+  [c showTranslationWindow:nil];
+  [c translationScreenshot:nil];
+  return noErr;
+}
+
+- (void)installTranslationHotKey {
+  EventTypeSpec es = {kEventClassKeyboard, kEventHotKeyPressed};
+  InstallEventHandler(GetApplicationEventTarget(), TranslationHotKeyHandler, 1, &es, (__bridge void *)self, &_translationHotKeyHandler);
+  EventHotKeyID hid = {'DLTR', 1};
+  RegisterEventHotKey(kVK_ANSI_T, controlKey | optionKey, hid, GetApplicationEventTarget(), 0, &_translationHotKey);
 }
 
 - (void)setupMainMenu {
@@ -7132,13 +7154,55 @@ static BOOL ValidGroupName(NSString *raw) {
   [self translationProviderChanged:nil];
 }
 
+- (void)fetchTranslationModels:(id)sender {
+  NSDictionary *e = self.translationProviderPopup.selectedItem.representedObject;
+  if (!e) return;
+  NSDictionary *cfg = [self translationAPIConfigForEntry:e];
+  NSString *key = e[@"api"] ?: @"";
+  if (!cfg || !key.length) { self.translationStatus.stringValue = @"缺少 API 地址或 Key"; return; }
+  self.translationStatus.stringValue = @"正在获取模型列表…";
+  NSString *url = [cfg[@"base"] stringByAppendingString:@"/models"];
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  req.timeoutInterval = 20;
+  __weak typeof(self) weakSelf = self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    NSMutableArray *models = [NSMutableArray array];
+    if (data.length) {
+      id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+      id list = [obj isKindOfClass:[NSDictionary class]] ? obj[@"data"] : nil;
+      if ([list isKindOfClass:[NSArray class]]) {
+        for (id m in list) {
+          NSString *mid = [m isKindOfClass:[NSDictionary class]] ? m[@"id"] : nil;
+          if (mid.length) [models addObject:mid];
+        }
+      }
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!models.count) { weakSelf.translationStatus.stringValue = @"未获取到模型列表，可直接手动输入模型名"; return; }
+      [models sortUsingSelector:@selector(localizedStandardCompare:)];
+      NSString *current = weakSelf.translationModelField.stringValue;
+      [weakSelf.translationModelField removeAllItems];
+      [weakSelf.translationModelField addItemsWithObjectValues:models];
+      if (current.length && [models containsObject:current]) weakSelf.translationModelField.stringValue = current;
+      else weakSelf.translationModelField.stringValue = models.firstObject;
+      weakSelf.translationStatus.stringValue = [NSString stringWithFormat:@"已获取 %ld 个模型", (long)models.count];
+    });
+  }] resume];
+}
+
 - (void)translationProviderChanged:(id)sender {
   NSDictionary *e = self.translationProviderPopup.selectedItem.representedObject;
   if (!e) return;
   NSDictionary *cfg = [self translationAPIConfigForEntry:e];
   self.translationModelField.stringValue = cfg[@"model"] ?: @"";
   if (!cfg) self.translationStatus.stringValue = @"该服务暂无可用 API 地址，可在备注中写「API 地址：https://…」";
-  else self.translationStatus.stringValue = @"";
+  else {
+    self.translationStatus.stringValue = @"";
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self fetchTranslationModels:nil];
+    });
+  }
 }
 
 - (NSTextView *)translationTextViewAtFrame:(NSRect)frame {
@@ -7198,11 +7262,19 @@ static BOOL ValidGroupName(NSString *raw) {
     pl.frame = NSMakeRect(24, 464, 70, 18); [cv addSubview:pl];
     NSTextField *ml = [self label:@"模型" size:11 bold:NO color:[NSColor secondaryLabelColor]];
     ml.frame = NSMakeRect(330, 464, 40, 18); [cv addSubview:ml];
-    self.translationModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(374, 458, 200, 28)];
-    self.translationModelField.placeholderString = @"模型名"; [cv addSubview:self.translationModelField];
+    self.translationModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(374, 458, 140, 28)];
+    self.translationModelField.placeholderString = @"模型";
+    self.translationModelField.editable = YES;
+    [cv addSubview:self.translationModelField];
+    ColorHoverButton *fetchModels = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(520, 458, 64, 28)];
+    fetchModels.title = @"获取模型"; fetchModels.hoverColor = [NSColor systemBlueColor];
+    fetchModels.target = self; fetchModels.action = @selector(fetchTranslationModels:);
+    fetchModels.toolTip = @"从服务商 /models 接口获取最新模型";
+    [fetchModels applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:fetchModels];
     NSTextField *tl = [self label:@"目标语言" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-    tl.frame = NSMakeRect(590, 464, 60, 18); [cv addSubview:tl];
-    self.translationTargetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(654, 458, 142, 28) pullsDown:NO];
+    tl.frame = NSMakeRect(594, 464, 60, 18); [cv addSubview:tl];
+    self.translationTargetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(660, 458, 146, 28) pullsDown:NO];
     [self.translationTargetPopup addItemsWithTitles:@[@"中文（简体）", @"English", @"日本語", @"한국어", @"Français", @"Deutsch", @"Español", @"Русский"]];
     [cv addSubview:self.translationTargetPopup];
 
@@ -7211,6 +7283,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTextField *rl = [self label:@"译文" size:11 bold:YES color:nil];
     rl.frame = NSMakeRect(424, 426, 100, 18); [cv addSubview:rl];
     self.translationSourceView = [self translationTextViewAtFrame:NSMakeRect(24, 140, 370, 276)];
+    self.translationSourceView.delegate = self;
     self.translationResultView = [self translationTextViewAtFrame:NSMakeRect(424, 140, 372, 276)];
 
     NSArray *titles = @[@"截图翻译", @"选择文档…", @"翻译", @"复制译文", @"保存译文…"];
@@ -7298,6 +7371,34 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)translationSetSource:(NSString *)text status:(NSString *)status {
   if (text.length) self.translationSourceView.string = text;
   self.translationStatus.stringValue = status ?: @"";
+  [self scheduleAutoTranslate];
+}
+
+- (NSString *)translationDetectedLanguage:(NSString *)text {
+  NLLanguageRecognizer *r = [[NLLanguageRecognizer alloc] init];
+  [r processString:text ?: @""];
+  NSString *lang = r.dominantLanguage ?: @"";
+  NSDictionary *names = @{@"en": @"英语", @"zh": @"中文", @"ja": @"日语", @"ko": @"韩语", @"fr": @"法语", @"de": @"德语", @"es": @"西班牙语", @"ru": @"俄语"};
+  return names[lang] ?: (lang.length ? lang.uppercaseString : @"未知语言");
+}
+
+- (void)scheduleAutoTranslate {
+  [self.translationAutoTimer invalidate];
+  self.translationAutoTimer = nil;
+  NSString *text = self.translationSourceView.string;
+  if (!text.length || self.translationBusy || !self.translationWindow.isVisible) return;
+  NSString *detected = [self translationDetectedLanguage:text];
+  self.translationStatus.stringValue = [NSString stringWithFormat:@"检测到 %@，准备自动翻译…", detected];
+  __weak typeof(self) weakSelf = self;
+  self.translationAutoTimer = [NSTimer scheduledTimerWithTimeInterval:0.9 repeats:NO block:^(NSTimer *timer) {
+    if (weakSelf.translationSourceView.string.length && !weakSelf.translationBusy) {
+      [weakSelf translationTranslate:nil];
+    }
+  }];
+}
+
+- (void)textDidChange:(NSNotification *)notification {
+  if (notification.object == self.translationSourceView) [self scheduleAutoTranslate];
 }
 
 - (void)translationScreenshot:(id)sender {
@@ -7361,6 +7462,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (idx >= (NSInteger)chunks.count) {
     self.translationResultView.string = output;
     self.translationStatus.stringValue = @"翻译完成";
+    self.translationBusy = NO;
     return;
   }
   self.translationStatus.stringValue = [NSString stringWithFormat:@"正在翻译 %ld/%ld…", (long)(idx+1), (long)chunks.count];
@@ -7397,6 +7499,7 @@ static BOOL ValidGroupName(NSString *raw) {
     dispatch_async(dispatch_get_main_queue(), ^{
       if (!content.length) {
         self.translationStatus.stringValue = errMsg;
+        self.translationBusy = NO;
       } else {
         [output appendString:content];
         if (idx + 1 < (NSInteger)chunks.count) [output appendString:@"\n\n"];
@@ -7407,6 +7510,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)translationTranslate:(id)sender {
+  if (self.translationBusy) return;
   NSString *text = self.translationSourceView.string;
   if (!text.length) { self.translationStatus.stringValue = @"请先输入、截图或拖入要翻译的内容"; return; }
   NSDictionary *e = self.translationProviderPopup.selectedItem.representedObject;
@@ -7422,6 +7526,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *target = names[MIN(ti, (NSInteger)names.count - 1)];
   NSArray *chunks = [self translationChunks:text];
   if (!chunks.count) return;
+  self.translationBusy = YES;
   self.translationResultView.string = @"";
   [self translateChunks:chunks index:0 output:[NSMutableString string] base:cfg[@"base"] model:model key:key target:target];
 }
