@@ -10,6 +10,7 @@
 #import <IOKit/ps/IOPSKeys.h>
 #import <Quartz/Quartz.h>
 #import <CoreServices/CoreServices.h>
+#import <IOKit/IOKitLib.h>
 
 static double gPrevCPUBusy = 0, gPrevCPUTotal = 0;
 static unsigned long long gPrevNetIn = 0, gPrevNetOut = 0;
@@ -152,7 +153,10 @@ static NSString *LetterSortKey(NSString *name) {
 @property (strong) NSButton *sideLive, *sideGroups, *sideUninstall, *sideSettings;
 @property NSInteger section;
 @property (strong) NSView *liveView, *groupsView, *uninstallView, *settingsView;
-@property (strong) NSTextField *cpuLabel, *memLabel, *diskLabel, *netLabel, *uptimeLabel;
+@property (strong) NSTextField *uptimeLabel;
+@property (strong) NSArray *metricColumns;
+@property (strong) NSMutableString *gpuText;
+@property double gpuPercent;
 @property (strong) Sparkline *cpuSpark, *memSpark;
 @property (strong) NSTimer *timer;
 @property (strong) NSTimer *autoSyncTimer;
@@ -310,6 +314,92 @@ static NSDate *InstallDateForPath(NSString *path) {
 }
 - (void)mouseEntered:(NSEvent *)e { [self applyTitleColor:self.hoverColor ?: [NSColor systemGreenColor]]; }
 - (void)mouseExited:(NSEvent *)e { [self applyTitleColor:self.normalColor ?: [NSColor secondaryLabelColor]]; }
+@end
+
+
+@interface BarChartView : NSView
+@property (strong) NSMutableArray<NSNumber *> *values;
+@property (strong) NSColor *barColor;
+@end
+@implementation BarChartView
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) { _values = [NSMutableArray array]; _barColor = [NSColor systemBlueColor]; }
+  return self;
+}
+- (BOOL)isFlipped { return YES; }
+- (void)addValue:(double)v {
+  [self.values addObject:@(MAX(0, MIN(100, v)))];
+  while (self.values.count > 28) [self.values removeObjectAtIndex:0];
+  [self setNeedsDisplay:YES];
+}
+- (void)drawRect:(NSRect)dirtyRect {
+  [[NSColor colorWithCalibratedWhite:0.965 alpha:1.0] setFill];
+  [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:8 yRadius:8] fill];
+  if (!self.values.count) return;
+  CGFloat w = self.bounds.size.width;
+  CGFloat h = self.bounds.size.height - 10;
+  NSInteger n = self.values.count;
+  CGFloat gap = 2.0;
+  CGFloat bw = MAX(2.0, (w - gap * (n + 1)) / MAX(n,1));
+  for (NSInteger i = 0; i < n; i++) {
+    double v = [self.values[i] doubleValue];
+    CGFloat bh = MAX(2.0, h * v / 100.0);
+    NSRect r = NSMakeRect(gap + i * (bw + gap), self.bounds.size.height - 4 - bh, bw, bh);
+    [[self.barColor colorWithAlphaComponent:0.75] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:r xRadius:MIN(3,bw/2) yRadius:MIN(3,bw/2)] fill];
+  }
+}
+@end
+
+@interface MetricColumnView : NSView
+@property (strong) NSString *metricKey;
+@property (strong) NSColor *accent;
+@property (strong) NSTextField *valueLabel;
+@property (strong) NSTextField *detailLabel;
+@property (strong) BarChartView *bar;
+@property (weak) id target;
+@property SEL action;
+@end
+@implementation MetricColumnView
+- (instancetype)initWithFrame:(NSRect)frame title:(NSString *)title accent:(NSColor *)accent key:(NSString *)key target:(id)target action:(SEL)action {
+  if ((self = [super initWithFrame:frame])) {
+    _metricKey = key; _accent = accent; _target = target; _action = action;
+    self.wantsLayer = YES;
+    self.layer.backgroundColor = [NSColor whiteColor].CGColor;
+    self.layer.cornerRadius = 14;
+    self.layer.borderWidth = 1;
+    self.layer.borderColor = [NSColor colorWithCalibratedWhite:0.93 alpha:1.0].CGColor;
+    CGFloat w = frame.size.width;
+    NSTextField *t = [NSTextField labelWithString:title];
+    t.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
+    t.textColor = [NSColor secondaryLabelColor];
+    t.frame = NSMakeRect(12, frame.size.height - 30, w - 24, 18);
+    [self addSubview:t];
+    _valueLabel = [NSTextField labelWithString:@"--"];
+    _valueLabel.font = [NSFont systemFontOfSize:22 weight:NSFontWeightBold];
+    _valueLabel.textColor = accent;
+    _valueLabel.frame = NSMakeRect(12, frame.size.height - 64, w - 24, 28);
+    [self addSubview:_valueLabel];
+    _detailLabel = [NSTextField labelWithString:@""];
+    _detailLabel.font = [NSFont systemFontOfSize:9.5];
+    _detailLabel.textColor = [NSColor secondaryLabelColor];
+    _detailLabel.maximumNumberOfLines = 3;
+    _detailLabel.frame = NSMakeRect(12, 14, w - 24, 48);
+    [self addSubview:_detailLabel];
+    _bar = [[BarChartView alloc] initWithFrame:NSMakeRect(10, 70, w - 20, frame.size.height - 150)];
+    _bar.barColor = accent;
+    [self addSubview:_bar];
+  }
+  return self;
+}
+- (void)setValueText:(NSString *)value detail:(NSString *)detail bar:(double)barVal {
+  self.valueLabel.stringValue = value;
+  self.detailLabel.stringValue = detail;
+  [self.bar addValue:barVal];
+}
+- (void)mouseDown:(NSEvent *)e {
+  if (self.target && self.action) [self.target performSelector:self.action withObject:self.metricKey];
+}
 @end
 
 @implementation Controller
@@ -669,49 +759,9 @@ static NSDate *InstallDateForPath(NSString *path) {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"本机实时状态" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
-  NSTextField *sub = [self label:@"每 2 秒采样 · 菜单栏同步显示 CPU / 内存" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  sub.frame = NSMakeRect(24, 584, 400, 18); [v addSubview:sub];
-  self.batteryLabel = [self label:@"电池 --" size:12 bold:NO color:nil];
-  self.batteryLabel.alignment = NSTextAlignmentRight;
-  self.batteryLabel.frame = NSMakeRect(470, 608, 250, 20); [v addSubview:self.batteryLabel];
-  self.thermalLabel = [self label:@"热状态 --" size:12 bold:NO color:[NSColor secondaryLabelColor]];
-  self.thermalLabel.alignment = NSTextAlignmentRight;
-  self.thermalLabel.frame = NSMakeRect(470, 588, 250, 18); [v addSubview:self.thermalLabel];
-
-  NSView *card1 = [self cardAt:NSMakeRect(24, 430, 340, 150)];
-  [v addSubview:card1];
-  self.cpuLabel = [self label:@"CPU  --" size:18 bold:YES color:nil];
-  self.cpuLabel.frame = NSMakeRect(16, 118, 200, 24); [card1 addSubview:self.cpuLabel];
-  self.cpuSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(16, 18, 308, 88)];
-  self.cpuSpark.lineColor = [NSColor systemBlueColor];
-  [card1 addSubview:self.cpuSpark];
-
-  NSView *card2 = [self cardAt:NSMakeRect(384, 430, 340, 150)];
-  [v addSubview:card2];
-  self.memLabel = [self label:@"内存  --" size:18 bold:YES color:nil];
-  self.memLabel.frame = NSMakeRect(16, 118, 200, 24); [card2 addSubview:self.memLabel];
-  self.memSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(16, 18, 308, 88)];
-  self.memSpark.lineColor = [NSColor systemGreenColor];
-  [card2 addSubview:self.memSpark];
-
-  NSView *card3 = [self cardAt:NSMakeRect(24, 300, 340, 110)];
-  [v addSubview:card3];
-  NSTextField *dl = [self label:@"磁盘" size:12 bold:YES color:nil]; dl.frame = NSMakeRect(16, 84, 100, 18); [card3 addSubview:dl];
-  self.diskLabel = [self label:@"已用 --" size:18 bold:NO color:nil]; self.diskLabel.frame = NSMakeRect(16, 44, 300, 24); [card3 addSubview:self.diskLabel];
-  NSTextField *dt = [self label:@"系统启动磁盘" size:10 bold:NO color:[NSColor secondaryLabelColor]]; dt.frame = NSMakeRect(16, 20, 260, 16); [card3 addSubview:dt];
-
-  NSView *card4 = [self cardAt:NSMakeRect(384, 300, 340, 110)];
-  [v addSubview:card4];
-  NSTextField *nl = [self label:@"网络" size:12 bold:YES color:nil]; nl.frame = NSMakeRect(16, 84, 100, 18); [card4 addSubview:nl];
-  self.netLabel = [self label:@"↓ --   ↑ --" size:16 bold:NO color:nil]; self.netLabel.frame = NSMakeRect(16, 44, 310, 24); [card4 addSubview:self.netLabel];
-  NSTextField *nt = [self label:@"实时上下行速率" size:10 bold:NO color:[NSColor secondaryLabelColor]]; nt.frame = NSMakeRect(16, 20, 260, 16); [card4 addSubview:nt];
-
-  self.uptimeLabel = [self label:@"" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  self.uptimeLabel.alignment = NSTextAlignmentRight;
-  self.uptimeLabel.frame = NSMakeRect(500, 20, 224, 18);
-  [v addSubview:self.uptimeLabel];
-
-  HoverTextButton *hide = [[HoverTextButton alloc] initWithFrame:NSMakeRect(602, 628, 120, 26)];
+  NSTextField *sub = [self label:@"点击任一指标可在本机查看详细报告" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  sub.frame = NSMakeRect(24, 584, 420, 18); [v addSubview:sub];
+  HoverTextButton *hide = [[HoverTextButton alloc] initWithFrame:NSMakeRect(602, 602, 124, 26)];
   hide.title = @"隐藏主窗口";
   hide.bordered = NO;
   hide.target = self;
@@ -720,7 +770,53 @@ static NSDate *InstallDateForPath(NSString *path) {
   hide.normalColor = [NSColor secondaryLabelColor];
   [hide applyTitleColor:hide.normalColor];
   [v addSubview:hide];
+
+  self.uptimeLabel = [self label:@"" size:10.5 bold:NO color:[NSColor tertiaryLabelColor]];
+  self.uptimeLabel.alignment = NSTextAlignmentRight;
+  self.uptimeLabel.frame = NSMakeRect(470, 46, 254, 16);
+  [v addSubview:self.uptimeLabel];
+
+  NSArray *titles = @[@"内存", @"磁盘", @"CPU", @"GPU", @"电源", @"网络"];
+  NSArray *keys = @[@"memory", @"disk", @"cpu", @"gpu", @"power", @"network"];
+  NSArray *colors = @[[NSColor systemGreenColor], [NSColor systemOrangeColor], [NSColor systemBlueColor],
+                      [NSColor systemPurpleColor], [NSColor systemPinkColor], [NSColor systemTealColor]];
+  CGFloat gap = 8, left = 20, width = (750 - left*2 - gap*5) / 6.0;
+  NSMutableArray *cols = [NSMutableArray array];
+  for (NSInteger i = 0; i < 6; i++) {
+    MetricColumnView *c = [[MetricColumnView alloc] initWithFrame:NSMakeRect(left + i*(width+gap), 86, width, 480)
+                                                            title:titles[i] accent:colors[i] key:keys[i]
+                                                           target:self action:@selector(metricClicked:)];
+    [v addSubview:c];
+    [cols addObject:c];
+  }
+  self.metricColumns = cols;
   self.liveView = v;
+}
+
+- (void)metricClicked:(NSString *)key {
+  NSString *url = nil;
+  if ([key isEqualToString:@"memory"]) {
+    [[NSWorkspace sharedWorkspace] launchApplication:@"Activity Monitor"];
+    return;
+  } else if ([key isEqualToString:@"disk"]) {
+    url = @"x-apple.systempreferences:com.apple.settings.Storage";
+    if (![[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:url]]) {
+      [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:@"/System/Applications/Utilities/Disk Utility.app"]];
+    }
+    return;
+  } else if ([key isEqualToString:@"cpu"]) {
+    [[NSWorkspace sharedWorkspace] launchApplication:@"Activity Monitor"];
+    return;
+  } else if ([key isEqualToString:@"gpu"]) {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:@"/System/Applications/Utilities/System Information.app"]];
+    return;
+  } else if ([key isEqualToString:@"power"]) {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:@"/System/Applications/Utilities/System Information.app"]];
+    return;
+  } else if ([key isEqualToString:@"network"]) {
+    url = @"x-apple.systempreferences:com.apple.Network-Settings.extension";
+  }
+  if (url) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:url]];
 }
 
 - (NSView *)cardAt:(NSRect)r {
@@ -3095,6 +3191,46 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 // ---------------- 采样 ----------------
+- (double)gpuUsagePercent {
+  double best = 0;
+  for (NSString *cls in @[@"IOAccelerator", @"AGXAccelerator"]) {
+    io_iterator_t it = 0;
+    if (IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching(cls.UTF8String), &it) != KERN_SUCCESS) continue;
+    io_object_t svc;
+    while ((svc = IOIteratorNext(it))) {
+      CFMutableDictionaryRef props = NULL;
+      if (IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS && props) {
+        NSDictionary *dict = CFBridgingRelease(props);
+        NSDictionary *perf = dict[@"PerformanceStatistics"];
+        if ([perf isKindOfClass:[NSDictionary class]]) {
+          for (NSString *k in @[@"Device Utilization %", @"GPU Activity(%)", @"gpu_busy", @"GPU Busy"]) {
+            id v = perf[k];
+            if ([v isKindOfClass:[NSNumber class]]) best = MAX(best, [v doubleValue]);
+          }
+        }
+      }
+      IOObjectRelease(svc);
+    }
+    IOObjectRelease(it);
+    if (best > 0) break;
+  }
+  return best;
+}
+
+- (NSDictionary *)batteryInfo {
+  io_service_t svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
+  if (!svc) return nil;
+  CFMutableDictionaryRef props = NULL;
+  NSDictionary *dict = nil;
+  if (IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS && props) dict = CFBridgingRelease(props);
+  IOObjectRelease(svc);
+  return dict;
+}
+
+- (NSString *)gbString:(unsigned long long)bytes {
+  return [NSString stringWithFormat:@"%.1f GB", bytes / 1073741824.0];
+}
+
 - (void)sample {
   host_cpu_load_info_data_t cpu;
   mach_msg_type_number_t ccount = HOST_CPU_LOAD_INFO_COUNT;
@@ -3141,15 +3277,54 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   gPrevNetIn = inB; gPrevNetOut = outB; gLastNetTime = now;
 
-  self.cpuLabel.stringValue = [NSString stringWithFormat:@"CPU  %.0f%%", cpuPct];
-  self.memLabel.stringValue = [NSString stringWithFormat:@"内存  %.0f%%", memPct];
-  self.diskLabel.stringValue = [NSString stringWithFormat:@"已用 %.0f%%", diskPct];
-  self.netLabel.stringValue = [NSString stringWithFormat:@"↓ %@/s   ↑ %@/s", [self rate:inRate], [self rate:outRate]];
-  [self.cpuSpark addValue:cpuPct];
-  [self.memSpark addValue:memPct];
+  unsigned long long memUsed = 0;
+  if (host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&vm, &vcount) == KERN_SUCCESS) {
+    memUsed = ((unsigned long long)vm.active_count + vm.wire_count + vm.compressor_page_count) * vm_page_size;
+  }
+  struct statfs fs2; unsigned long long diskTotal = 0, diskFree = 0;
+  if (statfs("/", &fs2) == 0) {
+    diskTotal = (unsigned long long)fs2.f_blocks * fs2.f_bsize;
+    diskFree = (unsigned long long)fs2.f_bavail * fs2.f_bsize;
+  }
+  if (self.metricColumns.count == 6) {
+    MetricColumnView *memCol = self.metricColumns[0];
+    [memCol setValueText:[NSString stringWithFormat:@"%.0f%%", memPct]
+                  detail:[NSString stringWithFormat:@"%@ / %@", [self gbString:memUsed], [self gbString:memTotal]]
+                     bar:memPct];
+    MetricColumnView *diskCol = self.metricColumns[1];
+    [diskCol setValueText:[NSString stringWithFormat:@"%.0f%%", diskPct]
+                   detail:[NSString stringWithFormat:@"已用 %@\n可用 %@", [self gbString:diskTotal-diskFree], [self gbString:diskFree]]
+                      bar:diskPct];
+    MetricColumnView *cpuCol = self.metricColumns[2];
+    [cpuCol setValueText:[NSString stringWithFormat:@"%.0f%%", cpuPct] detail:@"实时处理器占用" bar:cpuPct];
+    self.gpuPercent = [self gpuUsagePercent];
+    MetricColumnView *gpuCol = self.metricColumns[3];
+    [gpuCol setValueText:(self.gpuPercent > 0 ? [NSString stringWithFormat:@"%.0f%%", self.gpuPercent] : @"--") detail:@"图形处理器实时占用" bar:self.gpuPercent];
+    NSDictionary *bat = [self batteryInfo];
+    MetricColumnView *pwrCol = self.metricColumns[4];
+    if (bat) {
+      NSDictionary *bd = [bat[@"BatteryData"] isKindOfClass:[NSDictionary class]] ? bat[@"BatteryData"] : @{};
+      double cur = [bat[@"CurrentCapacity"] doubleValue];
+      double maxc = [bat[@"MaxCapacity"] doubleValue] ?: 100;
+      double pct = (maxc <= 100) ? cur : (maxc > 0 ? cur / maxc * 100.0 : 0);
+      double rawMax = [bd[@"AppleRawMaxCapacity"] doubleValue];
+      double design = [bd[@"DesignCapacity"] doubleValue];
+      if (design <= 0) design = [bat[@"DesignCapacity"] doubleValue];
+      double health = (design > 0 && rawMax > 0) ? rawMax / design * 100.0 : 0;
+      NSString *state = [bat[@"ExternalConnected"] boolValue] ? ([bat[@"IsCharging"] boolValue] ? @"充电中" : @"已接通电源") : @"使用电池";
+      [pwrCol setValueText:[NSString stringWithFormat:@"%.0f%%", pct]
+                    detail:[NSString stringWithFormat:@"%@\n循环 %@ 次\n健康 %.0f%%", state, bat[@"CycleCount"] ?: @"--", health]
+                       bar:pct];
+    } else {
+      [pwrCol setValueText:@"--" detail:@"未检测到电池" bar:0];
+    }
+    MetricColumnView *netCol = self.metricColumns[5];
+    double rateKB = (inRate + outRate) / 1024.0;
+    [netCol setValueText:[NSString stringWithFormat:@"%.0f KB/s", rateKB]
+                  detail:[NSString stringWithFormat:@"↓ %@/s\n↑ %@/s", [self rate:inRate], [self rate:outRate]]
+                     bar:MIN(100.0, rateKB * 2.0)];
+  }
   self.uptimeLabel.stringValue = [NSString stringWithFormat:@"系统启动：%@", [self uptimeString]];
-  self.batteryLabel.stringValue = [self batteryText];
-  self.thermalLabel.stringValue = [self thermalText];
   if (self.popover.isShown) {
     self.quickCPU.stringValue = [NSString stringWithFormat:@"CPU %.0f%%", cpuPct];
     self.quickMem.stringValue = [NSString stringWithFormat:@"内存 %.0f%%", memPct];
