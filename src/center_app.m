@@ -159,6 +159,8 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property (strong) NSMutableSet *userFilesSelected;
 @property (strong) NSTableView *userFilesTable;
 @property (strong) NSString *userFilesPreviewPath;
+@property (strong) NSArray *userFilesApps;
+@property (strong) NSArray *rememberedDirEntries;
 @property BOOL dialogHighlightName;
 @property (strong) NSScrollView *groupsScroll;
 // uninstall
@@ -255,6 +257,14 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     }
     exit(0);
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_MEMORY")) {
+    NSString *dir = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_MEMORY")];
+    [self rememberSaveDir:dir forApps:@[@{@"bid": @"com.test.saved", @"name": @"测试保存"}]];
+    NSArray *files = [self userSavedFilesForApps:@[@{@"name": @"测试保存", @"bid": @"com.test.saved", @"path": @"/Applications/Calculator.app"}]];
+    fprintf(stderr, "MEMORY count=%ld\n", (long)files.count);
+    for (NSDictionary *d in files) fprintf(stderr, "MFILE %s\n", [d[@"path"] UTF8String]);
+    exit(0);
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DETECT")) {
     NSArray *files = [self userSavedFilesForApps:@[@{@"name": @"测试保存", @"bid": @"com.test.saved", @"path": @"/Applications/Calculator.app"}]];
     fprintf(stderr, "DETECT count=%ld\n", (long)files.count);
@@ -269,7 +279,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
         [files addObject:@{@"path": p, @"name": [p lastPathComponent], @"type": [p pathExtension].uppercaseString, @"size": attr[NSFileSize] ?: @0, @"app": @"测试应用"}];
       }
     }
-    [self pickUserFilesToDelete:files];
+    [self pickUserFilesToDelete:files apps:@[]];
     exit(0);
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_RENAME")) {
@@ -1892,6 +1902,74 @@ static BOOL ValidGroupName(NSString *raw) {
   return out;
 }
 
+- (NSDictionary *)rememberedSaveDirs {
+  NSDictionary *d = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"rememberedSaveDirs"];
+  return [d isKindOfClass:[NSDictionary class]] ? d : @{};
+}
+- (void)setRememberedSaveDirs:(NSDictionary *)d {
+  [[NSUserDefaults standardUserDefaults] setObject:d forKey:@"rememberedSaveDirs"];
+}
+- (void)rememberSaveDir:(NSString *)dir forApps:(NSArray<NSDictionary *> *)apps {
+  if (!dir.length || !apps.count) return;
+  NSMutableDictionary *all = [[self rememberedSaveDirs] mutableCopy];
+  for (NSDictionary *a in apps) {
+    NSString *bid = a[@"bid"];
+    if (!bid.length) continue;
+    NSMutableArray *arr = [all[bid] mutableCopy] ?: [NSMutableArray array];
+    if (![arr containsObject:dir]) [arr addObject:dir];
+    all[bid] = arr;
+  }
+  [self setRememberedSaveDirs:all];
+}
+
+- (void)removeRememberedDir:(NSButton *)b {
+  NSInteger idx = b.tag;
+  if (idx < 0 || idx >= (NSInteger)self.rememberedDirEntries.count) return;
+  NSDictionary *e = self.rememberedDirEntries[idx];
+  NSMutableDictionary *all = [[self rememberedSaveDirs] mutableCopy];
+  NSString *bid = e[@"bid"];
+  NSMutableArray *arr = [all[bid] mutableCopy];
+  [arr removeObject:e[@"path"]];
+  if (arr.count) all[bid] = arr; else [all removeObjectForKey:bid];
+  [self setRememberedSaveDirs:all];
+  [b.window orderOut:nil];
+  [NSApp stopModal];
+}
+
+- (void)showRememberedSaveDirs:(id)sender {
+  NSDictionary *all = [self rememberedSaveDirs];
+  if (!all.count) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.icon = [self characterImage:64];
+    a.messageText = @"没有记住的保存目录";
+    a.informativeText = @"在卸载文件选择页点「添加文件夹…」时，会自动记住该应用的自定义保存目录。";
+    [a runModal];
+    return;
+  }
+  NSMutableArray *entries = [NSMutableArray array];
+  for (NSString *bid in all) for (NSString *p in all[bid]) [entries addObject:@{@"bid": bid, @"path": p}];
+  self.rememberedDirEntries = entries;
+  NSAlert *a = [[NSAlert alloc] init];
+  a.icon = [self characterImage:64];
+  a.messageText = @"已记住的保存目录";
+  a.informativeText = @"下次卸载对应应用时会自动扫描这些目录。";
+  CGFloat h = MIN(60 + entries.count * 34, 300);
+  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 620, h)];
+  CGFloat y = h - 32;
+  for (NSInteger i = 0; i < (NSInteger)entries.count && i < 8; i++) {
+    NSDictionary *e = entries[i];
+    NSTextField *l = [self label:[NSString stringWithFormat:@"%@  ←  %@", e[@"bid"], e[@"path"]] size:11 bold:NO color:nil];
+    l.frame = NSMakeRect(10, y, 520, 18); [v addSubview:l];
+    NSButton *rm = [NSButton buttonWithTitle:@"移除" target:self action:@selector(removeRememberedDir:)];
+    rm.tag = i; rm.frame = NSMakeRect(540, y-5, 60, 26); rm.bezelStyle = NSBezelStyleRounded;
+    [v addSubview:rm];
+    y -= 34;
+  }
+  a.accessoryView = v;
+  [a addButtonWithTitle:@"关闭"];
+  [a runModal];
+}
+
 - (NSArray<NSDictionary *> *)userSavedFilesForApps:(NSArray<NSDictionary *> *)apps {
   NSFileManager *fm = [NSFileManager defaultManager];
   NSMutableArray *out = [NSMutableArray array];
@@ -1909,6 +1987,7 @@ static BOOL ValidGroupName(NSString *raw) {
       NSString *data = [home stringByAppendingPathComponent:[@"Library/Containers" stringByAppendingPathComponent:bid]];
       data = [data stringByAppendingPathComponent:@"Data"];
       for (NSString *sub in subdirs) [roots addObject:[data stringByAppendingPathComponent:sub]];
+      for (NSString *p in [self rememberedSaveDirs][bid] ?: @[]) [roots addObject:p];
       // 尝试从应用偏好里找自定义保存路径
       NSUserDefaults *ud = [[NSUserDefaults alloc] initWithSuiteName:bid];
       NSDictionary *prefs = [ud dictionaryRepresentation];
@@ -2005,6 +2084,7 @@ static BOOL ValidGroupName(NSString *raw) {
                      @"size": attr[NSFileSize] ?: @0,
                      @"app": @"手动选择"}];
   }
+  [self rememberSaveDir:root forApps:self.userFilesApps ?: @[]];
   NSMutableArray *merged = [self.userFilesForUninstall mutableCopy] ?: [NSMutableArray array];
   NSMutableSet *seen = [NSMutableSet set];
   for (NSDictionary *d in merged) [seen addObject:d[@"path"]];
@@ -2013,8 +2093,9 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.userFilesTable reloadData];
 }
 
-- (NSArray<NSString *> *)pickUserFilesToDelete:(NSArray<NSDictionary *> *)files {
+- (NSArray<NSString *> *)pickUserFilesToDelete:(NSArray<NSDictionary *> *)files apps:(NSArray<NSDictionary *> *)apps {
   self.userFilesForUninstall = files;
+  self.userFilesApps = apps;
   self.userFilesSelected = [NSMutableSet set];
   NSAlert *a = [[NSAlert alloc] init];
   a.icon = [self characterImage:64];
@@ -2123,7 +2204,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [p addButtonWithTitle:@"是"];
     [p addButtonWithTitle:@"否"];
     if ([p runModal] == NSAlertFirstButtonReturn) {
-      NSArray *picked = [self pickUserFilesToDelete:userFiles];
+      NSArray *picked = [self pickUserFilesToDelete:userFiles apps:sel];
       if (!picked) return;
       pickedUserFiles = picked;
     }
@@ -2230,6 +2311,8 @@ static BOOL ValidGroupName(NSString *raw) {
 
   NSButton *openGrp = [NSButton buttonWithTitle:@"打开分组文件夹" target:self action:@selector(openGroupsFolder:)];
   openGrp.frame = NSMakeRect(24, 300, 160, 34); openGrp.bezelStyle = NSBezelStyleRounded; [v addSubview:openGrp];
+  NSButton *remember = [NSButton buttonWithTitle:@"管理已记住的保存目录…" target:self action:@selector(showRememberedSaveDirs:)];
+  remember.frame = NSMakeRect(24, 250, 220, 34); remember.bezelStyle = NSBezelStyleRounded; [v addSubview:remember];
   NSButton *quit = [NSButton buttonWithTitle:@"退出控制台" target:self action:@selector(quitApp:)];
   quit.frame = NSMakeRect(196, 300, 140, 34); quit.bezelStyle = NSBezelStyleRounded; [v addSubview:quit];
 
