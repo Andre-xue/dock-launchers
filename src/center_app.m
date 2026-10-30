@@ -2250,6 +2250,52 @@ static BOOL ValidGroupName(NSString *raw) {
       }
     }
   }
+  // Spotlight 元数据候选
+  for (NSDictionary *d in [self spotlightFilesForApps:apps]) {
+    NSString *p = d[@"path"];
+    if ([seen containsObject:p]) continue;
+    [seen addObject:p];
+    [out addObject:d];
+  }
+  return out;
+}
+
+- (NSArray<NSDictionary *> *)spotlightFilesForApps:(NSArray<NSDictionary *> *)apps {
+  NSMutableSet *exts = [NSMutableSet set];
+  NSMutableSet *names = [NSMutableSet set];
+  for (NSDictionary *d in apps) {
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[d[@"path"] stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+    for (NSDictionary *dt in info[@"CFBundleDocumentTypes"] ?: @[]) {
+      for (NSString *ext in dt[@"CFBundleTypeExtensions"] ?: @[]) if ([ext isKindOfClass:[NSString class]] && ext.length) [exts addObject:ext.lowercaseString];
+    }
+    NSString *label = d[@"label"] ?: d[@"name"];
+    if (label.length >= 2) [names addObject:label];
+  }
+  if (!exts.count && !names.count) return @[];
+  NSMutableArray *terms = [NSMutableArray array];
+  for (NSString *e in exts) [terms addObject:[NSString stringWithFormat:@"kMDItemFSName == \"*.%@\"c", e]];
+  for (NSString *n in names) [terms addObject:[NSString stringWithFormat:@"kMDItemWhereFroms == \"*%@*\"c", n]];
+  NSString *query = [NSString stringWithFormat:@"(%@)", [terms componentsJoinedByString:@" || "]];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/mdfind";
+  t.arguments = @[@"-onlyin", NSHomeDirectory(), @"-0", query];
+  NSPipe *pipe = [NSPipe pipe];
+  t.standardOutput = pipe;
+  t.standardError = [NSPipe pipe];
+  @try { [t launch]; } @catch (NSException *e) { return @[]; }
+  NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
+  [t waitUntilExit];
+  NSMutableArray *out = [NSMutableArray array];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+  for (NSString *p in [str componentsSeparatedByString:@"\0"]) {
+    if (!p.length || out.count >= 400) continue;
+    if ([p containsString:@"/Library/"] || [p containsString:@"/.Trash/"] || [p hasPrefix:NSTemporaryDirectory()]) continue;
+    NSDictionary *attr = [fm attributesOfItemAtPath:p error:NULL];
+    if (![attr[NSFileType] isEqualToString:NSFileTypeRegular]) continue;
+    NSString *ext = [p pathExtension].uppercaseString;
+    [out addObject:@{@"path": p, @"name": [p lastPathComponent], @"type": [@"Spotlight/" stringByAppendingString:(ext.length ? ext : @"文件")], @"size": attr[NSFileSize] ?: @0, @"app": @"Spotlight"}];
+  }
   return out;
 }
 
