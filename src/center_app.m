@@ -5,6 +5,7 @@
 #include <sys/sysctl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#include <sys/stat.h>
 #import <IOKit/ps/IOPowerSources.h>
 #import <IOKit/ps/IOPSKeys.h>
 #import <Quartz/Quartz.h>
@@ -126,6 +127,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 }
 @end
 
+@class LetterIndexView;
 @interface Controller : NSObject <NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
@@ -177,6 +179,8 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property (strong) NSMutableArray<NSDictionary *> *uninstallFiltered;
 @property (strong) NSMutableSet<NSString *> *uninstallSelected;
 @property (strong) NSTableView *uninstallTable;
+@property (strong) LetterIndexView *letterIndex;
+@property (strong) NSArray<NSString *> *letters;
 @property (strong) NSSearchField *uninstallSearch;
 @property (strong) NSTextField *uninstallFooter;
 @property (strong) NSSegmentedControl *uninstallScopeCtl;
@@ -197,6 +201,72 @@ static void ActivityStreamCallback(ConstFSEventStreamRef streamRef, void *info, 
   for (size_t i = 0; i < numEvents; i++) if (paths[i]) [arr addObject:[NSString stringWithUTF8String:paths[i]]];
   Controller *c = (__bridge Controller *)info;
   [c handleActivityPaths:arr];
+}
+
+
+@interface LetterIndexView : NSView
+@property (strong) NSArray<NSString *> *letters;
+@property NSInteger hovered;
+@property (weak) id target;
+@property SEL action;
+@end
+@implementation LetterIndexView
+- (BOOL)isFlipped { return YES; }
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) { _letters = @[]; _hovered = -1; }
+  return self;
+}
+- (void)updateTrackingAreas {
+  [super updateTrackingAreas];
+  for (NSTrackingArea *a in self.trackingAreas) [self removeTrackingArea:a];
+  NSTrackingArea *ta = [[NSTrackingArea alloc] initWithRect:self.bounds options:(NSTrackingMouseMoved|NSTrackingActiveInKeyWindow|NSTrackingInVisibleRect) owner:self userInfo:nil];
+  [self addTrackingArea:ta];
+}
+- (void)setLetters:(NSArray<NSString *> *)letters { _letters = letters; self.hovered = -1; [self setNeedsDisplay:YES]; }
+- (NSInteger)indexAtPoint:(NSPoint)p {
+  if (!self.letters.count) return -1;
+  CGFloat h = self.bounds.size.height / self.letters.count;
+  NSInteger i = (NSInteger)(p.y / MAX(h,1));
+  return (i >= 0 && i < (NSInteger)self.letters.count) ? i : -1;
+}
+- (void)mouseMoved:(NSEvent *)e {
+  NSInteger i = [self indexAtPoint:[self convertPoint:e.locationInWindow fromView:nil]];
+  if (i != self.hovered) { self.hovered = i; [self setNeedsDisplay:YES]; }
+}
+- (void)mouseExited:(NSEvent *)e { self.hovered = -1; [self setNeedsDisplay:YES]; }
+- (void)mouseDown:(NSEvent *)e {
+  NSInteger i = [self indexAtPoint:[self convertPoint:e.locationInWindow fromView:nil]];
+  if (i >= 0 && i < (NSInteger)self.letters.count && self.target) {
+    SEL sel = self.action;
+    if (sel) [self.target performSelector:sel withObject:self.letters[i]];
+  }
+}
+- (void)drawRect:(NSRect)dirtyRect {
+  [[NSColor colorWithCalibratedWhite:0.97 alpha:0.9] setFill];
+  [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:8 yRadius:8] fill];
+  CGFloat h = self.bounds.size.height / MAX(self.letters.count,1);
+  for (NSInteger i = 0; i < (NSInteger)self.letters.count; i++) {
+    BOOL hot = (i == self.hovered);
+    NSFont *f = hot ? [NSFont boldSystemFontOfSize:13] : [NSFont systemFontOfSize:10 weight:NSFontWeightMedium];
+    NSColor *c = hot ? [NSColor controlAccentColor] : [NSColor secondaryLabelColor];
+    NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+    ps.alignment = NSTextAlignmentCenter;
+    NSDictionary *attrs = @{NSFontAttributeName: f, NSForegroundColorAttributeName: c, NSParagraphStyleAttributeName: ps};
+    NSString *s = self.letters[i];
+    NSSize sz = [s sizeWithAttributes:attrs];
+    [s drawAtPoint:NSMakePoint((self.bounds.size.width-sz.width)/2, i*h + (h-sz.height)/2) withAttributes:attrs];
+  }
+}
+@end
+
+static NSDate *InstallDateForPath(NSString *path) {
+  struct stat st;
+  if (stat(path.fileSystemRepresentation, &st) != 0) return nil;
+  time_t t = st.st_birthtime;
+  if (t < 946684800) t = st.st_ctime;
+  if (t < 946684800) t = st.st_mtime;
+  if (t < 946684800) return nil;
+  return [NSDate dateWithTimeIntervalSince1970:t];
 }
 
 @implementation Controller
@@ -1668,7 +1738,11 @@ static BOOL ValidGroupName(NSString *raw) {
   NSButton *refresh = [NSButton buttonWithTitle:@"刷新" target:self action:@selector(reloadUninstallData)];
   refresh.frame = NSMakeRect(656, 540, 56, 30); refresh.bezelStyle = NSBezelStyleRounded; [v addSubview:refresh];
 
-  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 76, 710, 450)];
+  self.letterIndex = [[LetterIndexView alloc] initWithFrame:NSMakeRect(22, 76, 20, 450)];
+  self.letterIndex.target = self;
+  self.letterIndex.action = @selector(letterIndexClicked:);
+  [v addSubview:self.letterIndex];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(48, 76, 682, 450)];
   sv.hasVerticalScroller = YES;
   sv.drawsBackground = NO;
   self.uninstallTable = [[NSTableView alloc] initWithFrame:NSMakeRect(0,0,710,450)];
@@ -1819,7 +1893,7 @@ static BOOL ValidGroupName(NSString *raw) {
                                 @"path": p, @"group": group,
                                 @"bid": bid,
                                 @"size": @0,
-                                @"installed": attr[NSFileCreationDate] ?: [NSDate date],
+                                @"installed": (InstallDateForPath(p) ?: [NSDate distantPast]),
                                 @"running": @(isRunning),
                                 @"target": (targetGroup[p] ? p : p)} mutableCopy];
     [arr addObject:d];
@@ -1855,6 +1929,33 @@ static BOOL ValidGroupName(NSString *raw) {
   });
 }
 
+- (void)rebuildLetterIndex {
+  NSMutableOrderedSet *set = [NSMutableOrderedSet orderedSet];
+  for (NSDictionary *d in self.uninstallFiltered) {
+    NSString *s = d[@"label"] ?: @"";
+    if (!s.length) continue;
+    unichar c = [s characterAtIndex:0];
+    NSString *letter = (c >= 'A' && c <= 'Z') ? [NSString stringWithFormat:@"%C", c] :
+                       ((c >= 'a' && c <= 'z') ? [[NSString stringWithFormat:@"%C", c] uppercaseString] : @"#");
+    [set addObject:letter];
+  }
+  NSArray *letters = [[set array] sortedArrayUsingSelector:@selector(compare:)];
+  self.letters = letters;
+  self.letterIndex.letters = letters;
+  self.letterIndex.hidden = (letters.count < 2);
+}
+
+- (void)letterIndexClicked:(NSString *)letter {
+  for (NSInteger i = 0; i < (NSInteger)self.uninstallFiltered.count; i++) {
+    NSString *s = self.uninstallFiltered[i][@"label"] ?: @"";
+    if (!s.length) continue;
+    unichar c = [s characterAtIndex:0];
+    NSString *l = (c >= 'A' && c <= 'Z') ? [NSString stringWithFormat:@"%C", c] :
+                  ((c >= 'a' && c <= 'z') ? [[NSString stringWithFormat:@"%C", c] uppercaseString] : @"#");
+    if ([l isEqualToString:letter]) { [self.uninstallTable scrollRowToVisible:i]; break; }
+  }
+}
+
 - (void)applyUninstallFilter {
   NSString *q = [self.uninstallSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
   NSMutableArray *out = [NSMutableArray array];
@@ -1867,6 +1968,7 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   self.uninstallFiltered = out;
   [self.uninstallTable reloadData];
+  [self rebuildLetterIndex];
   [self updateUninstallFooter];
 }
 
@@ -1912,7 +2014,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.uninstallFiltered sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
     NSComparisonResult r = NSOrderedSame;
     if ([key isEqualToString:@"name"]) {
-      r = [(a[@"label"] ?: @"") localizedCompare:(b[@"label"] ?: @"")];
+      r = [(a[@"label"] ?: @"") compare:(b[@"label"] ?: @"") options:(NSCaseInsensitiveSearch|NSNumericSearch)];
     } else if ([key isEqualToString:@"installed"]) {
       r = [(a[@"installed"] ?: [NSDate date]) compare:(b[@"installed"] ?: [NSDate date])];
     } else {
@@ -1924,6 +2026,7 @@ static BOOL ValidGroupName(NSString *raw) {
     return r;
   }];
   [tableView reloadData];
+  [self rebuildLetterIndex];
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
@@ -1983,7 +2086,9 @@ static BOOL ValidGroupName(NSString *raw) {
     s.alignment = NSTextAlignmentRight; s.frame = NSMakeRect(2, 16, col.width-8, 18); [v addSubview:s];
   } else if ([ident isEqualToString:@"installed"]) {
     NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyy/MM/dd";
-    NSTextField *s = [self label:[df stringFromDate:d[@"installed"]] size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    NSDate *inst = d[@"installed"];
+    NSString *dateStr = (inst && [inst timeIntervalSince1970] > 946684800) ? [df stringFromDate:inst] : @"未知";
+    NSTextField *s = [self label:dateStr size:11 bold:NO color:[NSColor secondaryLabelColor]];
     s.frame = NSMakeRect(2, 16, col.width-6, 18); [v addSubview:s];
   }
   return v;
