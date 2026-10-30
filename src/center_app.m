@@ -188,6 +188,10 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property NSInteger section;
 @property (strong) NSView *liveView, *groupsView, *uninstallView, *settingsView;
 @property (strong) NSMutableSet *builtSections;
+@property (strong) NSWindow *compressWindow;
+@property (strong) NSMutableArray *compressPaths;
+@property (strong) NSTextField *compressStatus, *compressListLabel;
+@property (strong) NSProgressIndicator *compressSpinner;
 @property NSInteger groupsPage;
 @property (strong) NSString *groupsFilter, *groupsHighlightedName, *groupsSelectedName;
 @property (strong) NSArray *groupsFiltered;
@@ -1089,6 +1093,53 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
 }
 @end
 
+
+@interface CompressDropView : NSView
+@property (weak) id dropTarget;
+@property SEL dropAction;
+@end
+@implementation CompressDropView
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    self.wantsLayer = YES;
+    self.layer.cornerRadius = 12;
+    self.layer.borderWidth = 1.5;
+    self.layer.borderColor = [[NSColor separatorColor] colorWithAlphaComponent:0.5].CGColor;
+    [self registerForDraggedTypes:@[NSFilenamesPboardType, NSPasteboardTypeFileURL]];
+  }
+  return self;
+}
+- (NSArray<NSURL *> *)urls:(id<NSDraggingInfo>)info {
+  NSArray *urls = [info.draggingPasteboard readObjectsForClasses:@[[NSURL class]] options:nil];
+  if (!urls.count) {
+    NSArray *paths = [info.draggingPasteboard propertyListForType:NSFilenamesPboardType];
+    NSMutableArray *a = [NSMutableArray array];
+    for (NSString *p in paths) [a addObject:[NSURL fileURLWithPath:p]];
+    urls = a;
+  }
+  return urls ?: @[];
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+  self.layer.borderColor = [NSColor controlAccentColor].CGColor;
+  self.layer.backgroundColor = [[NSColor controlAccentColor] colorWithAlphaComponent:0.06].CGColor;
+  return NSDragOperationCopy;
+}
+- (void)draggingExited:(id<NSDraggingInfo>)sender {
+  self.layer.borderColor = [[NSColor separatorColor] colorWithAlphaComponent:0.5].CGColor;
+  self.layer.backgroundColor = [NSColor clearColor].CGColor;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  self.layer.borderColor = [[NSColor separatorColor] colorWithAlphaComponent:0.5].CGColor;
+  self.layer.backgroundColor = [NSColor clearColor].CGColor;
+  NSArray *urls = [self urls:sender];
+  if (urls.count && self.dropTarget && self.dropAction) {
+    [self.dropTarget performSelector:self.dropAction withObject:urls];
+    return YES;
+  }
+  return NO;
+}
+@end
+
 @implementation Controller
 
 - (NSImage *)characterImage:(CGFloat)size {
@@ -1269,6 +1320,9 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self refreshDiskAnalysis];
     });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_COMPRESS")) {
+    [self showCompressWindow:nil];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_SECTION")) {
     int sec = atoi(getenv("DOCKLAUNCHERS_CENTER_TEST_SECTION"));
@@ -6718,6 +6772,12 @@ static BOOL ValidGroupName(NSString *raw) {
   settings.toolTip = @"关闭菜单栏面板，不退出应用";
   [settings applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [root addSubview:settings];
+  ColorHoverButton *compress = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(74, 6, 60, 28)];
+  compress.title = @"压缩"; compress.hoverColor = [NSColor systemOrangeColor];
+  compress.target = self; compress.action = @selector(showCompressWindow:);
+  compress.toolTip = @"压缩 / 解压文件与文件夹";
+  [compress applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [root addSubview:compress];
   ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(146, 6, 128, 28)];
   open.title = @"打开控制台"; open.hoverColor = [NSColor systemGreenColor];
   open.target = self; open.action = @selector(openConsoleFromPopover:);
@@ -7030,6 +7090,218 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)openQuickGroup:(NSButton *)b {
   if (b.toolTip) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:b.toolTip]];
   [self.popover performClose:nil];
+}
+
+- (void)showCompressWindow:(id)sender {
+  if (!self.compressWindow) {
+    NSRect frame = NSMakeRect(0, 0, 620, 470);
+    self.compressWindow = [[NSWindow alloc] initWithContentRect:frame styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.compressWindow.title = @"压缩 / 解压";
+    self.compressWindow.releasedWhenClosed = NO;
+    self.compressWindow.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance);
+    NSView *cv = self.compressWindow.contentView;
+    NSTextField *title = [self label:@"压缩 / 解压" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(24, 418, 300, 26); [cv addSubview:title];
+    NSTextField *sub = [self label:@"拖入文件或文件夹，支持 ZIP 与 TAR.GZ；不会修改原文件" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(24, 396, 560, 18); [cv addSubview:sub];
+
+    CompressDropView *drop = [[CompressDropView alloc] initWithFrame:NSMakeRect(20, 190, 580, 190)];
+    drop.dropTarget = self; drop.dropAction = @selector(compressDropped:);
+    [cv addSubview:drop];
+    NSTextField *dhint = [self label:@"拖入文件 / 文件夹" size:13 bold:NO color:[NSColor tertiaryLabelColor]];
+    dhint.alignment = NSTextAlignmentCenter;
+    dhint.frame = NSMakeRect(20, 270, 580, 22); [cv addSubview:dhint];
+
+    self.compressListLabel = [self label:@"尚未选择项目" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.compressListLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    self.compressListLabel.frame = NSMakeRect(20, 166, 580, 18); [cv addSubview:self.compressListLabel];
+
+    NSArray *titles = @[@"添加文件…", @"添加文件夹…", @"清空", @"压缩为 ZIP", @"压缩为 TAR.GZ", @"解压…"];
+    NSArray *sels = @[@"compressAddFiles:", @"compressAddFolder:", @"compressClear:", @"compressZip:", @"compressTar:", @"extractArchive:"];
+    NSArray *colors = @[[NSColor systemBlueColor], [NSColor systemTealColor], [NSColor systemGrayColor], [NSColor systemGreenColor], [NSColor systemPurpleColor], [NSColor systemOrangeColor]];
+    CGFloat xs[6] = {20, 128, 248, 340, 468, 20};
+    CGFloat ws[6] = {100, 112, 60, 120, 132, 90};
+    CGFloat ys[6] = {126, 126, 126, 126, 126, 78};
+    for (NSInteger i = 0; i < 6; i++) {
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(xs[i], ys[i], ws[i], 30)];
+      b.title = titles[i];
+      b.target = self;
+      b.action = NSSelectorFromString(sels[i]);
+      b.hoverColor = colors[i];
+      [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      [cv addSubview:b];
+    }
+    self.compressSpinner = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(24, 30, 18, 18)];
+    self.compressSpinner.style = NSProgressIndicatorStyleSpinning;
+    self.compressSpinner.displayedWhenStopped = NO;
+    [cv addSubview:self.compressSpinner];
+    self.compressStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.compressStatus.frame = NSMakeRect(50, 30, 540, 18); [cv addSubview:self.compressStatus];
+    self.compressPaths = [NSMutableArray array];
+    [self.compressWindow center];
+  }
+  self.compressWindow.level = NSFloatingWindowLevel;
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.compressWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)compressAddFiles:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = YES;
+  if ([p runModal] != NSModalResponseOK) return;
+  [self addCompressURLs:p.URLs];
+}
+- (void)compressAddFolder:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = NO; p.canChooseDirectories = YES; p.allowsMultipleSelection = YES;
+  if ([p runModal] != NSModalResponseOK) return;
+  [self addCompressURLs:p.URLs];
+}
+- (void)compressDropped:(NSArray<NSURL *> *)urls { [self addCompressURLs:urls]; }
+- (void)addCompressURLs:(NSArray<NSURL *> *)urls {
+  if (!self.compressPaths) self.compressPaths = [NSMutableArray array];
+  for (NSURL *u in urls) {
+    NSString *p = u.path.stringByStandardizingPath;
+    if (!p.length || [self.compressPaths containsObject:p]) continue;
+    [self.compressPaths addObject:p];
+  }
+  NSMutableArray *names = [NSMutableArray array];
+  for (NSString *p in self.compressPaths) [names addObject:p.lastPathComponent];
+  self.compressListLabel.stringValue = names.count ? [names componentsJoinedByString:@"  ·  "] : @"尚未选择项目";
+}
+- (void)compressClear:(id)sender {
+  [self.compressPaths removeAllObjects];
+  self.compressListLabel.stringValue = @"尚未选择项目";
+  self.compressStatus.stringValue = @"";
+}
+- (NSString *)commonParentForPaths:(NSArray<NSString *> *)paths {
+  if (!paths.count) return nil;
+  NSArray *first = [paths.firstObject pathComponents];
+  NSInteger n = first.count - 1;
+  for (NSString *p in paths) {
+    NSArray *c = p.pathComponents;
+    NSInteger m = MIN(n, (NSInteger)c.count - 1);
+    NSInteger k = 0;
+    while (k < m && [c[k] isEqualToString:first[k]]) k++;
+    n = k;
+  }
+  NSArray *prefix = [first subarrayWithRange:NSMakeRange(0, n)];
+  if (!prefix.count) return nil;
+  return [NSString pathWithComponents:prefix];
+}
+
+- (void)runCompressTask:(NSString *)launch args:(NSArray<NSString *> *)args currentDir:(NSString *)dir completion:(void (^)(BOOL, NSString *))completion {
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = launch;
+    t.arguments = args;
+    if (dir) t.currentDirectoryURL = [NSURL fileURLWithPath:dir];
+    NSPipe *err = [NSPipe pipe];
+    t.standardError = err;
+    t.standardOutput = [NSPipe pipe];
+    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {
+      dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(NO, e.reason ?: @"启动失败"); });
+      return;
+    }
+    NSData *ed = [err.fileHandleForReading readDataToEndOfFile];
+    NSString *msg = [[NSString alloc] initWithData:ed encoding:NSUTF8StringEncoding] ?: @"";
+    dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(t.terminationStatus == 0, msg); });
+  });
+}
+
+- (void)compressZip:(id)sender {
+  if (!self.compressPaths.count) { self.compressStatus.stringValue = @"请先添加文件或文件夹"; return; }
+  NSString *parent = [self commonParentForPaths:self.compressPaths];
+  if (!parent) { self.compressStatus.stringValue = @"请选择同一目录下的项目"; return; }
+  NSSavePanel *p = [NSSavePanel savePanel];
+  p.nameFieldStringValue = [((NSString *)self.compressPaths.firstObject).lastPathComponent stringByAppendingString:@".zip"];
+  p.allowedFileTypes = @[@"zip"];
+  if ([p runModal] != NSModalResponseOK) return;
+  NSString *archive = p.URL.path;
+  [[NSFileManager defaultManager] removeItemAtPath:archive error:NULL];
+  NSMutableArray *args = [NSMutableArray arrayWithObjects:@"-r", @"-y", archive, nil];
+  for (NSString *path in self.compressPaths) [args addObject:path.lastPathComponent];
+  [self.compressSpinner startAnimation:nil];
+  self.compressStatus.stringValue = @"正在压缩 ZIP…";
+  [self runCompressTask:@"/usr/bin/zip" args:args currentDir:parent completion:^(BOOL ok, NSString *msg) {
+    [self.compressSpinner stopAnimation:nil];
+    self.compressStatus.stringValue = ok ? @"ZIP 压缩完成" : msg;
+  }];
+}
+
+- (void)compressTar:(id)sender {
+  if (!self.compressPaths.count) { self.compressStatus.stringValue = @"请先添加文件或文件夹"; return; }
+  NSString *parent = [self commonParentForPaths:self.compressPaths];
+  if (!parent) { self.compressStatus.stringValue = @"请选择同一目录下的项目"; return; }
+  NSSavePanel *p = [NSSavePanel savePanel];
+  p.nameFieldStringValue = [((NSString *)self.compressPaths.firstObject).lastPathComponent stringByAppendingString:@".tar.gz"];
+  p.allowedFileTypes = @[@"gz"];
+  if ([p runModal] != NSModalResponseOK) return;
+  NSMutableArray *args = [NSMutableArray arrayWithObjects:@"-czf", p.URL.path, @"-C", parent, nil];
+  for (NSString *path in self.compressPaths) [args addObject:path.lastPathComponent];
+  [self.compressSpinner startAnimation:nil];
+  self.compressStatus.stringValue = @"正在压缩 TAR.GZ…";
+  [self runCompressTask:@"/usr/bin/tar" args:args currentDir:nil completion:^(BOOL ok, NSString *msg) {
+    [self.compressSpinner stopAnimation:nil];
+    self.compressStatus.stringValue = ok ? @"TAR.GZ 压缩完成" : msg;
+  }];
+}
+
+- (BOOL)isSafeArchiveEntry:(NSString *)entry {
+  if (!entry.length || [entry hasPrefix:@"/"]) return NO;
+  for (NSString *part in [entry pathComponents]) if ([part isEqualToString:@".."]) return NO;
+  return YES;
+}
+
+- (BOOL)archiveListSafe:(NSString *)archive tar:(BOOL)tar {
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = tar ? @"/usr/bin/tar" : @"/usr/bin/unzip";
+  t.arguments = tar ? @[@"-tzf", archive] : @[@"-Z1", archive];
+  NSPipe *out = [NSPipe pipe];
+  t.standardOutput = out;
+  t.standardError = [NSPipe pipe];
+  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) { return NO; }
+  if (t.terminationStatus != 0) return NO;
+  NSString *s = [[NSString alloc] initWithData:[out.fileHandleForReading readDataToEndOfFile] encoding:NSUTF8StringEncoding] ?: @"";
+  for (NSString *line in [s componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+    if (line.length && ![self isSafeArchiveEntry:line]) return NO;
+  }
+  return YES;
+}
+
+- (void)extractArchive:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = NO;
+  p.allowedFileTypes = @[@"zip", @"gz", @"tgz", @"tar"];
+  p.message = @"选择要解压的 ZIP / TAR.GZ";
+  if ([p runModal] != NSModalResponseOK) return;
+  NSString *archive = p.URL.path;
+  BOOL isTar = [archive.pathExtension.lowercaseString isEqualToString:@"gz"] || [archive.pathExtension.lowercaseString isEqualToString:@"tgz"] || [archive.pathExtension.lowercaseString isEqualToString:@"tar"];
+  NSOpenPanel *dp = [NSOpenPanel openPanel];
+  dp.canChooseFiles = NO; dp.canChooseDirectories = YES; dp.allowsMultipleSelection = NO;
+  dp.message = @"选择解压目标文件夹";
+  if ([dp runModal] != NSModalResponseOK) return;
+  NSString *dest = [dp.URL.path stringByAppendingPathComponent:archive.lastPathComponent.stringByDeletingPathExtension];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dest withIntermediateDirectories:YES attributes:nil error:NULL];
+  [self.compressSpinner startAnimation:nil];
+  self.compressStatus.stringValue = @"正在检查压缩包…";
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    BOOL safe = [self archiveListSafe:archive tar:isTar];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!safe) {
+        [self.compressSpinner stopAnimation:nil];
+        self.compressStatus.stringValue = @"压缩包包含不安全路径，已拒绝解压";
+        return;
+      }
+      self.compressStatus.stringValue = @"正在解压…";
+      NSArray *args = isTar ? @[@"-xzf", archive, @"-C", dest] : @[@"-x", @"-k", archive, dest];
+      NSString *launch = isTar ? @"/usr/bin/tar" : @"/usr/bin/ditto";
+      [self runCompressTask:launch args:args currentDir:nil completion:^(BOOL ok, NSString *msg) {
+        [self.compressSpinner stopAnimation:nil];
+        self.compressStatus.stringValue = ok ? [NSString stringWithFormat:@"已解压到 %@", dest] : msg;
+      }];
+    });
+  });
 }
 
 - (void)openConsoleFromPopover:(id)sender {
