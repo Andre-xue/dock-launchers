@@ -8,6 +8,7 @@
 #import <IOKit/ps/IOPowerSources.h>
 #import <IOKit/ps/IOPSKeys.h>
 #import <Quartz/Quartz.h>
+#import <CoreServices/CoreServices.h>
 
 static double gPrevCPUBusy = 0, gPrevCPUTotal = 0;
 static unsigned long long gPrevNetIn = 0, gPrevNetOut = 0;
@@ -126,6 +127,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @end
 
 @interface Controller : NSObject <NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
+- (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
 @property (strong) NSWindow *window;
 @property (strong) NSView *content;
@@ -163,6 +165,11 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property (strong) NSString *userFilesPreviewPath;
 @property (strong) NSArray *userFilesApps;
 @property (strong) NSArray *rememberedDirEntries;
+@property FSEventStreamRef activityStream;
+@property (strong) NSMutableArray *activityEntries;
+@property (strong) NSButton *activityCheck;
+@property (strong) NSTimer *activitySaveTimer;
+@property BOOL activityDirty;
 @property BOOL dialogHighlightName;
 @property (strong) NSScrollView *groupsScroll;
 // uninstall
@@ -182,6 +189,15 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property (strong) NSTextField *quickCPU, *quickMem, *quickBat;
 @property (strong) NSTextField *batteryLabel, *thermalLabel, *processLabel;
 @end
+
+
+static void ActivityStreamCallback(ConstFSEventStreamRef streamRef, void *info, size_t numEvents, void *eventPaths, const FSEventStreamEventFlags eventFlags[], const FSEventStreamEventId eventIds[]) {
+  char **paths = (char **)eventPaths;
+  NSMutableArray *arr = [NSMutableArray array];
+  for (size_t i = 0; i < numEvents; i++) if (paths[i]) [arr addObject:[NSString stringWithUTF8String:paths[i]]];
+  Controller *c = (__bridge Controller *)info;
+  [c handleActivityPaths:arr];
+}
 
 @implementation Controller
 
@@ -346,6 +362,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   id autoSyncVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerAutoSync"];
   BOOL autoSync = autoSyncVal ? [autoSyncVal boolValue] : YES;
   if (autoSync) [self startAutoSyncTimer];
+  if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerFileActivity"]) [self startActivityRecorder];
   [self showWindow:nil];
   if (getenv("DOCKLAUNCHERS_CENTER_SECTION")) {
     [self showSection:atoi(getenv("DOCKLAUNCHERS_CENTER_SECTION"))];
@@ -2040,6 +2057,105 @@ static BOOL ValidGroupName(NSString *raw) {
   [a runModal];
 }
 
+- (NSString *)activityFilePath {
+  return [[self backupBaseDir] stringByAppendingPathComponent:@"file_activity.json"];
+}
+- (void)loadActivityEntries {
+  self.activityEntries = [NSMutableArray array];
+  NSData *data = [NSData dataWithContentsOfFile:[self activityFilePath]];
+  if (!data) return;
+  id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+  if ([obj isKindOfClass:[NSArray class]]) self.activityEntries = [obj mutableCopy];
+}
+- (void)saveActivityEntries {
+  if (!self.activityEntries) return;
+  NSData *data = [NSJSONSerialization dataWithJSONObject:self.activityEntries options:0 error:NULL];
+  [data writeToFile:[self activityFilePath] atomically:YES];
+  self.activityDirty = NO;
+}
+- (void)activitySaveTick:(NSTimer *)t { if (self.activityDirty) [self saveActivityEntries]; }
+
+- (void)startActivityRecorder {
+  if (self.activityStream) return;
+  [self loadActivityEntries];
+  NSArray *dirs = @[[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"],
+                    [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"],
+                    [NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"],
+                    [NSHomeDirectory() stringByAppendingPathComponent:@"Movies"],
+                    [NSHomeDirectory() stringByAppendingPathComponent:@"Music"],
+                    [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures"]];
+  NSMutableArray *existing = [NSMutableArray array];
+  for (NSString *d in dirs) if ([[NSFileManager defaultManager] fileExistsAtPath:d]) [existing addObject:d];
+  if (!existing.count) return;
+  FSEventStreamContext ctx = {0, (__bridge void *)self, NULL, NULL, NULL};
+  self.activityStream = FSEventStreamCreate(kCFAllocatorDefault, ActivityStreamCallback, &ctx,
+      (__bridge CFArrayRef)existing, kFSEventStreamEventIdSinceNow, 0.5,
+      kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer);
+  if (!self.activityStream) return;
+  FSEventStreamScheduleWithRunLoop(self.activityStream, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+  FSEventStreamStart(self.activityStream);
+  self.activitySaveTimer = [NSTimer scheduledTimerWithTimeInterval:5.0 target:self selector:@selector(activitySaveTick:) userInfo:nil repeats:YES];
+}
+- (void)stopActivityRecorder {
+  if (self.activityStream) {
+    FSEventStreamStop(self.activityStream);
+    FSEventStreamInvalidate(self.activityStream);
+    FSEventStreamRelease(self.activityStream);
+    self.activityStream = NULL;
+  }
+  [self.activitySaveTimer invalidate];
+  self.activitySaveTimer = nil;
+  [self saveActivityEntries];
+}
+- (void)handleActivityPaths:(NSArray<NSString *> *)paths {
+  if (!self.activityEntries) [self loadActivityEntries];
+  NSString *tmp = NSTemporaryDirectory();
+  NSRunningApplication *front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+  NSString *bid = front.bundleIdentifier ?: @"unknown";
+  NSString *appName = front.localizedName ?: @"未知应用";
+  NSInteger added = 0;
+  for (NSString *path in paths) {
+    if (![path hasPrefix:@"/"]) continue;
+    if ([path hasPrefix:tmp] || [path containsString:@"/Library/"] || [path containsString:@"/.Trash/"] || [path containsString:@"/.git/"]) continue;
+    NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL];
+    if (![attr[NSFileType] isEqualToString:NSFileTypeRegular]) continue;
+    NSNumber *ts = @([[NSDate date] timeIntervalSince1970]);
+    BOOL exists = NO;
+    for (NSDictionary *e in self.activityEntries) {
+      if ([e[@"path"] isEqual:path] && [e[@"bid"] isEqual:bid]) { exists = YES; break; }
+    }
+    if (exists) continue;
+    [self.activityEntries addObject:@{@"path": path, @"bid": bid, @"app": appName, @"ts": ts}];
+    added++;
+    if (added > 50) break;
+  }
+  if (added) {
+    while (self.activityEntries.count > 5000) [self.activityEntries removeObjectAtIndex:0];
+    self.activityDirty = YES;
+  }
+}
+- (void)toggleActivityRecorder:(id)sender {
+  BOOL on = (self.activityCheck.state == NSControlStateValueOn);
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerFileActivity"];
+  if (on) [self startActivityRecorder]; else [self stopActivityRecorder];
+}
+
+- (NSArray<NSString *> *)recordedFilesForBids:(NSSet<NSString *> *)bids {
+  if (!bids.count) return @[];
+  if (!self.activityEntries) [self loadActivityEntries];
+  NSMutableArray *out = [NSMutableArray array];
+  NSMutableSet *seen = [NSMutableSet set];
+  for (NSDictionary *e in self.activityEntries) {
+    if (![bids containsObject:e[@"bid"] ?: @""]) continue;
+    NSString *p = e[@"path"];
+    if (!p.length || [seen containsObject:p]) continue;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:p]) continue;
+    [seen addObject:p];
+    [out addObject:p];
+  }
+  return out;
+}
+
 - (NSArray<NSDictionary *> *)userSavedFilesForApps:(NSArray<NSDictionary *> *)apps {
   NSFileManager *fm = [NSFileManager defaultManager];
   NSMutableArray *out = [NSMutableArray array];
@@ -2091,6 +2207,46 @@ static BOOL ValidGroupName(NSString *raw) {
                          @"type": ext.length ? ext : @"文件",
                          @"size": attr[NSFileSize] ?: @0,
                          @"app": name.length ? name : @""}];
+      }
+    }
+  }
+  // 活动记录候选
+  NSMutableSet *bids = [NSMutableSet set];
+  for (NSDictionary *d in apps) if (d[@"bid"]) [bids addObject:d[@"bid"]];
+  for (NSString *p in [self recordedFilesForBids:bids]) {
+    if ([seen containsObject:p]) continue;
+    NSDictionary *attr = [fm attributesOfItemAtPath:p error:NULL];
+    if (![attr[NSFileType] isEqualToString:NSFileTypeRegular]) continue;
+    [seen addObject:p];
+    NSString *ext = [p pathExtension].uppercaseString;
+    [out addObject:@{@"path": p, @"name": [p lastPathComponent], @"type": [@"活动记录/" stringByAppendingString:(ext.length ? ext : @"文件")], @"size": attr[NSFileSize] ?: @0, @"app": @"活动记录"}];
+  }
+  // 按应用声明类型 + 最近修改扫描
+  NSMutableSet *exts = [NSMutableSet set];
+  for (NSDictionary *d in apps) {
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[d[@"path"] stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+    for (NSDictionary *dt in info[@"CFBundleDocumentTypes"] ?: @[]) {
+      for (NSString *ext in dt[@"CFBundleTypeExtensions"] ?: @[]) if ([ext isKindOfClass:[NSString class]] && ext.length) [exts addObject:ext.lowercaseString];
+    }
+  }
+  if (exts.count) {
+    NSDate *cutoff = [NSDate dateWithTimeIntervalSinceNow:-180*24*3600];
+    for (NSString *sub in subdirs) {
+      NSString *root = [home stringByAppendingPathComponent:sub];
+      if (![fm fileExistsAtPath:root]) continue;
+      NSDirectoryEnumerator *en = [fm enumeratorAtPath:root];
+      for (NSString *rel in en) {
+        if (out.count >= 1200) break;
+        NSString *full = [root stringByAppendingPathComponent:rel];
+        NSString *ext = [full pathExtension].lowercaseString;
+        if (![exts containsObject:ext]) continue;
+        NSDictionary *attr = [fm attributesOfItemAtPath:full error:NULL];
+        if (![attr[NSFileType] isEqualToString:NSFileTypeRegular]) continue;
+        NSDate *mod = attr[NSFileModificationDate];
+        if (mod && [mod compare:cutoff] == NSOrderedAscending) continue;
+        if ([seen containsObject:full]) continue;
+        [seen addObject:full];
+        [out addObject:@{@"path": full, @"name": [full lastPathComponent], @"type": ext.uppercaseString, @"size": attr[NSFileSize] ?: @0, @"app": @"类型匹配"}];
       }
     }
   }
@@ -2386,10 +2542,10 @@ static BOOL ValidGroupName(NSString *raw) {
   [v addSubview:card];
   self.menuBarCheck = [NSButton checkboxWithTitle:@"在菜单栏显示 CPU / 内存数字" target:self action:@selector(toggleMenuBarText:)];
   self.menuBarCheck.state = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerMenuText"] ? ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerMenuText"] ? NSControlStateValueOn : NSControlStateValueOff) : NSControlStateValueOn;
-  self.menuBarCheck.frame = NSMakeRect(20, 150, 400, 24); [card addSubview:self.menuBarCheck];
+  self.menuBarCheck.frame = NSMakeRect(20, 158, 400, 24); [card addSubview:self.menuBarCheck];
   NSTextField *il = [self label:@"采样间隔" size:13 bold:NO color:nil];
-  il.frame = NSMakeRect(20, 108, 100, 20); [card addSubview:il];
-  self.intervalPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(120, 102, 140, 28) pullsDown:NO];
+  il.frame = NSMakeRect(20, 118, 100, 20); [card addSubview:il];
+  self.intervalPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(120, 112, 140, 28) pullsDown:NO];
   [self.intervalPopup addItemsWithTitles:@[@"1 秒", @"2 秒", @"5 秒", @"10 秒"]];
   NSInteger saved = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerInterval"];
   NSArray *secs = @[@1,@2,@5,@10];
@@ -2401,11 +2557,14 @@ static BOOL ValidGroupName(NSString *raw) {
   self.autoSyncCheck = [NSButton checkboxWithTitle:@"自动同步（外部卸载应用后清理分组）" target:self action:@selector(toggleAutoSync:)];
   id autoSyncVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerAutoSync"];
   self.autoSyncCheck.state = (autoSyncVal ? [autoSyncVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
-  self.autoSyncCheck.frame = NSMakeRect(20, 28, 420, 24); [card addSubview:self.autoSyncCheck];
+  self.autoSyncCheck.frame = NSMakeRect(20, 44, 420, 24); [card addSubview:self.autoSyncCheck];
   self.loginCheck = [NSButton checkboxWithTitle:@"开机自动启动控制台" target:self action:@selector(toggleLoginItem:)];
   self.loginCheck.state = [[NSFileManager defaultManager] fileExistsAtPath:[self loginPlistPath]] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.loginCheck.frame = NSMakeRect(20, 66, 400, 24); [card addSubview:self.loginCheck];
+  self.loginCheck.frame = NSMakeRect(20, 80, 400, 24); [card addSubview:self.loginCheck];
 
+  self.activityCheck = [NSButton checkboxWithTitle:@"记录应用保存的文件（卸载候选，默认关）" target:self action:@selector(toggleActivityRecorder:)];
+  self.activityCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerFileActivity"] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.activityCheck.frame = NSMakeRect(20, 8, 500, 24); [card addSubview:self.activityCheck];
   NSButton *openGrp = [NSButton buttonWithTitle:@"打开分组文件夹" target:self action:@selector(openGroupsFolder:)];
   openGrp.frame = NSMakeRect(24, 300, 160, 34); openGrp.bezelStyle = NSBezelStyleRounded; [v addSubview:openGrp];
   NSButton *remember = [NSButton buttonWithTitle:@"管理已记住的保存目录…" target:self action:@selector(showRememberedSaveDirs:)];
