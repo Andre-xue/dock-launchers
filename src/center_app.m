@@ -143,10 +143,11 @@ static NSString *LetterSortKey(NSString *name) {
 }
 
 @class LetterIndexView;
-@interface Controller : NSObject <NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
+@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
 @property (strong) NSWindow *window;
+@property (strong) NSTextField *centerTitleLabel;
 @property (strong) NSView *content;
 @property (strong) NSButton *sideLive, *sideGroups, *sideUninstall, *sideSettings;
 @property NSInteger section;
@@ -289,6 +290,27 @@ static NSDate *InstallDateForPath(NSString *path) {
   if (t < 946684800) return nil;
   return [NSDate dateWithTimeIntervalSince1970:t];
 }
+
+
+@interface HoverTextButton : NSButton
+@property (strong) NSColor *hoverColor;
+@property (strong) NSColor *normalColor;
+@end
+@implementation HoverTextButton
+- (void)updateTrackingAreas {
+  [super updateTrackingAreas];
+  for (NSTrackingArea *a in self.trackingAreas) [self removeTrackingArea:a];
+  NSTrackingArea *ta = [[NSTrackingArea alloc] initWithRect:self.bounds options:(NSTrackingMouseEnteredAndExited|NSTrackingActiveInKeyWindow|NSTrackingInVisibleRect) owner:self userInfo:nil];
+  [self addTrackingArea:ta];
+}
+- (void)applyTitleColor:(NSColor *)color {
+  NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+  ps.alignment = NSTextAlignmentCenter;
+  self.attributedTitle = [[NSAttributedString alloc] initWithString:self.title attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSForegroundColorAttributeName: color, NSParagraphStyleAttributeName: ps}];
+}
+- (void)mouseEntered:(NSEvent *)e { [self applyTitleColor:self.hoverColor ?: [NSColor systemGreenColor]]; }
+- (void)mouseExited:(NSEvent *)e { [self applyTitleColor:self.normalColor ?: [NSColor secondaryLabelColor]]; }
+@end
 
 @implementation Controller
 
@@ -485,11 +507,26 @@ static NSDate *InstallDateForPath(NSString *path) {
   }
 }
 
+- (void)layoutCenterTitle {
+  NSView *frameView = self.window.contentView.superview;
+  if (!frameView || !self.centerTitleLabel) return;
+  CGFloat w = frameView.bounds.size.width;
+  CGFloat h = frameView.bounds.size.height;
+  self.centerTitleLabel.frame = NSMakeRect((w - 380)/2.0, h - 30, 380, 24);
+}
+- (void)windowDidResize:(NSNotification *)notification { [self layoutCenterTitle]; }
+
 - (void)buildWindow {
   self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,960,660)
                                             styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable)
                                               backing:NSBackingStoreBuffered defer:NO];
   self.window.title = @"DockLaunchers 控制台";
+  self.window.titleVisibility = NSWindowTitleHidden;
+  self.window.delegate = self;
+  self.centerTitleLabel = [self label:@"DockLaunchers 控制台" size:16 bold:YES color:[NSColor systemOrangeColor]];
+  self.centerTitleLabel.alignment = NSTextAlignmentCenter;
+  [self.window.contentView.superview addSubview:self.centerTitleLabel];
+  [self layoutCenterTitle];
   self.window.minSize = NSMakeSize(820, 540);
   self.window.releasedWhenClosed = NO;
   self.window.titlebarAppearsTransparent = YES;
@@ -655,10 +692,15 @@ static NSDate *InstallDateForPath(NSString *path) {
   self.uptimeLabel.frame = NSMakeRect(24, 92, 700, 18);
   [v addSubview:self.uptimeLabel];
 
-  NSButton *folder = [NSButton buttonWithTitle:@"打开分组文件夹" target:self action:@selector(openGroupsFolder:)];
-  folder.frame = NSMakeRect(24, 42, 160, 32); folder.bezelStyle = NSBezelStyleRounded; [v addSubview:folder];
-  NSButton *hide = [NSButton buttonWithTitle:@"隐藏主窗口" target:self action:@selector(hideWindow:)];
-  hide.frame = NSMakeRect(196, 42, 140, 32); hide.bezelStyle = NSBezelStyleRounded; [v addSubview:hide];
+  HoverTextButton *hide = [[HoverTextButton alloc] initWithFrame:NSMakeRect(602, 628, 120, 26)];
+  hide.title = @"隐藏主窗口";
+  hide.bordered = NO;
+  hide.target = self;
+  hide.action = @selector(hideWindow:);
+  hide.hoverColor = [NSColor systemGreenColor];
+  hide.normalColor = [NSColor secondaryLabelColor];
+  [hide applyTitleColor:hide.normalColor];
+  [v addSubview:hide];
   self.liveView = v;
 }
 
