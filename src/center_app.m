@@ -151,6 +151,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property (strong) NSTextField *dialogNameField;
 @property (strong) NSString *dialogPendingOpen;
 @property (strong) NSString *dialogPendingEditName;
+@property BOOL dialogIconsMissing;
 @property BOOL dialogHighlightName;
 @property (strong) NSScrollView *groupsScroll;
 // uninstall
@@ -262,6 +263,12 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     [self showSection:1];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self refreshAllGroupsClicked:nil];
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_ICON_MISSING")) {
+    [self showSection:1];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self createGroup:nil];
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_CREATE_EMPTY")) {
@@ -927,6 +934,12 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 
 - (void)refreshDialogIconSelection {
   for (NSButton *b in self.dialogIconButtons) {
+    if (self.dialogIconsMissing) {
+      b.layer.borderWidth = 2.0;
+      b.layer.borderColor = [NSColor systemRedColor].CGColor;
+      b.layer.cornerRadius = 12;
+      continue;
+    }
     BOOL sel = (b.tag == self.dialogSelectedBuiltin)
             || ((self.dialogSelectedBuiltin == -2 || self.dialogCustomIcon.length) && b.tag == 98);
     b.layer.borderWidth = sel ? 3.0 : 1.0;
@@ -936,6 +949,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 }
 
 - (void)dialogIconClicked:(NSButton *)b {
+  self.dialogIconsMissing = NO;
   if (b.tag == 99) { self.dialogSelectedBuiltin = -1; self.dialogCustomIcon = nil; }
   else { self.dialogSelectedBuiltin = b.tag; self.dialogCustomIcon = nil; }
   if (self.dialogIconButtons.count && self.dialogFirstIconImage && b.tag != 98) {
@@ -952,6 +966,7 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     if (!url) return;
     self.dialogCustomIcon = url.path;
     self.dialogSelectedBuiltin = -1;
+    self.dialogIconsMissing = NO;
     NSImage *img = [[NSImage alloc] initWithContentsOfFile:url.path];
     if (img && self.dialogIconButtons.count) ((NSButton *)self.dialogIconButtons.firstObject).image = img;
     [self refreshDialogIconSelection];
@@ -1101,7 +1116,7 @@ static BOOL ValidGroupName(NSString *raw) {
   tf.placeholderString = @"分组名，如 设计";
   [v addSubview:tf];
   self.dialogNameField = tf;
-  NSTextField *l1 = [self label:@"Dock 图标（默认「工作」样式）" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *l1 = [self label:@"Dock 图标（请选择一个图标）" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   l1.frame = NSMakeRect(10, 284, 600, 16); [v addSubview:l1];
   NSArray *names = @[@"工作组", @"聊天组", @"外网组", @"影音组", @"Ai组", @"Docker组", @"工具组"];
   NSMutableArray *btns = [NSMutableArray array];
@@ -1118,8 +1133,9 @@ static BOOL ValidGroupName(NSString *raw) {
     [v addSubview:b];
     [btns addObject:b];
   }
-  self.dialogSelectedBuiltin = 0;
+  self.dialogSelectedBuiltin = -1;
   self.dialogCustomIcon = nil;
+  self.dialogIconsMissing = NO;
   [self setDialogIconButtons:btns];
   self.dialogFirstIconImage = ((NSButton *)btns.firstObject).image;
   NSButton *custom = [NSButton buttonWithTitle:@"自定义图标…" target:self action:@selector(dialogChooseCustomIcon:)];
@@ -1140,6 +1156,14 @@ static BOOL ValidGroupName(NSString *raw) {
     [self showSheetMessage:@"请填写有效的分组名" info:@"分组名不能为空，且前后不能有空格。" parent:[NSApp modalWindow]];
     return;
   }
+  if (self.dialogSelectedBuiltin < 0 && self.dialogCustomIcon.length == 0) {
+    self.dialogIconsMissing = YES;
+    [self refreshDialogIconSelection];
+    [self showSheetMessage:@"图标还未设置" info:@"请从上方选择一个 Dock 图标，或使用自定义图标。" parent:[NSApp modalWindow]];
+    return;
+  }
+  self.dialogIconsMissing = NO;
+  [self refreshDialogIconSelection];
   NSString *name = raw;
   while ([name hasSuffix:@"组"] && name.length > 1) name = [name substringToIndex:name.length-1];
   NSFileManager *fm = [NSFileManager defaultManager];
@@ -1199,6 +1223,11 @@ static BOOL ValidGroupName(NSString *raw) {
   }];
 }
 
+- (void)testIconMissingTimer:(NSTimer *)t {
+  self.dialogNameField.stringValue = @"测试分组";
+  [self createDialogSubmit:nil];
+}
+
 - (void)createGroup:(id)sender {
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"新建分组";
@@ -1210,6 +1239,10 @@ static BOOL ValidGroupName(NSString *raw) {
   a.buttons.firstObject.hidden = YES;
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_CREATE_EMPTY")) {
     NSTimer *t = [NSTimer timerWithTimeInterval:1.2 target:self selector:@selector(createDialogSubmit:) userInfo:nil repeats:NO];
+    [[NSRunLoop mainRunLoop] addTimer:t forMode:NSModalPanelRunLoopMode];
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_ICON_MISSING")) {
+    NSTimer *t = [NSTimer timerWithTimeInterval:1.0 target:self selector:@selector(testIconMissingTimer:) userInfo:nil repeats:NO];
     [[NSRunLoop mainRunLoop] addTimer:t forMode:NSModalPanelRunLoopMode];
   }
   NSModalResponse r = [a runModal];
