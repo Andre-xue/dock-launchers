@@ -1108,15 +1108,48 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
   return l;
 }
 
+- (void)runSelfTest {
+  __block int failed = 0;
+  void (^check)(BOOL, NSString *) = ^(BOOL ok, NSString *name) {
+    fprintf(stderr, "%s %s\n", ok ? "PASS" : "FAIL", name.UTF8String);
+    if (!ok) failed = 1;
+  };
+  for (NSInteger i = 0; i < 6; i++) check([self viewForSection:i] != nil, [NSString stringWithFormat:@"section %ld", (long)i]);
+  [self refreshGroups];
+  check(self.groups.count >= 7, @"groups loaded");
+  self.groupsSearch.stringValue = @"工具";
+  [self groupsSearchChanged:nil];
+  check(self.groupsFiltered.count == 1, @"exact group search");
+  self.groupsSearch.stringValue = @"";
+  self.groupsFilter = nil;
+  [self refreshGroups];
+  NSDictionary *preset = [self aiPresetForName:@"Anthropic Claude"];
+  check([preset[@"url"] containsString:@"anthropic"], @"AI preset exact name");
+  preset = [self aiPresetForName:@"千问"];
+  check([preset[@"name"] containsString:@"通义千问"], @"AI preset alias");
+  [self rebuildAIDisplay];
+  check(self.aiVisibleEntries.count <= 2, @"AI two rows per page");
+  check([self isProtectedUserPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"]], @"protected path filter");
+  check([[self aiCategoryForEntry:@{@"name": @"Kling", @"note": @"视频生成"}] isEqualToString:@"视频"], @"AI category inference");
+  fprintf(stderr, failed ? "SELFTEST FAILED\n" : "SELFTEST OK\n");
+  exit(failed);
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
   // 单实例：避免重复 Dock 图标/菜单栏图标
   NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
   pid_t me = [[NSProcessInfo processInfo] processIdentifier];
-  for (NSRunningApplication *ra in [NSRunningApplication runningApplicationsWithBundleIdentifier:bid]) {
-    if (ra.processIdentifier != me) {
-      [ra activateWithOptions:NSApplicationActivateIgnoringOtherApps];
-      exit(0);
+  if (!getenv("DOCKLAUNCHERS_CENTER_SELFTEST")) {
+    for (NSRunningApplication *ra in [NSRunningApplication runningApplicationsWithBundleIdentifier:bid]) {
+      if (ra.processIdentifier != me) {
+        [ra activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+        exit(0);
+      }
     }
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_SELFTEST")) {
+    [self runSelfTest];
+    return;
   }
   [self pruneStaleDockEntries];
   NSUserDefaults *ud0 = [NSUserDefaults standardUserDefaults];
