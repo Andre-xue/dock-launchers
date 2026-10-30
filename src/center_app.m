@@ -127,6 +127,21 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 }
 @end
 
+static NSString *LetterSortKey(NSString *name) {
+  if (!name.length) return @"#";
+  unichar c = [name characterAtIndex:0];
+  if (c >= 'A' && c <= 'Z') return [NSString stringWithFormat:@"%C", c];
+  if (c >= 'a' && c <= 'z') return [[NSString stringWithFormat:@"%C", c] uppercaseString];
+  NSMutableString *m = [name mutableCopy];
+  CFStringTransform((__bridge CFMutableStringRef)m, NULL, kCFStringTransformToLatin, false);
+  CFStringTransform((__bridge CFMutableStringRef)m, NULL, kCFStringTransformStripDiacritics, false);
+  for (NSUInteger i = 0; i < m.length; i++) {
+    unichar ch = [m characterAtIndex:i];
+    if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')) return [[NSString stringWithFormat:@"%C", ch] uppercaseString];
+  }
+  return @"#";
+}
+
 @class LetterIndexView;
 @interface Controller : NSObject <NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
@@ -181,6 +196,9 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 @property (strong) NSTableView *uninstallTable;
 @property (strong) LetterIndexView *letterIndex;
 @property (strong) NSArray<NSString *> *letters;
+@property (strong) NSString *letterFilter;
+@property (strong) NSTimer *letterFilterTimer;
+@property (strong) id letterActivityMonitor;
 @property (strong) NSSearchField *uninstallSearch;
 @property (strong) NSTextField *uninstallFooter;
 @property (strong) NSSegmentedControl *uninstallScopeCtl;
@@ -206,6 +224,9 @@ static void ActivityStreamCallback(ConstFSEventStreamRef streamRef, void *info, 
 
 @interface LetterIndexView : NSView
 @property (strong) NSArray<NSString *> *letters;
+@property (strong) NSString *letterFilter;
+@property (strong) NSTimer *letterFilterTimer;
+@property (strong) id letterActivityMonitor;
 @property NSInteger hovered;
 @property (weak) id target;
 @property SEL action;
@@ -1772,6 +1793,8 @@ static BOOL ValidGroupName(NSString *raw) {
   [v addSubview:self.uninstallFooter];
   self.uninstallGo = [NSButton buttonWithTitle:@"卸载所选应用" target:self action:@selector(confirmUninstallApps:)];
   self.uninstallGo.frame = NSMakeRect(580, 26, 120, 32); self.uninstallGo.bezelStyle = NSBezelStyleRounded; [v addSubview:self.uninstallGo];
+  NSClickGestureRecognizer *blank = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(uninstallBlankClicked:)];
+  [v addGestureRecognizer:blank];
   self.uninstallView = v;
 }
 
@@ -1806,6 +1829,15 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *out = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
   NSInteger kb = [[out componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] firstObject].integerValue;
   return (unsigned long long)MAX(kb, 0) * 1024ULL;
+}
+
+- (void)uninstallBlankClicked:(NSClickGestureRecognizer *)g {
+  if (!self.letterFilter.length) return;
+  NSPoint p = [g locationInView:self.uninstallView];
+  if (self.uninstallTable.enclosingScrollView && NSPointInRect(p, self.uninstallTable.enclosingScrollView.frame)) return;
+  if (NSPointInRect(p, self.letterIndex.frame)) return;
+  if (p.y > 520) return;
+  [self cancelLetterFilter];
 }
 
 - (void)uninstallScopeChanged:(id)sender {
@@ -1898,6 +1930,13 @@ static BOOL ValidGroupName(NSString *raw) {
                                 @"target": (targetGroup[p] ? p : p)} mutableCopy];
     [arr addObject:d];
   }
+  [arr sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+    NSString *ka = LetterSortKey(a[@"label"] ?: @"");
+    NSString *kb = LetterSortKey(b[@"label"] ?: @"");
+    NSComparisonResult r = [ka compare:kb];
+    if (r != NSOrderedSame) return r;
+    return [(a[@"label"] ?: @"") compare:(b[@"label"] ?: @"") options:(NSCaseInsensitiveSearch|NSNumericSearch)];
+  }];
   self.uninstallData = arr;
   if (getenv("DOCKLAUNCHERS_CENTER_DUMP")) {
     for (NSDictionary *d in arr) fprintf(stderr, "APP: %s\n", [d[@"path"] UTF8String]);
@@ -1930,29 +1969,37 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)rebuildLetterIndex {
-  NSMutableOrderedSet *set = [NSMutableOrderedSet orderedSet];
-  for (NSDictionary *d in self.uninstallFiltered) {
-    NSString *s = d[@"label"] ?: @"";
-    if (!s.length) continue;
-    unichar c = [s characterAtIndex:0];
-    NSString *letter = (c >= 'A' && c <= 'Z') ? [NSString stringWithFormat:@"%C", c] :
-                       ((c >= 'a' && c <= 'z') ? [[NSString stringWithFormat:@"%C", c] uppercaseString] : @"#");
-    [set addObject:letter];
-  }
-  NSArray *letters = [[set array] sortedArrayUsingSelector:@selector(compare:)];
+  NSMutableArray *letters = [NSMutableArray array];
+  for (char c = 'A'; c <= 'Z'; c++) [letters addObject:[NSString stringWithFormat:@"%c", c]];
+  [letters addObject:@"#"];
   self.letters = letters;
   self.letterIndex.letters = letters;
-  self.letterIndex.hidden = (letters.count < 2);
+  self.letterIndex.hidden = NO;
 }
 
+- (void)restartLetterFilterTimer {
+  [self.letterFilterTimer invalidate];
+  self.letterFilterTimer = [NSTimer scheduledTimerWithTimeInterval:10.0 target:self selector:@selector(cancelLetterFilter) userInfo:nil repeats:NO];
+}
+- (void)cancelLetterFilter {
+  if (!self.letterFilter.length) return;
+  self.letterFilter = nil;
+  [self.letterFilterTimer invalidate];
+  self.letterFilterTimer = nil;
+  if (self.letterActivityMonitor) { [NSEvent removeMonitor:self.letterActivityMonitor]; self.letterActivityMonitor = nil; }
+  [self applyUninstallFilter];
+}
 - (void)letterIndexClicked:(NSString *)letter {
-  for (NSInteger i = 0; i < (NSInteger)self.uninstallFiltered.count; i++) {
-    NSString *s = self.uninstallFiltered[i][@"label"] ?: @"";
-    if (!s.length) continue;
-    unichar c = [s characterAtIndex:0];
-    NSString *l = (c >= 'A' && c <= 'Z') ? [NSString stringWithFormat:@"%C", c] :
-                  ((c >= 'a' && c <= 'z') ? [[NSString stringWithFormat:@"%C", c] uppercaseString] : @"#");
-    if ([l isEqualToString:letter]) { [self.uninstallTable scrollRowToVisible:i]; break; }
+  self.letterFilter = letter;
+  [self applyUninstallFilter];
+  [self.uninstallTable scrollRowToVisible:0];
+  [self restartLetterFilterTimer];
+  if (!self.letterActivityMonitor) {
+    __weak typeof(self) weakSelf = self;
+    self.letterActivityMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskMouseMoved|NSEventMaskKeyDown|NSEventMaskScrollWheel) handler:^NSEvent *(NSEvent *e) {
+      if (weakSelf.letterFilter.length) [weakSelf restartLetterFilterTimer];
+      return e;
+    }];
   }
 }
 
@@ -1960,6 +2007,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *q = [self.uninstallSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
   NSMutableArray *out = [NSMutableArray array];
   for (NSDictionary *d in self.uninstallData) {
+    if (self.letterFilter.length && ![LetterSortKey(d[@"label"] ?: @"") isEqualToString:self.letterFilter]) continue;
     if (q.length) {
       NSString *hay = [NSString stringWithFormat:@"%@ %@ %@", d[@"label"], d[@"bid"], d[@"path"]];
       if ([hay rangeOfString:q options:NSCaseInsensitiveSearch].location == NSNotFound) continue;
@@ -2014,7 +2062,8 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.uninstallFiltered sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
     NSComparisonResult r = NSOrderedSame;
     if ([key isEqualToString:@"name"]) {
-      r = [(a[@"label"] ?: @"") compare:(b[@"label"] ?: @"") options:(NSCaseInsensitiveSearch|NSNumericSearch)];
+      r = [LetterSortKey(a[@"label"] ?: @"") compare:LetterSortKey(b[@"label"] ?: @"")];
+      if (r == NSOrderedSame) r = [(a[@"label"] ?: @"") compare:(b[@"label"] ?: @"") options:(NSCaseInsensitiveSearch|NSNumericSearch)];
     } else if ([key isEqualToString:@"installed"]) {
       r = [(a[@"installed"] ?: [NSDate date]) compare:(b[@"installed"] ?: [NSDate date])];
     } else {
