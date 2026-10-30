@@ -750,6 +750,13 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
       BOOL ours = IsOurDockEntry(item);
       BOOL missing = (path.length && [path hasPrefix:@"/"] && ![[NSFileManager defaultManager] fileExistsAtPath:path]);
       if (missing && ours) { changed = YES; continue; }
+      // 控制台只保留当前安装路径那一条，清掉 build 目录等重复条目
+      NSString *bid = nil;
+      @try { bid = item[@"tile-data"][@"bundle-identifier"]; } @catch (NSException *e) {}
+      if ([bid isEqualToString:@"com.docklaunchers.center"]) {
+        NSString *selfPath = [[[NSBundle mainBundle] bundlePath] stringByStandardizingPath];
+        if (![path isEqualToString:selfPath]) { changed = YES; continue; }
+      }
       if (ours && path.length && [seenPaths containsObject:path]) { changed = YES; continue; }
       if (path.length) [seenPaths addObject:path];
       [keep addObject:item];
