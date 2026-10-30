@@ -268,7 +268,7 @@ static void ActivityStreamCallback(ConstFSEventStreamRef streamRef, void *info, 
   CGFloat h = self.bounds.size.height / MAX(self.letters.count,1);
   for (NSInteger i = 0; i < (NSInteger)self.letters.count; i++) {
     BOOL hot = (i == self.hovered);
-    NSFont *f = hot ? [NSFont boldSystemFontOfSize:13] : [NSFont systemFontOfSize:10 weight:NSFontWeightMedium];
+    NSFont *f = hot ? [NSFont boldSystemFontOfSize:15] : [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
     NSColor *c = hot ? [NSColor controlAccentColor] : [NSColor secondaryLabelColor];
     NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
     ps.alignment = NSTextAlignmentCenter;
@@ -413,6 +413,12 @@ static NSDate *InstallDateForPath(NSString *path) {
     [self showSection:1];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self refreshAllGroupsClicked:nil];
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_LETTER")) {
+    [self showSection:2];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self letterIndexClicked:[NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_LETTER")]];
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_ICON_MISSING")) {
@@ -1554,6 +1560,12 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTimer *t = [NSTimer timerWithTimeInterval:1.2 target:self selector:@selector(createDialogSubmit:) userInfo:nil repeats:NO];
     [[NSRunLoop mainRunLoop] addTimer:t forMode:NSModalPanelRunLoopMode];
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_LETTER")) {
+    [self showSection:2];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self letterIndexClicked:[NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_LETTER")]];
+    });
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_ICON_MISSING")) {
     NSTimer *t = [NSTimer timerWithTimeInterval:1.0 target:self selector:@selector(testIconMissingTimer:) userInfo:nil repeats:NO];
     [[NSRunLoop mainRunLoop] addTimer:t forMode:NSModalPanelRunLoopMode];
@@ -1759,7 +1771,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSButton *refresh = [NSButton buttonWithTitle:@"刷新" target:self action:@selector(reloadUninstallData)];
   refresh.frame = NSMakeRect(656, 540, 56, 30); refresh.bezelStyle = NSBezelStyleRounded; [v addSubview:refresh];
 
-  self.letterIndex = [[LetterIndexView alloc] initWithFrame:NSMakeRect(22, 76, 20, 450)];
+  self.letterIndex = [[LetterIndexView alloc] initWithFrame:NSMakeRect(18, 76, 26, 450)];
   self.letterIndex.target = self;
   self.letterIndex.action = @selector(letterIndexClicked:);
   [v addSubview:self.letterIndex];
@@ -1793,8 +1805,6 @@ static BOOL ValidGroupName(NSString *raw) {
   [v addSubview:self.uninstallFooter];
   self.uninstallGo = [NSButton buttonWithTitle:@"卸载所选应用" target:self action:@selector(confirmUninstallApps:)];
   self.uninstallGo.frame = NSMakeRect(580, 26, 120, 32); self.uninstallGo.bezelStyle = NSBezelStyleRounded; [v addSubview:self.uninstallGo];
-  NSClickGestureRecognizer *blank = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(uninstallBlankClicked:)];
-  [v addGestureRecognizer:blank];
   self.uninstallView = v;
 }
 
@@ -1996,8 +2006,16 @@ static BOOL ValidGroupName(NSString *raw) {
   [self restartLetterFilterTimer];
   if (!self.letterActivityMonitor) {
     __weak typeof(self) weakSelf = self;
-    self.letterActivityMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskMouseMoved|NSEventMaskKeyDown|NSEventMaskScrollWheel) handler:^NSEvent *(NSEvent *e) {
-      if (weakSelf.letterFilter.length) [weakSelf restartLetterFilterTimer];
+    self.letterActivityMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskMouseMoved|NSEventMaskKeyDown|NSEventMaskScrollWheel|NSEventMaskLeftMouseDown) handler:^NSEvent *(NSEvent *e) {
+      if (weakSelf.letterFilter.length) {
+        [weakSelf restartLetterFilterTimer];
+        if (e.type == NSEventTypeLeftMouseDown && e.window == weakSelf.window) {
+          NSPoint p = [weakSelf.uninstallView convertPoint:e.locationInWindow fromView:nil];
+          BOOL inTable = weakSelf.uninstallTable.enclosingScrollView && NSPointInRect(p, weakSelf.uninstallTable.enclosingScrollView.frame);
+          BOOL inLetters = NSPointInRect(p, weakSelf.letterIndex.frame);
+          if (!inTable && !inLetters && p.y < 520) [weakSelf cancelLetterFilter];
+        }
+      }
       return e;
     }];
   }
