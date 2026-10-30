@@ -262,13 +262,13 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_MEMORY")) {
     NSString *dir = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_MEMORY")];
     [self rememberSaveDir:dir forApps:@[@{@"bid": @"com.test.saved", @"name": @"测试保存"}]];
-    NSArray *files = [self userSavedFilesForApps:@[@{@"name": @"测试保存", @"bid": @"com.test.saved", @"path": @"/Applications/Calculator.app"}]];
+    NSArray *files = [self userSavedFilesForApps:@[@{@"name": @"NeteaseMusic", @"label": @"网易云音乐", @"bid": @"com.netease.163music", @"path": @"/Applications/NeteaseMusic.app"}]];
     fprintf(stderr, "MEMORY count=%ld\n", (long)files.count);
     for (NSDictionary *d in files) fprintf(stderr, "MFILE %s\n", [d[@"path"] UTF8String]);
     exit(0);
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DETECT")) {
-    NSArray *files = [self userSavedFilesForApps:@[@{@"name": @"测试保存", @"bid": @"com.test.saved", @"path": @"/Applications/Calculator.app"}]];
+    NSArray *files = [self userSavedFilesForApps:@[@{@"name": @"NeteaseMusic", @"label": @"网易云音乐", @"bid": @"com.netease.163music", @"path": @"/Applications/NeteaseMusic.app"}]];
     fprintf(stderr, "DETECT count=%ld\n", (long)files.count);
     for (NSDictionary *d in files) fprintf(stderr, "FILE %s\n", [d[@"path"] UTF8String]);
     exit(0);
@@ -2048,10 +2048,12 @@ static BOOL ValidGroupName(NSString *raw) {
   NSArray *subdirs = @[@"Documents", @"Downloads", @"Desktop", @"Pictures", @"Movies", @"Music"];
   for (NSDictionary *d in apps) {
     NSString *name = d[@"name"] ?: @"";
+    NSString *label = d[@"label"] ?: @"";
     NSString *bid = d[@"bid"] ?: @"";
     NSMutableArray *roots = [NSMutableArray array];
     for (NSString *sub in subdirs) {
       if (name.length) [roots addObject:[home stringByAppendingPathComponent:[sub stringByAppendingPathComponent:name]]];
+      if (label.length && ![label isEqualToString:name]) [roots addObject:[home stringByAppendingPathComponent:[sub stringByAppendingPathComponent:label]]];
     }
     if (bid.length) {
       NSString *data = [home stringByAppendingPathComponent:[@"Library/Containers" stringByAppendingPathComponent:bid]];
@@ -2279,6 +2281,18 @@ static BOOL ValidGroupName(NSString *raw) {
       pickedUserFiles = picked;
     }
   }
+  // 先退出运行中的被卸载应用，避免 Dock 图标残留/继续可用
+  for (NSDictionary *d in sel) {
+    NSString *targetPath = d[@"path"];
+    NSString *targetBid = d[@"bid"];
+    for (NSRunningApplication *ra in [[NSWorkspace sharedWorkspace] runningApplications]) {
+      BOOL match = NO;
+      if (ra.bundleURL && [[ra.bundleURL path] isEqualToString:targetPath]) match = YES;
+      if (targetBid.length && [ra.bundleIdentifier isEqualToString:targetBid]) match = YES;
+      if (match) [ra forceTerminate];
+    }
+  }
+  [NSThread sleepForTimeInterval:0.4];
   NSMutableArray *removals = [NSMutableArray array];
   for (NSDictionary *d in sel) {
     [removals addObject:d[@"path"]];
