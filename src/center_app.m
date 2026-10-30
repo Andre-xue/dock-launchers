@@ -226,6 +226,13 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   [self removeDockEntry:selfPath];
   [self addDockEntry:selfPath label:@"DockLaunchers控制台"];
   [self killDock];
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")) {
+    NSString *arg = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")];
+    NSMutableArray *names = [NSMutableArray array];
+    for (NSString *x in [arg componentsSeparatedByString:@"|"]) if (x.length) [names addObject:x];
+    [self deleteGroupNames:names];
+    exit(0);
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
     [self deleteGroupNames:@[[NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")]]];
     exit(0);
@@ -501,17 +508,19 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 - (NSString *)groupBackupRoot {
   return [[self backupBaseDir] stringByAppendingPathComponent:@"groups"];
 }
-- (NSString *)deletedManifestPath {
-  return [[self backupBaseDir] stringByAppendingPathComponent:@"deleted.plist"];
+- (NSString *)lastDeleteBatchPath {
+  return [[self backupBaseDir] stringByAppendingPathComponent:@"last_delete.plist"];
 }
 
-- (NSMutableArray<NSString *> *)deletedGroupNames {
-  NSArray *a = [NSArray arrayWithContentsOfFile:[self deletedManifestPath]];
-  return a ? [a mutableCopy] : [NSMutableArray array];
+- (NSDictionary *)lastDeleteBatch {
+  NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:[self lastDeleteBatchPath]];
+  return [d isKindOfClass:[NSDictionary class]] ? d : @{};
 }
-- (void)saveDeletedGroupNames:(NSArray *)names {
+
+- (void)saveLastDeleteBatch:(NSArray<NSString *> *)names {
   [[NSFileManager defaultManager] createDirectoryAtPath:[self backupBaseDir] withIntermediateDirectories:YES attributes:nil error:NULL];
-  [names writeToFile:[self deletedManifestPath] atomically:YES];
+  if (!names.count) { [[NSFileManager defaultManager] removeItemAtPath:[self lastDeleteBatchPath] error:NULL]; return; }
+  [@{@"names": names, @"date": [NSDate date]} writeToFile:[self lastDeleteBatchPath] atomically:YES];
 }
 
 - (BOOL)isGroupBackedUp:(NSString *)name {
@@ -640,6 +649,13 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     if ([fm fileExistsAtPath:list]) [trashPaths addObject:list];
     [self removeDockEntry:app];
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")) {
+    NSString *arg = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")];
+    NSMutableArray *names = [NSMutableArray array];
+    for (NSString *x in [arg componentsSeparatedByString:@"|"]) if (x.length) [names addObject:x];
+    [self deleteGroupNames:names];
+    exit(0);
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
     for (NSString *n in names) {
       NSString *app = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
@@ -650,14 +666,14 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   } else {
     [self runAdminTrashPaths:trashPaths];
   }
-  NSMutableArray *deleted = [self deletedGroupNames];
+  NSMutableArray *deleted = [NSMutableArray array];
   NSMutableArray *failed = [NSMutableArray array];
   for (NSString *n in names) {
     NSString *app = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
     if ([fm fileExistsAtPath:app]) { [failed addObject:n]; continue; }
-    if (![deleted containsObject:n]) [deleted addObject:n];
+    [deleted addObject:n];
   }
-  [self saveDeletedGroupNames:deleted];
+  [self saveLastDeleteBatch:deleted];
   [self killDock];
   [self refreshGroups];
   if (self.popover.isShown) [self rebuildQuickGroups];
@@ -672,23 +688,31 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
 }
 
 - (void)restoreGroupsClicked:(id)sender {
+  NSDictionary *batch = [self lastDeleteBatch];
+  NSArray *names = batch[@"names"] ?: @[];
+  if (!names.count) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.icon = [self characterImage:64];
+    a.messageText = @"没有需要恢复的分组";
+    a.informativeText = @"没有找到最近一次删除记录。";
+    [a runModal];
+    return;
+  }
   NSFileManager *fm = [NSFileManager defaultManager];
   NSString *root = [self groupBackupRoot];
-  NSArray *dirs = [fm contentsOfDirectoryAtPath:root error:NULL];
   NSMutableArray *restored = [NSMutableArray array];
-  NSMutableArray *deleted = [self deletedGroupNames];
-  for (NSString *n in dirs) {
+  NSMutableArray *missing = [NSMutableArray array];
+  for (NSString *n in names) {
     NSString *appBackup = [[root stringByAppendingPathComponent:n] stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"app"]];
-    if (![fm fileExistsAtPath:appBackup]) continue;
     NSString *installed = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
-    if ([fm fileExistsAtPath:installed]) continue;   // 未删除的跳过
-    if (![fm copyItemAtPath:appBackup toPath:installed error:NULL]) continue;
+    if (![fm fileExistsAtPath:appBackup]) { [missing addObject:n]; continue; }
+    if ([fm fileExistsAtPath:installed]) continue;
+    if (![fm copyItemAtPath:appBackup toPath:installed error:NULL]) { [missing addObject:n]; continue; }
     NSString *listBackup = [[root stringByAppendingPathComponent:n] stringByAppendingPathComponent:@"list.txt"];
     NSString *listsDir = [GroupDir() stringByAppendingPathComponent:@"lists"];
     [fm createDirectoryAtPath:listsDir withIntermediateDirectories:YES attributes:nil error:NULL];
     NSString *listDst = [listsDir stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"txt"]];
     if ([fm fileExistsAtPath:listBackup] && ![fm fileExistsAtPath:listDst]) [fm copyItemAtPath:listBackup toPath:listDst error:NULL];
-
     NSString *prefs = [[root stringByAppendingPathComponent:n] stringByAppendingPathComponent:@"prefs.plist"];
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[installed stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
     NSString *bid = info[@"CFBundleIdentifier"];
@@ -707,10 +731,9 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
     reg.arguments = @[@"-f", installed];
     @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
     [self addDockEntry:installed label:n];
-    [deleted removeObject:n];
     [restored addObject:n];
   }
-  [self saveDeletedGroupNames:deleted];
+  if (restored.count) [self saveLastDeleteBatch:@[]];
   [self killDock];
   [self refreshGroups];
   if (self.popover.isShown) [self rebuildQuickGroups];
@@ -718,7 +741,11 @@ static BOOL IsOurDockEntry(NSDictionary *item) {
   NSAlert *a = [[NSAlert alloc] init];
   a.icon = [self characterImage:64];
   a.messageText = restored.count ? @"恢复完成" : @"没有需要恢复的分组";
-  a.informativeText = restored.count ? [NSString stringWithFormat:@"已恢复：%@", [restored componentsJoinedByString:@"、"]] : @"所有备份的分组都已经安装。";
+  NSMutableString *info = [NSMutableString string];
+  if (restored.count) [info appendFormat:@"已恢复最近一次删除的：%@", [restored componentsJoinedByString:@"、"]];
+  else [info appendString:@"最近一次删除的分组都已存在或备份缺失。"];
+  if (missing.count) [info appendFormat:@"\n缺少备份：%@", [missing componentsJoinedByString:@"、"]];
+  a.informativeText = info;
   [a runModal];
 }
 
