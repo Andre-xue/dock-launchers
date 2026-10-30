@@ -191,6 +191,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSView *liveView, *groupsView, *uninstallView, *settingsView;
 @property (strong) NSMutableSet *builtSections;
 @property (strong) NSWindow *compressWindow;
+@property (strong) NSButton *compressPinButton, *translationPinButton;
+@property (strong) NSView *quickToolsPage;
 @property (strong) NSMutableArray *compressPaths;
 @property (strong) NSTextField *compressStatus, *compressListLabel;
 @property (strong) NSWindow *translationWindow;
@@ -1329,6 +1331,13 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self togglePopover:nil];
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_TOOLS")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      self.quickTabs.selectedSegment = 3;
+      [self quickTabChanged:nil];
       [self togglePopover:nil];
     });
   }
@@ -6701,9 +6710,9 @@ static BOOL ValidGroupName(NSString *raw) {
   NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0,0,420,620)];
   vc.view = root;
 
-  self.quickTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(12, 574, 240, 28)];
-  self.quickTabs.segmentCount = 3;
-  NSArray *tabs = @[@"概览", @"分组", @"AI"];
+  self.quickTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(12, 574, 300, 28)];
+  self.quickTabs.segmentCount = 4;
+  NSArray *tabs = @[@"概览", @"分组", @"AI", @"工具"];
   for (NSInteger i = 0; i < tabs.count; i++) [self.quickTabs setLabel:tabs[i] forSegment:i];
   self.quickTabs.controlSize = NSControlSizeSmall;
   self.quickTabs.trackingMode = NSSegmentSwitchTrackingSelectOne;
@@ -6739,6 +6748,27 @@ static BOOL ValidGroupName(NSString *raw) {
     else if (i == 4) { self.quickNet = val; val.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold]; val.maximumNumberOfLines = 2; val.lineBreakMode = NSLineBreakByWordWrapping; self.quickNetSub = sub; self.quickNetSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(10, 50, cw - 20, 110)]; self.quickNetSpark.lineColor = ccolors[i]; [card addSubview:self.quickNetSpark]; }
     else { self.quickBat = val; self.quickPowerSub = sub; }
   }
+
+  NSView *toolsPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
+  toolsPage.hidden = YES; self.quickToolsPage = toolsPage; [root addSubview:toolsPage];
+  NSTextField *tt = [self label:@"工具" size:18 bold:YES color:nil];
+  tt.frame = NSMakeRect(16, 480, 250, 26); [toolsPage addSubview:tt];
+  NSTextField *ts = [self label:@"弹出独立窗口，可选择钉住或普通窗口" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+  ts.frame = NSMakeRect(16, 456, 388, 18); [toolsPage addSubview:ts];
+  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 356, 380, 74)];
+  transBtn.title = @"AI 翻译"; transBtn.hoverColor = [NSColor systemTealColor];
+  transBtn.target = self; transBtn.action = @selector(openTranslationToolFromPopover:);
+  [transBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [toolsPage addSubview:transBtn];
+  NSTextField *td = [self label:@"截图 OCR / 文档 / 图片翻译" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+  td.frame = NSMakeRect(32, 370, 340, 16); [toolsPage addSubview:td];
+  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 256, 380, 74)];
+  zipBtn.title = @"压缩 / 解压"; zipBtn.hoverColor = [NSColor systemOrangeColor];
+  zipBtn.target = self; zipBtn.action = @selector(openCompressToolFromPopover:);
+  [zipBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [toolsPage addSubview:zipBtn];
+  NSTextField *zd = [self label:@"ZIP / TAR.GZ，本地处理不联网" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+  zd.frame = NSMakeRect(32, 270, 340, 16); [toolsPage addSubview:zd];
 
   NSView *groupPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   groupPage.hidden = YES; self.quickGroupPage = groupPage; [root addSubview:groupPage];
@@ -6777,18 +6807,6 @@ static BOOL ValidGroupName(NSString *raw) {
   settings.toolTip = @"关闭菜单栏面板，不退出应用";
   [settings applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [root addSubview:settings];
-  ColorHoverButton *compress = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(74, 6, 60, 28)];
-  compress.title = @"压缩"; compress.hoverColor = [NSColor systemOrangeColor];
-  compress.target = self; compress.action = @selector(showCompressWindow:);
-  compress.toolTip = @"压缩 / 解压文件与文件夹";
-  [compress applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [root addSubview:compress];
-  ColorHoverButton *translate = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(64, 6, 52, 28)];
-  translate.title = @"翻译"; translate.hoverColor = [NSColor systemTealColor];
-  translate.target = self; translate.action = @selector(showTranslationWindow:);
-  translate.toolTip = @"AI 翻译 / 截图 OCR / 文档翻译";
-  [translate applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [root addSubview:translate];
   ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(146, 6, 128, 28)];
   open.title = @"打开控制台"; open.hoverColor = [NSColor systemGreenColor];
   open.target = self; open.action = @selector(openConsoleFromPopover:);
@@ -6954,6 +6972,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (self.quickDetail) self.quickDetail.hidden = YES;
   if (self.quickGroupPage) self.quickGroupPage.hidden = (idx != 1);
   if (self.quickAIPage) self.quickAIPage.hidden = (idx != 2);
+  if (self.quickToolsPage) self.quickToolsPage.hidden = (idx != 3);
   if (idx == 1) [self rebuildQuickGroupTab];
   else if (idx == 2) [self rebuildQuickAITab];
 }
@@ -7135,6 +7154,31 @@ static BOOL ValidGroupName(NSString *raw) {
   return tv;
 }
 
+- (void)openTranslationToolFromPopover:(id)sender {
+  [self.popover performClose:nil];
+  [self showTranslationWindow:sender];
+}
+- (void)openCompressToolFromPopover:(id)sender {
+  [self.popover performClose:nil];
+  [self showCompressWindow:sender];
+}
+
+- (void)applyPinLook:(NSButton *)b pinned:(BOOL)pinned {
+  b.state = pinned ? NSControlStateValueOn : NSControlStateValueOff;
+  b.image = [NSImage imageWithSystemSymbolName:(pinned ? @"pin.fill" : @"pin") accessibilityDescription:@"钉住"];
+  b.contentTintColor = pinned ? [NSColor systemOrangeColor] : [NSColor secondaryLabelColor];
+  b.toolTip = pinned ? @"取消钉住（不再置顶）" : @"钉住窗口（始终置顶）";
+}
+
+- (void)toggleToolPin:(NSButton *)b {
+  NSWindow *w = b.tag == 0 ? self.compressWindow : self.translationWindow;
+  if (!w) return;
+  BOOL pinned = (w.level != NSFloatingWindowLevel);
+  w.level = pinned ? NSFloatingWindowLevel : NSNormalWindowLevel;
+  [[NSUserDefaults standardUserDefaults] setBool:pinned forKey:(b.tag == 0 ? @"centerCompressPinned" : @"centerTranslatePinned")];
+  [self applyPinLook:b pinned:pinned];
+}
+
 - (void)showTranslationWindow:(id)sender {
   if (!self.translationWindow) {
     self.translationWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,820,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -7188,12 +7232,21 @@ static BOOL ValidGroupName(NSString *raw) {
     dh.frame = NSMakeRect(24, 49, 772, 18); [cv addSubview:dh];
     self.translationStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.translationStatus.frame = NSMakeRect(24, 10, 772, 18); [cv addSubview:self.translationStatus];
+    self.translationPinButton = [[NSButton alloc] initWithFrame:NSMakeRect(768, 516, 30, 26)];
+    self.translationPinButton.bordered = NO;
+    self.translationPinButton.target = self;
+    self.translationPinButton.action = @selector(toggleToolPin:);
+    self.translationPinButton.tag = 1;
+    [cv addSubview:self.translationPinButton];
     [self.translationWindow center];
   }
   [self reloadTranslationProviders];
-  self.translationWindow.level = NSFloatingWindowLevel;
+  BOOL pinned = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerTranslatePinned"];
+  self.translationWindow.level = pinned ? NSFloatingWindowLevel : NSNormalWindowLevel;
+  [self applyPinLook:self.translationPinButton pinned:pinned];
   [NSApp activateIgnoringOtherApps:YES];
   [self.translationWindow makeKeyAndOrderFront:nil];
+  [self.translationWindow orderFrontRegardless];
 }
 
 - (void)translationOCRImage:(NSString *)path completion:(void (^)(NSString *))completion {
@@ -7436,12 +7489,21 @@ static BOOL ValidGroupName(NSString *raw) {
     [cv addSubview:self.compressSpinner];
     self.compressStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.compressStatus.frame = NSMakeRect(50, 30, 540, 18); [cv addSubview:self.compressStatus];
+    self.compressPinButton = [[NSButton alloc] initWithFrame:NSMakeRect(572, 418, 30, 26)];
+    self.compressPinButton.bordered = NO;
+    self.compressPinButton.target = self;
+    self.compressPinButton.action = @selector(toggleToolPin:);
+    self.compressPinButton.tag = 0;
+    [cv addSubview:self.compressPinButton];
     self.compressPaths = [NSMutableArray array];
     [self.compressWindow center];
   }
-  self.compressWindow.level = NSFloatingWindowLevel;
+  BOOL cpinned = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCompressPinned"];
+  self.compressWindow.level = cpinned ? NSFloatingWindowLevel : NSNormalWindowLevel;
+  [self applyPinLook:self.compressPinButton pinned:cpinned];
   [NSApp activateIgnoringOtherApps:YES];
   [self.compressWindow makeKeyAndOrderFront:nil];
+  [self.compressWindow orderFrontRegardless];
 }
 
 - (void)compressAddFiles:(id)sender {
