@@ -195,8 +195,10 @@ static NSString *LocalizedAppName(NSString *path, NSDictionary *info) {
   self.statusItem.button.action = @selector(togglePopover:);
   [self buildWindow];
   [self buildPopover];
-  // 确保控制台自己出现在 Dock（首次运行/未添加时）
-  [self addDockEntry:[[NSBundle mainBundle] bundlePath] label:@"DockLaunchers控制台"];
+  // 确保控制台自己出现在 Dock，并刷新图标缓存（先删后加）
+  NSString *selfPath = [[NSBundle mainBundle] bundlePath];
+  [self removeDockEntry:selfPath];
+  [self addDockEntry:selfPath label:@"DockLaunchers控制台"];
   [self killDock];
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")) {
     [self deleteGroupNames:@[[NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE")]]];
