@@ -6368,6 +6368,35 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.playerChooserWindow orderOut:nil];
 }
 
+- (void)openSystemVideoAssetID:(NSString *)assetID {
+  PHAsset *asset = [PHAsset fetchAssetsWithLocalIdentifiers:@[assetID] options:nil].firstObject;
+  if (!asset) { [self showToast:@"系统相册视频读取失败"]; return; }
+  self.diskStatus.stringValue = @"正在准备系统相册视频…";
+  self.diskStatus.textColor = [NSColor secondaryLabelColor];
+  PHVideoRequestOptions *opts = [[PHVideoRequestOptions alloc] init];
+  opts.networkAccessAllowed = YES;
+  opts.deliveryMode = PHVideoRequestOptionsDeliveryModeHighQualityFormat;
+  __weak typeof(self) weakSelf = self;
+  [[PHImageManager defaultManager] requestAVAssetForVideo:asset options:opts resultHandler:^(AVAsset *avAsset, AVAudioMix *audioMix, NSDictionary *info) {
+    NSURL *url = [avAsset isKindOfClass:[AVURLAsset class]] ? [(AVURLAsset *)avAsset URL] : nil;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (url.isFileURL && url.path.length) {
+        [weakSelf openVideoPathWithPreferredOrChooser:url.path];
+      } else {
+        // 非本地 URL 时导出资源后再播放
+        [weakSelf exportAlbumAssetID:assetID completion:^(NSString *exported) {
+          if (!exported.length) {
+            weakSelf.diskStatus.stringValue = @"系统相册视频导出失败";
+            weakSelf.diskStatus.textColor = [NSColor systemRedColor];
+            return;
+          }
+          [weakSelf openVideoPathWithPreferredOrChooser:exported];
+        }];
+      }
+    });
+  }];
+}
+
 - (void)openVideoPathWithPreferredOrChooser:(NSString *)path {
   NSString *preferred = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerVideoPlayerPath"] ?: @"";
   if (preferred.length && [[NSFileManager defaultManager] fileExistsAtPath:preferred]) {
@@ -6385,12 +6414,9 @@ static BOOL ValidGroupName(NSString *raw) {
   if (!path.length && assetID.length) {
     __weak typeof(self) weakSelf = self;
     BOOL isVideo = [item[@"kind"] isEqualToString:@"视频"];
+    if (isVideo) { [self openSystemVideoAssetID:assetID]; return; }
     [self exportAlbumAssetID:assetID completion:^(NSString *exported) {
       if (!exported.length) return;
-      if (isVideo) {
-        [weakSelf openVideoPathWithPreferredOrChooser:exported];
-        return;
-      }
       weakSelf.userFilesPreviewPath = exported;
       weakSelf.diskPreviewMode = NO;
       QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
