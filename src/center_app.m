@@ -4022,7 +4022,17 @@ static BOOL ValidGroupName(NSString *raw) {
   NSArray *files = [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:[self aiHistoryDir] error:NULL] sortedArrayUsingSelector:@selector(compare:)] ?: @[];
   if (!files.count) { [self showToast:@"暂无历史版本，修改 AI 数据后会自动生成"]; return; }
   NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,0,320,28) pullsDown:NO];
-  for (NSString *f in [files reverseObjectEnumerator]) [popup addItemWithTitle:[f stringByDeletingPathExtension]];
+  NSDateFormatter *inFmt = [[NSDateFormatter alloc] init];
+  inFmt.dateFormat = @"yyyyMMdd-HHmmss";
+  NSDateFormatter *outFmt = [[NSDateFormatter alloc] init];
+  outFmt.dateFormat = @"yyyy-MM-dd HH:mm:ss";
+  for (NSString *f in [files reverseObjectEnumerator]) {
+    NSString *stamp = [f stringByDeletingPathExtension];
+    NSDate *date = [inFmt dateFromString:stamp];
+    NSString *label = date ? [outFmt stringFromDate:date] : stamp;
+    [popup addItemWithTitle:label];
+    popup.lastItem.representedObject = f;
+  }
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"AI 数据历史版本";
   a.informativeText = @"选择要恢复的版本；恢复前会覆盖当前 AI 服务列表。";
@@ -4032,7 +4042,7 @@ static BOOL ValidGroupName(NSString *raw) {
   a.window.level = NSFloatingWindowLevel;
   [NSApp activateIgnoringOtherApps:YES];
   if ([a runModal] != NSAlertFirstButtonReturn) return;
-  NSString *selected = [popup.titleOfSelectedItem stringByAppendingString:@".json"];
+  NSString *selected = popup.selectedItem.representedObject;
   NSString *path = [[self aiHistoryDir] stringByAppendingPathComponent:selected];
   NSData *d = [NSData dataWithContentsOfFile:path];
   if (!d.length) { [self showToast:@"历史版本读取失败"]; return; }
