@@ -4443,23 +4443,50 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *path = [[self aiHistoryDir] stringByAppendingPathComponent:name];
   NSData *d = [NSJSONSerialization dataWithJSONObject:sanitized options:NSJSONWritingPrettyPrinted error:NULL];
   [d writeToFile:path atomically:YES];
-  NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:[self aiHistoryDir] error:NULL];
-  NSArray *sorted = [files sortedArrayUsingSelector:@selector(compare:)];
-  if (sorted.count > 20) {
-    for (NSUInteger i = 0; i + 20 < sorted.count; i++) {
-      [[NSFileManager defaultManager] removeItemAtPath:[[self aiHistoryDir] stringByAppendingPathComponent:sorted[i]] error:NULL];
+  [self pruneAIHistory];
+}
+
+- (NSInteger)aiHistoryRetentionDays {
+  if (![[NSUserDefaults standardUserDefaults] objectForKey:@"centerAIHistoryDays"]) return 30;
+  return [[NSUserDefaults standardUserDefaults] integerForKey:@"centerAIHistoryDays"];
+}
+
+- (void)pruneAIHistory {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *dir = [self aiHistoryDir];
+  NSArray *files = [[fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[] sortedArrayUsingSelector:@selector(compare:)];
+  NSInteger days = [self aiHistoryRetentionDays];
+  NSDate *cutoff = days > 0 ? [NSDate dateWithTimeIntervalSinceNow:-days * 86400.0] : nil;
+  NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+  fmt.dateFormat = @"yyyyMMdd-HHmmss";
+  for (NSString *f in files) {
+    if (![f.pathExtension.lowercaseString isEqualToString:@"json"]) continue;
+    NSDate *date = [fmt dateFromString:f.stringByDeletingPathExtension];
+    if (cutoff && date && [date compare:cutoff] == NSOrderedAscending) {
+      [fm removeItemAtPath:[dir stringByAppendingPathComponent:f] error:NULL];
+    }
+  }
+  files = [[fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[] sortedArrayUsingSelector:@selector(compare:)];
+  if (files.count > 20) {
+    for (NSUInteger i = 0; i + 20 < files.count; i++) {
+      [fm removeItemAtPath:[dir stringByAppendingPathComponent:files[i]] error:NULL];
     }
   }
 }
 
 - (void)showAIHistory:(id)sender {
-  NSArray *files = [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:[self aiHistoryDir] error:NULL] sortedArrayUsingSelector:@selector(compare:)] ?: @[];
+  [self pruneAIHistory];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *dir = [self aiHistoryDir];
+  NSArray *files = [[fm contentsOfDirectoryAtPath:dir error:NULL] sortedArrayUsingSelector:@selector(compare:)] ?: @[];
   if (!files.count) { [self showToast:@"暂无历史版本，修改 AI 数据后会自动生成"]; return; }
-  NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,0,320,28) pullsDown:NO];
-  NSDateFormatter *inFmt = [[NSDateFormatter alloc] init];
-  inFmt.dateFormat = @"yyyyMMdd-HHmmss";
-  NSDateFormatter *outFmt = [[NSDateFormatter alloc] init];
-  outFmt.dateFormat = @"yyyy-MM-dd HH:mm:ss";
+
+  NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0,0,340,82)];
+  NSTextField *versionLabel = [self label:@"历史版本" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
+  versionLabel.frame = NSMakeRect(0, 62, 80, 18); [accessory addSubview:versionLabel];
+  NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 34, 340, 28) pullsDown:NO];
+  NSDateFormatter *inFmt = [[NSDateFormatter alloc] init]; inFmt.dateFormat = @"yyyyMMdd-HHmmss";
+  NSDateFormatter *outFmt = [[NSDateFormatter alloc] init]; outFmt.dateFormat = @"yyyy-MM-dd HH:mm:ss";
   for (NSString *f in [files reverseObjectEnumerator]) {
     NSString *stamp = [f stringByDeletingPathExtension];
     NSDate *date = [inFmt dateFromString:stamp];
@@ -4467,17 +4494,42 @@ static BOOL ValidGroupName(NSString *raw) {
     [popup addItemWithTitle:label];
     popup.lastItem.representedObject = f;
   }
+  [accessory addSubview:popup];
+  NSTextField *retLabel = [self label:@"自动清除" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
+  retLabel.frame = NSMakeRect(0, 6, 75, 18); [accessory addSubview:retLabel];
+  NSPopUpButton *retPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(78, 0, 180, 26) pullsDown:NO];
+  NSArray *retTitles = @[@"7 天", @"30 天", @"90 天", @"永久"];
+  NSArray *retDays = @[@7, @30, @90, @0];
+  for (NSInteger i = 0; i < retTitles.count; i++) {
+    [retPopup addItemWithTitle:retTitles[i]];
+    retPopup.lastItem.representedObject = retDays[i];
+  }
+  NSInteger curDays = [self aiHistoryRetentionDays];
+  for (NSMenuItem *mi in retPopup.itemArray) if ([mi.representedObject integerValue] == curDays) { [retPopup selectItem:mi]; break; }
+  [accessory addSubview:retPopup];
+
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"AI 数据历史版本";
-  a.informativeText = @"选择要恢复的版本；恢复前会覆盖当前 AI 服务列表。";
-  a.accessoryView = popup;
+  a.informativeText = @"选择版本可恢复或单独删除；自动清除按保留天数执行。";
+  a.accessoryView = accessory;
   [a addButtonWithTitle:@"恢复此版本"];
+  [a addButtonWithTitle:@"删除此版本"];
   [a addButtonWithTitle:@"取消"];
-  a.window.level = NSFloatingWindowLevel;
+  a.window.level = NSStatusWindowLevel + 2;
   [NSApp activateIgnoringOtherApps:YES];
-  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSModalResponse resp = [a runModal];
+
+  NSInteger selectedDays = [retPopup.selectedItem.representedObject integerValue];
+  [[NSUserDefaults standardUserDefaults] setInteger:selectedDays forKey:@"centerAIHistoryDays"];
+
+  if (resp == NSAlertThirdButtonReturn) return;
   NSString *selected = popup.selectedItem.representedObject;
-  NSString *path = [[self aiHistoryDir] stringByAppendingPathComponent:selected];
+  NSString *path = [dir stringByAppendingPathComponent:selected ?: @""];
+  if (resp == NSAlertSecondButtonReturn) {
+    [fm removeItemAtPath:path error:NULL];
+    [self showToast:@"已删除该历史版本"];
+    return;
+  }
   NSData *d = [NSData dataWithContentsOfFile:path];
   if (!d.length) { [self showToast:@"历史版本读取失败"]; return; }
   [d writeToFile:[self aiStorePath] atomically:YES];
