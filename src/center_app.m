@@ -399,6 +399,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *clipboardWindow;
 @property (strong) NSTableView *clipboardTable;
 @property (strong) NSMutableArray *clipboardItems;
+@property (strong) NSMutableArray *clipboardVisibleItems;
+@property (strong) NSSearchField *clipboardSearch;
+@property BOOL clipboardFavoritesOnly;
 @property (strong) NSTimer *clipboardTimer;
 @property NSInteger clipboardLastChange;
 @property (strong) NSString *clipboardLastText;
@@ -4164,9 +4167,55 @@ static BOOL ValidGroupName(NSString *raw) {
   [d writeToFile:[self aiStorePath] atomically:YES];
   [self recordAIHistorySnapshot];
 }
+- (NSString *)clipboardStorePath {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:@"clipboard.json"];
+}
+
+- (void)loadClipboardHistory {
+  self.clipboardItems = [NSMutableArray array];
+  NSData *d = [NSData dataWithContentsOfFile:[self clipboardStorePath]];
+  id arr = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  if (![arr isKindOfClass:[NSArray class]]) return;
+  for (id raw in arr) {
+    if (![raw isKindOfClass:[NSDictionary class]]) continue;
+    NSString *text = raw[@"text"];
+    if (!text.length) continue;
+    NSTimeInterval ts = [raw[@"date"] doubleValue];
+    [self.clipboardItems addObject:@{@"text": text, @"date": ts > 0 ? [NSDate dateWithTimeIntervalSince1970:ts] : [NSDate date], @"favorite": @([raw[@"favorite"] boolValue])}];
+  }
+}
+
+- (void)saveClipboardHistory {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *it in self.clipboardItems) {
+    NSString *text = it[@"text"] ?: @"";
+    if (!text.length) continue;
+    NSDate *date = it[@"date"] ?: [NSDate date];
+    [out addObject:@{@"text": text, @"date": @([date timeIntervalSince1970]), @"favorite": @([it[@"favorite"] boolValue])}];
+  }
+  NSData *d = [NSJSONSerialization dataWithJSONObject:out options:NSJSONWritingPrettyPrinted error:NULL];
+  [d writeToFile:[self clipboardStorePath] atomically:YES];
+}
+
+- (void)reloadClipboardVisibleItems {
+  if (!self.clipboardVisibleItems) self.clipboardVisibleItems = [NSMutableArray array];
+  [self.clipboardVisibleItems removeAllObjects];
+  NSString *q = [self.clipboardSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  for (NSDictionary *it in self.clipboardItems) {
+    if (self.clipboardFavoritesOnly && ![it[@"favorite"] boolValue]) continue;
+    if (q.length && [(it[@"text"] ?: @"") rangeOfString:q options:NSCaseInsensitiveSearch].location == NSNotFound) continue;
+    [self.clipboardVisibleItems addObject:it];
+  }
+  [self.clipboardTable reloadData];
+}
+
+- (void)clipboardSearchChanged:(id)sender { [self reloadClipboardVisibleItems]; }
+
 - (void)startClipboardMonitor {
   if (self.clipboardTimer) return;
-  if (!self.clipboardItems) self.clipboardItems = [NSMutableArray array];
+  [self loadClipboardHistory];
   self.clipboardLastChange = [NSPasteboard generalPasteboard].changeCount;
   self.clipboardLastText = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString] ?: @"";
   self.clipboardTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
@@ -4178,9 +4227,10 @@ static BOOL ValidGroupName(NSString *raw) {
     NSString *text = [pb stringForType:NSPasteboardTypeString];
     if (!text.length || [text isEqualToString:self.clipboardLastText]) return;
     self.clipboardLastText = text;
-    [self.clipboardItems insertObject:@{@"text": text, @"date": [NSDate date]} atIndex:0];
-    while (self.clipboardItems.count > 30) [self.clipboardItems removeLastObject];
-    if (self.clipboardWindow.isVisible) [self.clipboardTable reloadData];
+    [self.clipboardItems insertObject:@{@"text": text, @"date": [NSDate date], @"favorite": @NO} atIndex:0];
+    while (self.clipboardItems.count > 200) [self.clipboardItems removeLastObject];
+    [self saveClipboardHistory];
+    if (self.clipboardWindow.isVisible) [self reloadClipboardVisibleItems];
   }];
 }
 
@@ -4193,9 +4243,16 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *cv = self.clipboardWindow.contentView;
     NSTextField *title = [self label:@"剪贴板历史" size:16 bold:YES color:nil];
     title.frame = NSMakeRect(20, 396, 200, 22); [cv addSubview:title];
-    NSTextField *hint = [self label:@"只记录文字，最多 30 条；双击可重新复制" size:10 bold:NO color:[NSColor secondaryLabelColor]];
-    hint.frame = NSMakeRect(20, 376, 400, 16); [cv addSubview:hint];
-    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 64, 508, 300)];
+    NSTextField *hint = [self label:@"只记录文字，最多 200 条；支持搜索、收藏，双击重新复制" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    hint.frame = NSMakeRect(20, 376, 450, 16); [cv addSubview:hint];
+    self.clipboardSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(20, 340, 250, 26)];
+    self.clipboardSearch.placeholderString = @"搜索剪贴板内容";
+    self.clipboardSearch.target = self; self.clipboardSearch.action = @selector(clipboardSearchChanged:);
+    [cv addSubview:self.clipboardSearch];
+    NSButton *favOnly = [NSButton checkboxWithTitle:@"只看收藏" target:self action:@selector(toggleClipboardFavoritesOnly:)];
+    favOnly.frame = NSMakeRect(280, 342, 120, 22);
+    [cv addSubview:favOnly];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 64, 508, 266)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder; sv.drawsBackground = YES; sv.backgroundColor = [NSColor whiteColor];
     self.clipboardTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"clip"]; col.width = 490;
@@ -4216,14 +4273,17 @@ static BOOL ValidGroupName(NSString *raw) {
     pause.title = @"暂停监听"; pause.hoverColor = [NSColor systemOrangeColor];
     pause.target = self; pause.action = @selector(toggleClipboardPause:);
     [pause applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:pause];
+    ColorHoverButton *fav = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250, 20, 110, 30)];
+    fav.title = @"收藏 / 取消"; fav.hoverColor = [NSColor systemYellowColor];
+    fav.target = self; fav.action = @selector(toggleClipboardFavorite:);
+    [fav applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:fav];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(424, 20, 100, 30)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeClipboardWindow:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.clipboardWindow center];
   }
-  if (!self.clipboardItems) self.clipboardItems = [NSMutableArray array];
-  [self.clipboardTable reloadData];
+  [self reloadClipboardVisibleItems];
   [NSApp activateIgnoringOtherApps:YES];
   [self.clipboardWindow makeKeyAndOrderFront:nil];
   [self.clipboardWindow orderFrontRegardless];
@@ -4232,8 +4292,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)copyClipboardRow:(id)sender {
   NSInteger row = self.clipboardTable.clickedRow;
   if (row < 0) row = self.clipboardTable.selectedRow;
-  if (row < 0 || row >= (NSInteger)self.clipboardItems.count) return;
-  NSString *text = self.clipboardItems[row][@"text"] ?: @"";
+  if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return;
+  NSString *text = self.clipboardVisibleItems[row][@"text"] ?: @"";
   [[NSPasteboard generalPasteboard] clearContents];
   [[NSPasteboard generalPasteboard] setString:text forType:NSPasteboardTypeString];
   self.clipboardLastChange = [NSPasteboard generalPasteboard].changeCount;
@@ -4243,8 +4303,31 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)clearClipboardHistory:(id)sender {
   [self.clipboardItems removeAllObjects];
-  [self.clipboardTable reloadData];
+  [self saveClipboardHistory];
+  [self reloadClipboardVisibleItems];
   [self showToast:@"剪贴板历史已清空"];
+}
+
+- (void)toggleClipboardFavorite:(id)sender {
+  NSInteger row = self.clipboardTable.selectedRow;
+  if (row < 0) row = self.clipboardTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return;
+  NSDictionary *visible = self.clipboardVisibleItems[row];
+  for (NSInteger i = 0; i < (NSInteger)self.clipboardItems.count; i++) {
+    if (self.clipboardItems[i] == visible || [self.clipboardItems[i][@"text"] isEqual:visible[@"text"]]) {
+      NSMutableDictionary *m = [self.clipboardItems[i] mutableCopy];
+      m[@"favorite"] = @(![m[@"favorite"] boolValue]);
+      self.clipboardItems[i] = m;
+      break;
+    }
+  }
+  [self saveClipboardHistory];
+  [self reloadClipboardVisibleItems];
+}
+
+- (void)toggleClipboardFavoritesOnly:(NSButton *)sender {
+  self.clipboardFavoritesOnly = (sender.state == NSControlStateValueOn);
+  [self reloadClipboardVisibleItems];
 }
 
 - (void)toggleClipboardPause:(id)sender {
@@ -6960,7 +7043,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (tableView == self.usageTable) return self.usageRows.count;
   if (tableView == self.playerChooserTable) return self.playerChooserApps.count;
   if (tableView == self.appShortcutTable) return self.appShortcuts.count;
-  if (tableView == self.clipboardTable) return self.clipboardItems.count;
+  if (tableView == self.clipboardTable) return self.clipboardVisibleItems.count;
   if (tableView == self.aiTable) return self.aiVisibleEntries.count;
   if (tableView == self.diskTable) return self.diskFileFiltered.count;
   if (tableView == self.userFilesTable) return self.userFilesForUninstall.count;
