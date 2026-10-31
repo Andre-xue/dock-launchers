@@ -511,6 +511,33 @@ static NSColor *ThemeSel(NSInteger t) {
 }
 
 @implementation RowView
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, @"com.apple.dock.tile"]];
+  }
+  return self;
+}
+- (NSArray<NSURL *> *)dragDropURLs:(id<NSDraggingInfo>)sender {
+  NSPasteboard *pb = sender.draggingPasteboard;
+  NSArray *urls = [pb readObjectsForClasses:@[[NSURL class]] options:nil];
+  if (urls.count) return urls;
+  NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
+  if ([paths isKindOfClass:[NSArray class]] && paths.count) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *p in paths) if ([p isKindOfClass:[NSString class]]) [out addObject:[NSURL fileURLWithPath:p]];
+    return out;
+  }
+  return @[];
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  NSArray *urls = [self dragDropURLs:sender];
+  if (urls.count && self.ctrl) {
+    [self.ctrl performSelector:@selector(addDroppedApps:) withObject:urls];
+    return YES;
+  }
+  return NO;
+}
 - (NSView *)hitTest:(NSPoint)point {
   return NSPointInRect(point, self.bounds) ? self : [super hitTest:point];
 }
