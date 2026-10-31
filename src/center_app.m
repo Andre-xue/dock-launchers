@@ -2858,20 +2858,15 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 
 - (void)runAdminTrashPaths:(NSArray<NSString *> *)paths {
   if (!paths.count) return;
-  NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\n"];
-  NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
-  NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
-  [body appendFormat:@"mkdir -p \"%@\"\n", trash];
-  NSInteger idx = 0;
-  for (NSString *p in paths) [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%ld-%@\"\n", p, p, trash, stamp, (long)idx++, [p lastPathComponent]];
-  [body appendString:@"/usr/bin/killall -KILL Dock 2>/dev/null\n"];
-  NSString *sp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-center-groups.sh"];
-  [body writeToFile:sp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-  [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions:@0755} ofItemAtPath:sp error:NULL];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  for (NSString *p in paths) {
+    if (![fm fileExistsAtPath:p]) continue;
+    [fm trashItemAtURL:[NSURL fileURLWithPath:p] resultingItemURL:nil error:NULL];
+  }
   NSTask *t = [[NSTask alloc] init];
-  t.launchPath = @"/usr/bin/osascript";
-  t.arguments = @[@"-e", [NSString stringWithFormat:@"do shell script \"/bin/sh %@\" with administrator privileges", sp]];
-  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+  t.launchPath = @"/usr/bin/killall";
+  t.arguments = @[@"Dock"];
+  @try { [t launch]; } @catch (NSException *e) {}
 }
 
 - (NSArray<NSString *> *)targetGroupNamesFromSelection {
@@ -2952,6 +2947,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 }
 
 - (void)deleteEmptyGroupDirect:(NSString *)name {
+  if (!getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE") && ![self requestAdminAuthentication]) return;
   NSFileManager *fm = [NSFileManager defaultManager];
   NSString *app = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
   NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
@@ -2991,6 +2987,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 
 - (void)finalizeDeleteGroupNames:(NSArray<NSString *> *)names backup:(BOOL)backup {
   BOOL testMode = getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE") != NULL;
+  if (!testMode && ![self requestAdminAuthentication]) return;
   NSMutableArray *backupNames = [NSMutableArray array];
   for (NSString *n in names) if (![self groupIsEmpty:n]) [backupNames addObject:n];
   if (backup && !testMode) {
@@ -7879,22 +7876,16 @@ static BOOL ValidGroupName(NSString *raw) {
   [a addButtonWithTitle:@"关闭"];
   NSModalResponse r = [a runModal];
   if (r == NSAlertFirstButtonReturn) {
-    NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\n"];
-    NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
-    NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
-    [body appendFormat:@"mkdir -p \"%@\"\n", trash];
-    NSInteger idx = 0;
-    for (NSString *p in leftovers) [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%ld-%@\"\n", p, p, trash, stamp, (long)idx++, [p lastPathComponent]];
-    NSString *sp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-leftovers.sh"];
-    [body writeToFile:sp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-    [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions:@0755} ofItemAtPath:sp error:NULL];
-    NSTask *t = [[NSTask alloc] init];
-    t.launchPath = @"/usr/bin/osascript";
-    t.arguments = @[@"-e", [NSString stringWithFormat:@"do shell script \"/bin/sh %@\" with administrator privileges", sp]];
-    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSInteger failed = 0;
+    for (NSString *p in leftovers) {
+      if (![fm fileExistsAtPath:p]) continue;
+      if (![fm trashItemAtURL:[NSURL fileURLWithPath:p] resultingItemURL:nil error:NULL]) failed++;
+    }
     NSAlert *done = [[NSAlert alloc] init];
     done.icon = [self characterImage:64];
-    done.messageText = t.terminationStatus == 0 ? @"残留已删除" : @"残留删除失败";
+    done.messageText = failed == 0 ? @"残留已删除" : @"部分残留删除失败";
+    done.informativeText = failed ? @"这些文件可能需要管理员权限，可在 Finder 中手动删除。" : @"";
     [done runModal];
   } else if (r == NSAlertSecondButtonReturn) {
     NSMutableArray *urls = [NSMutableArray array];
@@ -7968,20 +7959,20 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   if ([c runModal] != NSAlertFirstButtonReturn) return;
 
-  NSMutableString *body = [NSMutableString stringWithString:@"#!/bin/sh\n"];
-  NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
-  NSString *stamp = [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970]];
-  [body appendFormat:@"mkdir -p \"%@\"\n", trash];
-  NSInteger idx = 0;
-  for (NSString *p in removals) [body appendFormat:@"[ -e \"%@\" ] && mv \"%@\" \"%@/%@-%ld-%@\"\n", p, p, trash, stamp, (long)idx++, [p lastPathComponent]];
-  NSString *sp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-center-uninstall.sh"];
-  [body writeToFile:sp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-  [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions:@0755} ofItemAtPath:sp error:NULL];
-  NSTask *t = [[NSTask alloc] init];
-  t.launchPath = @"/usr/bin/osascript";
-  t.arguments = @[@"-e", [NSString stringWithFormat:@"do shell script \"/bin/sh %@\" with administrator privileges", sp]];
-  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
-  if (t.terminationStatus != 0) return;
+  NSFileManager *uninstallFM = [NSFileManager defaultManager];
+  NSInteger uninstallFailed = 0;
+  for (NSString *p in removals) {
+    if (![uninstallFM fileExistsAtPath:p]) continue;
+    if (![uninstallFM trashItemAtURL:[NSURL fileURLWithPath:p] resultingItemURL:nil error:NULL]) uninstallFailed++;
+  }
+  if (uninstallFailed > 0) {
+    NSAlert *fa = [[NSAlert alloc] init];
+    fa.messageText = @"部分应用无法移到废纸篓";
+    fa.informativeText = @"这些应用可能需要管理员权限，已在 Finder 中保留。";
+    [fa addButtonWithTitle:@"好"];
+    [fa runModal];
+    return;
+  }
 
   NSMutableSet *targets = [NSMutableSet set];
   NSMutableSet *removePaths = [NSMutableSet set];
