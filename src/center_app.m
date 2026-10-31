@@ -529,7 +529,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSTextField *quickCPUSub, *quickGPUSub, *quickMemSub, *quickDiskSub, *quickNetSub, *quickPowerSub;
 @property (strong) QuickBarView *quickCPUBar, *quickGPUBar, *quickMemBar, *quickDiskBar;
 @property (strong) Sparkline *quickCPUSpark, *quickGPUSpark, *quickNetSpark;
-@property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage;
+@property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage, *quickScenePage, *quickSceneContainer;
 @property (strong) NSMutableArray *quickAIRowViews;
 @property NSInteger quickAISelectedRow;
 @property (strong) NSView *quickGroupContainer;
@@ -1813,7 +1813,7 @@ static void HideDockHoverTip(void) {
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      self.quickTabs.selectedSegment = 1;
+      self.quickTabs.selectedSegment = 2;
       [self quickTabChanged:nil];
       [self togglePopover:nil];
       if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI_HIDE_MAIN")) [self.window orderOut:nil];
@@ -1826,7 +1826,7 @@ static void HideDockHoverTip(void) {
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_TOOLS")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      self.quickTabs.selectedSegment = 2;
+      self.quickTabs.selectedSegment = 3;
       [self quickTabChanged:nil];
       [self togglePopover:nil];
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -2626,7 +2626,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
         weakBtn.toolTip = @"该服务不支持自动查询，或未填写 API Key";
       }
       [weakSelf.aiTable reloadData];
-      if (weakSelf.popover.isShown && weakSelf.quickTabs.selectedSegment == 1) [weakSelf rebuildQuickAITab];
+      if (weakSelf.popover.isShown && weakSelf.quickTabs.selectedSegment == 2) [weakSelf rebuildQuickAITab];
     });
   }];
 }
@@ -8089,10 +8089,11 @@ static BOOL ValidGroupName(NSString *raw) {
     return;
   }
   self.scenes = [@[
-    @{@"name": @"工作", @"groups": @[@"工作", @"工具", @"Ai"]},
-    @{@"name": @"下班", @"groups": @[@"聊天", @"影音", @"外网", @"工具"]},
-    @{@"name": @"会议", @"groups": @[@"工作", @"工具"]},
-    @{@"name": @"全部", @"groups": @[]}
+    @{@"name": @"工作", @"groups": @[@"工作", @"工具", @"Ai"], @"all": @NO},
+    @{@"name": @"下班", @"groups": @[@"聊天", @"影音", @"外网", @"工具"], @"all": @NO},
+    @{@"name": @"会议", @"groups": @[@"工作", @"工具"], @"all": @NO},
+    @{@"name": @"全部", @"groups": @[], @"all": @YES},
+    @{@"name": @"无", @"groups": @[], @"all": @NO}
   ] mutableCopy];
   [self saveScenes];
 }
@@ -8100,6 +8101,11 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)saveScenes {
   NSData *d = [NSJSONSerialization dataWithJSONObject:self.scenes options:NSJSONWritingPrettyPrinted error:NULL];
   [d writeToFile:[self sceneStorePath] atomically:YES];
+}
+
+- (BOOL)sceneIsAll:(NSDictionary *)scene {
+  if ([scene[@"all"] isKindOfClass:[NSNumber class]]) return [scene[@"all"] boolValue];
+  return [[scene[@"name"] description] isEqualToString:@"全部"];
 }
 
 - (NSArray<NSString *> *)installedGroupNames {
@@ -8164,8 +8170,9 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)reloadSceneChecks {
   NSInteger idx = self.scenePopup.indexOfSelectedItem;
   if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
-  NSArray *sceneGroups = self.scenes[idx][@"groups"] ?: @[];
-  BOOL all = (sceneGroups.count == 0);
+  NSDictionary *scene = self.scenes[idx];
+  NSArray *sceneGroups = scene[@"groups"] ?: @[];
+  BOOL all = [self sceneIsAll:scene];
   NSArray *installed = [self installedGroupNames];
   NSView *doc = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,450,MAX(310,installed.count*34))];
   [self.sceneChecks removeAllObjects];
@@ -8193,7 +8200,11 @@ static BOOL ValidGroupName(NSString *raw) {
     if (tag >= 0 && tag < (NSInteger)installed.count && cb.state == NSControlStateValueOn) [checked addObject:installed[tag]];
   }
   NSMutableDictionary *scene = [self.scenes[idx] mutableCopy];
-  scene[@"groups"] = checked.count == installed.count ? @[] : checked;
+  if (checked.count == installed.count) {
+    scene[@"all"] = @YES; scene[@"groups"] = @[];
+  } else {
+    scene[@"all"] = @NO; scene[@"groups"] = checked;
+  }
   self.scenes[idx] = scene;
   [self saveScenes];
 }
@@ -8239,7 +8250,7 @@ static BOOL ValidGroupName(NSString *raw) {
   for (NSDictionary *sc in self.scenes) if ([sc[@"name"] isEqualToString:name]) { scene = sc; break; }
   if (!scene) return;
   NSArray *sceneGroups = scene[@"groups"] ?: @[];
-  BOOL all = (sceneGroups.count == 0);
+  BOOL all = [self sceneIsAll:scene];
   NSArray *installed = [self installedGroupNames];
   for (NSString *group in installed) {
     NSString *path = [[GroupDir() stringByAppendingPathComponent:group] stringByAppendingPathExtension:@"app"];
@@ -8449,7 +8460,7 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   [self applyAppearanceRecursively:self.window.contentView appearance:ap];
   [self refreshThemeColors];
-  if (self.popover.isShown && self.quickTabs.selectedSegment == 1) [self rebuildQuickAITab];
+  if (self.popover.isShown && self.quickTabs.selectedSegment == 2) [self rebuildQuickAITab];
 }
 
 - (void)refreshThemeColors {
@@ -8551,8 +8562,8 @@ static BOOL ValidGroupName(NSString *raw) {
   vc.view = root;
 
   self.quickTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(12, 574, 300, 28)];
-  self.quickTabs.segmentCount = 3;
-  NSArray *tabs = @[@"概览", @"AI", @"工具"];
+  self.quickTabs.segmentCount = 4;
+  NSArray *tabs = @[@"概览", @"场景", @"AI", @"工具"];
   for (NSInteger i = 0; i < tabs.count; i++) [self.quickTabs setLabel:tabs[i] forSegment:i];
   self.quickTabs.controlSize = NSControlSizeSmall;
   self.quickTabs.trackingMode = NSSegmentSwitchTrackingSelectOne;
@@ -8648,6 +8659,13 @@ static BOOL ValidGroupName(NSString *raw) {
   gtitle.frame = NSMakeRect(16, 480, 250, 26); [groupPage addSubview:gtitle];
   self.quickGroupContainer = [[NSView alloc] initWithFrame:NSMakeRect(10, 10, 400, 462)];
   [groupPage addSubview:self.quickGroupContainer];
+
+  NSView *scenePage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
+  scenePage.hidden = YES; self.quickScenePage = scenePage; [root addSubview:scenePage];
+  NSTextField *sct = [self label:@"场景模式" size:18 bold:YES color:nil];
+  sct.frame = NSMakeRect(16, 480, 250, 26); [scenePage addSubview:sct];
+  self.quickSceneContainer = [[NSView alloc] initWithFrame:NSMakeRect(10, 10, 400, 462)];
+  [scenePage addSubview:self.quickSceneContainer];
 
   NSView *aiPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   aiPage.hidden = YES; self.quickAIPage = aiPage; [root addSubview:aiPage];
@@ -8849,14 +8867,51 @@ static BOOL ValidGroupName(NSString *raw) {
   }
 }
 
+- (void)rebuildQuickSceneTab {
+  if (!self.quickSceneContainer) return;
+  [self loadScenes];
+  for (NSView *v in [self.quickSceneContainer.subviews copy]) [v removeFromSuperview];
+  CGFloat cw = 124, ch = 76, gap = 10;
+  for (NSInteger i = 0; i < (NSInteger)self.scenes.count; i++) {
+    NSDictionary *sc = self.scenes[i];
+    NSInteger col = i % 3, row = i / 3;
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(8 + col*(cw+gap), 370 - row*(ch+gap), cw, ch)];
+    NSArray *groups = sc[@"groups"] ?: @[];
+    NSString *count = [self sceneIsAll:sc] ? @"全部分组" : (groups.count ? [NSString stringWithFormat:@"%ld 个分组", (long)groups.count] : @"不显示分组");
+    b.title = [NSString stringWithFormat:@"%@\n%@", sc[@"name"] ?: @"", count];
+    b.tag = i;
+    b.hoverColor = [NSColor systemIndigoColor];
+    b.target = self; b.action = @selector(quickSceneClicked:);
+    b.toolTip = @"点击立即切换 Dock 分组";
+    [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+    ps.alignment = NSTextAlignmentCenter;
+    b.attributedTitle = [[NSAttributedString alloc] initWithString:b.title attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:ps}];
+    [self.quickSceneContainer addSubview:b];
+  }
+  NSTextField *hint = [self label:@"点击场景立即切换 Dock 中显示的分组" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
+  hint.alignment = NSTextAlignmentCenter;
+  hint.frame = NSMakeRect(10, 236, 380, 18); [self.quickSceneContainer addSubview:hint];
+}
+
+- (void)quickSceneClicked:(NSButton *)b {
+  NSInteger idx = b.tag;
+  if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
+  NSString *name = self.scenes[idx][@"name"];
+  [self applySceneNamed:name silent:NO];
+  [self.popover performClose:nil];
+}
+
 - (void)quickTabChanged:(id)sender {
   NSInteger idx = self.quickTabs.selectedSegment;
   self.quickOverview.hidden = (idx != 0);
   if (self.quickDetail) self.quickDetail.hidden = YES;
   if (self.quickGroupPage) self.quickGroupPage.hidden = YES;
-  if (self.quickAIPage) self.quickAIPage.hidden = (idx != 1);
-  if (self.quickToolsPage) self.quickToolsPage.hidden = (idx != 2);
-  if (idx == 1) [self rebuildQuickAITab];
+  if (self.quickScenePage) self.quickScenePage.hidden = (idx != 1);
+  if (self.quickAIPage) self.quickAIPage.hidden = (idx != 2);
+  if (self.quickToolsPage) self.quickToolsPage.hidden = (idx != 3);
+  if (idx == 1) [self rebuildQuickSceneTab];
+  else if (idx == 2) [self rebuildQuickAITab];
 }
 
 - (void)rebuildQuickGroupTab {
@@ -9929,8 +9984,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)refreshPopover:(id)sender {
   [self sample];
   [self refreshExternalVolumes];
-  if (self.quickTabs.selectedSegment == 1) [self rebuildQuickGroupTab];
-  if (self.quickTabs.selectedSegment == 1) [self rebuildQuickAITab];
+  if (self.quickTabs.selectedSegment == 1) [self rebuildQuickSceneTab];
+  if (self.quickTabs.selectedSegment == 2) [self rebuildQuickAITab];
   [self showToast:@"菜单栏数据已刷新"];
 }
 
