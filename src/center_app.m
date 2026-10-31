@@ -908,8 +908,68 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
 @end
 
 
+@interface DockHoverTipPanel : NSPanel
+@end
+@implementation DockHoverTipPanel
+- (BOOL)canBecomeKeyWindow { return NO; }
+- (BOOL)canBecomeMainWindow { return NO; }
+@end
+
+static DockHoverTipPanel *gHoverTipPanel = nil;
+static NSTextField *gHoverTipTitle = nil;
+static NSTextField *gHoverTipDetail = nil;
+
+static void ShowDockHoverTip(NSString *title, NSString *detail) {
+  if (!title.length) return;
+  if (!gHoverTipPanel) {
+    gHoverTipPanel = [[DockHoverTipPanel alloc] initWithContentRect:NSMakeRect(0,0,300,70) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    gHoverTipPanel.level = NSFloatingWindowLevel;
+    gHoverTipPanel.opaque = NO;
+    gHoverTipPanel.backgroundColor = [NSColor clearColor];
+    gHoverTipPanel.hasShadow = YES;
+    gHoverTipPanel.ignoresMouseEvents = YES;
+    gHoverTipPanel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+    NSView *bg = [[NSView alloc] initWithFrame:NSMakeRect(0,0,300,70)];
+    bg.wantsLayer = YES;
+    bg.layer.cornerRadius = 10;
+    bg.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.98 alpha:0.97].CGColor;
+    bg.layer.borderWidth = 1;
+    bg.layer.borderColor = [[NSColor separatorColor] colorWithAlphaComponent:0.5].CGColor;
+    [gHoverTipPanel.contentView addSubview:bg];
+    gHoverTipTitle = [[NSTextField alloc] initWithFrame:NSMakeRect(12,38,276,20)];
+    gHoverTipTitle.editable = NO; gHoverTipTitle.bordered = NO; gHoverTipTitle.drawsBackground = NO;
+    gHoverTipTitle.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
+    gHoverTipTitle.textColor = [NSColor labelColor];
+    [bg addSubview:gHoverTipTitle];
+    gHoverTipDetail = [[NSTextField alloc] initWithFrame:NSMakeRect(12,12,276,22)];
+    gHoverTipDetail.editable = NO; gHoverTipDetail.bordered = NO; gHoverTipDetail.drawsBackground = NO;
+    gHoverTipDetail.font = [NSFont systemFontOfSize:10.5];
+    gHoverTipDetail.textColor = [NSColor secondaryLabelColor];
+    gHoverTipDetail.maximumNumberOfLines = 2;
+    gHoverTipDetail.lineBreakMode = NSLineBreakByWordWrapping;
+    [bg addSubview:gHoverTipDetail];
+  }
+  gHoverTipTitle.stringValue = title;
+  gHoverTipDetail.stringValue = detail ?: @"";
+  NSPoint mouse = [NSEvent mouseLocation];
+  NSScreen *scr = [NSScreen mainScreen];
+  NSRect vf = scr.visibleFrame;
+  CGFloat w = 300, h = detail.length > 34 ? 70 : 56;
+  CGFloat x = mouse.x + 14;
+  CGFloat y = mouse.y - h - 8;
+  if (x + w > NSMaxX(vf)) x = mouse.x - w - 14;
+  if (y < NSMinY(vf)) y = mouse.y + 14;
+  [gHoverTipPanel setFrame:NSMakeRect(x, y, w, h) display:YES];
+  [gHoverTipPanel orderFrontRegardless];
+}
+
+static void HideDockHoverTip(void) {
+  [gHoverTipPanel orderOut:nil];
+}
+
 @interface ColorHoverButton : NSButton
 @property (strong) NSColor *hoverColor;
+@property (strong) NSString *hoverTitle, *hoverDetail;
 @property BOOL persistentHighlight;
 @end
 @implementation ColorHoverButton
@@ -940,8 +1000,12 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
   self.layer.shadowOffset = CGSizeMake(0, -2);
   self.layer.shadowOpacity = 0.0;
 }
-- (void)mouseEntered:(NSEvent *)e { [self applyColor:self.hoverColor ?: [NSColor systemBlueColor] textColor:[NSColor whiteColor]]; }
+- (void)mouseEntered:(NSEvent *)e {
+  [self applyColor:self.hoverColor ?: [NSColor systemBlueColor] textColor:[NSColor whiteColor]];
+  if (self.hoverTitle.length) ShowDockHoverTip(self.hoverTitle, self.hoverDetail);
+}
 - (void)mouseExited:(NSEvent *)e {
+  HideDockHoverTip();
   if (self.persistentHighlight) [self applyColor:self.hoverColor ?: [NSColor systemBlueColor] textColor:[NSColor whiteColor]];
   else [self applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
 }
@@ -1381,6 +1445,12 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
           [self.popover showRelativeToRect:self.statusItem.button.bounds ofView:self.statusItem.button preferredEdge:NSRectEdgeMinY];
         }
       });
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_HOVER")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self showTranslationWindow:nil];
+      ShowDockHoverTip(@"选择文档", @"支持 txt / md / pdf / docx / 图片");
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_CONFIRM")) {
@@ -6886,7 +6956,8 @@ static BOOL ValidGroupName(NSString *raw) {
   transBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
   transBtn.hoverColor = [NSColor systemTealColor];
   transBtn.target = self; transBtn.action = @selector(openTranslationToolFromPopover:);
-  transBtn.toolTip = @"AI 翻译：截图 OCR、划词翻译、拖入文档或图片自动识别语言并翻译";
+  transBtn.hoverTitle = @"AI 翻译";
+  transBtn.hoverDetail = @"截图 OCR、划词、文档/图片翻译，自动识别语言";
   [transBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [toolsPage addSubview:transBtn];
 
@@ -6897,7 +6968,8 @@ static BOOL ValidGroupName(NSString *raw) {
   zipBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
   zipBtn.hoverColor = [NSColor systemOrangeColor];
   zipBtn.target = self; zipBtn.action = @selector(openCompressToolFromPopover:);
-  zipBtn.toolTip = @"压缩 / 解压：支持 ZIP、TAR.GZ；可拖入文件或文件夹，解压前做路径安全校验";
+  zipBtn.hoverTitle = @"压缩 / 解压";
+  zipBtn.hoverDetail = @"ZIP / TAR.GZ，本地处理，解压前做路径安全校验";
   [zipBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [toolsPage addSubview:zipBtn];
 
@@ -7408,7 +7480,8 @@ static BOOL ValidGroupName(NSString *raw) {
     self.translationResultView = [self translationTextViewAtFrame:NSMakeRect(424, 140, 372, 276)];
 
     NSArray *symbols = @[@"doc.badge.plus", @"doc.on.doc", @"square.and.arrow.down", @"keyboard"];
-    NSArray *tips = @[@"选择文档：txt / md / pdf / docx / 图片", @"复制译文", @"保存译文为 txt", @"快捷键设置"];
+    NSArray *tips = @[@"选择文档", @"复制译文", @"保存译文", @"快捷键设置"];
+    NSArray *details = @[@"支持 txt / md / pdf / docx / 图片", @"复制右侧译文到剪贴板", @"保存译文为 txt 文件", @"设置截图、划词、翻译的快捷键"];
     NSArray *tSels = @[@"translationChooseDocument:", @"translationCopy:", @"translationSave:", @"openShortcutSettings:"];
     CGFloat txs[4] = {560, 604, 648, 692};
     for (NSInteger i = 0; i < 4; i++) {
@@ -7418,7 +7491,7 @@ static BOOL ValidGroupName(NSString *raw) {
       b.imagePosition = NSImageOnly;
       b.hoverColor = [NSColor systemTealColor];
       b.target = self; b.action = NSSelectorFromString(tSels[i]);
-      b.toolTip = tips[i];
+      b.hoverTitle = tips[i]; b.hoverDetail = details[i];
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
     }
@@ -7891,7 +7964,8 @@ static BOOL ValidGroupName(NSString *raw) {
     self.compressListLabel.frame = NSMakeRect(20, 166, 580, 18); [cv addSubview:self.compressListLabel];
 
     NSArray *symbols = @[@"doc.badge.plus", @"folder.badge.plus", @"trash", @"doc.zipper", @"archivebox", @"shippingbox.and.arrow.backward"];
-    NSArray *tips = @[@"添加文件", @"添加文件夹", @"清空已选项目", @"压缩为 ZIP", @"压缩为 TAR.GZ", @"解压 ZIP / TAR.GZ"];
+    NSArray *tips = @[@"添加文件", @"添加文件夹", @"清空", @"压缩为 ZIP", @"压缩为 TAR.GZ", @"解压"];
+    NSArray *details = @[@"选择一个或多个文件", @"选择一个或多个文件夹", @"移除已选项目", @"压缩为 ZIP 压缩包", @"压缩为 TAR.GZ 压缩包", @"解压 ZIP / TAR.GZ"];
     NSArray *sels = @[@"compressAddFiles:", @"compressAddFolder:", @"compressClear:", @"compressZip:", @"compressTar:", @"extractArchive:"];
     CGFloat xs[6] = {300, 344, 388, 432, 476, 520};
     for (NSInteger i = 0; i < 6; i++) {
@@ -7901,7 +7975,7 @@ static BOOL ValidGroupName(NSString *raw) {
       b.imagePosition = NSImageOnly;
       b.hoverColor = (i < 3) ? [NSColor systemGrayColor] : [NSColor systemOrangeColor];
       b.target = self; b.action = NSSelectorFromString(sels[i]);
-      b.toolTip = tips[i];
+      b.hoverTitle = tips[i]; b.hoverDetail = details[i];
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
     }
