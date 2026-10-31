@@ -409,6 +409,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property BOOL clipboardFavoritesOnly;
 @property (strong) NSPopUpButton *clipboardDaysPopup;
 @property (strong) ColorHoverButton *processMetricButton;
+@property (strong) NSWindow *startupWindow;
+@property (strong) NSTableView *startupTable;
+@property (strong) NSArray *startupItems;
 @property (strong) NSWindow *processWindow;
 @property (strong) NSTableView *processTable;
 @property (strong) NSArray *processItems;
@@ -6777,7 +6780,12 @@ static BOOL ValidGroupName(NSString *raw) {
   NSTextField *h = [self label:@"应用卸载" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
   NSTextField *sub = [self label:@"扫描本机应用（全部应用）或仅分组内；已排除本程序自身的 Dock 分组应用" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  sub.frame = NSMakeRect(24, 584, 550, 18); [v addSubview:sub];
+  sub.frame = NSMakeRect(24, 584, 500, 18); [v addSubview:sub];
+  ColorHoverButton *startupBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(570, 584, 150, 28)];
+  startupBtn.title = @"启动项管理…"; startupBtn.hoverColor = [NSColor systemTealColor];
+  startupBtn.target = self; startupBtn.action = @selector(showStartupItems:);
+  [startupBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:startupBtn];
 
   self.uninstallScopeCtl = [[ScopeColorControl alloc] initWithFrame:NSMakeRect(24, 540, 180, 28)
                                                              title0:@"全部应用" color0:[NSColor systemBlueColor]
@@ -7193,6 +7201,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.startupTable) return self.startupItems.count;
   if (tableView == self.processTable) return self.processItems.count;
   if (tableView == self.usageTable) return self.usageRows.count;
   if (tableView == self.playerChooserTable) return self.playerChooserApps.count;
@@ -7212,6 +7221,39 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.startupTable) {
+    if (row < 0 || row >= (NSInteger)self.startupItems.count) return nil;
+    NSDictionary *it = self.startupItems[row];
+    NSString *ident = col.identifier;
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,40)];
+    if ([ident isEqualToString:@"sname"]) {
+      NSTextField *l = [self label:it[@"name"] size:11 bold:YES color:nil];
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.toolTip = it[@"path"];
+      l.frame = NSMakeRect(4, 10, col.width - 8, 18); [v addSubview:l];
+    } else if ([ident isEqualToString:@"sstatus"]) {
+      BOOL loaded = [it[@"loaded"] boolValue];
+      NSTextField *l = [self label:loaded ? @"已启用" : @"已禁用" size:10.5 bold:YES color:loaded ? [NSColor systemGreenColor] : [NSColor secondaryLabelColor]];
+      l.frame = NSMakeRect(4, 10, col.width - 8, 18); [v addSubview:l];
+    } else if ([ident isEqualToString:@"stype"]) {
+      NSTextField *l = [self label:it[@"type"] size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+      l.frame = NSMakeRect(4, 10, col.width - 8, 18); [v addSubview:l];
+    } else {
+      BOOL user = [it[@"user"] boolValue];
+      ColorHoverButton *toggle = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(0, 5, 80, 28)];
+      toggle.title = [it[@"loaded"] boolValue] ? @"禁用" : @"启用";
+      toggle.tag = row; toggle.target = self; toggle.action = @selector(toggleStartupRow:);
+      [toggle applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      toggle.enabled = user;
+      [v addSubview:toggle];
+      ColorHoverButton *finder = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(86, 5, 76, 28)];
+      finder.title = @"Finder";
+      finder.tag = row; finder.target = self; finder.action = @selector(revealStartupRow:);
+      [finder applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      [v addSubview:finder];
+    }
+    return v;
+  }
   if (tableView == self.processTable) {
     if (row < 0 || row >= (NSInteger)self.processItems.count) return nil;
     NSDictionary *p = self.processItems[row];
@@ -8832,6 +8874,104 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.processTimer invalidate]; self.processTimer = nil;
   [self.processWindow orderOut:nil];
 }
+
+- (BOOL)launchAgentLoaded:(NSString *)label domain:(NSString *)domain {
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/bin/launchctl";
+  t.arguments = @[@"print", [NSString stringWithFormat:@"%@/%@", domain, label]];
+  t.standardOutput = [NSPipe pipe];
+  t.standardError = [NSPipe pipe];
+  @try { [t launch]; [t waitUntilExit]; return t.terminationStatus == 0; } @catch (NSException *e) { return NO; }
+}
+
+- (void)showStartupItems:(id)sender {
+  if (!self.startupWindow) {
+    self.startupWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.startupWindow.title = @"启动项管理";
+    self.startupWindow.releasedWhenClosed = NO;
+    self.startupWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.startupWindow.contentView;
+    NSTextField *title = [self label:@"启动项管理" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"管理用户 LaunchAgents；系统级启动项仅展示" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 448, 600, 18); [cv addSubview:sub];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 688, 360)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.startupTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"sname", @"启动项", @260.0], @[@"sstatus", @"状态", @100.0], @[@"stype", @"类型", @110.0], @[@"sactions", @"操作", @190.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.startupTable addTableColumn:col];
+    }
+    self.startupTable.rowHeight = 40;
+    self.startupTable.dataSource = self; self.startupTable.delegate = self;
+    sv.documentView = self.startupTable;
+    [cv addSubview:sv];
+    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 36, 90, 30)];
+    refresh.title = @"刷新"; refresh.hoverColor = [NSColor systemGreenColor];
+    refresh.target = self; refresh.action = @selector(refreshStartupItems:);
+    [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(604, 36, 100, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeStartupItems:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.startupWindow center];
+  }
+  [self refreshStartupItems:nil];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.startupWindow makeKeyAndOrderFront:nil];
+  [self.startupWindow orderFrontRegardless];
+}
+
+- (void)refreshStartupItems:(id)sender {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSMutableArray *rows = [NSMutableArray array];
+  NSArray *dirs = @[@[NSHomeDirectory(), @"用户"], @[@"/Library/LaunchAgents", @"系统"], @[@"/Library/LaunchDaemons", @"系统"]];
+  for (NSArray *pair in dirs) {
+    NSString *dir = pair[0];
+    NSString *type = pair[1];
+    BOOL user = [type isEqualToString:@"用户"];
+    for (NSString *f in [[fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[] sortedArrayUsingSelector:@selector(compare:)]) {
+      if (![f.pathExtension.lowercaseString isEqualToString:@"plist"]) continue;
+      NSString *path = [dir stringByAppendingPathComponent:f];
+      NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:path];
+      if (![plist isKindOfClass:[NSDictionary class]]) continue;
+      NSString *label = plist[@"Label"] ?: f.stringByDeletingPathExtension;
+      NSString *domain = user ? [NSString stringWithFormat:@"gui/%d", getuid()] : @"system";
+      BOOL loaded = [self launchAgentLoaded:label domain:domain];
+      [rows addObject:@{@"name": label, @"path": path, @"type": type, @"user": @(user), @"loaded": @(loaded), @"domain": domain}];
+    }
+  }
+  self.startupItems = rows;
+  [self.startupTable reloadData];
+}
+
+- (void)toggleStartupRow:(NSButton *)b {
+  NSInteger row = b.tag;
+  if (row < 0 || row >= (NSInteger)self.startupItems.count) return;
+  NSDictionary *it = self.startupItems[row];
+  if (![it[@"user"] boolValue]) { [self showToast:@"系统级启动项需要在系统设置中管理"]; return; }
+  if (![self requestAdminAuthentication]) return;
+  NSString *domain = it[@"domain"];
+  NSString *path = it[@"path"];
+  BOOL loaded = [it[@"loaded"] boolValue];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/bin/launchctl";
+  t.arguments = loaded ? @[@"bootout", domain, path] : @[@"bootstrap", domain, path];
+  t.standardOutput = [NSPipe pipe]; t.standardError = [NSPipe pipe];
+  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+  [self refreshStartupItems:nil];
+  [self showToast:loaded ? @"已禁用启动项" : @"已启用启动项"];
+}
+
+- (void)revealStartupRow:(NSButton *)b {
+  NSInteger row = b.tag;
+  if (row < 0 || row >= (NSInteger)self.startupItems.count) return;
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.startupItems[row][@"path"]]]];
+}
+
+- (void)closeStartupItems:(id)sender { [self.startupWindow orderOut:nil]; }
 
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
