@@ -234,6 +234,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property BOOL iconMode;
 @property NSRect iconRect;
 @property CGFloat iconCorner;
+@property BOOL dropHighlight;
+@property BOOL dropAfter;
 @end
 
 @interface GroupDropWindow : NSWindow
@@ -641,11 +643,27 @@ static NSColor *ThemeSel(NSInteger t) {
 - (NSArray<NSURL *> *)dragDropURLs:(id<NSDraggingInfo>)sender {
   return ExtractDraggedURLs(sender.draggingPasteboard);
 }
-- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+  self.dropHighlight = DraggedRowPaths(sender.draggingPasteboard).count > 0;
+  [self setNeedsDisplay:YES];
+  return NSDragOperationCopy;
+}
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
+  NSPoint p = [self convertPoint:sender.draggingLocation fromView:nil];
+  BOOL after = (p.y < NSMidY(self.bounds));
+  if (after != self.dropAfter) { self.dropAfter = after; [self setNeedsDisplay:YES]; }
+  self.dropHighlight = YES;
+  return NSDragOperationCopy;
+}
+- (void)draggingExited:(id<NSDraggingInfo>)sender {
+  self.dropHighlight = NO;
+  [self setNeedsDisplay:YES];
+}
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
   NSArray<NSString *> *rowPaths = DraggedRowPaths(sender.draggingPasteboard);
   if (rowPaths.count && self.ctrl) {
-    [self.ctrl performSelector:@selector(reorderDraggedPaths:beforePath:) withObject:rowPaths withObject:self.targetPath];
+    NSString *before = self.dropAfter ? [@"__after__" stringByAppendingString:self.targetPath] : self.targetPath;
+    [self.ctrl performSelector:@selector(reorderDraggedPaths:beforePath:) withObject:rowPaths withObject:before];
     return YES;
   }
   NSArray *urls = [self dragDropURLs:sender];
@@ -664,10 +682,26 @@ static NSColor *ThemeSel(NSInteger t) {
   return NSPointInRect(point, self.bounds) ? self : [super hitTest:point];
 }
 - (void)drawRect:(NSRect)dirtyRect {
-  if (!self.selected || self.iconMode) return;
-  [(self.selColor ?: ThemeSel(gTheme)) setFill];
-  NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 2) xRadius:10 yRadius:10];
-  [p fill];
+  if (self.selected && !self.iconMode) {
+    [(self.selColor ?: ThemeSel(gTheme)) setFill];
+    NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 2) xRadius:10 yRadius:10];
+    [p fill];
+  }
+  if (self.dropHighlight) {
+    NSRect box = NSInsetRect(self.bounds, 3, 3);
+    NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:box xRadius:9 yRadius:9];
+    [[[NSColor controlAccentColor] colorWithAlphaComponent:0.12] setFill];
+    [p fill];
+    p.lineWidth = 2.0;
+    [[NSColor controlAccentColor] setStroke];
+    [p stroke];
+    // 插入位置指示线：上半区插到前面，下半区插到后面
+    CGFloat y = self.dropAfter ? NSMinY(self.bounds) + 2 : NSMaxY(self.bounds) - 4;
+    NSRect line = NSMakeRect(NSMinX(self.bounds) + 10, y, NSWidth(self.bounds) - 20, 3);
+    [[NSColor controlAccentColor] setFill];
+    NSBezierPath *lp = [NSBezierPath bezierPathWithRoundedRect:line xRadius:1.5 yRadius:1.5];
+    [lp fill];
+  }
 }
 - (void)rightMouseDown:(NSEvent *)event {
   [self.ctrl selectRow:self.idx];
@@ -1075,9 +1109,6 @@ static NSColor *ThemeSel(NSInteger t) {
   else if (c == 27) { [self.ctrl closeCancel:nil]; }
   else { [super keyDown:event]; }
 }
-- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
-  return NSDragOperationCopy;
-}
 - (NSArray<NSURL *> *)droppedURLs:(id<NSDraggingInfo>)sender {
   NSPasteboard *pb = sender.draggingPasteboard;
   NSArray *urls = [pb readObjectsForClasses:@[[NSURL class]] options:nil];
@@ -1092,6 +1123,7 @@ static NSColor *ThemeSel(NSInteger t) {
   if (s.length) { NSURL *u = [NSURL URLWithString:s]; if (u) return @[u]; }
   return @[];
 }
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
   NSArray<NSString *> *rowPaths = DraggedRowPaths(sender.draggingPasteboard);
   if (rowPaths.count && self.ctrl) {
@@ -1988,6 +2020,8 @@ static NSString *ResolveAppPath(NSString *target) {
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     self.suppressExternalDragEnd = NO;
   });
+  BOOL dropAfter = [before hasPrefix:@"__after__"];
+  if (dropAfter) before = [before substringFromIndex:9];
   NSSet *moved = [NSSet setWithArray:paths];
   NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL] ?: @"";
   NSArray *rawLines = [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
@@ -2001,8 +2035,10 @@ static NSString *ResolveAppPath(NSString *target) {
     NSRange r = [line rangeOfString:@"|"];
     NSString *target = [[(r.location == NSNotFound ? line : [line substringFromIndex:r.location+1]) stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] copy];
     if ([moved containsObject:target]) { [movedLines addObject:line]; continue; }
-    if (before.length && (insertAt < 0) && ([target isEqualToString:before] || [ResolveAppPath(target) isEqualToString:ResolveAppPath(before)])) insertAt = kept.count;
+    BOOL isTarget = before.length && ([target isEqualToString:before] || [ResolveAppPath(target) isEqualToString:ResolveAppPath(before)]);
+    if (isTarget && !dropAfter && insertAt < 0) insertAt = kept.count;
     [kept addObject:line];
+    if (isTarget && dropAfter) insertAt = kept.count;
   }
   if (insertAt < 0) insertAt = kept.count;
   NSMutableArray *out = [kept mutableCopy];
