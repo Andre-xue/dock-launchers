@@ -1441,22 +1441,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)rowDragEnded:(NSString *)path screenPoint:(NSPoint)pt {
   if (!path.length) return;
-  NSString *label = path.lastPathComponent.stringByDeletingPathExtension;
-  NSAlert *a = [[NSAlert alloc] init];
-  a.messageText = @"添加到 Dock？";
-  a.informativeText = [NSString stringWithFormat:@"将「%@」添加到 Dock 后，会从当前分组移除。", label];
-  [a addButtonWithTitle:@"添加"];
-  [a addButtonWithTitle:@"取消"];
-  if ([a runModal] != NSAlertFirstButtonReturn) return;
-  if ([self dockContainsApp:path]) {
-    NSAlert *d = [[NSAlert alloc] init];
-    d.messageText = @"Dock 中已有该应用";
-    d.informativeText = @"同一个应用不能重复添加到 Dock。";
-    [d addButtonWithTitle:@"好"];
-    [d runModal];
-    return;
-  }
-  [self addAppToDock:path];
+  if (![self dockContainsApp:path]) [self addAppToDock:path];
   [self removeAppFromList:path];
   [self reload];
 }
