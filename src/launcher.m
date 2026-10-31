@@ -5,6 +5,52 @@
 
 static NSString *gGroup = @"";
 static NSString *gListKey = @"";
+static void CollectDockDragURLs(id obj, NSMutableArray *out) {
+  if (!obj) return;
+  if ([obj isKindOfClass:[NSString class]]) {
+    NSString *s = obj;
+    if ([s hasPrefix:@"file://"]) {
+      NSURL *u = [NSURL URLWithString:s];
+      if (u.isFileURL) [out addObject:u];
+    }
+    return;
+  }
+  if ([obj isKindOfClass:[NSArray class]]) {
+    for (id x in obj) CollectDockDragURLs(x, out);
+    return;
+  }
+  if ([obj isKindOfClass:[NSDictionary class]]) {
+    NSDictionary *d = obj;
+    NSString *bid = d[@"bundle-identifier"] ?: d[@"bundleID"] ?: d[@"CFBundleIdentifier"];
+    if ([bid isKindOfClass:[NSString class]] && bid.length) {
+      NSURL *u = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bid];
+      if (u) [out addObject:u];
+    }
+    for (id x in d.allValues) CollectDockDragURLs(x, out);
+  }
+}
+
+static BOOL DragIsFromDock(NSPasteboard *pb) {
+  return [[pb types] containsObject:@"com.apple.dock.tile"];
+}
+
+static NSArray<NSURL *> *ExtractDraggedURLs(NSPasteboard *pb) {
+  NSMutableArray *out = [NSMutableArray array];
+  NSArray *urls = [pb readObjectsForClasses:@[[NSURL class]] options:nil];
+  if (urls.count) [out addObjectsFromArray:urls];
+  NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
+  if ([paths isKindOfClass:[NSArray class]]) for (NSString *p in paths) if ([p isKindOfClass:[NSString class]]) [out addObject:[NSURL fileURLWithPath:p]];
+  id tile = [pb propertyListForType:@"com.apple.dock.tile"];
+  if (tile) CollectDockDragURLs(tile, out);
+  NSMutableArray *unique = [NSMutableArray array];
+  NSMutableSet *seen = [NSMutableSet set];
+  for (NSURL *u in out) {
+    if (!u.path.length || [seen containsObject:u.path]) continue;
+    [seen addObject:u.path]; [unique addObject:u];
+  }
+  return unique;
+}
+
 static NSString *gListFile = @"";
 
 // 皮肤：0 纯白 1 纯黑 2 质感玻璃 3 自定义图片
@@ -166,16 +212,7 @@ static NSString *SignatureForEvent(NSEvent *e);
   return self;
 }
 - (NSArray<NSURL *> *)droppedURLs:(id<NSDraggingInfo>)sender {
-  NSPasteboard *pb = sender.draggingPasteboard;
-  NSArray *urls = [pb readObjectsForClasses:@[[NSURL class]] options:nil];
-  if (urls.count) return urls;
-  NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
-  if ([paths isKindOfClass:[NSArray class]] && paths.count) {
-    NSMutableArray *out = [NSMutableArray array];
-    for (NSString *p in paths) if ([p isKindOfClass:[NSString class]]) [out addObject:[NSURL fileURLWithPath:p]];
-    return out;
-  }
-  return @[];
+  return ExtractDraggedURLs(sender.draggingPasteboard);
 }
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
@@ -342,6 +379,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)addDroppedApps:(NSArray<NSURL *> *)urls;
 - (void)rowDragEnded:(NSString *)path screenPoint:(NSPoint)pt;
 - (void)addRowToDockAtIndex:(NSNumber *)idx;
+- (void)restoreDockEntriesForPaths:(NSArray<NSURL *> *)urls;
 - (void)removeRowAtIndex:(NSNumber *)idx;
 - (void)removeSelected:(id)sender;
 - (void)loadIconsFrom:(NSInteger)start;
@@ -518,22 +556,14 @@ static NSColor *ThemeSel(NSInteger t) {
   return self;
 }
 - (NSArray<NSURL *> *)dragDropURLs:(id<NSDraggingInfo>)sender {
-  NSPasteboard *pb = sender.draggingPasteboard;
-  NSArray *urls = [pb readObjectsForClasses:@[[NSURL class]] options:nil];
-  if (urls.count) return urls;
-  NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
-  if ([paths isKindOfClass:[NSArray class]] && paths.count) {
-    NSMutableArray *out = [NSMutableArray array];
-    for (NSString *p in paths) if ([p isKindOfClass:[NSString class]]) [out addObject:[NSURL fileURLWithPath:p]];
-    return out;
-  }
-  return @[];
+  return ExtractDraggedURLs(sender.draggingPasteboard);
 }
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
   NSArray *urls = [self dragDropURLs:sender];
   if (urls.count && self.ctrl) {
     [self.ctrl performSelector:@selector(addDroppedApps:) withObject:urls];
+    if (DragIsFromDock(sender.draggingPasteboard)) [self.ctrl performSelector:@selector(restoreDockEntriesForPaths:) withObject:urls];
     return YES;
   }
   return NO;
@@ -898,23 +928,17 @@ static NSColor *ThemeSel(NSInteger t) {
   return self;
 }
 - (NSArray<NSURL *> *)droppedURLs:(id<NSDraggingInfo>)sender {
-  NSPasteboard *pb = sender.draggingPasteboard;
-  NSArray *urls = [pb readObjectsForClasses:@[[NSURL class]] options:nil];
-  if (urls.count) return urls;
-  NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
-  if ([paths isKindOfClass:[NSArray class]] && paths.count) {
-    NSMutableArray *out = [NSMutableArray array];
-    for (NSString *p in paths) if ([p isKindOfClass:[NSString class]]) [out addObject:[NSURL fileURLWithPath:p]];
-    return out;
-  }
-  return @[];
+  return ExtractDraggedURLs(sender.draggingPasteboard);
 }
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
   NSArray *urls = [self droppedURLs:sender];
   if (urls.count) {
     id ctrl = self.dropCtrl;
-    if (ctrl) [ctrl performSelector:@selector(addDroppedApps:) withObject:urls];
+    if (ctrl) {
+      [ctrl performSelector:@selector(addDroppedApps:) withObject:urls];
+      if (DragIsFromDock(sender.draggingPasteboard)) [ctrl performSelector:@selector(restoreDockEntriesForPaths:) withObject:urls];
+    }
     return YES;
   }
   return NO;
@@ -958,7 +982,11 @@ static NSColor *ThemeSel(NSInteger t) {
 }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
   NSArray<NSURL *> *urls = [self droppedURLs:sender];
-  if (urls.count && self.ctrl) { [self.ctrl addDroppedApps:urls]; return YES; }
+  if (urls.count && self.ctrl) {
+    [self.ctrl addDroppedApps:urls];
+    if (DragIsFromDock(sender.draggingPasteboard)) [self.ctrl restoreDockEntriesForPaths:urls];
+    return YES;
+  }
   return NO;
 }
 
@@ -1367,6 +1395,14 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)syncTick:(NSTimer *)t {
   if ([self pruneStaleListEntries] > 0) [self reload];
+}
+
+- (void)restoreDockEntriesForPaths:(NSArray<NSURL *> *)urls {
+  for (NSURL *u in urls) {
+    if (![u.pathExtension.lowercaseString isEqualToString:@"app"]) continue;
+    NSString *path = u.path.stringByStandardizingPath;
+    if (![self dockContainsApp:path]) [self addAppToDock:path];
+  }
 }
 
 - (void)addDroppedApps:(NSArray<NSURL *> *)urls {
