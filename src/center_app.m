@@ -364,6 +364,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableArray *aiEntries;
 @property (strong) NSMutableSet *aiSelected;
 @property (strong) NSMutableSet *aiRevealedNames;
+@property (strong) NSWindow *photoPermissionWindow;
+@property (strong) NSButton *photoSystemRadio, *photoLocalRadio;
+@property (strong) NSTextField *photoPermissionStatus;
 @property (strong) NSWindow *appPasswordWindow;
 @property (strong) NSSecureTextField *pwCurrentField, *pwNewField, *pwConfirmField;
 @property (strong) NSTextField *pwStatusLabel;
@@ -5672,7 +5675,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [self.diskVolumePopup addItemWithTitle:[NSString stringWithFormat:@"外部 · %@", name]];
     self.diskVolumePopup.lastItem.representedObject = @{@"kind": @"external", @"path": [vol[@"url"] path] ?: @""};
   }
-  [self.diskVolumePopup addItemWithTitle:@"相册"];
+  [self.diskVolumePopup addItemWithTitle:[self photoSourceTitle]];
   self.diskVolumePopup.lastItem.representedObject = @{@"kind": @"photo"};
   NSInteger sel = 0;
   BOOL found = NO;
@@ -5871,23 +5874,31 @@ static BOOL ValidGroupName(NSString *raw) {
     }
     label = names.count ? [names componentsJoinedByString:@" + "] : @"外部磁盘";
   }
+  NSString *photoMode = [self photoMode];
   if (isPhotoSource) {
-    label = @"相册";
-    BOOL fullAlbum = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAlbumFullLibrary"];
-    if (fullAlbum) {
-      // PhotoKit 分支在后台处理，这里不预扫描路径
-    } else {
-    NSArray *items = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Pictures"] error:NULL] ?: @[];
-    for (NSString *it in items) {
-      if (![it.pathExtension.lowercaseString isEqualToString:@"photoslibrary"]) continue;
-      NSString *orig = [[[NSHomeDirectory() stringByAppendingPathComponent:@"Pictures"] stringByAppendingPathComponent:it] stringByAppendingPathComponent:@"originals"];
-      if ([[NSFileManager defaultManager] fileExistsAtPath:orig]) [roots addObject:orig];
-    }
-    if (!roots.count) {
-      self.diskStatus.stringValue = @"未找到照片图库";
+    if (!photoMode.length) {
+      self.diskStatus.stringValue = @"尚未设置图库权限";
+      self.diskStatus.textColor = [NSColor systemOrangeColor];
       [self.diskSpinner stopAnimation:nil];
+      NSAlert *a = [[NSAlert alloc] init];
+      a.messageText = @"尚未设置图库权限";
+      a.informativeText = @"请先在 设置 → 权限设置 中选择「系统相册」或「本机相册」。";
+      [a addButtonWithTitle:@"去设置"];
+      [a addButtonWithTitle:@"取消"];
+      if ([a runModal] == NSAlertFirstButtonReturn) [self showPhotoPermissionSettings:nil];
       return;
     }
+    label = [self photoSourceTitle];
+    if ([photoMode isEqualToString:@"local"]) {
+      for (NSString *folder in [self localPhotoFolders]) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:folder]) [roots addObject:folder];
+      }
+      if (!roots.count) {
+        self.diskStatus.stringValue = @"本机图库未选择文件夹";
+        self.diskStatus.textColor = [NSColor systemRedColor];
+        [self.diskSpinner stopAnimation:nil];
+        return;
+      }
     }
   }
   self.diskStatus.stringValue = [NSString stringWithFormat:@"正在分析 %@…", label];
@@ -5903,7 +5914,7 @@ static BOOL ValidGroupName(NSString *raw) {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
     NSMutableArray *files = [NSMutableArray array];
     NSFileManager *fm = [NSFileManager defaultManager];
-    BOOL fullAlbum = (isPhotoSource && [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAlbumFullLibrary"]);
+    BOOL fullAlbum = (isPhotoSource && [photoMode isEqualToString:@"system"]);
     if (fullAlbum) {
       dispatch_semaphore_t sem = dispatch_semaphore_create(0);
       [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) { dispatch_semaphore_signal(sem); }];
@@ -7853,7 +7864,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
   CGFloat colX[3] = {24, 264, 504};
   CGFloat tileW = 222, tileH = 64, gap = 10;
-  NSArray *colTitles = @[@"常规", @"同步与文件", @"相册与磁盘"];
+  NSArray *colTitles = @[@"常规", @"同步与文件", @"权限设置"];
   for (NSInteger c = 0; c < 3; c++) {
     NSTextField *ct = [self label:colTitles[c] size:14 bold:YES color:nil];
     ct.frame = NSMakeRect(colX[c], 540, tileW, 20);
@@ -7933,12 +7944,12 @@ static BOOL ValidGroupName(NSString *raw) {
   [tActivity addSubview:self.activityCheck];
 
   // 第三列：相册与磁盘
-  NSView *tAlbum = tileAt(2, 500);
-  self.albumModeCheck = [NSButton checkboxWithTitle:@"相册完整图库" target:self action:@selector(toggleAlbumMode:)];
-  self.albumModeCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAlbumFullLibrary"] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.albumModeCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
-  self.albumModeCheck.toolTip = @"使用完整照片图库，首次需授权";
-  [tAlbum addSubview:self.albumModeCheck];
+  NSView *tAlbum = tileAt(2, 500); tileLabel(tAlbum, @"图库权限");
+  ColorHoverButton *albumPerm = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
+  albumPerm.title = @"图库权限…"; albumPerm.hoverColor = [NSColor systemPinkColor];
+  albumPerm.target = self; albumPerm.action = @selector(showPhotoPermissionSettings:);
+  [albumPerm applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [tAlbum addSubview:albumPerm];
 
   NSView *tMedia = tileAt(2, 426);
   self.mediaModeCheck = [NSButton checkboxWithTitle:@"包含个人媒体目录" target:self action:@selector(togglePersonalMedia:)];
@@ -9684,6 +9695,154 @@ static BOOL ValidGroupName(NSString *raw) {
   if (on) [self requestMediaDirsAccess];
   [self showToast:on ? @"已请求媒体目录访问权限" : @"已排除个人媒体目录"];
 }
+
+- (NSString *)photoMode {
+  NSString *m = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerPhotoMode"] ?: @"";
+  if (!m.length && [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAlbumFullLibrary"]) m = @"system";
+  return m;
+}
+
+- (NSArray<NSString *> *)localPhotoFolders {
+  NSArray *a = [[NSUserDefaults standardUserDefaults] arrayForKey:@"centerLocalPhotoFolders"];
+  return [a isKindOfClass:[NSArray class]] ? a : @[];
+}
+
+- (NSString *)photoSourceTitle {
+  NSString *m = [self photoMode];
+  if ([m isEqualToString:@"system"]) return @"图库（系统相册）";
+  if ([m isEqualToString:@"local"]) return @"图库（本机相册）";
+  return @"图库";
+}
+
+- (void)updatePhotoPermissionUI {
+  NSString *m = [self photoMode];
+  if (self.photoSystemRadio) self.photoSystemRadio.state = [m isEqualToString:@"system"] ? NSControlStateValueOn : NSControlStateValueOff;
+  if (self.photoLocalRadio) self.photoLocalRadio.state = [m isEqualToString:@"local"] ? NSControlStateValueOn : NSControlStateValueOff;
+  if (self.photoPermissionStatus) {
+    if ([m isEqualToString:@"system"]) self.photoPermissionStatus.stringValue = @"当前：系统相册（系统照片 App 全部内容）";
+    else if ([m isEqualToString:@"local"]) self.photoPermissionStatus.stringValue = [NSString stringWithFormat:@"当前：本机相册 · 已选 %ld 个文件夹", (long)[self localPhotoFolders].count];
+    else self.photoPermissionStatus.stringValue = @"当前：未设置图库权限";
+  }
+}
+
+- (void)showPhotoPermissionSettings:(id)sender {
+  if (!self.photoPermissionWindow) {
+    self.photoPermissionWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,540,310) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.photoPermissionWindow.title = @"图库权限";
+    self.photoPermissionWindow.releasedWhenClosed = NO;
+    self.photoPermissionWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.photoPermissionWindow.contentView;
+    NSTextField *t = [self label:@"图库权限" size:17 bold:YES color:nil];
+    t.frame = NSMakeRect(24, 262, 300, 24); [cv addSubview:t];
+    NSTextField *h = [self label:@"只能选择一个来源；磁盘分析会同步显示对应内容" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24, 240, 490, 16); [cv addSubview:h];
+    self.photoSystemRadio = [NSButton radioButtonWithTitle:@"系统相册（系统照片 App 的全部内容）" target:self action:@selector(photoPermissionRadioChanged:)];
+    self.photoSystemRadio.tag = 0;
+    self.photoSystemRadio.frame = NSMakeRect(28, 198, 460, 24);
+    [cv addSubview:self.photoSystemRadio];
+    self.photoLocalRadio = [NSButton radioButtonWithTitle:@"本机相册（保存在本机文件夹中的图片和视频）" target:self action:@selector(photoPermissionRadioChanged:)];
+    self.photoLocalRadio.tag = 1;
+    self.photoLocalRadio.frame = NSMakeRect(28, 166, 460, 24);
+    [cv addSubview:self.photoLocalRadio];
+    self.photoPermissionStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.photoPermissionStatus.frame = NSMakeRect(28, 124, 480, 18); [cv addSubview:self.photoPermissionStatus];
+    ColorHoverButton *folders = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(28, 72, 170, 30)];
+    folders.title = @"选择本机文件夹…"; folders.hoverColor = [NSColor systemTealColor];
+    folders.target = self; folders.action = @selector(chooseLocalPhotoFolders:);
+    [folders applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:folders];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(424, 72, 90, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closePhotoPermissionSettings:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:close];
+    NSTextField *note = [self label:@"本机相册未选择文件夹时不可用；系统相册首次使用需要照片权限" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    note.frame = NSMakeRect(28, 36, 480, 16); [cv addSubview:note];
+    [self.photoPermissionWindow center];
+  }
+  [self updatePhotoPermissionUI];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.photoPermissionWindow makeKeyAndOrderFront:nil];
+  [self.photoPermissionWindow orderFrontRegardless];
+}
+
+- (void)photoPermissionRadioChanged:(NSButton *)sender {
+  NSString *previous = [self photoMode];
+  if (sender.tag == 0) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"使用系统相册？";
+    a.informativeText = @"将请求访问系统照片图库；磁盘分析会显示系统相册的全部照片和视频。";
+    [a addButtonWithTitle:@"确认授权"];
+    [a addButtonWithTitle:@"取消"];
+    if ([a runModal] != NSAlertFirstButtonReturn) { [self updatePhotoPermissionUI]; return; }
+    __block PHAuthorizationStatus auth = PHAuthorizationStatusNotDetermined;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) { auth = status; dispatch_semaphore_signal(sem); }];
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)));
+    if (auth != PHAuthorizationStatusAuthorized && auth != PHAuthorizationStatusLimited) {
+      [self updatePhotoPermissionUI];
+      NSAlert *d = [[NSAlert alloc] init];
+      d.messageText = @"系统相册权限未开启";
+      d.informativeText = @"请到系统设置 → 隐私与安全性 → 照片中允许访问。";
+      [d addButtonWithTitle:@"好"];
+      [d runModal];
+      return;
+    }
+    [[NSUserDefaults standardUserDefaults] setObject:@"system" forKey:@"centerPhotoMode"];
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"centerAlbumFullLibrary"];
+  } else {
+    NSAlert *q = [[NSAlert alloc] init];
+    q.messageText = @"本机相册需要选择文件夹";
+    q.informativeText = @"是否现在选择要展示的图片 / 视频文件夹？可以多选。";
+    [q addButtonWithTitle:@"选择文件夹"];
+    [q addButtonWithTitle:@"取消"];
+    if ([q runModal] != NSAlertFirstButtonReturn) {
+      [self updatePhotoPermissionUI];
+      NSAlert *d = [[NSAlert alloc] init];
+      d.messageText = @"选择本机相册必须选择需展示的文件夹";
+      d.informativeText = @"已退回图库权限选择，未开启本机相册。";
+      [d addButtonWithTitle:@"好"];
+      [d runModal];
+      return;
+    }
+    NSOpenPanel *p = [NSOpenPanel openPanel];
+    p.canChooseFiles = NO; p.canChooseDirectories = YES; p.allowsMultipleSelection = YES;
+    p.message = @"选择本机相册要展示的文件夹（可多选）";
+    if ([p runModal] != NSModalResponseOK || !p.URLs.count) {
+      [self updatePhotoPermissionUI];
+      NSAlert *d = [[NSAlert alloc] init];
+      d.messageText = @"选择本机相册必须选择需展示的文件夹";
+      d.informativeText = @"已退回图库权限选择，未开启本机相册。";
+      [d addButtonWithTitle:@"好"];
+      [d runModal];
+      return;
+    }
+    NSMutableArray *folders = [NSMutableArray array];
+    for (NSURL *u in p.URLs) [folders addObject:u.path];
+    [[NSUserDefaults standardUserDefaults] setObject:@"local" forKey:@"centerPhotoMode"];
+    [[NSUserDefaults standardUserDefaults] setObject:folders forKey:@"centerLocalPhotoFolders"];
+    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"centerAlbumFullLibrary"];
+  }
+  [self updatePhotoPermissionUI];
+  [self refreshDiskSourcePopup];
+  [self styleDiskSource];
+}
+
+- (void)chooseLocalPhotoFolders:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = NO; p.canChooseDirectories = YES; p.allowsMultipleSelection = YES;
+  p.message = @"选择本机相册要展示的文件夹（可多选）";
+  if ([p runModal] != NSModalResponseOK || !p.URLs.count) return;
+  NSMutableArray *folders = [NSMutableArray array];
+  for (NSURL *u in p.URLs) [folders addObject:u.path];
+  [[NSUserDefaults standardUserDefaults] setObject:folders forKey:@"centerLocalPhotoFolders"];
+  [[NSUserDefaults standardUserDefaults] setObject:@"local" forKey:@"centerPhotoMode"];
+  [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"centerAlbumFullLibrary"];
+  [self updatePhotoPermissionUI];
+  [self refreshDiskSourcePopup];
+}
+
+- (void)closePhotoPermissionSettings:(id)sender { [self.photoPermissionWindow orderOut:nil]; }
 
 - (void)toggleAlbumMode:(id)sender {
   BOOL on = (self.albumModeCheck.state == NSControlStateValueOn);
