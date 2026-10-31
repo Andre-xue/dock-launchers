@@ -141,8 +141,10 @@ static NSString *SignatureForEvent(NSEvent *e);
 }
 @end
 
-@interface RowView : NSView
+@interface RowView : NSView <NSDraggingSource>
 @property (assign) NSInteger idx;
+@property (copy) NSString *targetPath;
+@property NSPoint dragStart;
 @property (strong) AppIconView *iconView;
 @property (strong) NSTextField *label;
 @property (assign) BOOL selected;
@@ -303,6 +305,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)openSelected:(id)sender;
 - (void)closeCancel:(id)sender;
 - (void)addApps:(id)sender;
+- (void)addDroppedApps:(NSArray<NSURL *> *)urls;
 - (void)removeSelected:(id)sender;
 - (void)loadIconsFrom:(NSInteger)start;
 - (void)selectRow:(NSInteger)idx;
@@ -478,8 +481,22 @@ static NSColor *ThemeSel(NSInteger t) {
   [p fill];
 }
 - (void)mouseDown:(NSEvent *)event {
+  self.dragStart = event.locationInWindow;
   [self.ctrl selectRow:self.idx];
   if (event.clickCount >= 2) [self.ctrl openSelected:nil];
+}
+- (void)mouseDragged:(NSEvent *)event {
+  if (!self.targetPath.length) return;
+  NSPoint p = event.locationInWindow;
+  if (hypot(p.x - self.dragStart.x, p.y - self.dragStart.y) < 5) return;
+  NSURL *url = [NSURL fileURLWithPath:self.targetPath];
+  NSDraggingItem *item = [[NSDraggingItem alloc] initWithPasteboardWriter:url];
+  NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:self.targetPath];
+  [item setDraggingFrame:NSMakeRect(0, 0, 48, 48) contents:icon];
+  [self beginDraggingSessionWithItems:@[item] event:event source:self];
+}
+- (NSDragOperation)draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
+  return NSDragOperationCopy;
 }
 @end
 
@@ -810,6 +827,15 @@ static NSColor *ThemeSel(NSInteger t) {
   else if (c == 27) { [self.ctrl closeCancel:nil]; }
   else { [super keyDown:event]; }
 }
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+  return NSDragOperationCopy;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  NSArray<NSURL *> *urls = [sender.draggingPasteboard readObjectsForClasses:@[[NSURL class]] options:nil];
+  if (urls.count && self.ctrl) { [self.ctrl addDroppedApps:urls]; return YES; }
+  return NO;
+}
+
 @end
 
 // ================= 可自定义快捷键 =================
@@ -1003,6 +1029,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
   ContentView *cv = [[ContentView alloc] initWithFrame:frame];
   cv.ctrl = self;
+  [cv registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
   cv.wantsLayer = YES;
   cv.layer.backgroundColor = [NSColor colorWithCalibratedRed:0.96 green:0.965 blue:0.972 alpha:1.0].CGColor;
   self.window.contentView = cv;
@@ -1213,6 +1240,33 @@ static NSString *ResolveAppPath(NSString *target) {
   if ([self pruneStaleListEntries] > 0) [self reload];
 }
 
+- (void)addDroppedApps:(NSArray<NSURL *> *)urls {
+  if (!urls.count || !gListFile.length) return;
+  NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+  NSMutableArray *lines = [[content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
+  NSInteger added = 0;
+  for (NSURL *u in urls) {
+    if (![u.pathExtension.lowercaseString isEqualToString:@"app"]) continue;
+    NSString *path = u.path.stringByStandardizingPath;
+    NSBundle *bundle = [NSBundle bundleWithPath:path];
+    NSString *display = bundle.localizedInfoDictionary[@"CFBundleDisplayName"] ?: bundle.infoDictionary[@"CFBundleDisplayName"] ?: bundle.localizedInfoDictionary[@"CFBundleName"] ?: bundle.infoDictionary[@"CFBundleName"] ?: path.lastPathComponent.stringByDeletingPathExtension;
+    BOOL exists = NO;
+    for (NSString *line in lines) {
+      NSRange r = [line rangeOfString:@"|"];
+      NSString *target = r.location == NSNotFound ? line : [line substringFromIndex:r.location+1];
+      if ([[target stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] isEqualToString:path]) { exists = YES; break; }
+    }
+    if (exists) continue;
+    [lines addObject:[NSString stringWithFormat:@"%@|%@", display, path]];
+    added++;
+  }
+  while (lines.count && [[lines lastObject] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].length == 0) [lines removeLastObject];
+  if (added > 0) {
+    [[lines componentsJoinedByString:@"\n"] writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    [self reload];
+  }
+}
+
 - (void)reload {
   [self pruneStaleListEntries];
   NSArray *allItems = [self loadItems];
@@ -1247,6 +1301,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
     NSString *target = it[@"target"];
     NSString *path = ResolveAppPath(target);
+    row.targetPath = path ?: @"";
     NSImage *icon = nil;
     if (path) icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
     NSDictionary *cfg = (icons && target) ? gAppIconSettings[target] : nil;
