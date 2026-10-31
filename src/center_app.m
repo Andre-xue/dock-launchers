@@ -2360,6 +2360,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 
 - (void)showSection:(NSInteger)idx {
   self.section = idx;
+  if (idx == 2) { if (!self.aiEntries) [self loadAIEntries]; [self hydrateAIKeys]; }
   for (NSView *v in self.content.subviews) [v removeFromSuperview];
   NSArray *btns = @[self.sideLive, self.sideGroups, self.sideAI, self.sideDisk, self.sideUninstall, self.sideSettings];
   NSArray *navColors = @[[NSColor systemGreenColor], [NSColor systemYellowColor], [NSColor systemBlueColor],
@@ -4098,6 +4099,26 @@ static BOOL ValidGroupName(NSString *raw) {
   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
   return [dir stringByAppendingPathComponent:@"ai_entries.json"];
 }
+- (void)hydrateAIKeys {
+  static BOOL hydrated = NO;
+  if (hydrated) return;
+  hydrated = YES;
+  if (!self.aiEntries) return;
+  for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
+    if (![self.aiEntries[i] isKindOfClass:[NSDictionary class]]) continue;
+    NSMutableDictionary *e = [self.aiEntries[i] mutableCopy];
+    NSString *kid = e[@"kid"];
+    if (kid.length && ![e[@"api"] length]) {
+      NSString *stored = AIKeychainGet(kid);
+      if (stored.length) {
+        e[@"api"] = stored;
+        AIKeychainSet(kid, stored);
+      }
+    }
+    self.aiEntries[i] = e;
+  }
+}
+
 - (void)loadAIEntries {
   NSData *d = [NSData dataWithContentsOfFile:[self aiStorePath]];
   id parsed = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
@@ -4112,13 +4133,6 @@ static BOOL ValidGroupName(NSString *raw) {
     if (plain.length) {
       AIKeychainSet(kid, plain);
       migrated = YES;
-    } else {
-      NSString *stored = AIKeychainGet(kid);
-      if (stored.length) {
-        e[@"api"] = stored;
-        // 迁移到信任本应用的 ACL，之后重新签名不再弹钥匙串密码
-        AIKeychainSet(kid, stored);
-      }
     }
     self.aiEntries[i] = e;
   }
@@ -8674,9 +8688,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
   NSView *scenePage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   scenePage.hidden = YES; self.quickScenePage = scenePage; [root addSubview:scenePage];
-  NSTextField *sct = [self label:@"场景模式" size:18 bold:YES color:nil];
-  sct.frame = NSMakeRect(16, 480, 250, 26); [scenePage addSubview:sct];
-  self.quickSceneContainer = [[NSView alloc] initWithFrame:NSMakeRect(10, 10, 400, 462)];
+  self.quickSceneContainer = [[NSView alloc] initWithFrame:NSMakeRect(10, 10, 400, 500)];
   [scenePage addSubview:self.quickSceneContainer];
 
   NSView *aiPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
@@ -8818,6 +8830,8 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)rebuildQuickAITab {
+  if (!self.aiEntries) [self loadAIEntries];
+  [self hydrateAIKeys];
   NSView *page = self.quickAIPage;
   if (!page) return;
   for (NSView *sub in [page.subviews copy]) [sub removeFromSuperview];
@@ -8884,17 +8898,17 @@ static BOOL ValidGroupName(NSString *raw) {
   [self loadScenes];
   for (NSView *v in [self.quickSceneContainer.subviews copy]) [v removeFromSuperview];
   NSTextField *title = [self label:@"场景模式" size:17 bold:YES color:nil];
-  title.frame = NSMakeRect(16, 404, 300, 24); [self.quickSceneContainer addSubview:title];
+  title.frame = NSMakeRect(16, 454, 300, 24); [self.quickSceneContainer addSubview:title];
   NSTextField *sub = [self label:@"选择场景要显示在 Dock 里的分组" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
-  sub.frame = NSMakeRect(16, 384, 380, 16); [self.quickSceneContainer addSubview:sub];
+  sub.frame = NSMakeRect(16, 434, 380, 16); [self.quickSceneContainer addSubview:sub];
 
-  self.quickScenePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(16, 350, 200, 26) pullsDown:NO];
+  self.quickScenePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(16, 400, 200, 26) pullsDown:NO];
   for (NSDictionary *sc in self.scenes) [self.quickScenePopup addItemWithTitle:sc[@"name"] ?: @""];
   if (self.quickSceneIndex < 0 || self.quickSceneIndex >= (NSInteger)self.scenes.count) self.quickSceneIndex = 0;
   [self.quickScenePopup selectItemAtIndex:self.quickSceneIndex];
   self.quickScenePopup.target = self; self.quickScenePopup.action = @selector(quickScenePopupChanged:);
   [self.quickSceneContainer addSubview:self.quickScenePopup];
-  ColorHoverButton *applyTop = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(228, 350, 88, 26)];
+  ColorHoverButton *applyTop = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(228, 400, 88, 26)];
   applyTop.title = @"应用"; applyTop.hoverColor = [NSColor systemIndigoColor];
   applyTop.target = self; applyTop.action = @selector(quickSceneApply:);
   [applyTop applyColor:[NSColor systemIndigoColor] textColor:[NSColor whiteColor]];
@@ -8903,20 +8917,20 @@ static BOOL ValidGroupName(NSString *raw) {
   self.quickSceneAutoCheck = [NSButton checkboxWithTitle:@"按时间自动切换（工作日 9:00-18:00 工作，其余下班）" target:self action:@selector(quickSceneAutoToggled:)];
   self.quickSceneAutoCheck.font = [NSFont systemFontOfSize:10.5];
   self.quickSceneAutoCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerSceneAuto"] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.quickSceneAutoCheck.frame = NSMakeRect(16, 318, 390, 22);
+  self.quickSceneAutoCheck.frame = NSMakeRect(16, 368, 390, 22);
   [self.quickSceneContainer addSubview:self.quickSceneAutoCheck];
 
   NSTextField *hint = [self label:@"勾选该场景要显示的分组" size:9.5 bold:YES color:[NSColor tertiaryLabelColor]];
-  hint.frame = NSMakeRect(16, 294, 300, 16); [self.quickSceneContainer addSubview:hint];
+  hint.frame = NSMakeRect(16, 344, 300, 16); [self.quickSceneContainer addSubview:hint];
 
-  self.quickSceneScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(12, 58, 396, 226)];
+  self.quickSceneScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(12, 108, 396, 226)];
   self.quickSceneScroll.hasVerticalScroller = YES;
   self.quickSceneScroll.borderType = NSBezelBorder;
   self.quickSceneScroll.drawsBackground = YES;
   self.quickSceneScroll.backgroundColor = [NSColor controlBackgroundColor];
   [self.quickSceneContainer addSubview:self.quickSceneScroll];
 
-  ColorHoverButton *apply = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(270, 12, 122, 32)];
+  ColorHoverButton *apply = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(270, 62, 122, 32)];
   apply.title = @"应用此场景"; apply.hoverColor = [NSColor systemIndigoColor];
   apply.target = self; apply.action = @selector(quickSceneApply:);
   [apply applyColor:[NSColor systemIndigoColor] textColor:[NSColor whiteColor]];
@@ -9244,6 +9258,8 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)showTranslationWindow:(id)sender {
+  if (!self.aiEntries) [self loadAIEntries];
+  [self hydrateAIKeys];
   if (!self.translationWindow) {
     self.translationWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,820,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.translationWindow.title = @"AI 翻译";
