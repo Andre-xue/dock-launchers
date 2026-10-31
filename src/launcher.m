@@ -160,6 +160,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 @end
 
 @interface FlippedView : NSView
+@property (weak) id dropCtrl;
 @end
 
 @interface CircleButton : NSButton
@@ -815,6 +816,32 @@ static NSColor *ThemeSel(NSInteger t) {
 @end
 
 @implementation FlippedView
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, @"com.apple.dock.tile"]];
+  return self;
+}
+- (NSArray<NSURL *> *)droppedURLs:(id<NSDraggingInfo>)sender {
+  NSPasteboard *pb = sender.draggingPasteboard;
+  NSArray *urls = [pb readObjectsForClasses:@[[NSURL class]] options:nil];
+  if (urls.count) return urls;
+  NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
+  if ([paths isKindOfClass:[NSArray class]] && paths.count) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *p in paths) if ([p isKindOfClass:[NSString class]]) [out addObject:[NSURL fileURLWithPath:p]];
+    return out;
+  }
+  return @[];
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  NSArray *urls = [self droppedURLs:sender];
+  if (urls.count) {
+    id ctrl = self.dropCtrl;
+    if (ctrl) [ctrl performSelector:@selector(addDroppedApps:) withObject:urls];
+    return YES;
+  }
+  return NO;
+}
 - (BOOL)isFlipped { return YES; }
 @end
 
@@ -838,8 +865,22 @@ static NSColor *ThemeSel(NSInteger t) {
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
   return NSDragOperationCopy;
 }
+- (NSArray<NSURL *> *)droppedURLs:(id<NSDraggingInfo>)sender {
+  NSPasteboard *pb = sender.draggingPasteboard;
+  NSArray *urls = [pb readObjectsForClasses:@[[NSURL class]] options:nil];
+  if (urls.count) return urls;
+  NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
+  if ([paths isKindOfClass:[NSArray class]] && paths.count) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *p in paths) if ([p isKindOfClass:[NSString class]]) [out addObject:[NSURL fileURLWithPath:p]];
+    return out;
+  }
+  NSString *s = [pb stringForType:NSPasteboardTypeFileURL];
+  if (s.length) { NSURL *u = [NSURL URLWithString:s]; if (u) return @[u]; }
+  return @[];
+}
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
-  NSArray<NSURL *> *urls = [sender.draggingPasteboard readObjectsForClasses:@[[NSURL class]] options:nil];
+  NSArray<NSURL *> *urls = [self droppedURLs:sender];
   if (urls.count && self.ctrl) { [self.ctrl addDroppedApps:urls]; return YES; }
   return NO;
 }
@@ -1037,7 +1078,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
   ContentView *cv = [[ContentView alloc] initWithFrame:frame];
   cv.ctrl = self;
-  [cv registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+  [cv registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, @"com.apple.dock.tile"]];
   cv.wantsLayer = YES;
   cv.layer.backgroundColor = [NSColor colorWithCalibratedRed:0.96 green:0.965 blue:0.972 alpha:1.0].CGColor;
   self.window.contentView = cv;
@@ -1147,6 +1188,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [cv addSubview:self.scroll];
 
   self.listContainer = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,W-32,10)];
+  ((FlippedView *)self.listContainer).dropCtrl = self;
   self.scroll.documentView = self.listContainer;
 
   PillButton *cancel = [[PillButton alloc] initWithFrame:NSMakeRect(16, 10, 56, 56)];
@@ -1363,7 +1405,7 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)rowDragEnded:(NSString *)path screenPoint:(NSPoint)pt {
-  if (!path.length || ![self pointIsOverDock:pt]) return;
+  if (!path.length) return;
   NSString *label = path.lastPathComponent.stringByDeletingPathExtension;
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"添加到 Dock？";
