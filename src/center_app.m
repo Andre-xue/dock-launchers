@@ -450,6 +450,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) ColorHoverButton *promptPrevButton;
 @property (strong) ColorHoverButton *promptNextButton;
 @property (strong) NSSearchField *promptSearch;
+@property (strong) NSPopUpButton *promptCategoryPopup;
 @property (strong) NSWindow *largeFileWindow;
 @property (strong) NSTableView *largeFileTable;
 @property (strong) NSArray *largeFileItems;
@@ -9310,6 +9311,11 @@ static BOOL ValidGroupName(NSString *raw) {
     self.promptSearch.target = self; self.promptSearch.action = @selector(promptSearchChanged:);
     [self.promptSearch setContinuous:YES];
     [cv addSubview:self.promptSearch];
+    self.promptCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(328, 410, 160, 28) pullsDown:NO];
+    self.promptCategoryPopup.target = self;
+    self.promptCategoryPopup.action = @selector(promptCategoryChanged:);
+    self.promptCategoryPopup.toolTip = @"按分类快速筛选提示词";
+    [cv addSubview:self.promptCategoryPopup];
     ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(570, 408, 110, 30)];
     add.title = @"新增提示词"; add.hoverColor = [NSColor systemGreenColor];
     add.target = self; add.action = @selector(promptAdd:);
@@ -9358,16 +9364,38 @@ static BOOL ValidGroupName(NSString *raw) {
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.promptWindow center];
   }
+  [self refreshPromptCategories];
   [self reloadPromptTable];
   [NSApp activateIgnoringOtherApps:YES];
   [self.promptWindow makeKeyAndOrderFront:nil];
   [self.promptWindow orderFrontRegardless];
 }
 
+- (void)refreshPromptCategories {
+  if (!self.promptCategoryPopup) return;
+  NSString *cur = self.promptCategoryPopup.titleOfSelectedItem ?: @"全部分类";
+  NSMutableArray *cats = [NSMutableArray arrayWithObject:@"全部分类"];
+  for (NSDictionary *p in self.prompts) {
+    NSString *c = p[@"category"] ?: @"";
+    if (c.length && ![cats containsObject:c]) [cats addObject:c];
+  }
+  [cats sortUsingSelector:@selector(localizedCompare:)];
+  [self.promptCategoryPopup removeAllItems];
+  for (NSString *c in cats) [self.promptCategoryPopup addItemWithTitle:c];
+  if ([cats containsObject:cur]) [self.promptCategoryPopup selectItemWithTitle:cur];
+}
+
+- (void)promptCategoryChanged:(id)sender {
+  self.promptPage = 0;
+  [self reloadPromptTable];
+}
+
 - (void)reloadPromptTable {
   NSString *q = [self.promptSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  NSString *cat = self.promptCategoryPopup.titleOfSelectedItem ?: @"全部分类";
   NSMutableArray *out = [NSMutableArray array];
   for (NSDictionary *p in self.prompts) {
+    if (![cat isEqualToString:@"全部分类"] && ![(p[@"category"] ?: @"") isEqualToString:cat]) continue;
     if (q.length) {
       NSString *hay = [NSString stringWithFormat:@"%@ %@ %@", p[@"title"] ?: @"", p[@"category"] ?: @"", p[@"content"] ?: @""].lowercaseString;
       if ([hay rangeOfString:q].location == NSNotFound) continue;
@@ -9425,6 +9453,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSMutableDictionary *p = [@{@"title": title, @"category": catField.stringValue ?: @"", @"content": tv.string ?: @""} mutableCopy];
   if (editing) self.prompts[idx] = p; else [self.prompts addObject:p];
   [self savePrompts];
+  [self refreshPromptCategories];
   [self reloadPromptTable];
 }
 
@@ -9446,6 +9475,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (idx == NSNotFound) return;
   [self.prompts removeObjectAtIndex:idx];
   [self savePrompts];
+  [self refreshPromptCategories];
   [self reloadPromptTable];
   [self showToast:@"提示词已删除"];
 }
