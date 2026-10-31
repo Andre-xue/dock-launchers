@@ -3300,6 +3300,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   NSString *old = [NSString stringWithContentsOfFile:listPath encoding:NSUTF8StringEncoding error:NULL] ?: @"";
   NSMutableArray *lines = [[old componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
   NSInteger added = 0, skipped = 0;
+  NSFileManager *fm = [NSFileManager defaultManager];
   for (NSURL *u in urls) {
     if (![u.pathExtension.lowercaseString isEqualToString:@"app"]) { skipped++; continue; }
     NSString *path = u.path.stringByStandardizingPath;
@@ -3307,11 +3308,39 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
     NSString *display = bundle.localizedInfoDictionary[@"CFBundleDisplayName"] ?: bundle.infoDictionary[@"CFBundleDisplayName"] ?: bundle.localizedInfoDictionary[@"CFBundleName"] ?: bundle.infoDictionary[@"CFBundleName"] ?: path.lastPathComponent.stringByDeletingPathExtension;
     BOOL exists = NO;
     for (NSString *line in lines) {
-      NSArray *parts = [line componentsSeparatedByString:@"|"];
-      NSString *target = parts.count > 1 ? parts[1] : parts.firstObject;
-      if ([[target stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] isEqualToString:path]) { exists = YES; break; }
+      NSRange r = [line rangeOfString:@"|"];
+      NSString *target = [(r.location == NSNotFound ? line : [line substringFromIndex:r.location+1]) stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if ([target isEqualToString:path] || [[self resolveApplicationPathForName:target] isEqualToString:path]) { exists = YES; break; }
     }
-    if (exists) { skipped++; continue; }
+    if (exists) {
+      NSAlert *a = [[NSAlert alloc] init];
+      a.messageText = @"该应用已在此分组中";
+      a.informativeText = display;
+      [a addButtonWithTitle:@"好"];
+      [a runModal];
+      skipped++; continue;
+    }
+    // 检查其他分组是否已存在
+    NSString *listsDir = [GroupDir() stringByAppendingPathComponent:@"lists"];
+    NSString *otherGroup = nil;
+    for (NSString *f in [[fm contentsOfDirectoryAtPath:listsDir error:NULL] ?: @[] sortedArrayUsingSelector:@selector(compare:)]) {
+      if (![f.pathExtension isEqualToString:@"txt"] || [[f stringByDeletingPathExtension] isEqualToString:groupName]) continue;
+      NSString *body = [NSString stringWithContentsOfFile:[listsDir stringByAppendingPathComponent:f] encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+      for (NSString *line in [body componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+        NSRange r = [line rangeOfString:@"|"];
+        NSString *target = [(r.location == NSNotFound ? line : [line substringFromIndex:r.location+1]) stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if ([target isEqualToString:path] || [[self resolveApplicationPathForName:target] isEqualToString:path]) { otherGroup = f.stringByDeletingPathExtension; break; }
+      }
+      if (otherGroup) break;
+    }
+    if (otherGroup) {
+      NSAlert *a = [[NSAlert alloc] init];
+      a.messageText = @"该应用已加入其他分组";
+      a.informativeText = [NSString stringWithFormat:@"%@ 已在「%@」中，不能重复添加。", display, otherGroup];
+      [a addButtonWithTitle:@"好"];
+      [a runModal];
+      skipped++; continue;
+    }
     [lines addObject:[NSString stringWithFormat:@"%@|%@", display, path]];
     added++;
   }
@@ -3320,6 +3349,10 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   [self refreshGroups];
   if (added > 0) [self showToast:[NSString stringWithFormat:@"已添加 %ld 个应用到「%@」", (long)added, groupName]];
   else if (skipped > 0) [self showToast:@"没有新增应用：已存在或不是 .app"];
+}
+
+- (void)groupsChangedExternally:(NSNotification *)note {
+  if (self.section == 1) [self refreshGroups];
 }
 
 - (void)groupsSearchChanged:(id)sender {

@@ -306,6 +306,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)closeCancel:(id)sender;
 - (void)addApps:(id)sender;
 - (void)addDroppedApps:(NSArray<NSURL *> *)urls;
+- (void)rowDragEnded:(NSString *)path screenPoint:(NSPoint)pt;
 - (void)removeSelected:(id)sender;
 - (void)loadIconsFrom:(NSInteger)start;
 - (void)selectRow:(NSInteger)idx;
@@ -497,6 +498,10 @@ static NSColor *ThemeSel(NSInteger t) {
 }
 - (NSDragOperation)draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
   return NSDragOperationCopy;
+}
+- (void)draggingSession:(NSDraggingSession *)session endedAtScreenPoint:(NSPoint)screenPoint operation:(NSDragOperation)operation {
+  if (operation == NSDragOperationNone) return;
+  [self.ctrl rowDragEnded:self.targetPath screenPoint:screenPoint];
 }
 @end
 
@@ -1244,6 +1249,8 @@ static NSString *ResolveAppPath(NSString *target) {
   if (!urls.count || !gListFile.length) return;
   NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL] ?: @"";
   NSMutableArray *lines = [[content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *listsDir = [gListFile stringByDeletingLastPathComponent];
   NSInteger added = 0;
   for (NSURL *u in urls) {
     if (![u.pathExtension.lowercaseString isEqualToString:@"app"]) continue;
@@ -1253,18 +1260,122 @@ static NSString *ResolveAppPath(NSString *target) {
     BOOL exists = NO;
     for (NSString *line in lines) {
       NSRange r = [line rangeOfString:@"|"];
-      NSString *target = r.location == NSNotFound ? line : [line substringFromIndex:r.location+1];
-      if ([[target stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] isEqualToString:path]) { exists = YES; break; }
+      NSString *target = [(r.location == NSNotFound ? line : [line substringFromIndex:r.location+1]) stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if ([target isEqualToString:path] || [ResolveAppPath(target) isEqualToString:path]) { exists = YES; break; }
     }
-    if (exists) continue;
+    if (exists) {
+      NSAlert *a = [[NSAlert alloc] init];
+      a.messageText = @"该应用已在此分组中";
+      a.informativeText = display;
+      [a addButtonWithTitle:@"好"];
+      [a runModal];
+      continue;
+    }
+    NSString *otherGroup = nil;
+    for (NSString *f in [[fm contentsOfDirectoryAtPath:listsDir error:NULL] ?: @[] sortedArrayUsingSelector:@selector(compare:)]) {
+      if (![f.pathExtension isEqualToString:@"txt"] || [[listsDir stringByAppendingPathComponent:f] isEqualToString:gListFile]) continue;
+      NSString *body = [NSString stringWithContentsOfFile:[listsDir stringByAppendingPathComponent:f] encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+      for (NSString *line in [body componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+        NSRange r = [line rangeOfString:@"|"];
+        NSString *target = [(r.location == NSNotFound ? line : [line substringFromIndex:r.location+1]) stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if ([target isEqualToString:path] || [ResolveAppPath(target) isEqualToString:path]) { otherGroup = f.stringByDeletingPathExtension; break; }
+      }
+      if (otherGroup) break;
+    }
+    if (otherGroup) {
+      NSAlert *a = [[NSAlert alloc] init];
+      a.messageText = @"该应用已加入其他分组";
+      a.informativeText = [NSString stringWithFormat:@"%@ 已在「%@」中，不能重复添加。", display, otherGroup];
+      [a addButtonWithTitle:@"好"];
+      [a runModal];
+      continue;
+    }
     [lines addObject:[NSString stringWithFormat:@"%@|%@", display, path]];
     added++;
   }
   while (lines.count && [[lines lastObject] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].length == 0) [lines removeLastObject];
   if (added > 0) {
     [[lines componentsJoinedByString:@"\n"] writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"DockLaunchersGroupsChanged" object:nil];
     [self reload];
   }
+}
+
+- (BOOL)pointIsOverDock:(NSPoint)pt {
+  NSScreen *screen = nil;
+  for (NSScreen *s in [NSScreen screens]) if (NSMouseInRect(pt, s.frame, NO)) { screen = s; break; }
+  if (!screen) screen = [NSScreen mainScreen];
+  NSRect vis = screen.visibleFrame, full = screen.frame;
+  return (pt.y < NSMinY(vis) - 1) || (pt.x < NSMinX(vis) - 1) || (pt.x > NSMaxX(vis) + 1);
+}
+
+- (BOOL)dockContainsApp:(NSString *)path {
+  CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+  NSArray *apps = raw ? CFBridgingRelease(raw) : @[];
+  for (id item in apps) {
+    if (![item isKindOfClass:[NSDictionary class]]) continue;
+    NSString *u = item[@"tile-data"][@"file-data"][@"_CFURLString"];
+    if (!u.length) continue;
+    NSURL *url = [NSURL URLWithString:u];
+    if (url.isFileURL && [url.path.stringByStandardizingPath isEqualToString:path]) return YES;
+  }
+  return NO;
+}
+
+- (void)addAppToDock:(NSString *)path {
+  NSString *label = path.lastPathComponent.stringByDeletingPathExtension;
+  NSString *bid = [[NSBundle bundleWithPath:path] bundleIdentifier] ?: @"";
+  NSDictionary *entry = @{@"tile-type": @"file-tile",
+                          @"tile-data": @{@"file-data": @{@"_CFURLString": [NSURL fileURLWithPath:path].absoluteString, @"_CFURLStringType": @15},
+                                          @"file-label": label,
+                                          @"bundle-identifier": bid}};
+  CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+  NSMutableArray *apps = raw ? [CFBridgingRelease(raw) mutableCopy] : [NSMutableArray array];
+  [apps addObject:entry];
+  CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)apps, CFSTR("com.apple.dock"));
+  CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+  NSTask *kill = [[NSTask alloc] init];
+  kill.launchPath = @"/usr/bin/killall";
+  kill.arguments = @[@"Dock"];
+  @try { [kill launch]; } @catch (NSException *e) {}
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+  });
+}
+
+- (void)removeAppFromList:(NSString *)path {
+  NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+  NSMutableArray *keep = [NSMutableArray array];
+  for (NSString *line in [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+    NSRange r = [line rangeOfString:@"|"];
+    NSString *target = r.location == NSNotFound ? line : [line substringFromIndex:r.location+1];
+    if ([[target stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] isEqualToString:path]) continue;
+    [keep addObject:line];
+  }
+  [[keep componentsJoinedByString:@"\n"] writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"DockLaunchersGroupsChanged" object:nil];
+}
+
+- (void)rowDragEnded:(NSString *)path screenPoint:(NSPoint)pt {
+  if (!path.length || ![self pointIsOverDock:pt]) return;
+  NSString *label = path.lastPathComponent.stringByDeletingPathExtension;
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"添加到 Dock？";
+  a.informativeText = [NSString stringWithFormat:@"将「%@」添加到 Dock 后，会从当前分组移除。", label];
+  [a addButtonWithTitle:@"添加"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  if ([self dockContainsApp:path]) {
+    NSAlert *d = [[NSAlert alloc] init];
+    d.messageText = @"Dock 中已有该应用";
+    d.informativeText = @"同一个应用不能重复添加到 Dock。";
+    [d addButtonWithTitle:@"好"];
+    [d runModal];
+    return;
+  }
+  [self addAppToDock:path];
+  [self removeAppFromList:path];
+  [self reload];
 }
 
 - (void)reload {
