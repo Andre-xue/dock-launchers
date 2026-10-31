@@ -4495,7 +4495,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.pinBtn.toolTip = self.pinned ? @"已钉住：窗口置顶，最小化/关闭已禁用" : @"钉住：置顶并禁用最小化/关闭（再点取消）";
   if (self.window) {
     if (self.pinned) {
-      self.window.level = NSStatusWindowLevel;
+      self.window.level = NSFloatingWindowLevel;
       self.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
       self.window.hidesOnDeactivate = NO;
     } else {
