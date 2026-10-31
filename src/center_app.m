@@ -602,6 +602,14 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSArray *appSearchFiltered;
 @property (strong) NSTextField *appSearchStatus;
 @property (strong) NSPopUpButton *promptCategoryPopup;
+@property (strong) NSWindow *dupWindow;
+@property (strong) NSTableView *dupTable;
+@property (strong) NSArray *dupItems;
+@property BOOL dupScanning;
+@property (strong) NSPopUpButton *dupScopePopup;
+@property (strong) NSPopUpButton *dupThresholdPopup;
+@property (strong) NSTextField *dupStatus;
+@property (strong) ColorHoverButton *dupScanButton;
 @property (strong) NSWindow *largeFileWindow;
 @property (strong) NSTableView *largeFileTable;
 @property (strong) NSArray *largeFileItems;
@@ -6118,9 +6126,14 @@ static BOOL ValidGroupName(NSString *raw) {
   self.diskTypeSegment = seg;
   seg.selectedSegment = -1;
   [card addSubview:seg];
-  NSTextField *readonly = [self label:@"只读浏览 · 不会修改或删除文件" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
-  readonly.frame = NSMakeRect(270, 414, 260, 16);
+  NSTextField *readonly = [self label:@"只读浏览 · 不会修改文件" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+  readonly.frame = NSMakeRect(270, 414, 130, 16);
   [card addSubview:readonly];
+  ColorHoverButton *dupBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(406, 406, 132, 28)];
+  dupBtn.title = @"重复文件…"; dupBtn.hoverColor = [NSColor systemPurpleColor];
+  dupBtn.target = self; dupBtn.action = @selector(showDuplicateFinder:);
+  [dupBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [card addSubview:dupBtn];
   ColorHoverButton *largeBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(556, 406, 128, 28)];
   largeBtn.title = @"大文件清理…"; largeBtn.hoverColor = [NSColor systemOrangeColor];
   largeBtn.target = self; largeBtn.action = @selector(showLargeFileCleaner:);
@@ -7419,6 +7432,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.dupTable) return self.dupItems.count;
   if (tableView == self.appSearchTable) return self.appSearchFiltered.count;
   if (tableView == self.promptTable) return self.promptPageItems.count;
   if (tableView == self.largeFileTable) return self.largeFileItems.count;
@@ -7443,6 +7457,30 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.dupTable) {
+    if (row < 0 || row >= (NSInteger)self.dupItems.count) return nil;
+    NSDictionary *it = self.dupItems[row];
+    NSString *ident = col.identifier;
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,32)];
+    if ([ident isEqualToString:@"dgroup"]) {
+      NSTextField *l = [self label:[NSString stringWithFormat:@"组 %@", it[@"group"]] size:10 bold:YES color:[NSColor systemPurpleColor]];
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
+    } else if ([ident isEqualToString:@"dname"]) {
+      NSTextField *l = [self label:it[@"name"] size:11 bold:YES color:nil];
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
+    } else if ([ident isEqualToString:@"dsize"]) {
+      NSTextField *l = [self label:[self gbString:[it[@"size"] unsignedLongLongValue]] size:10.5 bold:YES color:[NSColor systemOrangeColor]];
+      l.alignment = NSTextAlignmentRight;
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
+    } else {
+      NSButton *link = [NSButton buttonWithTitle:it[@"path"] target:self action:@selector(revealDuplicateRow:)];
+      link.bordered = NO; link.tag = row; link.alignment = NSTextAlignmentLeft;
+      link.font = [NSFont systemFontOfSize:9.5]; link.contentTintColor = [NSColor controlAccentColor];
+      link.frame = NSMakeRect(4, 5, col.width - 8, 22); [v addSubview:link];
+    }
+    return v;
+  }
   if (tableView == self.appSearchTable) {
     if (row < 0 || row >= (NSInteger)self.appSearchFiltered.count) return nil;
     NSDictionary *it = self.appSearchFiltered[row];
@@ -10294,6 +10332,199 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)closeAppSearch:(id)sender { [self.appSearchWindow orderOut:nil]; }
+
+- (NSString *)sha256OfFile:(NSString *)path {
+  NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:path];
+  if (!fh) return nil;
+  CC_SHA256_CTX ctx;
+  CC_SHA256_Init(&ctx);
+  while (YES) {
+    @autoreleasepool {
+      NSData *chunk = [fh readDataOfLength:1024 * 1024];
+      if (!chunk.length) break;
+      CC_SHA256_Update(&ctx, chunk.bytes, (CC_LONG)chunk.length);
+    }
+  }
+  [fh closeFile];
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+  CC_SHA256_Final(digest, &ctx);
+  NSMutableString *hex = [NSMutableString string];
+  for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [hex appendFormat:@"%02x", digest[i]];
+  return hex;
+}
+
+- (void)showDuplicateFinder:(id)sender {
+  if (!self.dupWindow) {
+    self.dupWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.dupWindow.title = @"重复文件清理";
+    self.dupWindow.releasedWhenClosed = NO;
+    self.dupWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.dupWindow.contentView;
+    NSTextField *title = [self label:@"重复文件清理" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 490, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"按大小和内容哈希查找重复文件；删除前会验证应用密码" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 468, 600, 18); [cv addSubview:sub];
+    self.dupScopePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(20, 428, 170, 26) pullsDown:NO];
+    NSArray *scopes = @[@[@"主目录", NSHomeDirectory()], @[@"下载", [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"]], @[@"桌面", [NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"]], @[@"影片文件夹", [NSHomeDirectory() stringByAppendingPathComponent:@"Movies"]]];
+    for (NSArray *sc in scopes) { [self.dupScopePopup addItemWithTitle:sc[0]]; self.dupScopePopup.lastItem.representedObject = sc[1]; }
+    [cv addSubview:self.dupScopePopup];
+    self.dupThresholdPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(198, 428, 130, 26) pullsDown:NO];
+    NSArray *thresholds = @[@[@"≥ 1 MB", @1], @[@"≥ 10 MB", @10], @[@"≥ 100 MB", @100]];
+    for (NSArray *t in thresholds) { [self.dupThresholdPopup addItemWithTitle:t[0]]; self.dupThresholdPopup.lastItem.representedObject = t[1]; }
+    [self.dupThresholdPopup selectItemAtIndex:1];
+    [cv addSubview:self.dupThresholdPopup];
+    self.dupScanButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(336, 426, 110, 30)];
+    self.dupScanButton.title = @"开始查找"; self.dupScanButton.hoverColor = [NSColor systemGreenColor];
+    self.dupScanButton.target = self; self.dupScanButton.action = @selector(scanDuplicates:);
+    [self.dupScanButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:self.dupScanButton];
+    ColorHoverButton *autoBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(454, 426, 120, 30)];
+    autoBtn.title = @"选择重复项"; autoBtn.hoverColor = [NSColor systemBlueColor];
+    autoBtn.target = self; autoBtn.action = @selector(selectDuplicateExtras:);
+    [autoBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:autoBtn];
+    ColorHoverButton *trash = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(600, 426, 140, 30)];
+    trash.title = @"移到废纸篓"; trash.hoverColor = [NSColor systemRedColor];
+    trash.target = self; trash.action = @selector(trashDuplicates:);
+    [trash applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:trash];
+    self.dupStatus = [self label:@"选择范围后开始查找" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    self.dupStatus.frame = NSMakeRect(20, 400, 720, 18); [cv addSubview:self.dupStatus];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 60, 728, 330)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.dupTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"dgroup", @"组", @55.0], @[@"dname", @"文件", @220.0], @[@"dsize", @"大小", @90.0], @[@"dpath", @"路径", @340.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.dupTable addTableColumn:col];
+    }
+    self.dupTable.rowHeight = 32;
+    self.dupTable.allowsMultipleSelection = YES;
+    self.dupTable.dataSource = self; self.dupTable.delegate = self;
+    sv.documentView = self.dupTable; [cv addSubview:sv];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(644, 20, 100, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeDuplicateFinder:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.dupWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.dupWindow makeKeyAndOrderFront:nil];
+  [self.dupWindow orderFrontRegardless];
+}
+
+- (void)scanDuplicates:(id)sender {
+  if (self.dupScanning) return;
+  self.dupScanning = YES;
+  self.dupScanButton.enabled = NO;
+  self.dupStatus.stringValue = @"正在查找重复文件…";
+  NSString *root = self.dupScopePopup.selectedItem.representedObject ?: NSHomeDirectory();
+  unsigned long long threshold = (unsigned long long)[self.dupThresholdPopup.selectedItem.representedObject integerValue] * 1024ULL * 1024ULL;
+  BOOL homeScan = [root isEqualToString:NSHomeDirectory()];
+  __weak typeof(self) weakSelf = self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableDictionary *bySize = [NSMutableDictionary dictionary];
+    NSDirectoryEnumerator *en = [fm enumeratorAtURL:[NSURL fileURLWithPath:root] includingPropertiesForKeys:@[NSURLFileSizeKey, NSURLIsRegularFileKey, NSURLIsSymbolicLinkKey] options:(NSDirectoryEnumerationSkipsHiddenFiles|NSDirectoryEnumerationSkipsPackageDescendants) errorHandler:nil];
+    NSInteger count = 0;
+    for (NSURL *u in en) {
+      if (count++ > 20000) break;
+      @autoreleasepool {
+        NSNumber *isReg = nil, *isLink = nil, *size = nil;
+        [u getResourceValue:&isReg forKey:NSURLIsRegularFileKey error:NULL];
+        [u getResourceValue:&isLink forKey:NSURLIsSymbolicLinkKey error:NULL];
+        if (!isReg.boolValue || isLink.boolValue) continue;
+        if (homeScan) {
+          if ([u.path containsString:@"/Library/"] || [u.path containsString:@"/.Trash/"]) continue;
+        }
+        [u getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
+        unsigned long long sz = size.unsignedLongLongValue;
+        if (sz < threshold) continue;
+        NSString *key = [NSString stringWithFormat:@"%llu", sz];
+        NSMutableArray *arr = bySize[key];
+        if (!arr) { arr = [NSMutableArray array]; bySize[key] = arr; }
+        [arr addObject:u.path];
+      }
+    }
+    NSMutableArray *groups = [NSMutableArray array];
+    for (NSString *key in bySize) {
+      NSArray *paths = bySize[key];
+      if (paths.count < 2) continue;
+      NSMutableDictionary *byHash = [NSMutableDictionary dictionary];
+      for (NSString *path in paths) {
+        NSString *h = [weakSelf sha256OfFile:path];
+        if (!h.length) continue;
+        NSMutableArray *a = byHash[h];
+        if (!a) { a = [NSMutableArray array]; byHash[h] = a; }
+        [a addObject:path];
+      }
+      for (NSString *h in byHash) {
+        NSArray *a = byHash[h];
+        if (a.count > 1) [groups addObject:@{@"paths": a, @"size": @(key.longLongValue)}];
+      }
+    }
+    [groups sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+      unsigned long long wa = [a[@"size"] unsignedLongLongValue] * ([a[@"paths"] count] - 1);
+      unsigned long long wb = [b[@"size"] unsignedLongLongValue] * ([b[@"paths"] count] - 1);
+      return wa < wb ? NSOrderedDescending : (wa > wb ? NSOrderedAscending : NSOrderedSame);
+    }];
+    NSMutableArray *rows = [NSMutableArray array];
+    for (NSInteger gi = 0; gi < (NSInteger)groups.count; gi++) {
+      NSDictionary *g = groups[gi];
+      for (NSString *path in g[@"paths"]) {
+        [rows addObject:@{@"group": @(gi + 1), @"name": path.lastPathComponent ?: path, @"path": path, @"size": g[@"size"]}];
+      }
+    }
+    unsigned long long wasted = 0;
+    for (NSDictionary *g in groups) wasted += [g[@"size"] unsignedLongLongValue] * ([g[@"paths"] count] - 1);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      weakSelf.dupItems = rows;
+      weakSelf.dupScanning = NO;
+      weakSelf.dupScanButton.enabled = YES;
+      weakSelf.dupStatus.stringValue = [NSString stringWithFormat:@"%ld 组重复，共 %ld 个文件，可释放约 %@", (long)groups.count, (long)rows.count, [weakSelf gbString:wasted]];
+      [weakSelf.dupTable reloadData];
+    });
+  });
+}
+
+- (void)selectDuplicateExtras:(id)sender {
+  NSMutableIndexSet *sel = [NSMutableIndexSet indexSet];
+  NSMutableSet *seenGroups = [NSMutableSet set];
+  for (NSInteger i = 0; i < (NSInteger)self.dupItems.count; i++) {
+    NSNumber *g = self.dupItems[i][@"group"];
+    if ([seenGroups containsObject:g]) [sel addIndex:i];
+    else [seenGroups addObject:g];
+  }
+  [self.dupTable selectRowIndexes:sel byExtendingSelection:NO];
+}
+
+- (void)trashDuplicates:(id)sender {
+  NSIndexSet *sel = self.dupTable.selectedRowIndexes;
+  if (!sel.count) { [self showToast:@"请先选择要删除的重复文件，或点「选择重复项」"]; return; }
+  if (![self requestAdminAuthentication]) return;
+  NSMutableArray<NSURL *> *urls = [NSMutableArray array];
+  [sel enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
+    if (idx < self.dupItems.count) [urls addObject:[NSURL fileURLWithPath:self.dupItems[idx][@"path"]]];
+  }];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"将 %ld 个重复文件移到废纸篓？", (long)urls.count];
+  a.informativeText = @"每组默认保留第一个文件。可在废纸篓中恢复。";
+  [a addButtonWithTitle:@"移到废纸篓"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSInteger ok = 0;
+  for (NSURL *u in urls) if ([fm trashItemAtURL:u resultingItemURL:nil error:NULL]) ok++;
+  [self showToast:[NSString stringWithFormat:@"已移到废纸篓 %ld 个文件", (long)ok]];
+  [self scanDuplicates:nil];
+}
+
+- (void)revealDuplicateRow:(NSButton *)sender {
+  NSInteger row = sender.tag;
+  if (row < 0 || row >= (NSInteger)self.dupItems.count) return;
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.dupItems[row][@"path"]]]];
+}
+
+- (void)closeDuplicateFinder:(id)sender { [self.dupWindow orderOut:nil]; }
 
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
