@@ -40,8 +40,32 @@ static NSArray<NSURL *> *ExtractDraggedURLs(NSPasteboard *pb) {
   if (urls.count) [out addObjectsFromArray:urls];
   NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
   if ([paths isKindOfClass:[NSArray class]]) for (NSString *p in paths) if ([p isKindOfClass:[NSString class]]) [out addObject:[NSURL fileURLWithPath:p]];
-  id tile = [pb propertyListForType:@"com.apple.dock.tile"];
-  if (tile) CollectDockDragURLs(tile, out);
+  NSRegularExpression *appRx = [NSRegularExpression regularExpressionWithPattern:@"(/[^\\\"\\n\\r\\t ]+?\\.app)" options:0 error:NULL];
+  NSRegularExpression *bidRx = [NSRegularExpression regularExpressionWithPattern:@"(com\\.[A-Za-z0-9_.-]+)" options:0 error:NULL];
+  for (NSString *type in pb.types) {
+    id plist = [pb propertyListForType:type];
+    if (plist) CollectDockDragURLs(plist, out);
+    NSMutableArray *raws = [NSMutableArray array];
+    NSString *str = [pb stringForType:type];
+    if (str.length) [raws addObject:str];
+    NSData *data = [pb dataForType:type];
+    if (data.length) {
+      NSString *raw = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+      if (!raw) raw = [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
+      if (raw.length) [raws addObject:raw];
+    }
+    for (NSString *raw in raws) {
+      for (NSTextCheckingResult *m in [appRx matchesInString:raw options:0 range:NSMakeRange(0, raw.length)]) {
+        NSString *path = [raw substringWithRange:m.range];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) [out addObject:[NSURL fileURLWithPath:path]];
+      }
+      for (NSTextCheckingResult *m in [bidRx matchesInString:raw options:0 range:NSMakeRange(0, raw.length)]) {
+        NSString *bid = [raw substringWithRange:m.range];
+        NSURL *u = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bid];
+        if (u.path) [out addObject:u];
+      }
+    }
+  }
   NSMutableArray *unique = [NSMutableArray array];
   NSMutableSet *seen = [NSMutableSet set];
   for (NSURL *u in out) {
@@ -207,7 +231,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 @implementation GroupDropWindow
 - (instancetype)initWithContentRect:(NSRect)contentRect styleMask:(NSWindowStyleMask)style backing:(NSBackingStoreType)bufferingType defer:(BOOL)flag {
   if ((self = [super initWithContentRect:contentRect styleMask:style backing:bufferingType defer:flag])) {
-    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, @"com.apple.dock.tile"]];
+    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile"]];
   }
   return self;
 }
@@ -380,6 +404,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)rowDragEnded:(NSString *)path screenPoint:(NSPoint)pt;
 - (void)addRowToDockAtIndex:(NSNumber *)idx;
 - (void)restoreDockEntriesForPaths:(NSArray<NSURL *> *)urls;
+- (void)promptAddAppFromDock;
 - (void)removeRowAtIndex:(NSNumber *)idx;
 - (void)removeSelected:(id)sender;
 - (void)loadIconsFrom:(NSInteger)start;
@@ -551,7 +576,7 @@ static NSColor *ThemeSel(NSInteger t) {
 @implementation RowView
 - (instancetype)initWithFrame:(NSRect)frame {
   if ((self = [super initWithFrame:frame])) {
-    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, @"com.apple.dock.tile"]];
+    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile"]];
   }
   return self;
 }
@@ -561,6 +586,10 @@ static NSColor *ThemeSel(NSInteger t) {
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
   NSArray *urls = [self dragDropURLs:sender];
+  if (self.ctrl && DragIsFromDock(sender.draggingPasteboard) && !urls.count) {
+    [self.ctrl performSelector:@selector(promptAddAppFromDock)];
+    return YES;
+  }
   if (urls.count && self.ctrl) {
     [self.ctrl performSelector:@selector(addDroppedApps:) withObject:urls];
     if (DragIsFromDock(sender.draggingPasteboard)) [self.ctrl performSelector:@selector(restoreDockEntriesForPaths:) withObject:urls];
@@ -924,7 +953,7 @@ static NSColor *ThemeSel(NSInteger t) {
 
 @implementation FlippedView
 - (instancetype)initWithFrame:(NSRect)frame {
-  if ((self = [super initWithFrame:frame])) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, @"com.apple.dock.tile"]];
+  if ((self = [super initWithFrame:frame])) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile"]];
   return self;
 }
 - (NSArray<NSURL *> *)droppedURLs:(id<NSDraggingInfo>)sender {
@@ -933,12 +962,14 @@ static NSColor *ThemeSel(NSInteger t) {
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
   NSArray *urls = [self droppedURLs:sender];
-  if (urls.count) {
-    id ctrl = self.dropCtrl;
-    if (ctrl) {
-      [ctrl performSelector:@selector(addDroppedApps:) withObject:urls];
-      if (DragIsFromDock(sender.draggingPasteboard)) [ctrl performSelector:@selector(restoreDockEntriesForPaths:) withObject:urls];
-    }
+  id ctrl = self.dropCtrl;
+  if (ctrl && DragIsFromDock(sender.draggingPasteboard) && !urls.count) {
+    [ctrl performSelector:@selector(promptAddAppFromDock)];
+    return YES;
+  }
+  if (urls.count && ctrl) {
+    [ctrl performSelector:@selector(addDroppedApps:) withObject:urls];
+    if (DragIsFromDock(sender.draggingPasteboard)) [ctrl performSelector:@selector(restoreDockEntriesForPaths:) withObject:urls];
     return YES;
   }
   return NO;
@@ -1185,7 +1216,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
   ContentView *cv = [[ContentView alloc] initWithFrame:frame];
   cv.ctrl = self;
-  [cv registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, @"com.apple.dock.tile"]];
+  [cv registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile"]];
   cv.wantsLayer = YES;
   cv.layer.backgroundColor = [NSColor colorWithCalibratedRed:0.96 green:0.965 blue:0.972 alpha:1.0].CGColor;
   self.window.contentView = cv;
@@ -1395,6 +1426,18 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)syncTick:(NSTimer *)t {
   if ([self pruneStaleListEntries] > 0) [self reload];
+}
+
+- (void)promptAddAppFromDock {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = NO;
+  p.directoryURL = [NSURL fileURLWithPath:@"/Applications"];
+  p.message = @"无法从 Dock 读取应用信息，请选择要添加到当前分组的 App";
+  if ([p runModal] != NSModalResponseOK) return;
+  NSURL *u = p.URL;
+  if (![u.pathExtension.lowercaseString isEqualToString:@"app"]) return;
+  [self addDroppedApps:@[u]];
+  [self restoreDockEntriesForPaths:@[u]];
 }
 
 - (void)restoreDockEntriesForPaths:(NSArray<NSURL *> *)urls {
