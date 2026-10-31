@@ -422,6 +422,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSSearchField *clipboardSearch;
 @property BOOL clipboardFavoritesOnly;
 @property (strong) NSPopUpButton *clipboardDaysPopup;
+@property (strong) ColorHoverButton *processMetricButton;
 @property (strong) NSWindow *processWindow;
 @property (strong) NSTableView *processTable;
 @property (strong) NSArray *processItems;
@@ -8610,7 +8611,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)showProcessManager:(id)sender {
   if (!self.processWindow) {
-    self.processWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.processWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.processWindow.title = @"进程管理";
     self.processWindow.releasedWhenClosed = NO;
     self.processWindow.level = NSFloatingWindowLevel;
@@ -8619,7 +8620,7 @@ static BOOL ValidGroupName(NSString *raw) {
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
     NSTextField *sub = [self label:@"按 CPU 或内存排序；结束进程前会确认" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 448, 500, 18); [cv addSubview:sub];
-    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 608, 360)];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 688, 360)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.processTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
     NSArray *cols = @[@[@"proc", @"进程", @260.0], @[@"pid", @"PID", @70.0], @[@"cpu", @"CPU", @90.0], @[@"mem", @"内存", @150.0]];
@@ -8639,18 +8640,25 @@ static BOOL ValidGroupName(NSString *raw) {
     refresh.title = @"刷新"; refresh.hoverColor = [NSColor systemGreenColor];
     refresh.target = self; refresh.action = @selector(refreshProcessList:);
     [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
-    NSPopUpButton *sortPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(230, 38, 120, 26) pullsDown:NO];
+    self.processMetricButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(338, 36, 120, 30)];
+    self.processMetricButton.title = @"指标 CPU";
+    self.processMetricButton.hoverColor = [NSColor systemTealColor];
+    self.processMetricButton.target = self; self.processMetricButton.action = @selector(showStatusMetricMenu:);
+    [self.processMetricButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    self.processMetricButton.toolTip = @"选择菜单栏显示的状态指标";
+    [cv addSubview:self.processMetricButton];
+    NSPopUpButton *sortPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(230, 38, 100, 26) pullsDown:NO];
     [sortPopup addItemWithTitle:@"按 CPU"];
     [sortPopup addItemWithTitle:@"按内存"];
     [sortPopup selectItemAtIndex:[(self.processSortKey ?: @"cpu") isEqualToString:@"mem"] ? 1 : 0];
     sortPopup.target = self; sortPopup.action = @selector(processSortChanged:);
     sortPopup.toolTip = @"切换进程排序方式";
     [cv addSubview:sortPopup];
-    ColorHoverButton *kill = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(372, 36, 110, 30)];
+    ColorHoverButton *kill = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(470, 36, 110, 30)];
     kill.title = @"结束进程"; kill.hoverColor = [NSColor systemRedColor];
     kill.target = self; kill.action = @selector(endProcessSelected:);
     [kill applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:kill];
-    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(520, 36, 100, 30)];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(600, 36, 100, 30)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeProcessManager:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
@@ -8659,6 +8667,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [NSApp activateIgnoringOtherApps:YES];
   [self.processWindow makeKeyAndOrderFront:nil];
   [self.processWindow orderFrontRegardless];
+  [self updateStatusMetricButtonTitle];
   [self refreshProcessList:nil];
   [self.processTimer invalidate];
   self.processTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refreshProcessList:) userInfo:nil repeats:YES];
@@ -11242,6 +11251,7 @@ static BOOL ValidGroupName(NSString *raw) {
   else if ([key isEqualToString:@"net"]) name = @"网络";
   else if ([key isEqualToString:@"power"]) name = @"电源";
   self.statusMetricButton.title = [NSString stringWithFormat:@"指标 %@", name];
+  if (self.processMetricButton) self.processMetricButton.title = [NSString stringWithFormat:@"指标 %@", name];
 }
 
 - (void)showStatusMetricMenu:(ColorHoverButton *)sender {
