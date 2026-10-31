@@ -155,6 +155,39 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property CGFloat iconCorner;
 @end
 
+@interface GroupDropWindow : NSWindow
+@property (weak) id dropCtrl;
+@end
+@implementation GroupDropWindow
+- (instancetype)initWithContentRect:(NSRect)contentRect styleMask:(NSWindowStyleMask)style backing:(NSBackingStoreType)bufferingType defer:(BOOL)flag {
+  if ((self = [super initWithContentRect:contentRect styleMask:style backing:bufferingType defer:flag])) {
+    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, @"com.apple.dock.tile"]];
+  }
+  return self;
+}
+- (NSArray<NSURL *> *)droppedURLs:(id<NSDraggingInfo>)sender {
+  NSPasteboard *pb = sender.draggingPasteboard;
+  NSArray *urls = [pb readObjectsForClasses:@[[NSURL class]] options:nil];
+  if (urls.count) return urls;
+  NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
+  if ([paths isKindOfClass:[NSArray class]] && paths.count) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *p in paths) if ([p isKindOfClass:[NSString class]]) [out addObject:[NSURL fileURLWithPath:p]];
+    return out;
+  }
+  return @[];
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  NSArray *urls = [self droppedURLs:sender];
+  if (urls.count && self.dropCtrl) {
+    [self.dropCtrl performSelector:@selector(addDroppedApps:) withObject:urls];
+    return YES;
+  }
+  return NO;
+}
+@end
+
 @interface ContentView : NSView
 @property (weak) Controller *ctrl;
 @end
@@ -1063,10 +1096,12 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)buildWindow {
   NSRect frame = NSMakeRect(0, 0, 480, 600);
-  self.window = [[NSWindow alloc] initWithContentRect:frame
+  GroupDropWindow *dropWindow = [[GroupDropWindow alloc] initWithContentRect:frame
                                             styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable|NSWindowStyleMaskFullSizeContentView)
                                               backing:NSBackingStoreBuffered
                                                 defer:NO];
+  dropWindow.dropCtrl = self;
+  self.window = dropWindow;
   self.window.title = gGroup;
   self.window.releasedWhenClosed = NO;
   self.window.delegate = self;
