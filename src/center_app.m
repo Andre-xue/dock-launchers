@@ -8091,6 +8091,23 @@ static BOOL ValidGroupName(NSString *raw) {
   self.activityCheck.toolTip = @"记录应用保存文件的位置，卸载时作为候选";
   [tActivity addSubview:self.activityCheck];
 
+  NSView *tPlayer = tileAt(1, 352); tileLabel(tPlayer, @"视频播放器");
+  self.videoPlayerPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26) pullsDown:NO];
+  [self.videoPlayerPopup addItemWithTitle:@"每次询问"];
+  self.videoPlayerPopup.lastItem.representedObject = @"";
+  NSArray *playerCandidates = @[@"/System/Applications/QuickTime Player.app", @"/Applications/VLC.app", @"/Applications/IINA.app", @"/Applications/Movist.app", @"/Applications/Elmedia Player.app"];
+  NSString *savedPlayer = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerVideoPlayerPath"] ?: @"";
+  for (NSString *cand in playerCandidates) {
+    if (![[NSFileManager defaultManager] fileExistsAtPath:cand]) continue;
+    [self.videoPlayerPopup addItemWithTitle:[[NSFileManager defaultManager] displayNameAtPath:cand]];
+    self.videoPlayerPopup.lastItem.representedObject = cand;
+  }
+  [self.videoPlayerPopup selectItemWithTitle:@"每次询问"];
+  for (NSMenuItem *mi in self.videoPlayerPopup.itemArray) if ([mi.representedObject isEqual:savedPlayer]) { [self.videoPlayerPopup selectItem:mi]; break; }
+  self.videoPlayerPopup.target = self; self.videoPlayerPopup.action = @selector(videoPlayerChanged:);
+  self.videoPlayerPopup.toolTip = @"空格预览视频时使用的播放器";
+  [tPlayer addSubview:self.videoPlayerPopup];
+
   // 第三列：相册与磁盘
   NSView *tAlbum = tileAt(2, 500); tileLabel(tAlbum, @"图库权限");
   ColorHoverButton *albumPerm = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
