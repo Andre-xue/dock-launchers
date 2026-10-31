@@ -6255,17 +6255,28 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showToast:path.length ? [NSString stringWithFormat:@"视频播放器：%@", popup.titleOfSelectedItem] : @"空格预览视频时每次询问播放器"];
 }
 
+- (BOOL)isRealVideoPlayerApp:(NSURL *)appURL {
+  NSString *bid = [[NSBundle bundleWithURL:appURL] bundleIdentifier].lowercaseString ?: @"";
+  NSArray *known = @[@"com.apple.quicktimeplayerx", @"org.videolan.vlc", @"com.colliderli.iina", @"com.movist", @"com.elmedia", @"com.infuse", @"io.mpv", @"org.mpv", @"com.celluloid", @"com.mplayer", @"com.plex", @"com.videolan"];
+  for (NSString *k in known) if ([bid hasPrefix:k]) return YES;
+  NSString *name = [[[NSFileManager defaultManager] displayNameAtPath:appURL.path] lowercaseString] ?: @"";
+  if ([name containsString:@"recorder"] || [name containsString:@"books"] || [name containsString:@"photo"] || [name containsString:@"preview"] || [name containsString:@"quickrecorder"]) return NO;
+  NSArray *names = @[@"vlc", @"iina", @"quicktime", @"movist", @"elmedia", @"infuse", @"mpv", @"celluloid"];
+  for (NSString *n in names) if ([name containsString:n]) return YES;
+  return NO;
+}
+
 - (NSArray<NSURL *> *)videoPlayersForPath:(NSString *)path {
   NSMutableArray *urls = [NSMutableArray array];
   NSArray *apps = CFBridgingRelease(LSCopyApplicationURLsForURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], kLSRolesViewer));
   for (NSURL *u in apps) {
     if ([u.path isEqualToString:[[NSBundle mainBundle] bundlePath]]) continue;
+    if (![self isRealVideoPlayerApp:u]) continue;
     if (![urls containsObject:u]) [urls addObject:u];
   }
-  if (!urls.count) {
-    for (NSString *p in @[@"/System/Applications/QuickTime Player.app", @"/Applications/VLC.app", @"/Applications/IINA.app"]) {
-      if ([[NSFileManager defaultManager] fileExistsAtPath:p]) [urls addObject:[NSURL fileURLWithPath:p]];
-    }
+  for (NSString *p in @[@"/System/Applications/QuickTime Player.app", @"/Applications/VLC.app", @"/Applications/IINA.app", @"/Applications/Movist.app", @"/Applications/Elmedia Player.app", @"/Applications/Infuse.app"]) {
+    NSURL *u = [NSURL fileURLWithPath:p];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:p] && ![urls containsObject:u]) [urls addObject:u];
   }
   [urls sortUsingComparator:^NSComparisonResult(NSURL *a, NSURL *b) {
     return [[[NSFileManager defaultManager] displayNameAtPath:a.path] compare:[[NSFileManager defaultManager] displayNameAtPath:b.path]];
@@ -6292,6 +6303,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [self.playerChooserTable addTableColumn:col];
     self.playerChooserTable.headerView = nil;
     self.playerChooserTable.rowHeight = 44;
+    self.playerChooserTable.allowsEmptySelection = NO;
     self.playerChooserTable.dataSource = self;
     self.playerChooserTable.delegate = self;
     self.playerChooserTable.target = self;
@@ -6325,8 +6337,19 @@ static BOOL ValidGroupName(NSString *raw) {
       if (e.keyCode == 53) { [weakSelf closePlayerChooser]; return nil; }
       if (e.keyCode == 36) { [weakSelf playPlayerChooser:nil]; return nil; }
       NSInteger row = weakSelf.playerChooserTable.selectedRow;
-      if (e.keyCode == 125) { row = MIN((NSInteger)weakSelf.playerChooserApps.count - 1, row + 1); [weakSelf.playerChooserTable selectRowIndexes:[NSIndexSet indexSetWithIndex:MAX(0,row)] byExtendingSelection:NO]; return nil; }
-      if (e.keyCode == 126) { row = MAX(0, row - 1); [weakSelf.playerChooserTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO]; return nil; }
+      if (e.keyCode == 125) {
+        row = MIN((NSInteger)weakSelf.playerChooserApps.count - 1, row + 1);
+        row = MAX(0, row);
+        [weakSelf.playerChooserTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+        [weakSelf.playerChooserTable scrollRowToVisible:row];
+        return nil;
+      }
+      if (e.keyCode == 126) {
+        row = MAX(0, row - 1);
+        [weakSelf.playerChooserTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+        [weakSelf.playerChooserTable scrollRowToVisible:row];
+        return nil;
+      }
       return e;
     }];
   }
