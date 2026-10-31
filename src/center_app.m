@@ -10307,10 +10307,26 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 @end
 
+@interface NSAlert (DLFront)
+- (NSModalResponse)dl_runModalFront;
+@end
+@implementation NSAlert (DLFront)
+- (NSModalResponse)dl_runModalFront {
+  [NSApp activateIgnoringOtherApps:YES];
+  NSWindow *w = self.window;
+  w.level = NSStatusWindowLevel + 2;
+  [w orderFrontRegardless];
+  return [self dl_runModalFront];
+}
+@end
+
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    Method m1 = class_getInstanceMethod([NSAlert class], @selector(runModal));
+    Method m2 = class_getInstanceMethod([NSAlert class], @selector(dl_runModalFront));
+    if (m1 && m2) method_exchangeImplementations(m1, m2);
     Controller *c = [[Controller alloc] init];
     NSApp.delegate = c;
     [NSApp run];
