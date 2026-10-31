@@ -9092,13 +9092,13 @@ static BOOL ValidGroupName(NSString *raw) {
     sub.frame = NSMakeRect(20, 468, 520, 18); [cv addSubview:sub];
 
     self.largeFileScopePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(20, 428, 170, 26) pullsDown:NO];
-    NSArray *scopes = @[@[@"主目录", NSHomeDirectory()], @[@"下载", [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"]], @[@"桌面", [NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"]], @[@"影片", [NSHomeDirectory() stringByAppendingPathComponent:@"Movies"]]];
+    NSArray *scopes = @[@[@"主目录", NSHomeDirectory()], @[@"下载", [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"]], @[@"桌面", [NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"]], @[@"影片文件夹", [NSHomeDirectory() stringByAppendingPathComponent:@"Movies"]], @[@"所有视频（全主目录）", @"__videos__"]];
     for (NSArray *sc in scopes) { [self.largeFileScopePopup addItemWithTitle:sc[0]]; self.largeFileScopePopup.lastItem.representedObject = sc[1]; }
     [cv addSubview:self.largeFileScopePopup];
     self.largeFileThresholdPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(200, 428, 130, 26) pullsDown:NO];
-    NSArray *thresholds = @[@100, @500, @1024, @5120];
+    NSArray *thresholds = @[@10, @50, @100, @500, @1024, @5120];
     for (NSNumber *mb in thresholds) { [self.largeFileThresholdPopup addItemWithTitle:[NSString stringWithFormat:@"≥ %@ MB", mb]]; self.largeFileThresholdPopup.lastItem.representedObject = mb; }
-    [self.largeFileThresholdPopup selectItemAtIndex:0];
+    [self.largeFileThresholdPopup selectItemAtIndex:2];
     [cv addSubview:self.largeFileThresholdPopup];
     self.largeFileScanButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(340, 426, 110, 30)];
     self.largeFileScanButton.title = @"开始扫描"; self.largeFileScanButton.hoverColor = [NSColor systemGreenColor];
@@ -9144,9 +9144,12 @@ static BOOL ValidGroupName(NSString *raw) {
   self.largeFileScanning = YES;
   self.largeFileScanButton.enabled = NO;
   self.largeFileStatus.stringValue = @"正在扫描…";
-  NSString *root = self.largeFileScopePopup.selectedItem.representedObject ?: NSHomeDirectory();
+  NSString *scope = self.largeFileScopePopup.selectedItem.representedObject ?: NSHomeDirectory();
+  BOOL videosOnly = [scope isEqualToString:@"__videos__"];
+  NSString *root = videosOnly ? NSHomeDirectory() : scope;
   unsigned long long threshold = (unsigned long long)[self.largeFileThresholdPopup.selectedItem.representedObject integerValue] * 1024ULL * 1024ULL;
-  BOOL homeScan = [root isEqualToString:NSHomeDirectory()];
+  BOOL homeScan = videosOnly || [root isEqualToString:NSHomeDirectory()];
+  NSSet *videoExts = [NSSet setWithArray:@[@"mp4", @"mov", @"mkv", @"avi", @"m4v", @"webm", @"flv", @"wmv", @"ts", @"mts", @"m2ts"]];
   __weak typeof(self) weakSelf = self;
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
     NSMutableArray *files = [NSMutableArray array];
@@ -9164,6 +9167,7 @@ static BOOL ValidGroupName(NSString *raw) {
           NSString *rel = u.path;
           if ([rel containsString:@"/Library/"] || [rel containsString:@"/.Trash/"]) continue;
         }
+        if (videosOnly && ![videoExts containsObject:u.pathExtension.lowercaseString]) continue;
         [u getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
         NSNumber *alloc = nil;
         [u getResourceValue:&alloc forKey:NSURLFileAllocatedSizeKey error:NULL];
