@@ -11498,6 +11498,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   NSInteger restored = 0, failed = 0;
   NSMutableDictionary *usedIndexes = [NSMutableDictionary dictionary];
+  NSMutableSet *activatedApps = [NSMutableSet set];
   for (NSDictionary *w in windows) {
     NSRunningApplication *app = apps[w[@"bundle"] ?: @""];
     if (!app) continue;
@@ -11526,6 +11527,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [used addIndex:idx];
     AXUIElementRef win = (__bridge AXUIElementRef)axWindows[idx];
     AXUIElementSetAttributeValue(win, kAXMinimizedAttribute, kCFBooleanFalse);
+    NSString *bundle = w[@"bundle"] ?: @"";
+    if (![activatedApps containsObject:bundle]) {
+      [activatedApps addObject:bundle];
+      [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    }
+    AXUIElementPerformAction(win, kAXRaiseAction);
     CGPoint p = CGPointMake([w[@"x"] doubleValue], [w[@"y"] doubleValue]);
     CGSize sz = CGSizeMake([w[@"w"] doubleValue], [w[@"h"] doubleValue]);
     AXValueRef posVal = AXValueCreate(kAXValueCGPointType, &p);
