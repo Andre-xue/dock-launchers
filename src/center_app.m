@@ -2458,14 +2458,6 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
   NSTextField *sub = [self label:@"点击任一指标可在本机查看详细报告" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 340, 18); [v addSubview:sub];
-  self.consoleMetricPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(370, 580, 150, 26) pullsDown:NO];
-  self.consoleMetricPopup.font = [NSFont systemFontOfSize:10.5];
-  [self setupStatusMetricPopup:self.consoleMetricPopup];
-  [v addSubview:self.consoleMetricPopup];
-  self.consoleMetricFocusLabel = [self label:@"当前指标：CPU" size:10 bold:NO color:[NSColor secondaryLabelColor]];
-  self.consoleMetricFocusLabel.alignment = NSTextAlignmentRight;
-  self.consoleMetricFocusLabel.frame = NSMakeRect(530, 584, 180, 18);
-  [v addSubview:self.consoleMetricFocusLabel];
   self.uptimeLabel = [self label:@"" size:9 bold:NO color:[NSColor tertiaryLabelColor]];
   self.uptimeLabel.alignment = NSTextAlignmentRight;
   self.uptimeLabel.maximumNumberOfLines = 1;
@@ -2672,6 +2664,8 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 
 - (void)liveAIBalanceClicked:(NSButton *)b {
   NSInteger idx = b.tag;
+  if (!self.aiEntries) [self loadAIEntries];
+  [self hydrateAIKeys];
   if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
   b.enabled = NO;
   b.image = nil;
@@ -8904,6 +8898,13 @@ static BOOL ValidGroupName(NSString *raw) {
   [passwordBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [tPassword addSubview:passwordBtn];
 
+  NSView *tMetric = tileAt(0, 130); tileLabel(tMetric, @"状态指标");
+  self.consoleMetricPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26) pullsDown:NO];
+  self.consoleMetricPopup.font = [NSFont systemFontOfSize:10.5];
+  [self setupStatusMetricPopup:self.consoleMetricPopup];
+  self.consoleMetricPopup.toolTip = @"控制台实时页高亮哪个指标";
+  [tMetric addSubview:self.consoleMetricPopup];
+
   NSView *tProcess = tileAt(2, 130); tileLabel(tProcess, @"进程管理");
   ColorHoverButton *processBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
   processBtn.title = @"打开进程管理…"; processBtn.hoverColor = [NSColor systemTealColor];
@@ -11274,14 +11275,6 @@ static BOOL ValidGroupName(NSString *raw) {
   for (MetricColumnView *c in self.internalColumns) {
     c.persistentHighlight = [c.metricKey isEqualToString:columnKey];
     [c refreshBorderForHover:NO];
-  }
-  if (self.consoleMetricFocusLabel) {
-    NSString *name = @"CPU";
-    if ([key isEqualToString:@"gpu"]) name = @"GPU";
-    else if ([key isEqualToString:@"mem"]) name = @"内存";
-    else if ([key isEqualToString:@"net"]) name = @"网络";
-    else if ([key isEqualToString:@"power"]) name = @"电源";
-    self.consoleMetricFocusLabel.stringValue = [NSString stringWithFormat:@"当前指标：%@", name];
   }
 }
 
