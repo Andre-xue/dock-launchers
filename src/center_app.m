@@ -1824,6 +1824,13 @@ static void HideDockHoverTip(void) {
       if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI_HIDE_MAIN")) [self.window orderOut:nil];
     });
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_SCENE")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      self.quickTabs.selectedSegment = 1;
+      [self quickTabChanged:nil];
+      [self togglePopover:nil];
+    });
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self togglePopover:nil];
@@ -8887,6 +8894,11 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.quickScenePopup selectItemAtIndex:self.quickSceneIndex];
   self.quickScenePopup.target = self; self.quickScenePopup.action = @selector(quickScenePopupChanged:);
   [self.quickSceneContainer addSubview:self.quickScenePopup];
+  ColorHoverButton *applyTop = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(228, 350, 88, 26)];
+  applyTop.title = @"应用"; applyTop.hoverColor = [NSColor systemIndigoColor];
+  applyTop.target = self; applyTop.action = @selector(quickSceneApply:);
+  [applyTop applyColor:[NSColor systemIndigoColor] textColor:[NSColor whiteColor]];
+  [self.quickSceneContainer addSubview:applyTop];
 
   self.quickSceneAutoCheck = [NSButton checkboxWithTitle:@"按时间自动切换（工作日 9:00-18:00 工作，其余下班）" target:self action:@selector(quickSceneAutoToggled:)];
   self.quickSceneAutoCheck.font = [NSFont systemFontOfSize:10.5];
