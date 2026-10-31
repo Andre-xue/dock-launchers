@@ -349,6 +349,13 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableArray *aiEntries;
 @property (strong) NSMutableSet *aiSelected;
 @property (strong) NSMutableSet *aiRevealedNames;
+@property (strong) NSWindow *clipboardWindow;
+@property (strong) NSTableView *clipboardTable;
+@property (strong) NSMutableArray *clipboardItems;
+@property (strong) NSTimer *clipboardTimer;
+@property NSInteger clipboardLastChange;
+@property (strong) NSString *clipboardLastText;
+@property BOOL clipboardPaused;
 @property (strong) NSWindow *apiKeyDialogWindow;
 @property (strong) NSString *apiKeyDialogValue;
 @property (strong) NSTextField *apiKeyDialogField;
@@ -1609,6 +1616,7 @@ static void HideDockHoverTip(void) {
   [self applyThemeFromDefaults];
   [self setupMainMenu];
   [self installTranslationHotKey];
+  [self startClipboardMonitor];
   [self buildWindow];
   [self buildPopover];
   [self applyThemeFromDefaults];
@@ -1735,6 +1743,11 @@ static void HideDockHoverTip(void) {
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_ALERTS")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self openAlertSettings:nil];
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_CLIPBOARD")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self showClipboardWindow:nil];
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_QUICK")) {
@@ -3984,6 +3997,96 @@ static BOOL ValidGroupName(NSString *raw) {
   [d writeToFile:[self aiStorePath] atomically:YES];
   [self recordAIHistorySnapshot];
 }
+- (void)startClipboardMonitor {
+  if (self.clipboardTimer) return;
+  if (!self.clipboardItems) self.clipboardItems = [NSMutableArray array];
+  self.clipboardLastChange = [NSPasteboard generalPasteboard].changeCount;
+  self.clipboardLastText = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString] ?: @"";
+  self.clipboardTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    NSInteger cc = pb.changeCount;
+    if (cc == self.clipboardLastChange) return;
+    self.clipboardLastChange = cc;
+    if (self.clipboardPaused) return;
+    NSString *text = [pb stringForType:NSPasteboardTypeString];
+    if (!text.length || [text isEqualToString:self.clipboardLastText]) return;
+    self.clipboardLastText = text;
+    [self.clipboardItems insertObject:@{@"text": text, @"date": [NSDate date]} atIndex:0];
+    while (self.clipboardItems.count > 30) [self.clipboardItems removeLastObject];
+    if (self.clipboardWindow.isVisible) [self.clipboardTable reloadData];
+  }];
+}
+
+- (void)showClipboardWindow:(id)sender {
+  if (!self.clipboardWindow) {
+    self.clipboardWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,540,440) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.clipboardWindow.title = @"剪贴板历史";
+    self.clipboardWindow.releasedWhenClosed = NO;
+    self.clipboardWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.clipboardWindow.contentView;
+    NSTextField *title = [self label:@"剪贴板历史" size:16 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 396, 200, 22); [cv addSubview:title];
+    NSTextField *hint = [self label:@"只记录文字，最多 30 条；双击可重新复制" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    hint.frame = NSMakeRect(20, 376, 400, 16); [cv addSubview:hint];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 64, 508, 300)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder; sv.drawsBackground = YES; sv.backgroundColor = [NSColor whiteColor];
+    self.clipboardTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"clip"]; col.width = 490;
+    [self.clipboardTable addTableColumn:col];
+    self.clipboardTable.headerView = nil;
+    self.clipboardTable.rowHeight = 44;
+    self.clipboardTable.dataSource = self;
+    self.clipboardTable.delegate = self;
+    self.clipboardTable.target = self;
+    self.clipboardTable.doubleAction = @selector(copyClipboardRow:);
+    sv.documentView = self.clipboardTable;
+    [cv addSubview:sv];
+    ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 20, 100, 30)];
+    clear.title = @"清空"; clear.hoverColor = [NSColor systemRedColor];
+    clear.target = self; clear.action = @selector(clearClipboardHistory:);
+    [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    ColorHoverButton *pause = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(126, 20, 120, 30)];
+    pause.title = @"暂停监听"; pause.hoverColor = [NSColor systemOrangeColor];
+    pause.target = self; pause.action = @selector(toggleClipboardPause:);
+    [pause applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:pause];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(424, 20, 100, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeClipboardWindow:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.clipboardWindow center];
+  }
+  if (!self.clipboardItems) self.clipboardItems = [NSMutableArray array];
+  [self.clipboardTable reloadData];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.clipboardWindow makeKeyAndOrderFront:nil];
+  [self.clipboardWindow orderFrontRegardless];
+}
+
+- (void)copyClipboardRow:(id)sender {
+  NSInteger row = self.clipboardTable.clickedRow;
+  if (row < 0) row = self.clipboardTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.clipboardItems.count) return;
+  NSString *text = self.clipboardItems[row][@"text"] ?: @"";
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:text forType:NSPasteboardTypeString];
+  self.clipboardLastChange = [NSPasteboard generalPasteboard].changeCount;
+  self.clipboardLastText = text;
+  [self showToast:@"已复制到剪贴板"];
+}
+
+- (void)clearClipboardHistory:(id)sender {
+  [self.clipboardItems removeAllObjects];
+  [self.clipboardTable reloadData];
+  [self showToast:@"剪贴板历史已清空"];
+}
+
+- (void)toggleClipboardPause:(id)sender {
+  self.clipboardPaused = !self.clipboardPaused;
+  [self showToast:self.clipboardPaused ? @"已暂停记录剪贴板" : @"已继续记录剪贴板"];
+}
+
+- (void)closeClipboardWindow:(id)sender { [self.clipboardWindow orderOut:nil]; }
+
 - (NSString *)aiHistoryDir {
   NSString *dir = [[self backupBaseDir] stringByAppendingPathComponent:@"ai-history"];
   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
@@ -6384,6 +6487,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.clipboardTable) return self.clipboardItems.count;
   if (tableView == self.aiTable) return self.aiVisibleEntries.count;
   if (tableView == self.diskTable) return self.diskFileFiltered.count;
   if (tableView == self.userFilesTable) return self.userFilesForUninstall.count;
@@ -6398,6 +6502,21 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.clipboardTable) {
+    if (row < 0 || row >= (NSInteger)self.clipboardItems.count) return nil;
+    NSDictionary *it = self.clipboardItems[row];
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
+    NSString *text = it[@"text"] ?: @"";
+    NSTextField *l = [self label:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:11.5 bold:NO color:nil];
+    l.lineBreakMode = NSLineBreakByTruncatingTail;
+    l.frame = NSMakeRect(8, 18, col.width-150, 18); [v addSubview:l];
+    NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"MM-dd HH:mm:ss";
+    NSTextField *t = [self label:[df stringFromDate:it[@"date"] ?: [NSDate date]] size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+    t.alignment = NSTextAlignmentRight;
+    t.frame = NSMakeRect(col.width-138, 20, 130, 16); [v addSubview:t];
+    NSBox *line = [[NSBox alloc] initWithFrame:NSMakeRect(8,0,col.width-16,1)]; line.boxType = NSBoxSeparator; [v addSubview:line];
+    return v;
+  }
   if (tableView == self.aiTable) {
     if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return nil;
     NSDictionary *e = self.aiVisibleEntries[row];
@@ -7585,7 +7704,7 @@ static BOOL ValidGroupName(NSString *raw) {
   tt.frame = NSMakeRect(16, 480, 250, 26); [toolsPage addSubview:tt];
   NSTextField *ts = [self label:@"选择工具，打开独立窗口；可钉住置顶" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   ts.frame = NSMakeRect(16, 456, 388, 18); [toolsPage addSubview:ts];
-  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(70, 296, 132, 140)];
+  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(50, 296, 100, 140)];
   transBtn.title = @"AI 翻译";
   transBtn.image = ToolIconImage(@"character.bubble.fill", [NSColor systemTealColor]);
   transBtn.imagePosition = NSImageAbove;
@@ -7600,7 +7719,7 @@ static BOOL ValidGroupName(NSString *raw) {
   transBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:transBtn];
 
-  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(218, 296, 132, 140)];
+  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(160, 296, 100, 140)];
   zipBtn.title = @"压缩 / 解压";
   zipBtn.image = ToolIconImage(@"archivebox.fill", [NSColor systemOrangeColor]);
   zipBtn.imagePosition = NSImageAbove;
@@ -7613,6 +7732,20 @@ static BOOL ValidGroupName(NSString *raw) {
   zipBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"压缩 / 解压" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
   zipBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:zipBtn];
+
+  ColorHoverButton *clipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(270, 296, 100, 140)];
+  clipBtn.title = @"剪贴板";
+  clipBtn.image = ToolIconImage(@"doc.on.clipboard.fill", [NSColor systemPurpleColor]);
+  clipBtn.imagePosition = NSImageAbove;
+  clipBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
+  clipBtn.hoverColor = [NSColor systemPurpleColor];
+  clipBtn.target = self; clipBtn.action = @selector(openClipboardFromPopover:);
+  clipBtn.hoverTitle = @"剪贴板历史";
+  clipBtn.hoverDetail = @"记录最近复制的文字，双击可重新复制";
+  [clipBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  clipBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"剪贴板" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
+  clipBtn.layer.borderWidth = 0.6;
+  [toolsPage addSubview:clipBtn];
 
   NSTextField *tip = [self label:@"悬停查看用途，点击打开工具" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
   tip.alignment = NSTextAlignmentCenter;
@@ -8058,6 +8191,10 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)openTranslationToolFromPopover:(id)sender {
   [self.popover performClose:nil];
   [self showTranslationWindow:sender];
+}
+- (void)openClipboardFromPopover:(id)sender {
+  [self.popover performClose:nil];
+  [self showClipboardWindow:sender];
 }
 - (void)openCompressToolFromPopover:(id)sender {
   [self.popover performClose:nil];
@@ -8860,6 +8997,7 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   [out addObject:@{@"title": @"AI 翻译", @"subtitle": @"截图 / 划词 / 文档翻译", @"type": @"工具", @"tool": @"translate", @"icon": [NSImage imageWithSystemSymbolName:@"character.bubble" accessibilityDescription:nil]}];
   [out addObject:@{@"title": @"压缩 / 解压", @"subtitle": @"ZIP / TAR.GZ", @"type": @"工具", @"tool": @"compress", @"icon": [NSImage imageWithSystemSymbolName:@"archivebox" accessibilityDescription:nil]}];
+  [out addObject:@{@"title": @"剪贴板历史", @"subtitle": @"最近复制的文字", @"type": @"工具", @"tool": @"clipboard", @"icon": [NSImage imageWithSystemSymbolName:@"doc.on.clipboard" accessibilityDescription:nil]}];
   return out;
 }
 
@@ -8874,6 +9012,7 @@ static BOOL ValidGroupName(NSString *raw) {
     if (path.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
   } else if ([type isEqualToString:@"工具"]) {
     if ([item[@"tool"] isEqualToString:@"translate"]) [self showTranslationWindow:nil];
+    else if ([item[@"tool"] isEqualToString:@"clipboard"]) [self showClipboardWindow:nil];
     else [self showCompressWindow:nil];
   }
 }
