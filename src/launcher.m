@@ -354,6 +354,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSTextField *searchField;
 @property (strong) NSButton *pinBtn;
 @property BOOL pinned;
+@property (strong) CircleButton *dockImportBtn;
 @property (strong) NSWindow *dockImportWindow;
 @property (strong) NSArray<NSURL *> *dockImportApps;
 @property (strong) NSMutableArray *dockImportChecks;
@@ -1361,16 +1362,16 @@ static NSString *ResolveAppPath(NSString *target) {
   [cv addSubview:add positioned:NSWindowAbove relativeTo:nil];
   [cv addSubview:remove positioned:NSWindowAbove relativeTo:nil];
 
-  CircleButton *dockImport = [[CircleButton alloc] initWithFrame:NSMakeRect(145, H - 12 - btnSize, btnSize, btnSize)];
-  dockImport.circleColor = [NSColor colorWithCalibratedRed:0.55 green:0.35 blue:0.95 alpha:1.0];
-  dockImport.glyph = @"import";
-  dockImport.bordered = NO;
-  dockImport.title = @"";
-  dockImport.focusRingType = NSFocusRingTypeNone;
-  dockImport.target = self;
-  dockImport.action = @selector(importAppsFromDock:);
-  dockImport.toolTip = @"从系统 Dock 导入应用";
-  [cv addSubview:dockImport];
+  self.dockImportBtn = [[CircleButton alloc] initWithFrame:NSMakeRect(145, H - 12 - btnSize, btnSize, btnSize)];
+  self.dockImportBtn.circleColor = [NSColor colorWithCalibratedRed:0.55 green:0.35 blue:0.95 alpha:1.0];
+  self.dockImportBtn.glyph = @"import";
+  self.dockImportBtn.bordered = NO;
+  self.dockImportBtn.title = @"";
+  self.dockImportBtn.focusRingType = NSFocusRingTypeNone;
+  self.dockImportBtn.target = self;
+  self.dockImportBtn.action = @selector(importAppsFromDock:);
+  self.dockImportBtn.toolTip = @"从系统 Dock 导入应用";
+  [cv addSubview:self.dockImportBtn];
 
   self.scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, W-32, H-54-76)];
   self.scroll.hasVerticalScroller = YES;
@@ -1956,9 +1957,10 @@ static NSString *ResolveAppPath(NSString *target) {
   CGFloat btnSize = 30.0;
   CGFloat cw = rw / 4.0;
   self.removeBtn.frame = NSMakeRect(ox + cw*0.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
-  self.skinBtn.frame   = NSMakeRect(ox + cw*1.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
-  if (self.searchBtn) self.searchBtn.frame = NSMakeRect(ox + cw*2.5 - 15.0, oy + rh - 88, 30, 30);
-  self.addBtn.frame    = NSMakeRect(ox + cw*3.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
+  if (self.dockImportBtn) self.dockImportBtn.frame = NSMakeRect(ox + cw*1.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
+  self.skinBtn.frame   = NSMakeRect(ox + cw*2.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
+  if (self.searchBtn) self.searchBtn.frame = NSMakeRect(ox + cw*3.5 - 15.0, oy + rh - 88, 30, 30);
+  self.addBtn.frame    = NSMakeRect(ox + cw*4.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
 
   BOOL morph = (gCornerRatio > 0.05);
   // 保持 Resizable：这样系统绿灯的 Move & Resize 悬停菜单在变形状态下也能用
