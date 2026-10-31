@@ -4550,9 +4550,9 @@ static BOOL ValidGroupName(NSString *raw) {
   self.aiTable.columnAutoresizingStyle = NSTableViewNoColumnAutoresizing;
   self.aiTable.dataSource = self;
   self.aiTable.delegate = self;
-  NSArray *cols = @[@[@"sel", @"", @24], @[@"ainame", @"名称", @120], @[@"quota", @"余量", @120],
-                    @[@"endpoint", @"链接地址(API)", @100], @[@"api", @"API Key", @80],
-                    @[@"note", @"备注(用途)", @100], @[@"aiactions", @"操作", @130]];
+  NSArray *cols = @[@[@"sel", @"", @24], @[@"ainame", @"名称", @110], @[@"quota", @"余量", @120],
+                    @[@"endpoint", @"链接地址(API)", @90], @[@"api", @"API Key", @70],
+                    @[@"note", @"备注(用途)", @90], @[@"aiactions", @"操作", @130]];
   for (NSArray *c in cols) {
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
     col.title = c[1]; col.width = [c[2] doubleValue];
