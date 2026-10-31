@@ -376,6 +376,14 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSString *playerChooserPath;
 @property (strong) id playerChooserKeyMonitor;
 @property (strong) NSPopUpButton *videoPlayerPopup;
+@property (strong) NSWindow *sceneWindow;
+@property (strong) NSPopUpButton *scenePopup;
+@property (strong) NSMutableArray *sceneChecks;
+@property (strong) NSMutableArray *scenes;
+@property (strong) NSButton *sceneAutoCheck;
+@property (strong) NSScrollView *sceneScroll;
+@property (strong) NSTimer *sceneTimer;
+@property (copy) NSString *lastAppliedScene;
 @property (strong) NSWindow *photoPermissionWindow;
 @property (strong) NSButton *photoSystemRadio, *photoLocalRadio;
 @property (strong) NSTextField *photoPermissionStatus;
@@ -1707,6 +1715,7 @@ static void HideDockHoverTip(void) {
   [self buildWindow];
   [self buildPopover];
   [self applyThemeFromDefaults];
+  [self startSceneAutoIfNeeded];
   self.diskKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
     if (e.keyCode == 49 && self.section == 3 && self.diskCollectionScroll.hidden == NO) {
       [self previewSelectedDiskFile];
@@ -8066,6 +8075,185 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.appShortcutWindow orderOut:nil];
 }
 
+- (NSString *)sceneStorePath {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:@"scenes.json"];
+}
+
+- (void)loadScenes {
+  NSData *d = [NSData dataWithContentsOfFile:[self sceneStorePath]];
+  id parsed = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  if ([parsed isKindOfClass:[NSArray class]] && [parsed count]) {
+    self.scenes = [parsed mutableCopy];
+    return;
+  }
+  self.scenes = [@[
+    @{@"name": @"工作", @"groups": @[@"工作", @"工具", @"Ai"]},
+    @{@"name": @"下班", @"groups": @[@"聊天", @"影音", @"外网", @"工具"]},
+    @{@"name": @"会议", @"groups": @[@"工作", @"工具"]},
+    @{@"name": @"全部", @"groups": @[]}
+  ] mutableCopy];
+  [self saveScenes];
+}
+
+- (void)saveScenes {
+  NSData *d = [NSJSONSerialization dataWithJSONObject:self.scenes options:NSJSONWritingPrettyPrinted error:NULL];
+  [d writeToFile:[self sceneStorePath] atomically:YES];
+}
+
+- (NSArray<NSString *> *)installedGroupNames {
+  NSMutableArray *names = [NSMutableArray array];
+  for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[]) {
+    if ([f.pathExtension.lowercaseString isEqualToString:@"app"]) [names addObject:f.stringByDeletingPathExtension];
+  }
+  [names sortUsingSelector:@selector(localizedCompare:)];
+  return names;
+}
+
+- (void)showSceneSettings:(id)sender {
+  [self loadScenes];
+  self.sceneWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,500,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+  self.sceneWindow.title = @"场景模式";
+  self.sceneWindow.releasedWhenClosed = NO;
+  self.sceneWindow.level = NSFloatingWindowLevel;
+  NSView *cv = self.sceneWindow.contentView;
+  NSTextField *title = [self label:@"场景模式" size:20 bold:YES color:nil];
+  title.frame = NSMakeRect(20, 510, 300, 28); [cv addSubview:title];
+  NSTextField *sub = [self label:@"选择场景要显示在 Dock 里的分组，应用后立即切换" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+  sub.frame = NSMakeRect(20, 488, 460, 18); [cv addSubview:sub];
+
+  self.scenePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(20, 448, 220, 28) pullsDown:NO];
+  for (NSDictionary *sc in self.scenes) [self.scenePopup addItemWithTitle:sc[@"name"] ?: @""];
+  self.scenePopup.target = self; self.scenePopup.action = @selector(scenePopupChanged:);
+  [cv addSubview:self.scenePopup];
+
+  self.sceneAutoCheck = [NSButton checkboxWithTitle:@"按时间自动切换（工作日 9:00-18:00 工作，其余下班）" target:self action:@selector(sceneAutoChanged:)];
+  self.sceneAutoCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerSceneAuto"] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.sceneAutoCheck.frame = NSMakeRect(20, 416, 460, 22);
+  [cv addSubview:self.sceneAutoCheck];
+
+  NSTextField *hint = [self label:@"勾选该场景要显示的分组" size:10.5 bold:YES color:[NSColor tertiaryLabelColor]];
+  hint.frame = NSMakeRect(20, 392, 300, 18); [cv addSubview:hint];
+
+  self.sceneScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 74, 468, 310)];
+  self.sceneScroll.hasVerticalScroller = YES; self.sceneScroll.borderType = NSBezelBorder;
+  self.sceneScroll.drawsBackground = YES; self.sceneScroll.backgroundColor = [NSColor controlBackgroundColor];
+  [cv addSubview:self.sceneScroll];
+
+  ColorHoverButton *apply = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(240, 24, 120, 34)];
+  apply.title = @"应用此场景"; apply.hoverColor = [NSColor systemIndigoColor];
+  apply.target = self; apply.action = @selector(applyCurrentScene:);
+  [apply applyColor:[NSColor systemIndigoColor] textColor:[NSColor whiteColor]];
+  [cv addSubview:apply];
+  ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(370, 24, 100, 34)];
+  close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+  close.target = self; close.action = @selector(closeSceneSettings:);
+  [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [cv addSubview:close];
+
+  self.sceneChecks = [NSMutableArray array];
+  [self reloadSceneChecks];
+  [self sceneAutoChanged:self.sceneAutoCheck];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.sceneWindow center];
+  [self.sceneWindow makeKeyAndOrderFront:nil];
+  [self.sceneWindow orderFrontRegardless];
+}
+
+- (void)reloadSceneChecks {
+  NSInteger idx = self.scenePopup.indexOfSelectedItem;
+  if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
+  NSArray *sceneGroups = self.scenes[idx][@"groups"] ?: @[];
+  BOOL all = (sceneGroups.count == 0);
+  NSArray *installed = [self installedGroupNames];
+  NSView *doc = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,450,MAX(310,installed.count*34))];
+  [self.sceneChecks removeAllObjects];
+  for (NSInteger i = 0; i < (NSInteger)installed.count; i++) {
+    NSString *name = installed[i];
+    NSButton *cb = [NSButton checkboxWithTitle:name target:self action:@selector(sceneCheckChanged:)];
+    cb.frame = NSMakeRect(12, i*34+5, 420, 24);
+    cb.tag = i;
+    cb.state = (all || [sceneGroups containsObject:name]) ? NSControlStateValueOn : NSControlStateValueOff;
+    [doc addSubview:cb];
+    [self.sceneChecks addObject:cb];
+  }
+  self.sceneScroll.documentView = doc;
+}
+
+- (void)scenePopupChanged:(id)sender { [self reloadSceneChecks]; }
+
+- (void)sceneCheckChanged:(id)sender {
+  NSInteger idx = self.scenePopup.indexOfSelectedItem;
+  if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
+  NSArray *installed = [self installedGroupNames];
+  NSMutableArray *checked = [NSMutableArray array];
+  for (NSButton *cb in self.sceneChecks) {
+    NSInteger tag = cb.tag;
+    if (tag >= 0 && tag < (NSInteger)installed.count && cb.state == NSControlStateValueOn) [checked addObject:installed[tag]];
+  }
+  NSMutableDictionary *scene = [self.scenes[idx] mutableCopy];
+  scene[@"groups"] = checked.count == installed.count ? @[] : checked;
+  self.scenes[idx] = scene;
+  [self saveScenes];
+}
+
+- (void)startSceneAutoIfNeeded {
+  if (![[NSUserDefaults standardUserDefaults] boolForKey:@"centerSceneAuto"]) return;
+  [self loadScenes];
+  self.sceneTimer = [NSTimer scheduledTimerWithTimeInterval:60 target:self selector:@selector(sceneAutoTick:) userInfo:nil repeats:YES];
+  [self sceneAutoTick:nil];
+}
+
+- (void)sceneAutoChanged:(id)sender {
+  BOOL on = self.sceneAutoCheck.state == NSControlStateValueOn;
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerSceneAuto"];
+  [self.sceneTimer invalidate]; self.sceneTimer = nil;
+  if (!on) return;
+  self.sceneTimer = [NSTimer scheduledTimerWithTimeInterval:60 target:self selector:@selector(sceneAutoTick:) userInfo:nil repeats:YES];
+  [self sceneAutoTick:nil];
+}
+
+- (void)sceneAutoTick:(NSTimer *)timer {
+  NSDate *now = [NSDate date];
+  NSCalendar *cal = [NSCalendar currentCalendar];
+  NSInteger weekday = [cal component:NSCalendarUnitWeekday fromDate:now];
+  NSInteger hour = [cal component:NSCalendarUnitHour fromDate:now];
+  BOOL workday = (weekday >= 2 && weekday <= 6);
+  BOOL workTime = workday && hour >= 9 && hour < 18;
+  NSString *target = workTime ? @"工作" : @"下班";
+  if ([self.lastAppliedScene isEqualToString:target]) return;
+  for (NSDictionary *sc in self.scenes) {
+    if ([sc[@"name"] isEqualToString:target]) { [self applySceneNamed:target silent:YES]; return; }
+  }
+}
+
+- (void)applyCurrentScene:(id)sender {
+  NSInteger idx = self.scenePopup.indexOfSelectedItem;
+  if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
+  [self applySceneNamed:self.scenes[idx][@"name"] silent:NO];
+}
+
+- (void)applySceneNamed:(NSString *)name silent:(BOOL)silent {
+  NSDictionary *scene = nil;
+  for (NSDictionary *sc in self.scenes) if ([sc[@"name"] isEqualToString:name]) { scene = sc; break; }
+  if (!scene) return;
+  NSArray *sceneGroups = scene[@"groups"] ?: @[];
+  BOOL all = (sceneGroups.count == 0);
+  NSArray *installed = [self installedGroupNames];
+  for (NSString *group in installed) {
+    NSString *path = [[GroupDir() stringByAppendingPathComponent:group] stringByAppendingPathExtension:@"app"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) continue;
+    if (all || [sceneGroups containsObject:group]) [self addDockEntry:path label:group];
+    else [self removeDockEntry:path];
+  }
+  [self killDock];
+  self.lastAppliedScene = name;
+  if (!silent) [self showToast:[NSString stringWithFormat:@"已切换到「%@」场景", name]];
+}
+
+- (void)closeSceneSettings:(id)sender { [self.sceneWindow orderOut:nil]; }
+
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"设置" size:24 bold:YES color:nil];
@@ -8170,6 +8358,14 @@ static BOOL ValidGroupName(NSString *raw) {
   self.videoPlayerPopup.target = self; self.videoPlayerPopup.action = @selector(videoPlayerChanged:);
   self.videoPlayerPopup.toolTip = @"空格预览视频时使用的播放器";
   [tPlayer addSubview:self.videoPlayerPopup];
+
+  NSView *tScene = tileAt(1, 278); tileLabel(tScene, @"场景模式");
+  ColorHoverButton *sceneBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
+  sceneBtn.title = @"场景设置…"; sceneBtn.hoverColor = [NSColor systemIndigoColor];
+  sceneBtn.target = self; sceneBtn.action = @selector(showSceneSettings:);
+  [sceneBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  sceneBtn.toolTip = @"按工作/下班/会议切换 Dock 中显示的分组";
+  [tScene addSubview:sceneBtn];
 
   // 第三列：相册与磁盘
   NSView *tAlbum = tileAt(2, 500); tileLabel(tAlbum, @"图库权限");
