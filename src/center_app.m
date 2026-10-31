@@ -11271,6 +11271,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.layoutWindow center];
   }
   [self.layoutTable reloadData];
+  if (self.layoutTable.numberOfRows > 0 && self.layoutTable.selectedRow < 0) {
+    [self.layoutTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+  }
+  self.layoutTable.target = self;
+  self.layoutTable.doubleAction = @selector(restoreSelectedWindowLayout:);
   if (self.layoutAXButton) {
     BOOL trusted = AXIsProcessTrusted();
     self.layoutAXButton.title = trusted ? @"窗口控制：已授权" : @"窗口控制权限";
@@ -11319,6 +11324,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.savedLayouts[name] = @{@"date": @([[NSDate date] timeIntervalSince1970]), @"windows": windows};
   [self saveWindowLayouts];
   [self.layoutTable reloadData];
+  NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
+  NSInteger idx = [names indexOfObject:name];
+  if (idx != NSNotFound) [self.layoutTable selectRowIndexes:[NSIndexSet indexSetWithIndex:idx] byExtendingSelection:NO];
   [self showToast:[NSString stringWithFormat:@"已保存布局「%@」", name]];
 }
 
@@ -11374,6 +11382,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if (app.activationPolicy == NSApplicationActivationPolicyRegular && app.bundleIdentifier.length) apps[app.bundleIdentifier] = app;
   }
   NSInteger restored = 0;
+  NSInteger failed = 0;
   NSMutableDictionary *used = [NSMutableDictionary dictionary];
   for (NSDictionary *w in windows) {
     NSRunningApplication *app = apps[w[@"bundle"] ?: @""];
@@ -11390,12 +11399,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     CGSize sz = CGSizeMake([w[@"w"] doubleValue], [w[@"h"] doubleValue]);
     AXValueRef posVal = AXValueCreate(kAXValueCGPointType, &p);
     AXValueRef sizeVal = AXValueCreate(kAXValueCGSizeType, &sz);
-    if (posVal) { AXUIElementSetAttributeValue(win, kAXPositionAttribute, posVal); CFRelease(posVal); }
-    if (sizeVal) { AXUIElementSetAttributeValue(win, kAXSizeAttribute, sizeVal); CFRelease(sizeVal); }
-    restored++;
+    BOOL ok = YES;
+    AXError pe = posVal ? AXUIElementSetAttributeValue(win, kAXPositionAttribute, posVal) : kAXErrorFailure;
+    AXError se = sizeVal ? AXUIElementSetAttributeValue(win, kAXSizeAttribute, sizeVal) : kAXErrorFailure;
+    if (pe != kAXErrorSuccess || se != kAXErrorSuccess) ok = NO;
+    if (posVal) CFRelease(posVal);
+    if (sizeVal) CFRelease(sizeVal);
+    if (ok) restored++; else failed++;
     CFRelease(axApp);
   }
-  [self showToast:[NSString stringWithFormat:@"已恢复「%@」的 %ld 个窗口", name, (long)restored]];
+  if (restored == 0) [self showToast:[NSString stringWithFormat:@"没有找到可恢复的窗口（失败 %ld 个）；请确认应用已打开并已获得窗口控制权限", (long)failed]];
+  else [self showToast:[NSString stringWithFormat:@"已恢复「%@」的 %ld 个窗口%@", name, (long)restored, failed ? [NSString stringWithFormat:@"，%ld 个失败", (long)failed] : @""]];
 }
 
 - (void)deleteSelectedWindowLayout:(id)sender {
