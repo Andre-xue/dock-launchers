@@ -472,6 +472,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate>
 - (void)hideClipboardPreview;
 - (void)installClipboardHoverMonitor;
+- (void)scheduleDockLiveApply;
 - (void)applyConsoleMetricSelection;
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
@@ -617,8 +618,10 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *dockAppearanceWindow;
 @property (strong) NSSlider *dockSizeSlider, *dockMagnifySlider;
 @property (strong) NSTextField *dockSizeValue, *dockMagnifyValue;
-@property (strong) NSButton *dockMagnifyCheck, *dockAutohideCheck;
-@property (strong) NSPopUpButton *dockPositionPopup;
+@property (strong) NSButton *dockMagnifyCheck, *dockAutohideCheck, *dockLivePreviewCheck;
+@property (strong) NSPopUpButton *dockPositionPopup, *dockAutohideDelayPopup;
+@property (strong) NSTimer *dockLiveTimer;
+@property (copy) NSString *dockLastSignature;
 @property (strong) NSWindow *dupWindow;
 @property (strong) NSTableView *dupTable;
 @property (strong) NSArray *dupItems;
@@ -10783,6 +10786,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.dockSizeSlider.minValue = 32; self.dockSizeSlider.maxValue = 128;
     self.dockSizeSlider.integerValue = [self dockPrefString:@"tilesize"].integerValue ?: 64;
     self.dockSizeSlider.target = self; self.dockSizeSlider.action = @selector(dockSizeChanged:);
+    self.dockSizeSlider.continuous = YES;
     [cv addSubview:self.dockSizeSlider];
     self.dockSizeValue = [self label:[NSString stringWithFormat:@"%ld", (long)self.dockSizeSlider.integerValue] size:11 bold:YES color:[NSColor systemBlueColor]];
     self.dockSizeValue.frame = NSMakeRect(390, 352, 50, 18); [cv addSubview:self.dockSizeValue];
@@ -10794,13 +10798,33 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.dockMagnifySlider.minValue = 32; self.dockMagnifySlider.maxValue = 128;
     self.dockMagnifySlider.integerValue = [self dockPrefString:@"largesize"].integerValue ?: 96;
     self.dockMagnifySlider.target = self; self.dockMagnifySlider.action = @selector(dockMagnifyChanged:);
+    self.dockMagnifySlider.continuous = YES;
     [cv addSubview:self.dockMagnifySlider];
     self.dockMagnifyValue = [self label:[NSString stringWithFormat:@"%ld", (long)self.dockMagnifySlider.integerValue] size:11 bold:YES color:[NSColor systemPurpleColor]];
     self.dockMagnifyValue.frame = NSMakeRect(386, 306, 50, 18); [cv addSubview:self.dockMagnifyValue];
 
-    self.dockAutohideCheck = [NSButton checkboxWithTitle:@"自动隐藏 Dock" target:self action:nil];
+    self.dockAutohideCheck = [NSButton checkboxWithTitle:@"启用自动隐藏和展开" target:self action:@selector(dockOptionChanged:)];
     self.dockAutohideCheck.state = [[self dockPrefString:@"autohide"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
-    self.dockAutohideCheck.frame = NSMakeRect(24, 260, 180, 22); [cv addSubview:self.dockAutohideCheck];
+    self.dockAutohideCheck.frame = NSMakeRect(24, 260, 190, 22); [cv addSubview:self.dockAutohideCheck];
+    NSTextField *delayLabel = [self label:@"悬停展开延迟" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+    delayLabel.frame = NSMakeRect(222, 262, 96, 18); [cv addSubview:delayLabel];
+    self.dockAutohideDelayPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(322, 254, 118, 26) pullsDown:NO];
+    NSArray *delays = @[@0.0, @0.2, @0.5, @1.0, @2.0];
+    for (NSNumber *d in delays) {
+      NSString *t = [d doubleValue] == 0 ? @"立即展开" : [NSString stringWithFormat:@"%.1f 秒", [d doubleValue]];
+      [self.dockAutohideDelayPopup addItemWithTitle:t];
+      self.dockAutohideDelayPopup.lastItem.representedObject = d;
+    }
+    double curDelay = [[self dockPrefString:@"autohide-delay"] doubleValue];
+    NSInteger best = 0;
+    for (NSInteger i = 0; i < (NSInteger)delays.count; i++) if (fabs([delays[i] doubleValue] - curDelay) < fabs([delays[best] doubleValue] - curDelay)) best = i;
+    [self.dockAutohideDelayPopup selectItemAtIndex:best];
+    self.dockAutohideDelayPopup.target = self;
+    self.dockAutohideDelayPopup.action = @selector(dockOptionChanged:);
+    [cv addSubview:self.dockAutohideDelayPopup];
+    self.dockLivePreviewCheck = [NSButton checkboxWithTitle:@"拖动时实时预览 Dock" target:self action:nil];
+    self.dockLivePreviewCheck.state = NSControlStateValueOn;
+    self.dockLivePreviewCheck.frame = NSMakeRect(24, 184, 220, 22); [cv addSubview:self.dockLivePreviewCheck];
 
     NSTextField *pl = [self label:@"位置" size:11 bold:YES color:nil];
     pl.frame = NSMakeRect(24, 214, 60, 18); [cv addSubview:pl];
@@ -10808,6 +10832,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.dockPositionPopup addItemsWithTitles:@[@"底部", @"左侧", @"右侧"]];
     NSString *ori = [self dockPrefString:@"orientation"];
     [self.dockPositionPopup selectItemAtIndex:[ori isEqualToString:@"left"] ? 1 : ([ori isEqualToString:@"right"] ? 2 : 0)];
+    self.dockPositionPopup.target = self;
+    self.dockPositionPopup.action = @selector(dockOptionChanged:);
     [cv addSubview:self.dockPositionPopup];
 
     ColorHoverButton *apply = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 140, 110, 34)];
@@ -10822,7 +10848,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeDockAppearance:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
-    NSTextField *note = [self label:@"应用后会重启 Dock，分组图标会自动恢复" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    NSTextField *note = [self label:@"拖动或应用时会重启 Dock，分组图标会自动恢复" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
     note.frame = NSMakeRect(24, 100, 430, 16); [cv addSubview:note];
     [self.dockAppearanceWindow center];
   }
@@ -10831,16 +10857,42 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.dockAppearanceWindow orderFrontRegardless];
 }
 
-- (void)dockSizeChanged:(NSSlider *)s { self.dockSizeValue.stringValue = [NSString stringWithFormat:@"%ld", (long)s.integerValue]; }
-- (void)dockMagnifyChanged:(NSSlider *)s { self.dockMagnifyValue.stringValue = [NSString stringWithFormat:@"%ld", (long)s.integerValue]; }
-- (void)dockMagnifyToggled:(NSButton *)b { self.dockMagnifySlider.enabled = b.state == NSControlStateValueOn; }
+- (void)dockSizeChanged:(NSSlider *)s {
+  self.dockSizeValue.stringValue = [NSString stringWithFormat:@"%ld", (long)s.integerValue];
+  [self scheduleDockLiveApply];
+}
 
-- (void)applyDockAppearance:(id)sender {
+- (void)dockMagnifyChanged:(NSSlider *)s {
+  self.dockMagnifyValue.stringValue = [NSString stringWithFormat:@"%ld", (long)s.integerValue];
+  [self scheduleDockLiveApply];
+}
+
+- (void)dockMagnifyToggled:(NSButton *)b {
+  self.dockMagnifySlider.enabled = b.state == NSControlStateValueOn;
+  [self scheduleDockLiveApply];
+}
+
+- (void)dockOptionChanged:(id)sender {
+  [self scheduleDockLiveApply];
+}
+
+- (NSString *)dockValuesSignature {
+  return [NSString stringWithFormat:@"%ld|%ld|%ld|%ld|%.2f|%ld",
+          (long)self.dockSizeSlider.integerValue,
+          (long)self.dockMagnifySlider.integerValue,
+          (long)self.dockMagnifyCheck.state,
+          (long)self.dockAutohideCheck.state,
+          [self.dockAutohideDelayPopup.selectedItem.representedObject doubleValue],
+          (long)self.dockPositionPopup.indexOfSelectedItem];
+}
+
+- (void)writeDockValuesAndRestart:(BOOL)restart {
   NSArray *pairs = @[
     @[@"tilesize", @"-int", [NSString stringWithFormat:@"%ld", (long)self.dockSizeSlider.integerValue]],
     @[@"magnification", @"-bool", self.dockMagnifyCheck.state == NSControlStateValueOn ? @"true" : @"false"],
     @[@"largesize", @"-int", [NSString stringWithFormat:@"%ld", (long)self.dockMagnifySlider.integerValue]],
-    @[@"autohide", @"-bool", self.dockAutohideCheck.state == NSControlStateValueOn ? @"true" : @"false"]
+    @[@"autohide", @"-bool", self.dockAutohideCheck.state == NSControlStateValueOn ? @"true" : @"false"],
+    @[@"autohide-delay", @"-float", [NSString stringWithFormat:@"%.2f", [self.dockAutohideDelayPopup.selectedItem.representedObject doubleValue]]]
   ];
   for (NSArray *pair in pairs) {
     NSTask *t = [[NSTask alloc] init];
@@ -10853,10 +10905,31 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   t2.launchPath = @"/usr/bin/defaults";
   t2.arguments = @[@"write", @"com.apple.dock", @"orientation", @"-string", pos[MAX(0, MIN(2, self.dockPositionPopup.indexOfSelectedItem))]];
   @try { [t2 launch]; [t2 waitUntilExit]; } @catch (NSException *e) {}
-  NSTask *kill = [[NSTask alloc] init];
-  kill.launchPath = @"/usr/bin/killall";
-  kill.arguments = @[@"Dock"];
-  @try { [kill launch]; [kill waitUntilExit]; } @catch (NSException *e) {}
+  if (restart) {
+    NSTask *kill = [[NSTask alloc] init];
+    kill.launchPath = @"/usr/bin/killall";
+    kill.arguments = @[@"Dock"];
+    @try { [kill launch]; [kill waitUntilExit]; } @catch (NSException *e) {}
+  }
+  self.dockLastSignature = [self dockValuesSignature];
+}
+
+- (void)scheduleDockLiveApply {
+  if (self.dockLivePreviewCheck.state != NSControlStateValueOn) return;
+  [self.dockLiveTimer invalidate];
+  self.dockLiveTimer = [NSTimer scheduledTimerWithTimeInterval:0.45 target:self selector:@selector(applyDockLiveValues:) userInfo:nil repeats:NO];
+}
+
+- (void)applyDockLiveValues:(NSTimer *)timer {
+  if (![self dockValuesSignature].length) return;
+  if ([[self dockValuesSignature] isEqualToString:self.dockLastSignature ?: @""]) return;
+  [self writeDockValuesAndRestart:YES];
+}
+
+- (void)applyDockAppearance:(id)sender {
+  [self.dockLiveTimer invalidate];
+  self.dockLiveTimer = nil;
+  [self writeDockValuesAndRestart:YES];
   [self showToast:@"Dock 外观已应用"];
 }
 
@@ -10865,6 +10938,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.dockMagnifySlider.integerValue = 96;
   self.dockMagnifyCheck.state = NSControlStateValueOff;
   self.dockAutohideCheck.state = NSControlStateValueOff;
+  [self.dockAutohideDelayPopup selectItemAtIndex:2];
   [self.dockPositionPopup selectItemAtIndex:0];
   self.dockSizeValue.stringValue = @"64";
   self.dockMagnifyValue.stringValue = @"96";
