@@ -374,6 +374,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableArray *aiEntries;
 @property (strong) NSMutableSet *aiSelected;
 @property (strong) NSMutableSet *aiRevealedNames;
+@property (strong) NSMutableSet *aiRevealedQuotas;
 @property (strong) NSWindow *playerChooserWindow;
 @property (strong) NSTableView *playerChooserTable;
 @property (strong) NSArray<NSURL *> *playerChooserApps;
@@ -4177,6 +4178,7 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   if (!self.aiSelected) self.aiSelected = [NSMutableSet set];
   if (!self.aiRevealedNames) self.aiRevealedNames = [NSMutableSet set];
+  if (!self.aiRevealedQuotas) self.aiRevealedQuotas = [NSMutableSet set];
   if (migrated) [self saveAIEntries];
   else if (self.aiEntries.count) [self recordAIHistorySnapshot];
 }
@@ -4956,6 +4958,16 @@ static BOOL ValidGroupName(NSString *raw) {
   [[NSPasteboard generalPasteboard] clearContents];
   [[NSPasteboard generalPasteboard] setString:text forType:NSPasteboardTypeString];
   [self showToast:@"完整服务信息已复制"];
+}
+
+- (void)aiToggleQuota:(NSButton *)b {
+  NSInteger row = b.tag;
+  if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
+  NSString *name = self.aiVisibleEntries[row][@"name"] ?: @"";
+  if (!self.aiRevealedQuotas) self.aiRevealedQuotas = [NSMutableSet set];
+  if ([self.aiRevealedQuotas containsObject:name]) [self.aiRevealedQuotas removeObject:name];
+  else [self.aiRevealedQuotas addObject:name];
+  [self.aiTable reloadData];
 }
 
 - (void)aiToggleReveal:(NSButton *)b {
@@ -7270,10 +7282,23 @@ static BOOL ValidGroupName(NSString *raw) {
         b.font = [NSFont systemFontOfSize:9];
         [v addSubview:b];
       }
+    } else if ([ident isEqualToString:@"quota"]) {
+      NSString *q = e[@"quota"] ?: @"";
+      BOOL revealed = [self.aiRevealedQuotas containsObject:e[@"name"] ?: @""];
+      NSTextField *l = [self label:revealed ? q : (q.length ? @"••••••" : @"") size:11 bold:NO color:nil];
+      l.toolTip = revealed ? q : @"点击右侧眼睛显示余量";
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.frame = NSMakeRect(2, 16, col.width - 32, 20); [v addSubview:l];
+      NSButton *qEye = [[NSButton alloc] initWithFrame:NSMakeRect(col.width-30, 14, 26, 26)];
+      qEye.bordered = NO;
+      qEye.image = [NSImage imageWithSystemSymbolName:revealed ? @"eye.slash" : @"eye" accessibilityDescription:@"显示余量"];
+      qEye.contentTintColor = [NSColor secondaryLabelColor];
+      qEye.toolTip = revealed ? @"隐藏余量" : @"显示余量";
+      qEye.tag = row; qEye.target = self; qEye.action = @selector(aiToggleQuota:);
+      [v addSubview:qEye];
     } else {
       NSString *text = @"";
       if ([ident isEqualToString:@"ainame"]) text = e[@"name"] ?: @"";
-      else if ([ident isEqualToString:@"quota"]) text = e[@"quota"] ?: @"";
       else if ([ident isEqualToString:@"endpoint"]) text = e[@"endpoint"] ?: @"";
       else if ([ident isEqualToString:@"note"]) text = e[@"note"] ?: @"";
       NSTextField *l = [self label:text size:11 bold:([ident isEqualToString:@"ainame"]) color:nil];
