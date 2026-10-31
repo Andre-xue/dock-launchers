@@ -1804,7 +1804,7 @@ static void HideDockHoverTip(void) {
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      self.quickTabs.selectedSegment = 2;
+      self.quickTabs.selectedSegment = 1;
       [self quickTabChanged:nil];
       [self togglePopover:nil];
       if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI_HIDE_MAIN")) [self.window orderOut:nil];
@@ -1817,7 +1817,7 @@ static void HideDockHoverTip(void) {
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_TOOLS")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      self.quickTabs.selectedSegment = 3;
+      self.quickTabs.selectedSegment = 2;
       [self quickTabChanged:nil];
       [self togglePopover:nil];
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -2617,7 +2617,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
         weakBtn.toolTip = @"该服务不支持自动查询，或未填写 API Key";
       }
       [weakSelf.aiTable reloadData];
-      if (weakSelf.popover.isShown && weakSelf.quickTabs.selectedSegment == 2) [weakSelf rebuildQuickAITab];
+      if (weakSelf.popover.isShown && weakSelf.quickTabs.selectedSegment == 1) [weakSelf rebuildQuickAITab];
     });
   }];
 }
@@ -8253,7 +8253,7 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   [self applyAppearanceRecursively:self.window.contentView appearance:ap];
   [self refreshThemeColors];
-  if (self.popover.isShown && self.quickTabs.selectedSegment == 2) [self rebuildQuickAITab];
+  if (self.popover.isShown && self.quickTabs.selectedSegment == 1) [self rebuildQuickAITab];
 }
 
 - (void)refreshThemeColors {
@@ -8355,8 +8355,8 @@ static BOOL ValidGroupName(NSString *raw) {
   vc.view = root;
 
   self.quickTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(12, 574, 300, 28)];
-  self.quickTabs.segmentCount = 4;
-  NSArray *tabs = @[@"概览", @"分组", @"AI", @"工具"];
+  self.quickTabs.segmentCount = 3;
+  NSArray *tabs = @[@"概览", @"AI", @"工具"];
   for (NSInteger i = 0; i < tabs.count; i++) [self.quickTabs setLabel:tabs[i] forSegment:i];
   self.quickTabs.controlSize = NSControlSizeSmall;
   self.quickTabs.trackingMode = NSSegmentSwitchTrackingSelectOne;
@@ -8657,11 +8657,10 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger idx = self.quickTabs.selectedSegment;
   self.quickOverview.hidden = (idx != 0);
   if (self.quickDetail) self.quickDetail.hidden = YES;
-  if (self.quickGroupPage) self.quickGroupPage.hidden = (idx != 1);
-  if (self.quickAIPage) self.quickAIPage.hidden = (idx != 2);
-  if (self.quickToolsPage) self.quickToolsPage.hidden = (idx != 3);
-  if (idx == 1) [self rebuildQuickGroupTab];
-  else if (idx == 2) [self rebuildQuickAITab];
+  if (self.quickGroupPage) self.quickGroupPage.hidden = YES;
+  if (self.quickAIPage) self.quickAIPage.hidden = (idx != 1);
+  if (self.quickToolsPage) self.quickToolsPage.hidden = (idx != 2);
+  if (idx == 1) [self rebuildQuickAITab];
 }
 
 - (void)rebuildQuickGroupTab {
@@ -9735,7 +9734,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [self sample];
   [self refreshExternalVolumes];
   if (self.quickTabs.selectedSegment == 1) [self rebuildQuickGroupTab];
-  if (self.quickTabs.selectedSegment == 2) [self rebuildQuickAITab];
+  if (self.quickTabs.selectedSegment == 1) [self rebuildQuickAITab];
   [self showToast:@"菜单栏数据已刷新"];
 }
 
