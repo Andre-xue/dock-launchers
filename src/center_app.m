@@ -2596,6 +2596,8 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 - (void)volumesChanged:(NSNotification *)note {
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     [self refreshExternalVolumes];
+    [self refreshDiskSourcePopup];
+    [self styleDiskSource];
   });
 }
 
@@ -5497,11 +5499,11 @@ static BOOL ValidGroupName(NSString *raw) {
   h.frame = NSMakeRect(24, 600, 300, 32); [v addSubview:h];
 
   self.diskVolumePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(154, 560, 150, 28) pullsDown:NO];
-  [self.diskVolumePopup addItemsWithTitles:@[@"本地磁盘", @"外部磁盘", @"相册"]];
   self.diskVolumePopup.target = self;
   self.diskVolumePopup.action = @selector(diskVolumeChanged:);
-  self.diskVolumePopup.toolTip = @"外部磁盘扫描需要「可移除宗卷」访问权限";
+  self.diskVolumePopup.toolTip = @"只显示当前实际接入的外部存储";
   [v addSubview:self.diskVolumePopup];
+  [self refreshDiskSourcePopup];
 
   self.diskDateButton = [NSButton buttonWithTitle:@"选择日期" target:self action:@selector(showDatePopover:)];
   self.diskDateButton.frame = NSMakeRect(329, 560, 150, 28);
@@ -5652,16 +5654,49 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)refreshDiskVolumes {
+  [self refreshDiskSourcePopup];
   [self styleDiskSource];
 }
 
+- (void)refreshDiskSourcePopup {
+  if (!self.diskVolumePopup) return;
+  id old = self.diskVolumePopup.selectedItem.representedObject;
+  NSString *oldKind = [old isKindOfClass:[NSDictionary class]] ? old[@"kind"] : @"local";
+  NSString *oldPath = [old isKindOfClass:[NSDictionary class]] ? old[@"path"] : nil;
+  [self.diskVolumePopup removeAllItems];
+  [self.diskVolumePopup addItemWithTitle:@"本地磁盘"];
+  self.diskVolumePopup.lastItem.representedObject = @{@"kind": @"local"};
+  NSArray *vols = [self scanExternalVolumes];
+  for (NSDictionary *vol in vols) {
+    NSString *name = vol[@"name"] ?: @"外部磁盘";
+    [self.diskVolumePopup addItemWithTitle:[NSString stringWithFormat:@"外部 · %@", name]];
+    self.diskVolumePopup.lastItem.representedObject = @{@"kind": @"external", @"path": [vol[@"url"] path] ?: @""};
+  }
+  [self.diskVolumePopup addItemWithTitle:@"相册"];
+  self.diskVolumePopup.lastItem.representedObject = @{@"kind": @"photo"};
+  NSInteger sel = 0;
+  BOOL found = NO;
+  if ([oldKind isEqualToString:@"external"] && oldPath.length) {
+    for (NSInteger i = 0; i < (NSInteger)self.diskVolumePopup.numberOfItems; i++) {
+      id rep = [self.diskVolumePopup itemAtIndex:i].representedObject;
+      if ([rep isKindOfClass:[NSDictionary class]] && [rep[@"kind"] isEqualToString:@"external"] && [rep[@"path"] isEqualToString:oldPath]) { sel = i; found = YES; break; }
+    }
+  } else if ([oldKind isEqualToString:@"photo"]) {
+    sel = self.diskVolumePopup.numberOfItems - 1; found = YES;
+  } else { found = YES; }
+  [self.diskVolumePopup selectItemAtIndex:sel];
+  if (!found) {
+    self.diskStatus.stringValue = @"外部磁盘已断开，已切回本地磁盘";
+    self.diskStatus.textColor = [NSColor systemOrangeColor];
+  }
+}
+
 - (void)styleDiskSource {
-  NSInteger idx = MAX(0, self.diskVolumePopup.indexOfSelectedItem);
-  NSArray *names = @[@"本地磁盘", @"外部磁盘", @"相册"];
+  NSString *sourceTitle = self.diskVolumePopup.titleOfSelectedItem ?: @"本地磁盘";
   NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
   ps.alignment = NSTextAlignmentLeft;
   NSColor *textColor = self.diskSourcePicked ? [NSColor systemIndigoColor] : [NSColor labelColor];
-  self.diskVolumePopup.attributedTitle = [[NSAttributedString alloc] initWithString:names[idx] attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:(self.diskSourcePicked ? NSFontWeightSemibold : NSFontWeightRegular)], NSForegroundColorAttributeName: textColor, NSParagraphStyleAttributeName: ps}];
+  self.diskVolumePopup.attributedTitle = [[NSAttributedString alloc] initWithString:sourceTitle attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:(self.diskSourcePicked ? NSFontWeightSemibold : NSFontWeightRegular)], NSForegroundColorAttributeName: textColor, NSParagraphStyleAttributeName: ps}];
   self.diskVolumePopup.wantsLayer = YES;
   self.diskVolumePopup.layer.cornerRadius = 6;
   self.diskVolumePopup.layer.backgroundColor = (self.diskSourcePicked ? [[NSColor systemIndigoColor] colorWithAlphaComponent:0.12] : [NSColor clearColor]).CGColor;
@@ -5782,8 +5817,11 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)refreshDiskAnalysis {
   if (!self.diskTable) return;
-  NSInteger src = self.diskVolumePopup.indexOfSelectedItem;
-  if (src == 1) {
+  NSDictionary *source = self.diskVolumePopup.selectedItem.representedObject;
+  NSString *srcKind = [source isKindOfClass:[NSDictionary class]] ? source[@"kind"] : @"local";
+  NSString *srcExternalPath = [source isKindOfClass:[NSDictionary class]] ? source[@"path"] : nil;
+  BOOL isPhotoSource = [srcKind isEqualToString:@"photo"];
+  if ([srcKind isEqualToString:@"external"]) {
     NSAlert *a = [[NSAlert alloc] init];
     a.messageText = @"扫描外部磁盘";
     a.informativeText = @"外部磁盘需要「可移除宗卷」访问权限。如果结果为空或很少，请到系统设置 → 隐私与安全性 → 文件与文件夹中允许。\n\n是否继续扫描？";
@@ -5797,21 +5835,18 @@ static BOOL ValidGroupName(NSString *raw) {
     }
     if (r == NSAlertThirdButtonReturn) return;
   }
-  if (src == 0 || src == 1) {
+  if (!isPhotoSource) {
     NSString *start = self.diskCurrentPath;
     if (!start.length) {
-      if (src == 0) start = NSHomeDirectory();
-      else {
-        NSArray *ext = [self scanExternalVolumes];
-        start = ext.count ? [ext.firstObject[@"url"] path] : @"/Volumes";
-      }
+      if ([srcKind isEqualToString:@"external"]) start = srcExternalPath.length ? srcExternalPath : @"/Volumes";
+      else start = NSHomeDirectory();
     }
     [self loadDiskDirectory:start recordHistory:YES];
     return;
   }
   NSMutableArray *roots = [NSMutableArray array];
   NSString *label = @"";
-  if (src == 0) {
+  if (![srcKind isEqualToString:@"external"]) {
     label = @"本地磁盘";
     [roots addObject:@"/Applications"];
     [roots addObject:@"/Library"];
@@ -5820,10 +5855,11 @@ static BOOL ValidGroupName(NSString *raw) {
       [roots addObject:[NSHomeDirectory() stringByAppendingPathComponent:@"Movies"]];
       [roots addObject:[NSHomeDirectory() stringByAppendingPathComponent:@"Library"]];
     }
-  } else if (src == 1) {
+  } else {
     NSArray *ext = [self scanExternalVolumes];
     if (!ext.count) {
-      self.diskStatus.stringValue = @"未检测到外部磁盘";
+      [self refreshDiskSourcePopup];
+      self.diskStatus.stringValue = @"外部磁盘已断开，已切回本地磁盘";
       self.diskStatus.textColor = [NSColor systemRedColor];
       [self.diskSpinner stopAnimation:nil];
       return;
@@ -5834,7 +5870,8 @@ static BOOL ValidGroupName(NSString *raw) {
       if (vol[@"name"]) [names addObject:vol[@"name"]];
     }
     label = names.count ? [names componentsJoinedByString:@" + "] : @"外部磁盘";
-  } else {
+  }
+  if (isPhotoSource) {
     label = @"相册";
     BOOL fullAlbum = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAlbumFullLibrary"];
     if (fullAlbum) {
@@ -5866,7 +5903,7 @@ static BOOL ValidGroupName(NSString *raw) {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
     NSMutableArray *files = [NSMutableArray array];
     NSFileManager *fm = [NSFileManager defaultManager];
-    BOOL fullAlbum = (src == 2 && [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAlbumFullLibrary"]);
+    BOOL fullAlbum = (isPhotoSource && [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAlbumFullLibrary"]);
     if (fullAlbum) {
       dispatch_semaphore_t sem = dispatch_semaphore_create(0);
       [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) { dispatch_semaphore_signal(sem); }];
@@ -5922,7 +5959,7 @@ static BOOL ValidGroupName(NSString *raw) {
         if (!size) { if ([u getResourceValue:&sz forKey:NSURLFileSizeKey error:NULL] && [sz isKindOfClass:[NSNumber class]]) size = [sz unsignedLongLongValue]; }
         NSString *path = u.path;
         NSString *kind = [weakSelf diskKindForPath:path];
-        if (src == 2 && ![kind isEqualToString:@"图片"] && ![kind isEqualToString:@"视频"]) continue;
+        if (isPhotoSource && ![kind isEqualToString:@"图片"] && ![kind isEqualToString:@"视频"]) continue;
         id dval = nil; NSDate *fdate = nil;
         if ([u getResourceValue:&dval forKey:NSURLContentModificationDateKey error:NULL] && [dval isKindOfClass:[NSDate class]]) fdate = dval;
         if (!fdate) fdate = [NSDate date];
