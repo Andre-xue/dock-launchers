@@ -2387,8 +2387,9 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
     b.tag = i; b.bordered = NO; b.alignment = NSTextAlignmentRight;
     b.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightBold];
     b.contentTintColor = [NSColor controlAccentColor];
-    b.image = [NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:@"显示余额"];
+    b.image = [[NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:@"显示余额"] imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:15 weight:NSFontWeightSemibold]];
     b.imagePosition = NSImageOnly;
+    b.contentTintColor = [NSColor labelColor];
     b.target = self; b.action = @selector(liveAIBalanceClicked:);
     b.toolTip = @"点击眼睛图标同步余额";
     [doc addSubview:b];
@@ -2446,7 +2447,8 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
       if (quota.length) {
         weakBtn.image = nil; weakBtn.title = quota; weakBtn.imagePosition = NSNoImage;
       } else {
-        weakBtn.image = [NSImage imageWithSystemSymbolName:@"eye.slash" accessibilityDescription:@"无余额数据"];
+        weakBtn.image = [[NSImage imageWithSystemSymbolName:@"eye.slash" accessibilityDescription:@"无余额数据"] imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:15 weight:NSFontWeightSemibold]];
+        weakBtn.contentTintColor = [NSColor labelColor];
         weakBtn.imagePosition = NSImageOnly; weakBtn.title = @"";
         weakBtn.toolTip = @"该服务不支持自动查询，或未填写 API Key";
       }
@@ -2530,6 +2532,7 @@ static BOOL ThemeIsDark(NSAppearance *ap) {
   NSInteger t = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerTheme"];
   if (t == 2) return YES;
   if (t == 1) return NO;
+  if (!ap) ap = NSApp.effectiveAppearance;
   return [[ap.name lowercaseString] containsString:@"dark"];
 }
 
@@ -7186,6 +7189,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 - (void)applyAppearanceRecursively:(NSView *)view appearance:(NSAppearance *)ap {
   if (!view) return;
+  if (!ap) ap = [NSApp effectiveAppearance];
   if ([view.identifier isEqualToString:@"MetricCard"]) {
     view.layer.backgroundColor = CardBackgroundForAppearance(ap).CGColor;
     view.layer.borderColor = CardBorderForAppearance(ap).CGColor;
@@ -7206,9 +7210,10 @@ static BOOL ValidGroupName(NSString *raw) {
   NSApp.appearance = ap;
   self.window.appearance = ap;
   if (self.popover) {
-    self.popover.appearance = ap;
+    NSAppearance *effective = ap ?: [NSApp effectiveAppearance];
+    self.popover.appearance = effective;
     if (self.popover.contentViewController.view) {
-      self.popover.contentViewController.view.appearance = ap;
+      self.popover.contentViewController.view.appearance = effective;
       [self applyAppearanceRecursively:self.popover.contentViewController.view appearance:ap];
     }
   }
@@ -7517,7 +7522,8 @@ static BOOL ValidGroupName(NSString *raw) {
       if (quota.length) {
         weakBtn.image = nil; weakBtn.title = quota; weakBtn.imagePosition = NSNoImage;
       } else {
-        weakBtn.image = [NSImage imageWithSystemSymbolName:@"eye.slash" accessibilityDescription:@"无余额数据"];
+        weakBtn.image = [[NSImage imageWithSystemSymbolName:@"eye.slash" accessibilityDescription:@"无余额数据"] imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:15 weight:NSFontWeightSemibold]];
+        weakBtn.contentTintColor = [NSColor labelColor];
         weakBtn.imagePosition = NSImageOnly; weakBtn.title = @"";
         weakBtn.toolTip = @"该服务不支持自动查询，或未填写 API Key";
       }
@@ -7570,8 +7576,9 @@ static BOOL ValidGroupName(NSString *raw) {
     qb.alignment = NSTextAlignmentRight;
     qb.font = [NSFont systemFontOfSize:12.5 weight:NSFontWeightBold];
     qb.contentTintColor = [NSColor controlAccentColor];
-    qb.image = [NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:@"显示余额"];
+    qb.image = [[NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:@"显示余额"] imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:15 weight:NSFontWeightSemibold]];
     qb.imagePosition = NSImageOnly;
+    qb.contentTintColor = [NSColor labelColor];
     qb.target = self; qb.action = @selector(quickAIBalanceClicked:);
     qb.toolTip = @"点击眼睛图标同步余额";
     [row addSubview:qb];
