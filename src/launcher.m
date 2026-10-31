@@ -1953,9 +1953,9 @@ static NSString *ResolveAppPath(NSString *target) {
   if (self.pinBtn) self.pinBtn.frame = NSMakeRect(ox + rw - 14 - 28, oy + rh - 34, 28, 28);
   if (self.countdownLabel) self.countdownLabel.frame = NSMakeRect(ox + rw - 14 - 28 - 8 - 150, oy + rh - 34 + 4, 150, 20);
 
-  // 第二行四个控件各占 1/4
+  // 第二行五个控件各占 1/5
   CGFloat btnSize = 30.0;
-  CGFloat cw = rw / 4.0;
+  CGFloat cw = rw / 5.0;
   self.removeBtn.frame = NSMakeRect(ox + cw*0.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
   if (self.dockImportBtn) self.dockImportBtn.frame = NSMakeRect(ox + cw*1.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
   self.skinBtn.frame   = NSMakeRect(ox + cw*2.5 - btnSize/2.0, oy + rh - 88, btnSize, btnSize);
