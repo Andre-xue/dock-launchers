@@ -11236,7 +11236,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.layoutWindow.contentView;
     NSTextField *title = [self label:@"窗口布局记忆" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 390, 300, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"保存不需要权限；恢复窗口时需要辅助功能权限" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *sub = [self label:@"点击布局行立即恢复；保存不需要权限，恢复需要窗口控制权限" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 368, 520, 18); [cv addSubview:sub];
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 568, 276)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
@@ -11275,6 +11275,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.layoutTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
   }
   self.layoutTable.target = self;
+  self.layoutTable.action = @selector(restoreSelectedWindowLayout:);
   self.layoutTable.doubleAction = @selector(restoreSelectedWindowLayout:);
   if (self.layoutAXButton) {
     BOOL trusted = AXIsProcessTrusted();
