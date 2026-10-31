@@ -614,6 +614,11 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSArray *appSearchFiltered;
 @property (strong) NSTextField *appSearchStatus;
 @property (strong) NSPopUpButton *promptCategoryPopup;
+@property (strong) NSWindow *dockAppearanceWindow;
+@property (strong) NSSlider *dockSizeSlider, *dockMagnifySlider;
+@property (strong) NSTextField *dockSizeValue, *dockMagnifyValue;
+@property (strong) NSButton *dockMagnifyCheck, *dockAutohideCheck;
+@property (strong) NSPopUpButton *dockPositionPopup;
 @property (strong) NSWindow *dupWindow;
 @property (strong) NSTableView *dupTable;
 @property (strong) NSArray *dupItems;
@@ -10753,6 +10758,121 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)closeDuplicateFinder:(id)sender { [self.dupWindow orderOut:nil]; }
 
+- (NSString *)dockPrefString:(NSString *)key {
+  CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+  CFPropertyListRef v = CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR("com.apple.dock"));
+  NSString *s = v ? [NSString stringWithFormat:@"%@", CFBridgingRelease(v)] : @"";
+  return s;
+}
+
+- (void)showDockAppearance:(id)sender {
+  if (!self.dockAppearanceWindow) {
+    self.dockAppearanceWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,470) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.dockAppearanceWindow.title = @"Dock 外观";
+    self.dockAppearanceWindow.releasedWhenClosed = NO;
+    self.dockAppearanceWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.dockAppearanceWindow.contentView;
+    NSTextField *title = [self label:@"Dock 外观" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(24, 420, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"调整图标大小、放大效果、自动隐藏和位置" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(24, 398, 430, 18); [cv addSubview:sub];
+
+    NSTextField *sl = [self label:@"图标大小" size:11 bold:YES color:nil];
+    sl.frame = NSMakeRect(24, 352, 90, 18); [cv addSubview:sl];
+    self.dockSizeSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(120, 348, 260, 24)];
+    self.dockSizeSlider.minValue = 32; self.dockSizeSlider.maxValue = 128;
+    self.dockSizeSlider.integerValue = [self dockPrefString:@"tilesize"].integerValue ?: 64;
+    self.dockSizeSlider.target = self; self.dockSizeSlider.action = @selector(dockSizeChanged:);
+    [cv addSubview:self.dockSizeSlider];
+    self.dockSizeValue = [self label:[NSString stringWithFormat:@"%ld", (long)self.dockSizeSlider.integerValue] size:11 bold:YES color:[NSColor systemBlueColor]];
+    self.dockSizeValue.frame = NSMakeRect(390, 352, 50, 18); [cv addSubview:self.dockSizeValue];
+
+    self.dockMagnifyCheck = [NSButton checkboxWithTitle:@"启用放大" target:self action:@selector(dockMagnifyToggled:)];
+    self.dockMagnifyCheck.state = [[self dockPrefString:@"magnification"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+    self.dockMagnifyCheck.frame = NSMakeRect(24, 304, 140, 22); [cv addSubview:self.dockMagnifyCheck];
+    self.dockMagnifySlider = [[NSSlider alloc] initWithFrame:NSMakeRect(168, 302, 210, 24)];
+    self.dockMagnifySlider.minValue = 32; self.dockMagnifySlider.maxValue = 128;
+    self.dockMagnifySlider.integerValue = [self dockPrefString:@"largesize"].integerValue ?: 96;
+    self.dockMagnifySlider.target = self; self.dockMagnifySlider.action = @selector(dockMagnifyChanged:);
+    [cv addSubview:self.dockMagnifySlider];
+    self.dockMagnifyValue = [self label:[NSString stringWithFormat:@"%ld", (long)self.dockMagnifySlider.integerValue] size:11 bold:YES color:[NSColor systemPurpleColor]];
+    self.dockMagnifyValue.frame = NSMakeRect(386, 306, 50, 18); [cv addSubview:self.dockMagnifyValue];
+
+    self.dockAutohideCheck = [NSButton checkboxWithTitle:@"自动隐藏 Dock" target:self action:nil];
+    self.dockAutohideCheck.state = [[self dockPrefString:@"autohide"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+    self.dockAutohideCheck.frame = NSMakeRect(24, 260, 180, 22); [cv addSubview:self.dockAutohideCheck];
+
+    NSTextField *pl = [self label:@"位置" size:11 bold:YES color:nil];
+    pl.frame = NSMakeRect(24, 214, 60, 18); [cv addSubview:pl];
+    self.dockPositionPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(90, 208, 140, 26) pullsDown:NO];
+    [self.dockPositionPopup addItemsWithTitles:@[@"底部", @"左侧", @"右侧"]];
+    NSString *ori = [self dockPrefString:@"orientation"];
+    [self.dockPositionPopup selectItemAtIndex:[ori isEqualToString:@"left"] ? 1 : ([ori isEqualToString:@"right"] ? 2 : 0)];
+    [cv addSubview:self.dockPositionPopup];
+
+    ColorHoverButton *apply = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 140, 110, 34)];
+    apply.title = @"应用"; apply.hoverColor = [NSColor systemGreenColor];
+    apply.target = self; apply.action = @selector(applyDockAppearance:);
+    [apply applyColor:[NSColor systemGreenColor] textColor:[NSColor whiteColor]]; [cv addSubview:apply];
+    ColorHoverButton *reset = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(144, 140, 110, 34)];
+    reset.title = @"恢复默认"; reset.hoverColor = [NSColor systemOrangeColor];
+    reset.target = self; reset.action = @selector(resetDockAppearance:);
+    [reset applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:reset];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(376, 140, 84, 34)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeDockAppearance:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    NSTextField *note = [self label:@"应用后会重启 Dock，分组图标会自动恢复" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    note.frame = NSMakeRect(24, 100, 430, 16); [cv addSubview:note];
+    [self.dockAppearanceWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.dockAppearanceWindow makeKeyAndOrderFront:nil];
+  [self.dockAppearanceWindow orderFrontRegardless];
+}
+
+- (void)dockSizeChanged:(NSSlider *)s { self.dockSizeValue.stringValue = [NSString stringWithFormat:@"%ld", (long)s.integerValue]; }
+- (void)dockMagnifyChanged:(NSSlider *)s { self.dockMagnifyValue.stringValue = [NSString stringWithFormat:@"%ld", (long)s.integerValue]; }
+- (void)dockMagnifyToggled:(NSButton *)b { self.dockMagnifySlider.enabled = b.state == NSControlStateValueOn; }
+
+- (void)applyDockAppearance:(id)sender {
+  NSArray *pairs = @[
+    @[@"tilesize", @"-int", [NSString stringWithFormat:@"%ld", (long)self.dockSizeSlider.integerValue]],
+    @[@"magnification", @"-bool", self.dockMagnifyCheck.state == NSControlStateValueOn ? @"true" : @"false"],
+    @[@"largesize", @"-int", [NSString stringWithFormat:@"%ld", (long)self.dockMagnifySlider.integerValue]],
+    @[@"autohide", @"-bool", self.dockAutohideCheck.state == NSControlStateValueOn ? @"true" : @"false"]
+  ];
+  for (NSArray *pair in pairs) {
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/bin/defaults";
+    t.arguments = @[@"write", @"com.apple.dock", pair[0], pair[1], pair[2]];
+    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+  }
+  NSArray *pos = @[@"bottom", @"left", @"right"];
+  NSTask *t2 = [[NSTask alloc] init];
+  t2.launchPath = @"/usr/bin/defaults";
+  t2.arguments = @[@"write", @"com.apple.dock", @"orientation", @"-string", pos[MAX(0, MIN(2, self.dockPositionPopup.indexOfSelectedItem))]];
+  @try { [t2 launch]; [t2 waitUntilExit]; } @catch (NSException *e) {}
+  NSTask *kill = [[NSTask alloc] init];
+  kill.launchPath = @"/usr/bin/killall";
+  kill.arguments = @[@"Dock"];
+  @try { [kill launch]; [kill waitUntilExit]; } @catch (NSException *e) {}
+  [self showToast:@"Dock 外观已应用"];
+}
+
+- (void)resetDockAppearance:(id)sender {
+  self.dockSizeSlider.integerValue = 64;
+  self.dockMagnifySlider.integerValue = 96;
+  self.dockMagnifyCheck.state = NSControlStateValueOff;
+  self.dockAutohideCheck.state = NSControlStateValueOff;
+  [self.dockPositionPopup selectItemAtIndex:0];
+  self.dockSizeValue.stringValue = @"64";
+  self.dockMagnifyValue.stringValue = @"96";
+  [self showToast:@"已恢复默认值，点应用生效"];
+}
+
+- (void)closeDockAppearance:(id)sender { [self.dockAppearanceWindow orderOut:nil]; }
+
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"设置" size:24 bold:YES color:nil];
@@ -11149,7 +11269,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSView *toolsPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   toolsPage.hidden = YES; self.quickToolsPage = toolsPage; [root addSubview:toolsPage];
   NSTextField *tt = [self label:@"工具" size:18 bold:YES color:nil];
-  tt.frame = NSMakeRect(16, 480, 250, 26); [toolsPage addSubview:tt];
+  tt.frame = NSMakeRect(16, 480, 180, 26); [toolsPage addSubview:tt];
+  ColorHoverButton *dockLookBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(294, 480, 110, 26)];
+  dockLookBtn.title = @"Dock 外观"; dockLookBtn.hoverColor = [NSColor systemBlueColor];
+  dockLookBtn.target = self; dockLookBtn.action = @selector(showDockAppearance:);
+  [dockLookBtn applyColor:[NSColor systemBlueColor] textColor:[NSColor whiteColor]];
+  [toolsPage addSubview:dockLookBtn];
   NSTextField *ts = [self label:@"选择工具，打开独立窗口；可钉住置顶" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   ts.frame = NSMakeRect(16, 456, 388, 18); [toolsPage addSubview:ts];
   ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(50, 296, 100, 140)];
