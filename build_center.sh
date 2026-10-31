@@ -29,6 +29,7 @@ cat > "$OUT/Contents/Info.plist" <<'PL'
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>12.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>用于读取和写入「备忘录」，仅在您主动使用提示词库导入/导出时调用。</string>
 <key>NSPhotoLibraryUsageDescription</key><string>用于读取照片图库中的照片和视频，仅在本机「文件管理」中展示，不上传、不修改。</string>
 </dict></plist>
 PL

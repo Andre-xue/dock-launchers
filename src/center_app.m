@@ -182,6 +182,15 @@ static BOOL DLWriteXLSX(NSArray<NSDictionary *> *prompts, NSString *path) {
   return ok;
 }
 
+static BOOL DLEnsureAutomationPermission(NSString *bundleID) {
+  AEAddressDesc target;
+  OSStatus createStatus = AECreateDesc(typeApplicationBundleID, bundleID.UTF8String, (ByteCount)strlen(bundleID.UTF8String), &target);
+  if (createStatus != noErr) return NO;
+  OSStatus status = AEDeterminePermissionToAutomateTarget(&target, typeWildCard, typeWildCard, true);
+  AEDisposeDesc(&target);
+  return status == noErr;
+}
+
 static NSArray<NSDictionary *> *ReadLoginItems(void) {
   NSArray *names = RunAppleScriptList(@"tell application \"System Events\" to get name of every login item");
   NSArray *paths = RunAppleScriptList(@"tell application \"System Events\" to get path of every login item");
@@ -9792,7 +9801,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [m popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, sender.bounds.size.height + 4) inView:sender];
 }
 
+- (BOOL)ensureNotesPermission {
+  [NSApp activateIgnoringOtherApps:YES];
+  if (DLEnsureAutomationPermission(@"com.apple.Notes")) return YES;
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"需要「备忘录」自动化权限";
+  a.informativeText = @"请在 系统设置 → 隐私与安全性 → 自动化 中，允许 DockLaunchers 控制台控制「备忘录」，然后重试。";
+  [a addButtonWithTitle:@"打开系统设置"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] == NSAlertFirstButtonReturn) {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"]];
+  }
+  return NO;
+}
+
 - (void)promptImportNotes:(id)sender {
+  if (![self ensureNotesPermission]) return;
   NSString *source = @"tell application \"Notes\"\nset out to \"\"\nrepeat with n in every note\nset out to out & \"@@NOTE@@\" & (name of n) & \"@@TITLE@@\" & (body of n)\nend repeat\nreturn out\nend tell";
   NSAppleScript *script = [[NSAppleScript alloc] initWithSource:source];
   NSDictionary *error = nil;
@@ -9842,6 +9866,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       return;
     }
   }
+  if (![self ensureNotesPermission]) return;
   NSString *escaped = [body stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"];
   escaped = [escaped stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
   escaped = [escaped stringByReplacingOccurrencesOfString:@"\n" withString:@"<br>"];
