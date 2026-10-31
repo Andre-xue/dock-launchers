@@ -9086,6 +9086,7 @@ static BOOL ValidGroupName(NSString *raw) {
   self.statusMetricButton.target = self; self.statusMetricButton.action = @selector(showStatusMetricMenu:);
   [self.statusMetricButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   self.statusMetricButton.toolTip = @"选择菜单栏显示的指标";
+  self.statusMetricButton.hidden = YES;
   [root addSubview:self.statusMetricButton];
 
   NSView *ov = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
@@ -9564,6 +9565,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (self.quickAIPage) self.quickAIPage.hidden = (idx != 2);
   if (self.quickToolsPage) self.quickToolsPage.hidden = (idx != 3);
   if (self.quickProcessPage) self.quickProcessPage.hidden = (idx != 4);
+  if (self.statusMetricButton) self.statusMetricButton.hidden = (idx != 4);
   [self.quickProcessTimer invalidate]; self.quickProcessTimer = nil;
   if (idx == 1) [self rebuildQuickSceneTab];
   else if (idx == 2) [self rebuildQuickAITab];
