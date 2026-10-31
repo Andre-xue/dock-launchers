@@ -54,6 +54,134 @@ static NSArray<NSString *> *RunAppleScriptList(NSString *script) {
   } @catch (NSException *e) { return @[]; }
 }
 
+static NSString *DLEscapeXML(NSString *s) {
+  if (!s) return @"";
+  NSString *r = [s stringByReplacingOccurrencesOfString:@"&" withString:@"&amp;"];
+  r = [r stringByReplacingOccurrencesOfString:@"<" withString:@"&lt;"];
+  r = [r stringByReplacingOccurrencesOfString:@">" withString:@"&gt;"];
+  r = [r stringByReplacingOccurrencesOfString:@"\"" withString:@"&quot;"];
+  return r;
+}
+
+static NSString *DLUnescapeXML(NSString *s) {
+  if (!s) return @"";
+  NSString *r = [s stringByReplacingOccurrencesOfString:@"&lt;" withString:@"<"];
+  r = [r stringByReplacingOccurrencesOfString:@"&gt;" withString:@">"];
+  r = [r stringByReplacingOccurrencesOfString:@"&quot;" withString:@"\""];
+  r = [r stringByReplacingOccurrencesOfString:@"&apos;" withString:@"'"];
+  r = [r stringByReplacingOccurrencesOfString:@"&amp;" withString:@"&"];
+  return r;
+}
+
+static NSString *DLTextutilToText(NSString *path) {
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/textutil";
+  t.arguments = @[@"-convert", @"txt", @"-stdout", path];
+  NSPipe *pipe = [NSPipe pipe];
+  t.standardOutput = pipe; t.standardError = [NSPipe pipe];
+  @try {
+    [t launch];
+    NSData *d = [pipe.fileHandleForReading readDataToEndOfFile];
+    [t waitUntilExit];
+    return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
+  } @catch (NSException *e) { return @""; }
+}
+
+static NSArray<NSDictionary *> *DLReadXLSX(NSString *path) {
+  NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+  [[NSFileManager defaultManager] createDirectoryAtPath:tmp withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/unzip";
+  t.arguments = @[@"-o", @"-q", path, @"-d", tmp];
+  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) { return @[]; }
+  NSData *sharedData = [NSData dataWithContentsOfFile:[tmp stringByAppendingPathComponent:@"xl/sharedStrings.xml"]];
+  NSMutableArray *shared = [NSMutableArray array];
+  if (sharedData.length) {
+    NSString *xml = [[NSString alloc] initWithData:sharedData encoding:NSUTF8StringEncoding] ?: @"";
+    NSRegularExpression *rx = [NSRegularExpression regularExpressionWithPattern:@"<t[^>]*>(.*?)</t>" options:NSRegularExpressionDotMatchesLineSeparators error:NULL];
+    for (NSTextCheckingResult *m in [rx matchesInString:xml options:0 range:NSMakeRange(0, xml.length)]) {
+      NSString *v = [xml substringWithRange:[m rangeAtIndex:1]];
+      [shared addObject:DLUnescapeXML(v)];
+    }
+  }
+  NSData *sheetData = [NSData dataWithContentsOfFile:[tmp stringByAppendingPathComponent:@"xl/worksheets/sheet1.xml"]];
+  NSMutableArray *rows = [NSMutableArray array];
+  if (sheetData.length) {
+    NSString *xml = [[NSString alloc] initWithData:sheetData encoding:NSUTF8StringEncoding] ?: @"";
+    NSRegularExpression *rowRx = [NSRegularExpression regularExpressionWithPattern:@"<row[^>]*>(.*?)</row>" options:NSRegularExpressionDotMatchesLineSeparators error:NULL];
+    NSRegularExpression *cellRx = [NSRegularExpression regularExpressionWithPattern:@"<c[^>]*r=\"([A-Z]+)\\d+\"([^>]*)>(.*?)</c>" options:NSRegularExpressionDotMatchesLineSeparators error:NULL];
+    for (NSTextCheckingResult *rm in [rowRx matchesInString:xml options:0 range:NSMakeRange(0, xml.length)]) {
+      NSString *rowXML = [xml substringWithRange:[rm rangeAtIndex:1]];
+      NSMutableDictionary *cells = [NSMutableDictionary dictionary];
+      for (NSTextCheckingResult *cm in [cellRx matchesInString:rowXML options:0 range:NSMakeRange(0, rowXML.length)]) {
+        NSString *col = [rowXML substringWithRange:[cm rangeAtIndex:1]];
+        NSString *attrs = [rowXML substringWithRange:[cm rangeAtIndex:2]];
+        NSString *inner = [rowXML substringWithRange:[cm rangeAtIndex:3]];
+        NSString *val = @"";
+        BOOL isShared = [attrs containsString:@"t=\"s\""];
+        BOOL isInline = [attrs containsString:@"t=\"inlineStr\""];
+        NSRegularExpression *vRx = [NSRegularExpression regularExpressionWithPattern:@"<v>(.*?)</v>" options:NSRegularExpressionDotMatchesLineSeparators error:NULL];
+        NSTextCheckingResult *vm = [vRx firstMatchInString:inner options:0 range:NSMakeRange(0, inner.length)];
+        if (isInline) {
+          NSRegularExpression *trx = [NSRegularExpression regularExpressionWithPattern:@"<t[^>]*>(.*?)</t>" options:NSRegularExpressionDotMatchesLineSeparators error:NULL];
+          NSTextCheckingResult *tm = [trx firstMatchInString:inner options:0 range:NSMakeRange(0, inner.length)];
+          if (tm) val = DLUnescapeXML([inner substringWithRange:[tm rangeAtIndex:1]]);
+        } else if (vm) {
+          val = [inner substringWithRange:[vm rangeAtIndex:1]];
+          if (isShared) {
+            NSInteger idx = val.integerValue;
+            if (idx >= 0 && idx < (NSInteger)shared.count) val = shared[idx];
+          }
+        }
+        cells[col] = val ?: @"";
+      }
+      [rows addObject:cells];
+    }
+  }
+  [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+  return rows;
+}
+
+static BOOL DLWriteXLSX(NSArray<NSDictionary *> *prompts, NSString *path) {
+  NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  [fm createDirectoryAtPath:tmp withIntermediateDirectories:YES attributes:nil error:NULL];
+  [fm createDirectoryAtPath:[tmp stringByAppendingPathComponent:@"_rels"] withIntermediateDirectories:YES attributes:nil error:NULL];
+  [fm createDirectoryAtPath:[tmp stringByAppendingPathComponent:@"xl/_rels"] withIntermediateDirectories:YES attributes:nil error:NULL];
+  [fm createDirectoryAtPath:[tmp stringByAppendingPathComponent:@"xl/worksheets"] withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *contentTypes = @"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/></Types>";
+  NSString *rels = @"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>";
+  NSString *wb = @"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets><sheet name=\"提示词\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>";
+  NSString *wbRels = @"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/></Relationships>";
+  [contentTypes writeToFile:[tmp stringByAppendingPathComponent:@"[Content_Types].xml"] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  [rels writeToFile:[tmp stringByAppendingPathComponent:@"_rels/.rels"] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  [wb writeToFile:[tmp stringByAppendingPathComponent:@"xl/workbook.xml"] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  [wbRels writeToFile:[tmp stringByAppendingPathComponent:@"xl/_rels/workbook.xml.rels"] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  NSMutableString *sheet = [NSMutableString stringWithString:@"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>"];
+  NSArray *header = @[@"title", @"category", @"content"];
+  [sheet appendString:@"<row r=\"1\">"];
+  for (NSInteger c = 0; c < 3; c++) [sheet appendFormat:@"<c r=\"%c1\" t=\"inlineStr\"><is><t>%@</t></is></c>", (unichar)('A'+c), header[c]];
+  [sheet appendString:@"</row>"];
+  for (NSInteger i = 0; i < (NSInteger)prompts.count; i++) {
+    NSDictionary *p = prompts[i];
+    NSArray *vals = @[p[@"title"] ?: @"", p[@"category"] ?: @"", p[@"content"] ?: @""];
+    [sheet appendFormat:@"<row r=\"%ld\">", (long)(i+2)];
+    for (NSInteger c = 0; c < 3; c++) [sheet appendFormat:@"<c r=\"%c%ld\" t=\"inlineStr\"><is><t>%@</t></is></c>", (unichar)('A'+c), (long)(i+2), DLEscapeXML(vals[c])];
+    [sheet appendString:@"</row>"];
+  }
+  [sheet appendString:@"</sheetData></worksheet>"];
+  [sheet writeToFile:[tmp stringByAppendingPathComponent:@"xl/worksheets/sheet1.xml"] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  NSString *zipPath = [[tmp stringByAppendingPathExtension:@"zip"] stringByStandardizingPath];
+  NSTask *zt = [[NSTask alloc] init];
+  zt.launchPath = @"/usr/bin/zip";
+  zt.arguments = @[@"-q", @"-r", zipPath, @"[Content_Types].xml", @"_rels", @"xl"];
+  zt.currentDirectoryPath = tmp;
+  @try { [zt launch]; [zt waitUntilExit]; } @catch (NSException *e) { return NO; }
+  BOOL ok = [[NSFileManager defaultManager] moveItemAtPath:zipPath toPath:path error:NULL];
+  [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+  return ok;
+}
+
 static NSArray<NSDictionary *> *ReadLoginItems(void) {
   NSArray *names = RunAppleScriptList(@"tell application \"System Events\" to get name of every login item");
   NSArray *paths = RunAppleScriptList(@"tell application \"System Events\" to get path of every login item");
@@ -9317,28 +9445,32 @@ static BOOL ValidGroupName(NSString *raw) {
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
     NSTextField *sub = [self label:@"保存常用提示词，双击复制到剪贴板" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 448, 400, 18); [cv addSubview:sub];
-    self.promptSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(20, 410, 230, 28)];
+    self.promptSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(20, 410, 200, 28)];
     self.promptSearch.placeholderString = @"搜索提示词";
     self.promptSearch.target = self; self.promptSearch.action = @selector(promptSearchChanged:);
     [self.promptSearch setContinuous:YES];
     [cv addSubview:self.promptSearch];
-    self.promptCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(258, 410, 150, 28) pullsDown:NO];
+    self.promptCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(228, 410, 130, 28) pullsDown:NO];
     self.promptCategoryPopup.target = self;
     self.promptCategoryPopup.action = @selector(promptCategoryChanged:);
     self.promptCategoryPopup.toolTip = @"按分类快速筛选提示词";
     [cv addSubview:self.promptCategoryPopup];
-    ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(416, 408, 100, 30)];
+    ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(366, 408, 80, 30)];
     add.title = @"新增"; add.hoverColor = [NSColor systemGreenColor];
     add.target = self; add.action = @selector(promptAdd:);
     [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
-    ColorHoverButton *importBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524, 408, 70, 30)];
+    ColorHoverButton *importBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(454, 408, 60, 30)];
     importBtn.title = @"导入"; importBtn.hoverColor = [NSColor systemBlueColor];
     importBtn.target = self; importBtn.action = @selector(promptImport:);
     [importBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:importBtn];
-    ColorHoverButton *exportBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(600, 408, 80, 30)];
+    ColorHoverButton *exportBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(522, 408, 60, 30)];
     exportBtn.title = @"导出"; exportBtn.hoverColor = [NSColor systemPurpleColor];
     exportBtn.target = self; exportBtn.action = @selector(promptExport:);
     [exportBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:exportBtn];
+    ColorHoverButton *notesBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(590, 408, 70, 30)];
+    notesBtn.title = @"备忘录"; notesBtn.hoverColor = [NSColor systemOrangeColor];
+    notesBtn.target = self; notesBtn.action = @selector(promptNotesMenu:);
+    [notesBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:notesBtn];
 
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 64, 668, 330)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
@@ -9635,18 +9767,145 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   cb.state = [self.promptSelected containsObject:key] ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
+- (NSArray<NSDictionary *> *)mergeImportedPrompts:(NSArray<NSDictionary *> *)parsed {
+  NSMutableArray *items = [NSMutableArray array];
+  for (NSDictionary *item in parsed) {
+    BOOL exists = NO;
+    for (NSDictionary *old in self.prompts) if ([old[@"title"] isEqual:item[@"title"]] && [old[@"content"] isEqual:item[@"content"]]) { exists = YES; break; }
+    if (!exists) { [self.prompts addObject:item]; [items addObject:item]; }
+  }
+  if (items.count) {
+    [self savePrompts];
+    self.promptPage = 0;
+    [self refreshPromptCategories];
+    [self reloadPromptTable];
+  }
+  return items;
+}
+
+- (void)promptNotesMenu:(NSButton *)sender {
+  NSMenu *m = [[NSMenu alloc] initWithTitle:@"备忘录"];
+  NSMenuItem *imp = [[NSMenuItem alloc] initWithTitle:@"从备忘录导入…" action:@selector(promptImportNotes:) keyEquivalent:@""];
+  imp.target = self; [m addItem:imp];
+  NSMenuItem *exp = [[NSMenuItem alloc] initWithTitle:@"导出到备忘录…" action:@selector(promptExportNotes:) keyEquivalent:@""];
+  exp.target = self; [m addItem:exp];
+  [m popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, sender.bounds.size.height + 4) inView:sender];
+}
+
+- (void)promptImportNotes:(id)sender {
+  NSString *source = @"tell application \"Notes\"\nset out to \"\"\nrepeat with n in every note\nset out to out & \"@@NOTE@@\" & (name of n) & \"@@TITLE@@\" & (body of n)\nend repeat\nreturn out\nend tell";
+  NSAppleScript *script = [[NSAppleScript alloc] initWithSource:source];
+  NSDictionary *error = nil;
+  NSAppleEventDescriptor *result = [script executeAndReturnError:&error];
+  NSString *out = result ? [result stringValue] : @"";
+  if (!out.length) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"无法读取备忘录";
+    a.informativeText = error[NSAppleScriptErrorMessage] ?: @"请在 系统设置 → 隐私与安全性 → 自动化 中允许控制台控制「备忘录」。";
+    [a addButtonWithTitle:@"好"];
+    [a runModal];
+    return;
+  }
+  NSArray *parts = [out componentsSeparatedByString:@"@@NOTE@@"];
+  NSMutableArray *parsed = [NSMutableArray array];
+  for (NSString *part in parts) {
+    if (![part containsString:@"@@TITLE@@"]) continue;
+    NSArray *pair = [part componentsSeparatedByString:@"@@TITLE@@"];
+    NSString *title = [pair.firstObject stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSString *body = pair.count > 1 ? pair[1] : @"";
+    NSRegularExpression *tagRx = [NSRegularExpression regularExpressionWithPattern:@"<[^>]+>" options:0 error:NULL];
+    body = [body stringByReplacingOccurrencesOfString:@"<br>" withString:@"\n"];
+    body = [body stringByReplacingOccurrencesOfString:@"</div>" withString:@"\n"];
+    body = [tagRx stringByReplacingMatchesInString:body options:0 range:NSMakeRange(0, body.length) withTemplate:@""];
+    body = DLUnescapeXML(body);
+    body = [body stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (!body.length) continue;
+    if (!title.length) title = @"备忘录提示词";
+    [parsed addObject:@{@"title": title, @"category": @"备忘录", @"content": body}];
+  }
+  if (!parsed.count) { [self showToast:@"备忘录里没有可导入的内容"]; return; }
+  NSArray *added = [self mergeImportedPrompts:parsed];
+  [self showToast:[NSString stringWithFormat:@"已从备忘录导入 %ld 条", (long)added.count]];
+}
+
+- (void)promptExportNotes:(id)sender {
+  NSMutableArray *selected = [NSMutableArray array];
+  for (NSDictionary *p in self.prompts) if ([self.promptSelected containsObject:[self promptSelectionKeyForDict:p]]) [selected addObject:p];
+  NSArray *items = selected.count ? selected : self.prompts;
+  if (!items.count) { [self showToast:@"没有可导出的提示词"]; return; }
+  NSMutableString *body = [NSMutableString stringWithFormat:@"DockLaunchers 提示词库 %@\n\n", [NSDateFormatter localizedStringFromDate:[NSDate date] dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle]];
+  for (NSDictionary *p in items) [body appendFormat:@"%@\n分类：%@\n%@\n\n------------\n\n", p[@"title"] ?: @"", p[@"category"] ?: @"", p[@"content"] ?: @""];
+  for (NSSharingService *svc in [NSSharingService sharingServicesForItems:@[body]]) {
+    if (([svc.title isEqualToString:@"Notes"] || [svc.title containsString:@"备忘录"]) && [svc canPerformWithItems:@[body]]) {
+      [svc performWithItems:@[body]];
+      [self showToast:@"已发送到备忘录"];
+      return;
+    }
+  }
+  NSString *escaped = [body stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"];
+  escaped = [escaped stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+  escaped = [escaped stringByReplacingOccurrencesOfString:@"\n" withString:@"<br>"];
+  NSString *source = [NSString stringWithFormat:@"tell application \"Notes\"\nset theTitle to \"DockLaunchers 提示词库\"\nset theBody to \"%@\"\nmake new note with properties {name:theTitle, body:theBody}\nend tell", escaped];
+  NSAppleScript *script = [[NSAppleScript alloc] initWithSource:source];
+  NSDictionary *error = nil;
+  if (![script executeAndReturnError:&error]) {
+    NSAlert *a = [[NSAlert alloc] init]; a.messageText = @"导出到备忘录失败";
+    a.informativeText = error[NSAppleScriptErrorMessage] ?: @"请允许控制台控制「备忘录」。";
+    [a addButtonWithTitle:@"好"]; [a runModal];
+  } else [self showToast:@"已导出到备忘录"];
+}
+
 - (void)promptImport:(id)sender {
   NSOpenPanel *p = [NSOpenPanel openPanel];
   p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = NO;
-  p.allowedFileTypes = @[@"json", @"md", @"markdown", @"txt", @"csv"];
-  p.message = @"选择要导入的提示词文本文件";
+  p.allowedFileTypes = @[@"json", @"md", @"markdown", @"txt", @"csv", @"doc", @"docx", @"rtf", @"rtfd", @"html", @"htm", @"odt", @"xlsx", @"xls", @"pdf"];
+  p.message = @"选择提示词文件（支持 TXT / Word / Excel / PDF / Markdown / CSV）";
   if ([p runModal] != NSModalResponseOK) return;
   NSURL *u = p.URL;
-  NSString *text = [NSString stringWithContentsOfURL:u usedEncoding:NULL error:NULL];
-  if (!text) text = [NSString stringWithContentsOfURL:u encoding:NSUTF8StringEncoding error:NULL];
-  if (!text) text = [NSString stringWithContentsOfURL:u encoding:NSISOLatin1StringEncoding error:NULL];
-  if (!text.length) { [self showToast:@"文件读取失败"]; return; }
-  NSArray *parsed = [self parsePromptText:text type:u.pathExtension.lowercaseString];
+  NSString *ext = u.pathExtension.lowercaseString;
+  NSArray *parsed = nil;
+  if ([ext isEqualToString:@"xlsx"] || [ext isEqualToString:@"xls"]) {
+    NSArray *rows = DLReadXLSX(u.path);
+    if (!rows.count) { [self showToast:@"Excel 读取失败，旧版 .xls 请先另存为 .xlsx"]; return; }
+    NSString *ti = @"A", *ci = @"C", *cti = @"B";
+    NSDictionary *first = rows.firstObject;
+    if (first) {
+      for (NSString *col in first) {
+        NSString *h = [first[col] lowercaseString];
+        if ([h containsString:@"title"] || [h containsString:@"标题"]) ti = col;
+        else if ([h containsString:@"content"] || [h containsString:@"内容"] || [h containsString:@"prompt"]) ci = col;
+        else if ([h containsString:@"category"] || [h containsString:@"分类"]) cti = col;
+      }
+    }
+    NSMutableArray *items = [NSMutableArray array];
+    for (NSInteger i = 1; i < (NSInteger)rows.count; i++) {
+      NSDictionary *r = rows[i];
+      NSString *content = r[ci] ?: @"";
+      NSString *title = r[ti] ?: @"";
+      NSString *cat = r[cti] ?: @"";
+      if (![self trimmedPromptText:content].length) continue;
+      if (![self trimmedPromptText:title].length) title = @"导入提示词";
+      [items addObject:@{@"title": [self trimmedPromptText:title], @"category": [self trimmedPromptText:cat], @"content": content}];
+    }
+    parsed = items;
+  } else if ([ext isEqualToString:@"pdf"]) {
+    PDFDocument *pdf = [[PDFDocument alloc] initWithURL:u];
+    NSMutableString *pdfText = [NSMutableString string];
+    for (NSUInteger i = 0; i < pdf.pageCount; i++) {
+      NSString *pageText = [[pdf pageAtIndex:i] string] ?: @"";
+      if (pageText.length) [pdfText appendFormat:@"%@\n\n", pageText];
+    }
+    if (!pdfText.length) { [self showToast:@"PDF 没有可提取的文字（可能是扫描件）"]; return; }
+    parsed = [self parsePromptText:pdfText type:@"txt"];
+  } else {
+    NSString *text = nil;
+    if ([@[@"doc", @"docx", @"rtf", @"rtfd", @"html", @"htm", @"odt"] containsObject:ext]) text = DLTextutilToText(u.path);
+    if (!text) text = [NSString stringWithContentsOfURL:u usedEncoding:NULL error:NULL];
+    if (!text) text = [NSString stringWithContentsOfURL:u encoding:NSUTF8StringEncoding error:NULL];
+    if (!text) text = [NSString stringWithContentsOfURL:u encoding:NSISOLatin1StringEncoding error:NULL];
+    if (!text.length) { [self showToast:@"文件读取失败"]; return; }
+    parsed = [self parsePromptText:text type:([@[@"doc", @"docx", @"rtf", @"rtfd", @"html", @"htm", @"odt"] containsObject:ext] ? @"txt" : ext)];
+  }
   if (!parsed.count) { [self showToast:@"未解析到提示词，请检查文件格式"]; return; }
   NSInteger added = 0;
   for (NSDictionary *item in parsed) {
@@ -9663,7 +9922,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)promptExportFormatChanged:(NSPopUpButton *)popup {
-  NSArray *exts = @[@"json", @"md", @"txt", @"csv"];
+  NSArray *exts = @[@"json", @"md", @"txt", @"csv", @"docx", @"xlsx", @"pdf"];
   NSInteger idx = popup.indexOfSelectedItem;
   if (idx < 0 || idx >= (NSInteger)exts.count) idx = 0;
   self.promptExportPanel.allowedFileTypes = @[exts[idx]];
@@ -9688,7 +9947,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSTextField *label = [self label:@"文件格式" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
   label.frame = NSMakeRect(0, 34, 300, 16); [av addSubview:label];
   self.promptExportFormatPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 240, 28) pullsDown:NO];
-  [self.promptExportFormatPopup addItemsWithTitles:@[@"JSON", @"Markdown", @"纯文本", @"CSV"]];
+  [self.promptExportFormatPopup addItemsWithTitles:@[@"JSON", @"Markdown", @"纯文本", @"CSV", @"Word (.docx)", @"Excel (.xlsx)", @"PDF"]];
   self.promptExportFormatPopup.target = self;
   self.promptExportFormatPopup.action = @selector(promptExportFormatChanged:);
   [av addSubview:self.promptExportFormatPopup];
@@ -9702,6 +9961,41 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (idx == 0) {
     NSData *d = [NSJSONSerialization dataWithJSONObject:items options:NSJSONWritingPrettyPrinted error:NULL];
     ok = d && [d writeToFile:path atomically:YES];
+  } else if (idx == 5) {
+    ok = DLWriteXLSX(items, path);
+  } else if (idx == 6) {
+    NSMutableString *plain = [NSMutableString string];
+    for (NSDictionary *p in items) {
+      [plain appendFormat:@"%@\n分类：%@\n%@\n\n----------------------------------------\n\n", p[@"title"] ?: @"", p[@"category"] ?: @"", p[@"content"] ?: @""];
+    }
+    NSString *txtPath = [[NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]] stringByAppendingPathExtension:@"txt"];
+    [plain writeToFile:txtPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    NSTask *ct = [[NSTask alloc] init];
+    ct.launchPath = @"/usr/sbin/cupsfilter";
+    ct.arguments = @[@"-m", @"application/pdf", txtPath];
+    NSPipe *outPipe = [NSPipe pipe];
+    ct.standardOutput = outPipe; ct.standardError = [NSPipe pipe];
+    @try {
+      [ct launch];
+      NSData *pdfData = [outPipe.fileHandleForReading readDataToEndOfFile];
+      [ct waitUntilExit];
+      ok = pdfData.length > 0 && [pdfData writeToFile:path atomically:YES];
+    } @catch (NSException *e) { ok = NO; }
+    [[NSFileManager defaultManager] removeItemAtPath:txtPath error:NULL];
+  } else if (idx == 4) {
+    NSMutableString *html = [NSMutableString stringWithString:@"<html><head><meta charset=\"utf-8\"></head><body>"];
+    for (NSDictionary *p in items) {
+      [html appendFormat:@"<h1>%@</h1><p><b>分类：</b>%@</p><p>%@</p><hr>", DLEscapeXML(p[@"title"] ?: @""), DLEscapeXML(p[@"category"] ?: @""), [DLEscapeXML(p[@"content"] ?: @"") stringByReplacingOccurrencesOfString:@"\n" withString:@"<br>"]];
+    }
+    [html appendString:@"</body></html>"];
+    NSString *htmlPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+    htmlPath = [htmlPath stringByAppendingPathExtension:@"html"];
+    [html writeToFile:htmlPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    NSTask *wt = [[NSTask alloc] init];
+    wt.launchPath = @"/usr/bin/textutil";
+    wt.arguments = @[@"-convert", @"docx", @"-output", path, htmlPath];
+    @try { [wt launch]; [wt waitUntilExit]; ok = wt.terminationStatus == 0; } @catch (NSException *e) { ok = NO; }
+    [[NSFileManager defaultManager] removeItemAtPath:htmlPath error:NULL];
   } else {
     NSMutableString *out = [NSMutableString string];
     if (idx == 3) [out appendString:@"title,category,content\n"];
