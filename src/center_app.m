@@ -402,6 +402,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableArray *clipboardVisibleItems;
 @property (strong) NSSearchField *clipboardSearch;
 @property BOOL clipboardFavoritesOnly;
+@property (strong) NSPopUpButton *clipboardDaysPopup;
 @property (strong) NSTimer *clipboardTimer;
 @property NSInteger clipboardLastChange;
 @property (strong) NSString *clipboardLastText;
@@ -4185,6 +4186,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTimeInterval ts = [raw[@"date"] doubleValue];
     [self.clipboardItems addObject:@{@"text": text, @"date": ts > 0 ? [NSDate dateWithTimeIntervalSince1970:ts] : [NSDate date], @"favorite": @([raw[@"favorite"] boolValue])}];
   }
+  [self pruneClipboardHistory];
 }
 
 - (void)saveClipboardHistory {
@@ -4213,6 +4215,34 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)clipboardSearchChanged:(id)sender { [self reloadClipboardVisibleItems]; }
 
+- (NSInteger)clipboardRetentionDays {
+  if (![[NSUserDefaults standardUserDefaults] objectForKey:@"centerClipboardDays"]) return 30;
+  return [[NSUserDefaults standardUserDefaults] integerForKey:@"centerClipboardDays"];
+}
+
+- (void)pruneClipboardHistory {
+  NSInteger days = [self clipboardRetentionDays];
+  if (days <= 0 || !self.clipboardItems.count) return;
+  NSDate *cutoff = [NSDate dateWithTimeIntervalSinceNow:-days * 86400.0];
+  NSMutableArray *keep = [NSMutableArray array];
+  for (NSDictionary *it in self.clipboardItems) {
+    NSDate *date = [it[@"date"] isKindOfClass:[NSDate class]] ? it[@"date"] : [NSDate date];
+    if ([date compare:cutoff] != NSOrderedAscending) [keep addObject:it];
+  }
+  if (keep.count != self.clipboardItems.count) {
+    self.clipboardItems = keep;
+    [self saveClipboardHistory];
+  }
+}
+
+- (void)clipboardRetentionChanged:(NSPopUpButton *)popup {
+  NSInteger days = [popup.selectedItem.representedObject integerValue];
+  [[NSUserDefaults standardUserDefaults] setInteger:days forKey:@"centerClipboardDays"];
+  [self pruneClipboardHistory];
+  if (self.clipboardWindow.isVisible) [self reloadClipboardVisibleItems];
+  [self showToast:days > 0 ? [NSString stringWithFormat:@"剪贴板将保留 %ld 天", (long)days] : @"剪贴板历史将永久保留"];
+}
+
 - (void)startClipboardMonitor {
   if (self.clipboardTimer) return;
   [self loadClipboardHistory];
@@ -4229,6 +4259,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.clipboardLastText = text;
     [self.clipboardItems insertObject:@{@"text": text, @"date": [NSDate date], @"favorite": @NO} atIndex:0];
     while (self.clipboardItems.count > 200) [self.clipboardItems removeLastObject];
+    [self pruneClipboardHistory];
     [self saveClipboardHistory];
     if (self.clipboardWindow.isVisible) [self reloadClipboardVisibleItems];
   }];
@@ -8638,6 +8669,19 @@ static BOOL ValidGroupName(NSString *raw) {
   [usageBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   usageBtn.toolTip = @"查看应用启动次数、最近使用时间和未分组推荐";
   [tUsage addSubview:usageBtn];
+
+  NSView *tClipRetain = tileAt(1, 130); tileLabel(tClipRetain, @"剪贴板保留");
+  self.clipboardDaysPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26) pullsDown:NO];
+  [self.clipboardDaysPopup addItemWithTitle:@"永久"]; self.clipboardDaysPopup.lastItem.representedObject = @0;
+  [self.clipboardDaysPopup addItemWithTitle:@"7 天"]; self.clipboardDaysPopup.lastItem.representedObject = @7;
+  [self.clipboardDaysPopup addItemWithTitle:@"30 天"]; self.clipboardDaysPopup.lastItem.representedObject = @30;
+  [self.clipboardDaysPopup addItemWithTitle:@"90 天"]; self.clipboardDaysPopup.lastItem.representedObject = @90;
+  NSInteger savedDays = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerClipboardDays"];
+  if (savedDays <= 0 && ![[NSUserDefaults standardUserDefaults] objectForKey:@"centerClipboardDays"]) savedDays = 30;
+  for (NSMenuItem *mi in self.clipboardDaysPopup.itemArray) if ([mi.representedObject integerValue] == savedDays) { [self.clipboardDaysPopup selectItem:mi]; break; }
+  self.clipboardDaysPopup.target = self; self.clipboardDaysPopup.action = @selector(clipboardRetentionChanged:);
+  self.clipboardDaysPopup.toolTip = @"超过保留天数的剪贴板历史会自动删除";
+  [tClipRetain addSubview:self.clipboardDaysPopup];
 
   // 第三列：相册与磁盘
   NSView *tAlbum = tileAt(2, 500); tileLabel(tAlbum, @"图库权限");
