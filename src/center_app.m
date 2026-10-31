@@ -623,6 +623,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSTableView *layoutTable;
 @property (strong) NSMutableDictionary *savedLayouts;
 @property (strong) NSButton *layoutAutoLaunchCheck;
+@property (strong) ColorHoverButton *layoutAXButton;
 @property (strong) NSWindow *dockAppearanceWindow;
 @property (strong) NSSlider *dockSizeSlider, *dockMagnifySlider;
 @property (strong) NSTextField *dockSizeValue, *dockMagnifyValue;
@@ -2110,10 +2111,6 @@ static void HideDockHoverTip(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self togglePopover:nil];
     });
-  }
-  if (getenv("DOCKLAUNCHERS_CENTER_TEST_AX")) {
-    fprintf(stderr, "AX_TRUSTED=%d\n", AXIsProcessTrusted() ? 1 : 0);
-    exit(0);
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_APP_SEARCH")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self showAppSearch:nil]; });
@@ -11256,6 +11253,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.layoutAutoLaunchCheck = [NSButton checkboxWithTitle:@"恢复布局时自动启动缺失的应用" target:self action:nil];
     self.layoutAutoLaunchCheck.state = NSControlStateValueOn;
     self.layoutAutoLaunchCheck.frame = NSMakeRect(16, 52, 300, 20); [cv addSubview:self.layoutAutoLaunchCheck];
+    self.layoutAXButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(322, 52, 150, 20)];
+    self.layoutAXButton.title = @"申请辅助功能权限"; self.layoutAXButton.hoverColor = [NSColor systemOrangeColor];
+    self.layoutAXButton.target = self; self.layoutAXButton.action = @selector(requestLayoutAccessibility:);
+    [self.layoutAXButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:self.layoutAXButton];
     NSArray *actions = @[@[@"保存当前布局", @"saveCurrentWindowLayout:", @16.0, @130.0, [NSColor systemGreenColor]],
                          @[@"恢复选中布局", @"restoreSelectedWindowLayout:", @154.0, @130.0, [NSColor systemBlueColor]],
                          @[@"删除", @"deleteSelectedWindowLayout:", @292.0, @72.0, [NSColor systemRedColor]],
@@ -11269,9 +11271,35 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.layoutWindow center];
   }
   [self.layoutTable reloadData];
+  if (self.layoutAXButton) {
+    BOOL trusted = AXIsProcessTrusted();
+    self.layoutAXButton.title = trusted ? @"辅助功能：已授权" : @"申请辅助功能权限";
+    [self.layoutAXButton applyColor:trusted ? [NSColor systemGreenColor] : DLButtonBackground() textColor:trusted ? [NSColor whiteColor] : [NSColor labelColor]];
+  }
   [NSApp activateIgnoringOtherApps:YES];
   [self.layoutWindow makeKeyAndOrderFront:nil];
   [self.layoutWindow orderFrontRegardless];
+}
+
+- (void)requestLayoutAccessibility:(id)sender {
+  if (AXIsProcessTrusted()) {
+    self.layoutAXButton.title = @"辅助功能：已授权";
+    [self.layoutAXButton applyColor:[NSColor systemGreenColor] textColor:[NSColor whiteColor]];
+    [self showToast:@"辅助功能权限已生效"];
+    return;
+  }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"需要添加当前应用到辅助功能";
+  a.informativeText = [NSString stringWithFormat:@"请按以下步骤操作：\n\n1. 打开 系统设置 → 隐私与安全性 → 辅助功能\n2. 点列表下方的「+」\n3. 选择：%@\n4. 打开开关\n5. 完全退出控制台后重新打开\n\n如果列表里已经有多个 DockLaunchers，请先删除旧条目。", [[NSBundle mainBundle] bundlePath]];
+  [a addButtonWithTitle:@"打开系统设置"];
+  [a addButtonWithTitle:@"在 Finder 中显示"];
+  [a addButtonWithTitle:@"好"];
+  NSModalResponse r = [a runModal];
+  if (r == NSAlertFirstButtonReturn) {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
+  } else if (r == NSAlertSecondButtonReturn) {
+    [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:[[NSBundle mainBundle] bundlePath]]]];
+  }
 }
 
 - (void)saveCurrentWindowLayout:(id)sender {
