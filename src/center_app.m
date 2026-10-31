@@ -407,6 +407,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSTableView *processTable;
 @property (strong) NSArray *processItems;
 @property (strong) NSTimer *processTimer;
+@property (copy) NSString *processSortKey;
 @property (strong) NSTimer *clipboardTimer;
 @property NSInteger clipboardLastChange;
 @property (strong) NSString *clipboardLastText;
@@ -8583,12 +8584,12 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *cv = self.processWindow.contentView;
     NSTextField *title = [self label:@"进程管理" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"按 CPU 占用排序；结束进程前会确认" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *sub = [self label:@"按 CPU 或内存排序；结束进程前会确认" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 448, 500, 18); [cv addSubview:sub];
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 608, 360)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.processTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
-    NSArray *cols = @[@[@"proc", @"进程", @300.0], @[@"pid", @"PID", @70.0], @[@"cpu", @"CPU", @90.0], @[@"mem", @"内存", @110.0]];
+    NSArray *cols = @[@[@"proc", @"进程", @260.0], @[@"pid", @"PID", @70.0], @[@"cpu", @"CPU", @90.0], @[@"mem", @"内存", @150.0]];
     for (NSArray *c in cols) {
       NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
       col.title = c[1]; col.width = [c[2] doubleValue];
@@ -8605,6 +8606,13 @@ static BOOL ValidGroupName(NSString *raw) {
     refresh.title = @"刷新"; refresh.hoverColor = [NSColor systemGreenColor];
     refresh.target = self; refresh.action = @selector(refreshProcessList:);
     [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    NSPopUpButton *sortPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(230, 38, 120, 26) pullsDown:NO];
+    [sortPopup addItemWithTitle:@"按 CPU"];
+    [sortPopup addItemWithTitle:@"按内存"];
+    [sortPopup selectItemAtIndex:[(self.processSortKey ?: @"cpu") isEqualToString:@"mem"] ? 1 : 0];
+    sortPopup.target = self; sortPopup.action = @selector(processSortChanged:);
+    sortPopup.toolTip = @"切换进程排序方式";
+    [cv addSubview:sortPopup];
     ColorHoverButton *kill = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(372, 36, 110, 30)];
     kill.title = @"结束进程"; kill.hoverColor = [NSColor systemRedColor];
     kill.target = self; kill.action = @selector(endProcessSelected:);
@@ -8649,9 +8657,15 @@ static BOOL ValidGroupName(NSString *raw) {
       [rows addObject:@{@"pid": @(pid), @"cpu": @(cpu), @"mem": @(memMB), @"name": name, @"path": comm}];
     }
   } @catch (NSException *e) {}
-  [rows sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"cpu"] compare:a[@"cpu"]]; }];
+  NSString *sortKey = self.processSortKey.length ? self.processSortKey : @"cpu";
+  [rows sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[sortKey] compare:a[sortKey]]; }];
   self.processItems = rows;
   [self.processTable reloadData];
+}
+
+- (void)processSortChanged:(NSPopUpButton *)popup {
+  self.processSortKey = popup.indexOfSelectedItem == 1 ? @"mem" : @"cpu";
+  [self refreshProcessList:nil];
 }
 
 - (void)toggleProcessAutoRefresh:(NSButton *)sender {
