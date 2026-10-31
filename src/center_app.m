@@ -8927,7 +8927,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)refreshStartupItems:(id)sender {
   NSFileManager *fm = [NSFileManager defaultManager];
   NSMutableArray *rows = [NSMutableArray array];
-  NSArray *dirs = @[@[NSHomeDirectory(), @"用户"], @[@"/Library/LaunchAgents", @"系统"], @[@"/Library/LaunchDaemons", @"系统"]];
+  NSString *userAgents = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/LaunchAgents"];
+  NSArray *dirs = @[@[userAgents, @"用户"], @[@"/Library/LaunchAgents", @"系统"], @[@"/Library/LaunchDaemons", @"系统"]];
   for (NSArray *pair in dirs) {
     NSString *dir = pair[0];
     NSString *type = pair[1];
