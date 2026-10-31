@@ -10937,6 +10937,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (NSView *sub in [page.subviews copy]) [sub removeFromSuperview];
   NSTextField *title = [self label:@"AI 管理" size:18 bold:YES color:nil];
   title.frame = NSMakeRect(16, 480, 250, 26); [page addSubview:title];
+  ColorHoverButton *promptLib = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(304, 480, 100, 26)];
+  promptLib.title = @"提示词库";
+  promptLib.hoverColor = [NSColor systemPurpleColor];
+  promptLib.target = self;
+  promptLib.action = @selector(showPromptLibrary:);
+  promptLib.toolTip = @"打开与控制台一致的提示词库";
+  [promptLib applyColor:[NSColor systemPurpleColor] textColor:[NSColor whiteColor]];
+  [page addSubview:promptLib];
   NSTextField *sub = [self label:@"点击眼睛图标同步并显示实时余量" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(16, 456, 388, 18); [page addSubview:sub];
   NSTextField *hName = [self label:@"名称" size:12 bold:YES color:nil];
