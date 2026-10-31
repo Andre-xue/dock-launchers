@@ -16,6 +16,7 @@
 #import <QuickLookThumbnailing/QuickLookThumbnailing.h>
 #import <Photos/Photos.h>
 #import <AVFoundation/AVFoundation.h>
+#import <CoreMedia/CoreMedia.h>
 #import <Vision/Vision.h>
 #import <PDFKit/PDFKit.h>
 #import <NaturalLanguage/NaturalLanguage.h>
