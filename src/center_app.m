@@ -546,6 +546,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) Sparkline *quickCPUSpark, *quickGPUSpark, *quickNetSpark;
 @property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage, *quickScenePage, *quickSceneContainer, *quickProcessPage, *quickProcessContainer;
 @property (strong) NSTimer *quickProcessTimer;
+@property (strong) NSTimer *quickSceneSyncTimer;
+@property (copy) NSString *quickSceneDockSignature;
 @property (strong) ColorHoverButton *statusMetricButton;
 @property (strong) NSPopUpButton *consoleMetricPopup;
 @property (strong) NSTextField *consoleMetricFocusLabel;
@@ -8503,6 +8505,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSArray<NSString *> *)dockGroupNames {
   NSMutableArray *names = [NSMutableArray array];
+  CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
   CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
   NSArray *apps = raw ? CFBridgingRelease(raw) : @[];
   NSString *groupDir = [GroupDir() stringByStandardizingPath];
@@ -9548,6 +9551,32 @@ static BOOL ValidGroupName(NSString *raw) {
   [self reloadQuickSceneChecks];
 }
 
+- (NSString *)currentDockGroupSignature {
+  NSArray *names = [[self dockGroupNames] sortedArrayUsingSelector:@selector(compare:)];
+  return [names componentsJoinedByString:@"|"];
+}
+
+- (void)startQuickSceneSync {
+  if (self.quickSceneSyncTimer) return;
+  self.quickSceneDockSignature = [self currentDockGroupSignature];
+  self.quickSceneSyncTimer = [NSTimer scheduledTimerWithTimeInterval:0.8 target:self selector:@selector(quickSceneSyncTick:) userInfo:nil repeats:YES];
+  [[NSRunLoop mainRunLoop] addTimer:self.quickSceneSyncTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopQuickSceneSync {
+  [self.quickSceneSyncTimer invalidate];
+  self.quickSceneSyncTimer = nil;
+}
+
+- (void)quickSceneSyncTick:(NSTimer *)timer {
+  if (!self.popover.isShown) { [self stopQuickSceneSync]; return; }
+  NSString *sig = [self currentDockGroupSignature];
+  if (![sig isEqualToString:self.quickSceneDockSignature ?: @""]) {
+    self.quickSceneDockSignature = sig;
+    [self reloadQuickSceneChecks];
+  }
+}
+
 - (void)reloadQuickSceneChecks {
   NSInteger idx = self.quickScenePopup ? self.quickScenePopup.indexOfSelectedItem : self.quickSceneIndex;
   if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
@@ -9566,6 +9595,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [self.quickSceneChecks addObject:cb];
   }
   self.quickSceneScroll.documentView = doc;
+  [self startQuickSceneSync];
 }
 
 - (void)quickScenePopupChanged:(id)sender {
@@ -9608,6 +9638,7 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)popoverDidClose:(NSNotification *)notification {
   [self.quickProcessTimer invalidate];
   self.quickProcessTimer = nil;
+  [self stopQuickSceneSync];
 }
 
 - (void)refreshQuickProcess:(NSTimer *)timer {
@@ -9671,6 +9702,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (self.quickProcessPage) self.quickProcessPage.hidden = (idx != 4);
   if (self.statusMetricButton) self.statusMetricButton.hidden = (idx != 4);
   [self.quickProcessTimer invalidate]; self.quickProcessTimer = nil;
+  if (idx != 1) [self stopQuickSceneSync];
   if (idx == 1) [self rebuildQuickSceneTab];
   else if (idx == 2) [self rebuildQuickAITab];
   else if (idx == 4) {
