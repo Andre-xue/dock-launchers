@@ -30,6 +30,16 @@ static void CollectDockDragURLs(id obj, NSMutableArray *out) {
   }
 }
 
+static NSString *const kRowDragType = @"com.docklaunchers.group.rows";
+
+static NSArray<NSString *> *DraggedRowPaths(NSPasteboard *pb) {
+  NSString *joined = [pb stringForType:kRowDragType];
+  if (!joined.length) return @[];
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSString *p in [joined componentsSeparatedByString:@"\n"]) if (p.length) [out addObject:p];
+  return out;
+}
+
 static BOOL DragIsFromDock(NSPasteboard *pb) {
   return [[pb types] containsObject:@"com.apple.dock.tile"];
 }
@@ -231,7 +241,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 @implementation GroupDropWindow
 - (instancetype)initWithContentRect:(NSRect)contentRect styleMask:(NSWindowStyleMask)style backing:(NSBackingStoreType)bufferingType defer:(BOOL)flag {
   if ((self = [super initWithContentRect:contentRect styleMask:style backing:bufferingType defer:flag])) {
-    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile"]];
+    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile", kRowDragType]];
   }
   return self;
 }
@@ -252,6 +262,11 @@ static NSString *SignatureForEvent(NSEvent *e);
 }
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  NSArray<NSString *> *rowPaths = DraggedRowPaths(sender.draggingPasteboard);
+  if (rowPaths.count && self.dropCtrl) {
+    [self.dropCtrl performSelector:@selector(reorderDraggedPaths:beforePath:) withObject:rowPaths withObject:nil];
+    return YES;
+  }
   NSArray *urls = [self droppedURLs:sender];
   if (urls.count && self.dropCtrl) {
     [self.dropCtrl performSelector:@selector(addDroppedApps:) withObject:urls];
@@ -354,6 +369,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSTextField *searchField;
 @property (strong) NSButton *pinBtn;
 @property BOOL pinned;
+@property (strong) NSMutableSet *multiSel;
+@property BOOL suppressExternalDragEnd;
 @property (strong) CircleButton *dockImportBtn;
 @property (strong) NSWindow *dockImportWindow;
 @property (strong) NSArray<NSURL *> *dockImportApps;
@@ -446,6 +463,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)removeSelected:(id)sender;
 - (void)loadIconsFrom:(NSInteger)start;
 - (void)selectRow:(NSInteger)idx;
+- (void)rowMouseDown:(id)row modifiers:(NSNumber *)mods;
+- (NSArray *)dragPathsForRow:(NSNumber *)idx;
+- (void)reorderDraggedPaths:(NSArray *)paths beforePath:(NSString *)before;
 - (void)applyTheme;
 - (void)showSkinMenu:(id)sender;
 - (void)rebuildSettingsRows;
@@ -613,7 +633,7 @@ static NSColor *ThemeSel(NSInteger t) {
 @implementation RowView
 - (instancetype)initWithFrame:(NSRect)frame {
   if ((self = [super initWithFrame:frame])) {
-    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile"]];
+    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile", kRowDragType]];
   }
   return self;
 }
@@ -622,6 +642,11 @@ static NSColor *ThemeSel(NSInteger t) {
 }
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  NSArray<NSString *> *rowPaths = DraggedRowPaths(sender.draggingPasteboard);
+  if (rowPaths.count && self.ctrl) {
+    [self.ctrl performSelector:@selector(reorderDraggedPaths:beforePath:) withObject:rowPaths withObject:self.targetPath];
+    return YES;
+  }
   NSArray *urls = [self dragDropURLs:sender];
   if (self.ctrl && DragIsFromDock(sender.draggingPasteboard) && !urls.count) {
     [self.ctrl performSelector:@selector(promptAddAppFromDock)];
@@ -666,16 +691,21 @@ static NSColor *ThemeSel(NSInteger t) {
 }
 - (void)mouseDown:(NSEvent *)event {
   self.dragStart = event.locationInWindow;
-  [self.ctrl selectRow:self.idx];
+  [self.ctrl performSelector:@selector(rowMouseDown:modifiers:) withObject:self withObject:@(event.modifierFlags)];
   if (event.clickCount >= 2) [self.ctrl openSelected:nil];
 }
 - (void)mouseDragged:(NSEvent *)event {
   if (!self.targetPath.length) return;
   NSPoint p = event.locationInWindow;
   if (hypot(p.x - self.dragStart.x, p.y - self.dragStart.y) < 5) return;
-  NSURL *url = [NSURL fileURLWithPath:self.targetPath];
-  NSDraggingItem *item = [[NSDraggingItem alloc] initWithPasteboardWriter:url];
-  NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:self.targetPath];
+  NSArray *paths = [self.ctrl performSelector:@selector(dragPathsForRow:) withObject:@(self.idx)] ?: @[self.targetPath];
+  NSPasteboardItem *pbItem = [[NSPasteboardItem alloc] init];
+  [pbItem setString:[paths componentsJoinedByString:@"\n"] forType:kRowDragType];
+  NSString *first = paths.firstObject ?: self.targetPath;
+  [pbItem setString:[[NSURL fileURLWithPath:first] absoluteString] forType:NSPasteboardTypeFileURL];
+  [pbItem setPropertyList:@[first] forType:NSFilenamesPboardType];
+  NSDraggingItem *item = [[NSDraggingItem alloc] initWithPasteboardWriter:pbItem];
+  NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:first];
   [item setDraggingFrame:NSMakeRect(0, 0, 48, 48) contents:icon];
   [self beginDraggingSessionWithItems:@[item] event:event source:self];
 }
@@ -996,7 +1026,7 @@ static NSColor *ThemeSel(NSInteger t) {
 
 @implementation FlippedView
 - (instancetype)initWithFrame:(NSRect)frame {
-  if ((self = [super initWithFrame:frame])) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile"]];
+  if ((self = [super initWithFrame:frame])) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile", kRowDragType]];
   return self;
 }
 - (NSArray<NSURL *> *)droppedURLs:(id<NSDraggingInfo>)sender {
@@ -1004,8 +1034,13 @@ static NSColor *ThemeSel(NSInteger t) {
 }
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
-  NSArray *urls = [self droppedURLs:sender];
+  NSArray<NSString *> *rowPaths = DraggedRowPaths(sender.draggingPasteboard);
   id ctrl = self.dropCtrl;
+  if (rowPaths.count && ctrl) {
+    [ctrl performSelector:@selector(reorderDraggedPaths:beforePath:) withObject:rowPaths withObject:nil];
+    return YES;
+  }
+  NSArray *urls = [self droppedURLs:sender];
   if (ctrl && DragIsFromDock(sender.draggingPasteboard) && !urls.count) {
     [ctrl performSelector:@selector(promptAddAppFromDock)];
     return YES;
@@ -1055,6 +1090,11 @@ static NSColor *ThemeSel(NSInteger t) {
   return @[];
 }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  NSArray<NSString *> *rowPaths = DraggedRowPaths(sender.draggingPasteboard);
+  if (rowPaths.count && self.ctrl) {
+    [self.ctrl performSelector:@selector(reorderDraggedPaths:beforePath:) withObject:rowPaths withObject:nil];
+    return YES;
+  }
   NSArray<NSURL *> *urls = [self droppedURLs:sender];
   if (urls.count && self.ctrl) {
     [self.ctrl addDroppedApps:urls];
@@ -1259,7 +1299,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
   ContentView *cv = [[ContentView alloc] initWithFrame:frame];
   cv.ctrl = self;
-  [cv registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile"]];
+  [cv registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType, NSPasteboardTypeString, @"com.apple.dock.tile", kRowDragType]];
   cv.wantsLayer = YES;
   cv.layer.backgroundColor = [NSColor colorWithCalibratedRed:0.96 green:0.965 blue:0.972 alpha:1.0].CGColor;
   self.window.contentView = cv;
@@ -1603,6 +1643,31 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)addDroppedApps:(NSArray<NSURL *> *)urls {
   if (!urls.count || !gListFile.length) return;
+  NSMutableArray<NSURL *> *expanded = [NSMutableArray array];
+  NSFileManager *dropFM = [NSFileManager defaultManager];
+  for (NSURL *u in urls) {
+    BOOL isDir = NO;
+    if ([dropFM fileExistsAtPath:u.path isDirectory:&isDir] && isDir && ![u.pathExtension.lowercaseString isEqualToString:@"app"]) {
+      NSDirectoryEnumerator *en = [dropFM enumeratorAtURL:u includingPropertiesForKeys:@[NSURLIsDirectoryKey] options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:nil];
+      for (NSURL *child in en) {
+        if ([child.pathExtension.lowercaseString isEqualToString:@"app"]) {
+          [expanded addObject:child];
+          [en skipDescendants];
+        }
+      }
+    } else {
+      [expanded addObject:u];
+    }
+  }
+  if (!expanded.count) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"文件夹中没有找到应用";
+    a.informativeText = @"只支持导入 .app 应用。";
+    [a addButtonWithTitle:@"好"];
+    [a runModal];
+    return;
+  }
+  urls = expanded;
   NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL] ?: @"";
   NSMutableArray *lines = [[content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
   NSFileManager *fm = [NSFileManager defaultManager];
@@ -1735,6 +1800,7 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)rowDragEnded:(NSString *)path screenPoint:(NSPoint)pt {
+  if (self.suppressExternalDragEnd) return;
   if (!path.length) return;
   if (![self dockContainsApp:path]) [self addAppToDock:path];
   [self removeAppFromList:path];
@@ -1852,16 +1918,100 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)selectRow:(NSInteger)idx {
   if (idx < 0 || idx >= (NSInteger)self.rows.count) return;
+  if (!self.multiSel) self.multiSel = [NSMutableSet set];
+  [self.multiSel removeAllObjects];
+  [self.multiSel addObject:@(idx)];
   self.sel = idx;
-  for (RowView *r in self.rows) {
-    r.selected = (r.idx == idx);
-    r.iconView.selected = (r.idx == idx);
-    r.iconView.selColor = r.selColor;
-    [r.iconView setNeedsDisplay:YES];
-  }
-  for (RowView *r in self.rows) [r setNeedsDisplay:YES];
+  [self refreshRowSelectionVisuals];
   NSRect r = self.rows[idx].frame;
   [self.listContainer scrollRectToVisible:r];
+}
+
+- (void)refreshRowSelectionVisuals {
+  for (RowView *r in self.rows) {
+    BOOL sel = (r.idx == self.sel) || [self.multiSel containsObject:@(r.idx)];
+    r.selected = sel;
+    r.iconView.selected = sel;
+    r.iconView.selColor = r.selColor;
+    [r.iconView setNeedsDisplay:YES];
+    [r setNeedsDisplay:YES];
+  }
+}
+
+- (void)rowMouseDown:(id)rowObj modifiers:(NSNumber *)mods {
+  RowView *row = rowObj;
+  NSInteger idx = row.idx;
+  if (idx < 0 || idx >= (NSInteger)self.items.count) return;
+  if (!self.multiSel) self.multiSel = [NSMutableSet set];
+  NSEventModifierFlags flags = mods.unsignedIntegerValue;
+  if (flags & NSEventModifierFlagCommand) {
+    NSNumber *key = @(idx);
+    if ([self.multiSel containsObject:key]) [self.multiSel removeObject:key];
+    else [self.multiSel addObject:key];
+    self.sel = idx;
+  } else if (flags & NSEventModifierFlagShift) {
+    NSInteger lo = MIN(self.sel, idx), hi = MAX(self.sel, idx);
+    if (self.sel < 0) lo = hi = idx;
+    for (NSInteger i = lo; i <= hi; i++) [self.multiSel addObject:@(i)];
+    self.sel = idx;
+  } else {
+    [self.multiSel removeAllObjects];
+    [self.multiSel addObject:@(idx)];
+    self.sel = idx;
+  }
+  [self refreshRowSelectionVisuals];
+}
+
+- (NSArray *)dragPathsForRow:(NSNumber *)idx {
+  NSInteger i = idx.integerValue;
+  if (i < 0 || i >= (NSInteger)self.items.count) return @[];
+  if (!self.multiSel) self.multiSel = [NSMutableSet set];
+  NSMutableArray *idxes = [NSMutableArray array];
+  if ([self.multiSel containsObject:@(i)]) [idxes addObjectsFromArray:self.multiSel.allObjects];
+  else [idxes addObject:@(i)];
+  [idxes sortUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) { return [a compare:b]; }];
+  NSMutableArray *paths = [NSMutableArray array];
+  for (NSNumber *n in idxes) {
+    NSInteger k = n.integerValue;
+    if (k >= 0 && k < (NSInteger)self.items.count) [paths addObject:self.items[k][@"target"]];
+  }
+  return paths;
+}
+
+- (void)reorderDraggedPaths:(NSArray *)paths beforePath:(NSString *)before {
+  if (!paths.count || !gListFile.length) return;
+  if (paths.count == 1 && before.length && ([paths.firstObject isEqualToString:before] || [ResolveAppPath(paths.firstObject) isEqualToString:ResolveAppPath(before)])) return;
+  self.suppressExternalDragEnd = YES;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    self.suppressExternalDragEnd = NO;
+  });
+  NSSet *moved = [NSSet setWithArray:paths];
+  NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+  NSArray *rawLines = [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+  NSMutableArray *kept = [NSMutableArray array];
+  NSMutableArray *movedLines = [NSMutableArray array];
+  NSInteger insertAt = -1;
+  for (NSString *raw in rawLines) {
+    NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (!line.length) continue;
+    if ([line hasPrefix:@"#"]) { [kept addObject:line]; continue; }
+    NSRange r = [line rangeOfString:@"|"];
+    NSString *target = [[(r.location == NSNotFound ? line : [line substringFromIndex:r.location+1]) stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] copy];
+    if ([moved containsObject:target]) { [movedLines addObject:line]; continue; }
+    if (before.length && (insertAt < 0) && ([target isEqualToString:before] || [ResolveAppPath(target) isEqualToString:ResolveAppPath(before)])) insertAt = kept.count;
+    [kept addObject:line];
+  }
+  if (insertAt < 0) insertAt = kept.count;
+  NSMutableArray *out = [kept mutableCopy];
+  NSInteger pos = MIN(MAX(insertAt, 0), (NSInteger)out.count);
+  for (NSInteger i = 0; i < (NSInteger)movedLines.count; i++) [out insertObject:movedLines[i] atIndex:pos + i];
+  NSString *joined = [out componentsJoinedByString:@"\n"];
+  if (joined.length) joined = [joined stringByAppendingString:@"\n"];
+  [joined writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  if (self.multiSel) [self.multiSel removeAllObjects];
+  self.sel = MAX(0, MIN(pos, (NSInteger)out.count - 1));
+  [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"DockLaunchersGroupsChanged" object:nil];
+  [self reload];
 }
 
 - (void)moveSel:(NSInteger)delta {
