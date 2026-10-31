@@ -475,6 +475,9 @@ static NSColor *ThemeSel(NSInteger t) {
 }
 
 @implementation RowView
+- (NSView *)hitTest:(NSPoint)point {
+  return NSPointInRect(point, self.bounds) ? self : [super hitTest:point];
+}
 - (void)drawRect:(NSRect)dirtyRect {
   if (!self.selected || self.iconMode) return;
   [(self.selColor ?: ThemeSel(gTheme)) setFill];
