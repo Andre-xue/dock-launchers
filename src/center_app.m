@@ -617,6 +617,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSArray *appSearchFiltered;
 @property (strong) NSTextField *appSearchStatus;
 @property (strong) NSPopUpButton *promptCategoryPopup;
+@property (strong) NSWindow *layoutWindow;
+@property (strong) NSTableView *layoutTable;
+@property (strong) NSMutableDictionary *savedLayouts;
 @property (strong) NSWindow *dockAppearanceWindow;
 @property (strong) NSSlider *dockSizeSlider, *dockMagnifySlider;
 @property (strong) NSTextField *dockSizeValue, *dockMagnifyValue;
@@ -7772,6 +7775,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.dupTable) return self.dupItems.count;
+  if (tableView == self.layoutTable) return self.savedLayouts.count;
   if (tableView == self.appSearchTable) return self.appSearchFiltered.count;
   if (tableView == self.promptTable) return self.promptPageItems.count;
   if (tableView == self.largeFileTable) return self.largeFileItems.count;
@@ -7818,6 +7822,25 @@ static BOOL ValidGroupName(NSString *raw) {
       link.font = [NSFont systemFontOfSize:9.5]; link.contentTintColor = [NSColor controlAccentColor];
       link.frame = NSMakeRect(4, 5, col.width - 8, 22); [v addSubview:link];
     }
+    return v;
+  }
+  if (tableView == self.layoutTable) {
+    NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
+    if (row < 0 || row >= (NSInteger)names.count) return nil;
+    NSString *name = names[row];
+    NSDictionary *info = self.savedLayouts[name] ?: @{};
+    NSArray *wins = info[@"windows"] ?: @[];
+    NSString *ident = col.identifier;
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,36)];
+    NSTextField *l;
+    if ([ident isEqualToString:@"lname"]) l = [self label:name size:11.5 bold:YES color:nil];
+    else if ([ident isEqualToString:@"lcount"]) l = [self label:[NSString stringWithFormat:@"%ld 个", (long)wins.count] size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    else {
+      NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyy-MM-dd HH:mm";
+      NSDate *date = [NSDate dateWithTimeIntervalSince1970:[info[@"date"] doubleValue]];
+      l = [self label:[df stringFromDate:date] size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    }
+    l.frame = NSMakeRect(4, 9, col.width - 8, 18); [v addSubview:l];
     return v;
   }
   if (tableView == self.appSearchTable) {
@@ -11086,6 +11109,173 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)closeDockAppearance:(id)sender { [self.dockAppearanceWindow orderOut:nil]; }
 
+- (NSString *)windowLayoutStorePath {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:@"window_layouts.json"];
+}
+
+- (void)loadWindowLayouts {
+  if (self.savedLayouts) return;
+  NSData *d = [NSData dataWithContentsOfFile:[self windowLayoutStorePath]];
+  id obj = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  self.savedLayouts = [obj isKindOfClass:[NSDictionary class]] ? [obj mutableCopy] : [NSMutableDictionary dictionary];
+}
+
+- (void)saveWindowLayouts {
+  NSData *d = [NSJSONSerialization dataWithJSONObject:self.savedLayouts ?: @{} options:NSJSONWritingPrettyPrinted error:NULL];
+  [d writeToFile:[self windowLayoutStorePath] atomically:YES];
+}
+
+- (BOOL)ensureAccessibilityPermission {
+  NSDictionary *opts = @{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES};
+  if (AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)opts)) return YES;
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"需要辅助功能权限";
+  a.informativeText = @"窗口布局记忆需要读取和移动其他应用窗口。请在 系统设置 → 隐私与安全性 → 辅助功能 中允许 DockLaunchers 控制台。";
+  [a addButtonWithTitle:@"打开系统设置"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] == NSAlertFirstButtonReturn) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
+  return NO;
+}
+
+- (NSArray<NSDictionary *> *)captureCurrentWindowLayout {
+  NSMutableArray *windows = [NSMutableArray array];
+  for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
+    if (app.activationPolicy != NSApplicationActivationPolicyRegular) continue;
+    if (app.processIdentifier == getpid()) continue;
+    NSString *bundle = app.bundleIdentifier ?: @"";
+    if (!bundle.length) continue;
+    AXUIElementRef axApp = AXUIElementCreateApplication(app.processIdentifier);
+    CFTypeRef raw = NULL;
+    if (AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute, &raw) != kAXErrorSuccess || !raw) { CFRelease(axApp); continue; }
+    NSArray *axWindows = CFBridgingRelease(raw);
+    for (id w in axWindows) {
+      AXUIElementRef win = (__bridge AXUIElementRef)w;
+      CFTypeRef posRef = NULL, sizeRef = NULL, titleRef = NULL;
+      CGPoint p = CGPointZero; CGSize sz = CGSizeZero;
+      if (AXUIElementCopyAttributeValue(win, kAXPositionAttribute, &posRef) == kAXErrorSuccess && posRef) { AXValueGetValue((AXValueRef)posRef, kAXValueCGPointType, &p); CFRelease(posRef); }
+      else continue;
+      if (AXUIElementCopyAttributeValue(win, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess && sizeRef) { AXValueGetValue((AXValueRef)sizeRef, kAXValueCGSizeType, &sz); CFRelease(sizeRef); }
+      NSString *title = @"";
+      if (AXUIElementCopyAttributeValue(win, kAXTitleAttribute, &titleRef) == kAXErrorSuccess && titleRef) { title = CFBridgingRelease(titleRef); }
+      [windows addObject:@{@"bundle": bundle, @"app": app.localizedName ?: bundle, @"title": title ?: @"", @"x": @(p.x), @"y": @(p.y), @"w": @(sz.width), @"h": @(sz.height)}];
+    }
+    CFRelease(axApp);
+  }
+  return windows;
+}
+
+- (void)showWindowLayouts:(id)sender {
+  [self loadWindowLayouts];
+  if (!self.layoutWindow) {
+    self.layoutWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,600,440) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.layoutWindow.title = @"窗口布局记忆";
+    self.layoutWindow.releasedWhenClosed = NO;
+    self.layoutWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.layoutWindow.contentView;
+    NSTextField *title = [self label:@"窗口布局记忆" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 390, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"保存当前所有应用窗口的位置和大小，一键恢复" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 368, 520, 18); [cv addSubview:sub];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 568, 276)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.layoutTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"lname", @"布局名称", @220.0], @[@"lcount", @"窗口数", @80.0], @[@"ldate", @"保存时间", @180.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.layoutTable addTableColumn:col];
+    }
+    self.layoutTable.rowHeight = 36;
+    self.layoutTable.dataSource = self; self.layoutTable.delegate = self;
+    sv.documentView = self.layoutTable; [cv addSubview:sv];
+    NSArray *actions = @[@[@"保存当前布局", @"saveCurrentWindowLayout:", @16.0, @130.0, [NSColor systemGreenColor]],
+                         @[@"恢复选中布局", @"restoreSelectedWindowLayout:", @154.0, @130.0, [NSColor systemBlueColor]],
+                         @[@"删除", @"deleteSelectedWindowLayout:", @292.0, @72.0, [NSColor systemRedColor]],
+                         @[@"关闭", @"closeWindowLayouts:", @488.0, @80.0, [NSColor systemGrayColor]]];
+    for (NSArray *d in actions) {
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([d[2] doubleValue], 24, [d[3] doubleValue], 32)];
+      b.title = d[0]; b.hoverColor = d[4]; b.target = self; b.action = NSSelectorFromString(d[1]);
+      [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      [cv addSubview:b];
+    }
+    [self.layoutWindow center];
+  }
+  [self.layoutTable reloadData];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.layoutWindow makeKeyAndOrderFront:nil];
+  [self.layoutWindow orderFrontRegardless];
+}
+
+- (void)saveCurrentWindowLayout:(id)sender {
+  if (![self ensureAccessibilityPermission]) return;
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"保存窗口布局";
+  a.informativeText = @"输入一个布局名称，例如：工作、下班、剪辑。";
+  NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,300,26)];
+  tf.placeholderString = @"布局名称";
+  a.accessoryView = tf;
+  [a addButtonWithTitle:@"保存"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSString *name = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!name.length) { [self showToast:@"布局名称不能为空"]; return; }
+  NSArray *windows = [self captureCurrentWindowLayout];
+  if (!windows.count) { [self showToast:@"没有可保存的窗口"]; return; }
+  self.savedLayouts[name] = @{@"date": @([[NSDate date] timeIntervalSince1970]), @"windows": windows};
+  [self saveWindowLayouts];
+  [self.layoutTable reloadData];
+  [self showToast:[NSString stringWithFormat:@"已保存布局「%@」", name]];
+}
+
+- (void)restoreSelectedWindowLayout:(id)sender {
+  if (![self ensureAccessibilityPermission]) return;
+  NSInteger row = self.layoutTable.selectedRow;
+  NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
+  if (row < 0 || row >= (NSInteger)names.count) { [self showToast:@"请先选择一个布局"]; return; }
+  NSString *name = names[row];
+  NSArray *windows = self.savedLayouts[name][@"windows"] ?: @[];
+  NSMutableDictionary *apps = [NSMutableDictionary dictionary];
+  for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
+    if (app.activationPolicy == NSApplicationActivationPolicyRegular && app.bundleIdentifier.length) apps[app.bundleIdentifier] = app;
+  }
+  NSInteger restored = 0;
+  NSMutableDictionary *used = [NSMutableDictionary dictionary];
+  for (NSDictionary *w in windows) {
+    NSRunningApplication *app = apps[w[@"bundle"] ?: @""];
+    if (!app) continue;
+    AXUIElementRef axApp = AXUIElementCreateApplication(app.processIdentifier);
+    CFTypeRef raw = NULL;
+    if (AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute, &raw) != kAXErrorSuccess || !raw) { CFRelease(axApp); continue; }
+    NSArray *axWindows = CFBridgingRelease(raw);
+    NSInteger idx = [used[w[@"bundle"]] integerValue];
+    used[w[@"bundle"]] = @(idx + 1);
+    if (idx >= (NSInteger)axWindows.count) { CFRelease(axApp); continue; }
+    AXUIElementRef win = (__bridge AXUIElementRef)axWindows[idx];
+    CGPoint p = CGPointMake([w[@"x"] doubleValue], [w[@"y"] doubleValue]);
+    CGSize sz = CGSizeMake([w[@"w"] doubleValue], [w[@"h"] doubleValue]);
+    AXValueRef posVal = AXValueCreate(kAXValueCGPointType, &p);
+    AXValueRef sizeVal = AXValueCreate(kAXValueCGSizeType, &sz);
+    if (posVal) { AXUIElementSetAttributeValue(win, kAXPositionAttribute, posVal); CFRelease(posVal); }
+    if (sizeVal) { AXUIElementSetAttributeValue(win, kAXSizeAttribute, sizeVal); CFRelease(sizeVal); }
+    restored++;
+    CFRelease(axApp);
+  }
+  [self showToast:[NSString stringWithFormat:@"已恢复「%@」的 %ld 个窗口", name, (long)restored]];
+}
+
+- (void)deleteSelectedWindowLayout:(id)sender {
+  NSInteger row = self.layoutTable.selectedRow;
+  NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
+  if (row < 0 || row >= (NSInteger)names.count) return;
+  [self.savedLayouts removeObjectForKey:names[row]];
+  [self saveWindowLayouts];
+  [self.layoutTable reloadData];
+}
+
+- (void)closeWindowLayouts:(id)sender { [self.layoutWindow orderOut:nil]; }
+
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"设置" size:24 bold:YES color:nil];
@@ -11482,7 +11672,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSView *toolsPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   toolsPage.hidden = YES; self.quickToolsPage = toolsPage; [root addSubview:toolsPage];
   NSTextField *tt = [self label:@"工具" size:18 bold:YES color:nil];
-  tt.frame = NSMakeRect(16, 480, 250, 26); [toolsPage addSubview:tt];
+  tt.frame = NSMakeRect(16, 480, 180, 26); [toolsPage addSubview:tt];
+  ColorHoverButton *layoutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(294, 480, 110, 26)];
+  layoutBtn.title = @"窗口布局"; layoutBtn.hoverColor = [NSColor systemBlueColor];
+  layoutBtn.target = self; layoutBtn.action = @selector(showWindowLayouts:);
+  [layoutBtn applyColor:[NSColor systemBlueColor] textColor:[NSColor whiteColor]];
+  [toolsPage addSubview:layoutBtn];
   NSTextField *ts = [self label:@"选择工具，打开独立窗口；可钉住置顶" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   ts.frame = NSMakeRect(16, 456, 388, 18); [toolsPage addSubview:ts];
   ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(50, 296, 100, 140)];
