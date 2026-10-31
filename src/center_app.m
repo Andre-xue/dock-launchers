@@ -317,6 +317,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @class QuickPanelController;
 
 @interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate>
+- (void)applyConsoleMetricSelection;
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
 @property (strong) NSWindow *window;
@@ -558,8 +559,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) Sparkline *quickCPUSpark, *quickGPUSpark, *quickNetSpark;
 @property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage, *quickScenePage, *quickSceneContainer, *quickProcessPage, *quickProcessContainer;
 @property (strong) NSTimer *quickProcessTimer;
-@property (strong) NSPopUpButton *statusMetricPopup;
+@property (strong) ColorHoverButton *statusMetricButton;
 @property (strong) NSPopUpButton *consoleMetricPopup;
+@property (strong) NSTextField *consoleMetricFocusLabel;
 @property (strong) NSWindow *usageWindow;
 @property (strong) NSTableView *usageTable;
 @property (strong) NSArray *usageRows;
@@ -2460,6 +2462,10 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   self.consoleMetricPopup.font = [NSFont systemFontOfSize:10.5];
   [self setupStatusMetricPopup:self.consoleMetricPopup];
   [v addSubview:self.consoleMetricPopup];
+  self.consoleMetricFocusLabel = [self label:@"当前指标：CPU" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+  self.consoleMetricFocusLabel.alignment = NSTextAlignmentRight;
+  self.consoleMetricFocusLabel.frame = NSMakeRect(530, 584, 180, 18);
+  [v addSubview:self.consoleMetricFocusLabel];
   self.uptimeLabel = [self label:@"" size:9 bold:NO color:[NSColor tertiaryLabelColor]];
   self.uptimeLabel.alignment = NSTextAlignmentRight;
   self.uptimeLabel.maximumNumberOfLines = 1;
@@ -2500,6 +2506,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   self.liveAIBoard = [self cardAt:NSMakeRect(18, 20, 714, 220)];
   [v addSubview:self.liveAIBoard];
   [self rebuildLiveAIBoard];
+  [self applyConsoleMetricSelection];
   [self refreshExternalVolumes];
 }
 
@@ -9063,10 +9070,13 @@ static BOOL ValidGroupName(NSString *raw) {
   self.quickTabs.target = self;
   self.quickTabs.action = @selector(quickTabChanged:);
   [root addSubview:self.quickTabs];
-  self.statusMetricPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 40, 100, 26) pullsDown:NO];
-  self.statusMetricPopup.font = [NSFont systemFontOfSize:10.5];
-  [self setupStatusMetricPopup:self.statusMetricPopup];
-  [root addSubview:self.statusMetricPopup];
+  self.statusMetricButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 56, 120, 30)];
+  self.statusMetricButton.title = @"指标 CPU";
+  self.statusMetricButton.hoverColor = [NSColor systemTealColor];
+  self.statusMetricButton.target = self; self.statusMetricButton.action = @selector(showStatusMetricMenu:);
+  [self.statusMetricButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  self.statusMetricButton.toolTip = @"选择菜单栏显示的指标";
+  [root addSubview:self.statusMetricButton];
 
   NSView *ov = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   self.quickOverview = ov;
@@ -9165,8 +9175,6 @@ static BOOL ValidGroupName(NSString *raw) {
   processPage.hidden = YES; self.quickProcessPage = processPage; [root addSubview:processPage];
   NSTextField *ptitle = [self label:@"进程 Top 6" size:18 bold:YES color:nil];
   ptitle.frame = NSMakeRect(16, 480, 250, 26); [processPage addSubview:ptitle];
-  NSTextField *psub = [self label:@"按 CPU 排序，菜单栏打开时每 2 秒刷新" size:10 bold:NO color:[NSColor secondaryLabelColor]];
-  psub.frame = NSMakeRect(16, 456, 380, 18); [processPage addSubview:psub];
   self.quickProcessContainer = [[NSView alloc] initWithFrame:NSMakeRect(10, 66, 400, 376)];
   [processPage addSubview:self.quickProcessContainer];
   ColorHoverButton *openProc = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(270, 16, 120, 30)];
@@ -9217,7 +9225,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [quit applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [root addSubview:quit];
 
-  [root addSubview:self.statusMetricPopup positioned:NSWindowAbove relativeTo:nil];
+  [root addSubview:self.statusMetricButton positioned:NSWindowAbove relativeTo:nil];
   pop.contentViewController = vc;
   pop.contentSize = NSMakeSize(420, 620);
 }
@@ -11213,16 +11221,70 @@ static BOOL ValidGroupName(NSString *raw) {
   popup.action = @selector(statusMetricChanged:);
   popup.toolTip = @"菜单栏状态图标显示哪个指标";
   [self updateStatusMetricIcon];
+  [self updateStatusMetricButtonTitle];
 }
 - (void)statusMetricChanged:(NSPopUpButton *)popup {
   NSString *key = popup.selectedItem.representedObject ?: @"cpu";
   [[NSUserDefaults standardUserDefaults] setObject:key forKey:@"centerStatusMetric"];
-  for (NSPopUpButton *p in @[self.statusMetricPopup ?: (id)[NSNull null], self.consoleMetricPopup ?: (id)[NSNull null]]) {
-    if (![p isKindOfClass:[NSPopUpButton class]]) continue;
-    for (NSMenuItem *mi in p.itemArray) if ([mi.representedObject isEqualToString:key]) { [p selectItem:mi]; break; }
-  }
+  for (NSMenuItem *mi in self.consoleMetricPopup.itemArray) if ([mi.representedObject isEqualToString:key]) { [self.consoleMetricPopup selectItem:mi]; break; }
+  [self updateStatusMetricButtonTitle];
   [self updateStatusMetricIcon];
+  [self applyConsoleMetricSelection];
 }
+
+- (void)updateStatusMetricButtonTitle {
+  if (!self.statusMetricButton) return;
+  NSString *key = [self statusMetricKey];
+  NSString *name = @"CPU";
+  if ([key isEqualToString:@"gpu"]) name = @"GPU";
+  else if ([key isEqualToString:@"mem"]) name = @"内存";
+  else if ([key isEqualToString:@"net"]) name = @"网络";
+  else if ([key isEqualToString:@"power"]) name = @"电源";
+  self.statusMetricButton.title = [NSString stringWithFormat:@"指标 %@", name];
+}
+
+- (void)showStatusMetricMenu:(ColorHoverButton *)sender {
+  NSMenu *m = [[NSMenu alloc] init];
+  NSArray *keys = [self statusMetricKeys];
+  NSArray *titles = [self statusMetricTitles];
+  NSString *cur = [self statusMetricKey];
+  for (NSInteger i = 0; i < keys.count; i++) {
+    NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:titles[i] action:@selector(statusMetricMenuSelected:) keyEquivalent:@""];
+    it.target = self; it.representedObject = keys[i];
+    it.state = [keys[i] isEqualToString:cur] ? NSControlStateValueOn : NSControlStateValueOff;
+    [m addItem:it];
+  }
+  [m popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, sender.bounds.size.height + 4) inView:sender];
+}
+
+- (void)statusMetricMenuSelected:(NSMenuItem *)item {
+  NSString *key = item.representedObject ?: @"cpu";
+  [[NSUserDefaults standardUserDefaults] setObject:key forKey:@"centerStatusMetric"];
+  [self updateStatusMetricButtonTitle];
+  [self updateStatusMetricIcon];
+  for (NSMenuItem *mi in self.consoleMetricPopup.itemArray) if ([mi.representedObject isEqualToString:key]) { [self.consoleMetricPopup selectItem:mi]; break; }
+  [self applyConsoleMetricSelection];
+}
+
+- (void)applyConsoleMetricSelection {
+  NSString *key = [self statusMetricKey];
+  NSString *columnKey = key;
+  if ([key isEqualToString:@"mem"]) columnKey = @"memory";
+  else if ([key isEqualToString:@"net"]) columnKey = @"network";
+  for (MetricColumnView *c in self.internalColumns) {
+    c.persistentHighlight = [c.metricKey isEqualToString:columnKey];
+    [c refreshBorderForHover:NO];
+  }
+  if (self.consoleMetricFocusLabel) {
+    NSString *name = @"CPU";
+    if ([key isEqualToString:@"gpu"]) name = @"GPU";
+    else if ([key isEqualToString:@"mem"]) name = @"内存";
+    else if ([key isEqualToString:@"net"]) name = @"网络";
+    else if ([key isEqualToString:@"power"]) name = @"电源";
+    self.consoleMetricFocusLabel.stringValue = [NSString stringWithFormat:@"当前指标：%@", name];
+  }
+}
+
 - (void)updateStatusItemTitleCPU:(double)cpu memory:(double)mem gpu:(double)gpu netBps:(double)bps power:(NSString *)power {
   self.statusItem.button.title = @"";
 }
