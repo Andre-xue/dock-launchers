@@ -7242,6 +7242,17 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger tv = self.themePopup.indexOfSelectedItem;
   [[NSUserDefaults standardUserDefaults] setInteger:tv forKey:@"centerTheme"];
   [self applyThemeFromDefaults];
+  // 主题切换后销毁旧页面，强制用新外观重建，避免旧控件保留浅色/深色文字
+  self.liveView = nil; self.groupsView = nil; self.aiView = nil;
+  self.diskView = nil; self.uninstallView = nil; self.settingsView = nil;
+  [self.builtSections removeAllObjects];
+  if (self.popover) {
+    [self.popover performClose:nil];
+    self.popover = nil;
+    self.quickOverview = nil; self.quickGroupPage = nil; self.quickAIPage = nil; self.quickDetail = nil;
+    self.quickToolsPage = nil;
+    [self buildPopover];
+  }
   [self showSection:self.section];
   NSArray *names = @[@"跟随系统", @"亮色", @"暗色"];
   [self showToast:[NSString stringWithFormat:@"显示主题：%@", names[tv]]];
