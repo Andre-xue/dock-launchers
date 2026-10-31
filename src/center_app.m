@@ -9768,6 +9768,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)togglePopover:(id)sender {
   if (self.popover.isShown) { [self.quickProcessTimer invalidate]; self.quickProcessTimer = nil; [self.popover performClose:nil]; return; }
   [self rebuildQuickGroups];
+  if (self.quickTabs.selectedSegment == 1) [self rebuildQuickSceneTab];
+  else if (self.quickTabs.selectedSegment == 4) [self refreshQuickProcess:nil];
   [self.popover showRelativeToRect:self.statusItem.button.bounds ofView:self.statusItem.button preferredEdge:NSRectEdgeMinY];
 }
 
