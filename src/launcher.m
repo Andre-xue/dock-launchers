@@ -1309,7 +1309,10 @@ static NSString *ResolveAppPath(NSString *target) {
   for (NSScreen *s in [NSScreen screens]) if (NSMouseInRect(pt, s.frame, NO)) { screen = s; break; }
   if (!screen) screen = [NSScreen mainScreen];
   NSRect vis = screen.visibleFrame, full = screen.frame;
-  return (pt.y < NSMinY(vis) - 1) || (pt.x < NSMinX(vis) - 1) || (pt.x > NSMaxX(vis) + 1);
+  BOOL inDockArea = (pt.y < NSMinY(vis) - 1) || (pt.x < NSMinX(vis) - 1) || (pt.x > NSMaxX(vis) + 1);
+  // Dock 自动隐藏时 visibleFrame 等于全屏，补充屏幕边缘判断
+  BOOL nearEdge = (pt.y < NSMinY(full) + 150) || (pt.x < NSMinX(full) + 100) || (pt.x > NSMaxX(full) - 100);
+  return inDockArea || nearEdge;
 }
 
 - (BOOL)dockContainsApp:(NSString *)path {
