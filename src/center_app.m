@@ -7885,15 +7885,7 @@ static BOOL ValidGroupName(NSString *raw) {
   self.themePopup.toolTip = @"切换控制台整体外观";
   [tTheme addSubview:self.themePopup];
 
-  NSView *tZoom = tileAt(0, 426); tileLabel(tZoom, @"界面缩放");
-  NSPopUpButton *zoomPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26) pullsDown:NO];
-  [zoomPopup addItemsWithTitles:@[@"100%", @"110%", @"120%", @"135%", @"150%", @"175%"]];
-  [zoomPopup selectItemAtIndex:0];
-  zoomPopup.target = self; zoomPopup.action = @selector(uiZoomChanged:);
-  zoomPopup.toolTip = @"放大或缩小整个页面";
-  [tZoom addSubview:zoomPopup];
-
-  NSView *tInterval = tileAt(0, 352); tileLabel(tInterval, @"采样间隔");
+  NSView *tInterval = tileAt(0, 426); tileLabel(tInterval, @"采样间隔");
   self.intervalPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26) pullsDown:NO];
   [self.intervalPopup addItemsWithTitles:@[@"1 秒", @"2 秒", @"5 秒", @"10 秒"]];
   NSInteger saved = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerInterval"];
@@ -7903,21 +7895,21 @@ static BOOL ValidGroupName(NSString *raw) {
   self.intervalPopup.target = self; self.intervalPopup.action = @selector(intervalChanged:);
   [tInterval addSubview:self.intervalPopup];
 
-  NSView *tLogin = tileAt(0, 278);
+  NSView *tLogin = tileAt(0, 352);
   self.loginCheck = [NSButton checkboxWithTitle:@"开机自动启动" target:self action:@selector(toggleLoginItem:)];
   self.loginCheck.state = [[NSFileManager defaultManager] fileExistsAtPath:[self loginPlistPath]] ? NSControlStateValueOn : NSControlStateValueOff;
   self.loginCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
   self.loginCheck.toolTip = @"登录 macOS 时自动启动控制台";
   [tLogin addSubview:self.loginCheck];
 
-  NSView *tAlert = tileAt(0, 204); tileLabel(tAlert, @"资源与余额提醒");
+  NSView *tAlert = tileAt(0, 278); tileLabel(tAlert, @"资源与余额提醒");
   ColorHoverButton *alertsBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
   alertsBtn.title = @"告警设置…"; alertsBtn.hoverColor = [NSColor systemOrangeColor];
   alertsBtn.target = self; alertsBtn.action = @selector(openAlertSettings:);
   [alertsBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [tAlert addSubview:alertsBtn];
 
-  NSView *tShortcut = tileAt(0, 130); tileLabel(tShortcut, @"应用内快捷键");
+  NSView *tShortcut = tileAt(0, 204); tileLabel(tShortcut, @"应用内快捷键");
   ColorHoverButton *appShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
   appShortcutBtn.title = @"快捷键设置…"; appShortcutBtn.hoverColor = [NSColor systemPurpleColor];
   appShortcutBtn.target = self; appShortcutBtn.action = @selector(showAppShortcutSettings:);
@@ -7939,14 +7931,6 @@ static BOOL ValidGroupName(NSString *raw) {
   self.activityCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
   self.activityCheck.toolTip = @"记录应用保存文件的位置，卸载时作为候选";
   [tActivity addSubview:self.activityCheck];
-
-  NSView *tProtected = tileAt(1, 352);
-  self.protectedDirsCheck = [NSButton checkboxWithTitle:@"受保护目录（已禁用）" target:nil action:nil];
-  self.protectedDirsCheck.state = NSControlStateValueOff;
-  self.protectedDirsCheck.enabled = NO;
-  self.protectedDirsCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
-  self.protectedDirsCheck.toolTip = @"为避免重复授权弹窗，已禁用";
-  [tProtected addSubview:self.protectedDirsCheck];
 
   // 第三列：相册与磁盘
   NSView *tAlbum = tileAt(2, 500);
