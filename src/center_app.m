@@ -4849,15 +4849,15 @@ static BOOL ValidGroupName(NSString *raw) {
   promptBtn.target = self; promptBtn.action = @selector(showPromptLibrary:);
   [promptBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:promptBtn];
-  self.aiPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(590, 26, 40, 30)];
+  self.aiPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(580, 26, 40, 30)];
   self.aiPrevButton.title = @"‹"; self.aiPrevButton.hoverColor = [NSColor systemBlueColor];
   self.aiPrevButton.target = self; self.aiPrevButton.action = @selector(aiPrevPage:);
   [self.aiPrevButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:self.aiPrevButton];
   self.aiPageLabel = [self label:@"第 1/1 页" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   self.aiPageLabel.alignment = NSTextAlignmentCenter;
-  self.aiPageLabel.frame = NSMakeRect(634, 32, 80, 18); [v addSubview:self.aiPageLabel];
-  self.aiNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(688, 26, 40, 30)];
+  self.aiPageLabel.frame = NSMakeRect(626, 32, 74, 18); [v addSubview:self.aiPageLabel];
+  self.aiNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(704, 26, 40, 30)];
   self.aiNextButton.title = @"›"; self.aiNextButton.hoverColor = [NSColor systemBlueColor];
   self.aiNextButton.target = self; self.aiNextButton.action = @selector(aiNextPage:);
   [self.aiNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
