@@ -2003,7 +2003,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   for (NSView *sub in [board.subviews copy]) [sub removeFromSuperview];
   NSTextField *title = [self label:@"AI 服务余量" size:13 bold:YES color:nil];
   title.frame = NSMakeRect(16, 186, 240, 20); [board addSubview:title];
-  NSTextField *sub = [self label:@"点击 *** 同步并显示实时余量" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *sub = [self label:@"点击眼睛图标同步并显示实时余量" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(16, 166, 400, 16); [board addSubview:sub];
   NSTextField *hn = [self label:@"名称" size:10.5 bold:YES color:nil];
   hn.frame = NSMakeRect(20, 142, 260, 16); [board addSubview:hn];
@@ -2031,12 +2031,14 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
     NSTextField *nm = [self label:e[@"name"] ?: @"" size:11 bold:YES color:nil];
     nm.lineBreakMode = NSLineBreakByTruncatingTail;
     nm.frame = NSMakeRect(10, y + 9, 470, 16); [doc addSubview:nm];
-    NSButton *b = [NSButton buttonWithTitle:@"***" target:self action:@selector(liveAIBalanceClicked:)];
+    NSButton *b = [[NSButton alloc] initWithFrame:NSMakeRect(560, y + 4, 100, 24)];
     b.tag = i; b.bordered = NO; b.alignment = NSTextAlignmentRight;
     b.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightBold];
     b.contentTintColor = [NSColor controlAccentColor];
-    b.frame = NSMakeRect(560, y + 4, 100, 24);
-    b.toolTip = @"点击同步余额";
+    b.image = [NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:@"显示余额"];
+    b.imagePosition = NSImageOnly;
+    b.target = self; b.action = @selector(liveAIBalanceClicked:);
+    b.toolTip = @"点击眼睛图标同步余额";
     [doc addSubview:b];
     NSBox *line = [[NSBox alloc] initWithFrame:NSMakeRect(10, y, 660, 1)];
     line.boxType = NSBoxSeparator; [doc addSubview:line];
@@ -2082,14 +2084,20 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   NSInteger idx = b.tag;
   if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
   b.enabled = NO;
+  b.image = nil;
   b.title = @"同步中…";
   __weak typeof(self) weakSelf = self;
   __weak NSButton *weakBtn = b;
   [self syncAIQuotaAtIndex:idx completion:^(NSString *quota) {
     dispatch_async(dispatch_get_main_queue(), ^{
       weakBtn.enabled = YES;
-      weakBtn.title = quota.length ? quota : @"不可用";
-      if (!quota.length) weakBtn.toolTip = @"该服务不支持自动查询，或未填写 API Key";
+      if (quota.length) {
+        weakBtn.image = nil; weakBtn.title = quota; weakBtn.imagePosition = NSNoImage;
+      } else {
+        weakBtn.image = [NSImage imageWithSystemSymbolName:@"eye.slash" accessibilityDescription:@"无余额数据"];
+        weakBtn.imagePosition = NSImageOnly; weakBtn.title = @"";
+        weakBtn.toolTip = @"该服务不支持自动查询，或未填写 API Key";
+      }
       [weakSelf.aiTable reloadData];
       if (weakSelf.popover.isShown && weakSelf.quickTabs.selectedSegment == 2) [weakSelf rebuildQuickAITab];
     });
@@ -6989,14 +6997,20 @@ static BOOL ValidGroupName(NSString *raw) {
     row.layer.backgroundColor = (i == idx) ? [[NSColor systemGreenColor] colorWithAlphaComponent:0.16].CGColor : [NSColor clearColor].CGColor;
   }
   b.enabled = NO;
+  b.image = nil;
   b.title = @"同步中…";
   __weak typeof(self) weakSelf = self;
   __weak NSButton *weakBtn = b;
   [self syncAIQuotaAtIndex:idx completion:^(NSString *quota) {
     dispatch_async(dispatch_get_main_queue(), ^{
       weakBtn.enabled = YES;
-      weakBtn.title = quota.length ? quota : @"不可用";
-      if (!quota.length) weakBtn.toolTip = @"该服务不支持自动查询，或未填写 API Key";
+      if (quota.length) {
+        weakBtn.image = nil; weakBtn.title = quota; weakBtn.imagePosition = NSNoImage;
+      } else {
+        weakBtn.image = [NSImage imageWithSystemSymbolName:@"eye.slash" accessibilityDescription:@"无余额数据"];
+        weakBtn.imagePosition = NSImageOnly; weakBtn.title = @"";
+        weakBtn.toolTip = @"该服务不支持自动查询，或未填写 API Key";
+      }
       [weakSelf.aiTable reloadData];
     });
   }];
@@ -7008,7 +7022,7 @@ static BOOL ValidGroupName(NSString *raw) {
   for (NSView *sub in [page.subviews copy]) [sub removeFromSuperview];
   NSTextField *title = [self label:@"AI 管理" size:18 bold:YES color:nil];
   title.frame = NSMakeRect(16, 480, 250, 26); [page addSubview:title];
-  NSTextField *sub = [self label:@"点击 \"***\" 同步并显示实时余量" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *sub = [self label:@"点击眼睛图标同步并显示实时余量" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(16, 456, 388, 18); [page addSubview:sub];
   NSTextField *hName = [self label:@"名称" size:12 bold:YES color:nil];
   hName.frame = NSMakeRect(22, 428, 220, 18); [page addSubview:hName];
@@ -7040,14 +7054,16 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTextField *nm = [self label:e[@"name"] ?: @"" size:12 bold:YES color:nil];
     nm.lineBreakMode = NSLineBreakByTruncatingTail;
     nm.frame = NSMakeRect(8, 13, 260, 18); [row addSubview:nm];
-    NSButton *qb = [NSButton buttonWithTitle:@"***" target:self action:@selector(quickAIBalanceClicked:)];
+    NSButton *qb = [[NSButton alloc] initWithFrame:NSMakeRect(274, 8, 94, 26)];
     qb.tag = i;
     qb.bordered = NO;
     qb.alignment = NSTextAlignmentRight;
     qb.font = [NSFont systemFontOfSize:12.5 weight:NSFontWeightBold];
     qb.contentTintColor = [NSColor controlAccentColor];
-    qb.frame = NSMakeRect(274, 8, 94, 26);
-    qb.toolTip = @"点击同步余额";
+    qb.image = [NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:@"显示余额"];
+    qb.imagePosition = NSImageOnly;
+    qb.target = self; qb.action = @selector(quickAIBalanceClicked:);
+    qb.toolTip = @"点击眼睛图标同步余额";
     [row addSubview:qb];
     NSBox *line = [[NSBox alloc] initWithFrame:NSMakeRect(8, 0, 356, 1)];
     line.boxType = NSBoxSeparator; [row addSubview:line];
