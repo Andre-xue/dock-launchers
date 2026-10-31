@@ -9502,7 +9502,7 @@ static BOOL ValidGroupName(NSString *raw) {
   CGFloat rowH = 58;
   for (NSInteger i = 0; i < (NSInteger)rows.count; i++) {
     NSDictionary *p = rows[i];
-    NSView *row = [self cardAt:NSMakeRect(4, 372 - i*rowH, 392, rowH - 6)];
+    NSView *row = [self cardAt:NSMakeRect(4, 318 - i*rowH, 392, rowH - 6)];
     [self.quickProcessContainer addSubview:row];
     NSTextField *rank = [self label:[NSString stringWithFormat:@"%ld", (long)(i+1)] size:12 bold:YES color:[NSColor tertiaryLabelColor]];
     rank.frame = NSMakeRect(10, 16, 20, 18); [row addSubview:rank];
