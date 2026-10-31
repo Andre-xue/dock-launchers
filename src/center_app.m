@@ -102,19 +102,42 @@ static NSColor *DLButtonBackground(void) {
 }
 
 static NSImage *ToolIconImage(NSString *symbol, NSColor *color) {
-  return [NSImage imageWithSize:NSMakeSize(64, 64) flipped:NO drawingHandler:^BOOL(NSRect r) {
-    NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(0, 0, 64, 64) xRadius:16 yRadius:16];
-    NSColor *top = [color blendedColorWithFraction:0.18 ofColor:[NSColor whiteColor]] ?: color;
-    NSGradient *g = [[NSGradient alloc] initWithStartingColor:top endingColor:color];
-    [g drawInBezierPath:p angle:-90];
+  return [NSImage imageWithSize:NSMakeSize(68, 68) flipped:NO drawingHandler:^BOOL(NSRect r) {
+    NSRect box = NSMakeRect(5, 5, 58, 58);
+    NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:box xRadius:15 yRadius:15];
+    NSGraphicsContext *ctx = [NSGraphicsContext currentContext];
+    [ctx saveGraphicsState];
+    NSShadow *outer = [[NSShadow alloc] init];
+    outer.shadowBlurRadius = 6; outer.shadowOffset = NSMakeSize(0, -2);
+    outer.shadowColor = [[NSColor blackColor] colorWithAlphaComponent:0.18];
+    [outer set];
+    [[color colorWithAlphaComponent:0.9] setFill]; [p fill];
+    [ctx restoreGraphicsState];
+    [ctx saveGraphicsState];
+    [p addClip];
+    NSColor *top = [color blendedColorWithFraction:0.52 ofColor:[NSColor whiteColor]];
+    NSGradient *g = [[NSGradient alloc] initWithColors:@[top, color, [color blendedColorWithFraction:0.16 ofColor:[NSColor blackColor]]]];
+    [g drawInRect:box angle:-90];
+    [[NSColor colorWithCalibratedWhite:1 alpha:0.24] setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(1, 32, 70, 46)] fill];
+    [[NSColor colorWithCalibratedWhite:1 alpha:0.16] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(9, 7, 50, 20) xRadius:10 yRadius:10] fill];
+    [ctx restoreGraphicsState];
+    [[NSColor colorWithCalibratedWhite:1 alpha:0.58] setStroke];
+    p.lineWidth = 1;
+    [p stroke];
     NSImage *sym = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
-    sym = [sym imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:32 weight:NSFontWeightSemibold]];
+    sym = [sym imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:28 weight:NSFontWeightSemibold]];
     sym.template = YES;
+    NSShadow *sh = [[NSShadow alloc] init]; sh.shadowBlurRadius = 2; sh.shadowOffset = NSMakeSize(0, -1);
+    sh.shadowColor = [[NSColor blackColor] colorWithAlphaComponent:0.22];
+    [sh set];
     [[NSColor whiteColor] set];
-    [sym drawInRect:NSMakeRect(15, 15, 34, 34)];
+    [sym drawInRect:NSMakeRect(20, 20, 28, 28)];
     return YES;
   }];
 }
+
 
 static NSColor *DLRowBackground(void) {
   return DLThemeIsDark() ? [NSColor colorWithCalibratedWhite:0.16 alpha:1.0] : [NSColor colorWithCalibratedWhite:0.985 alpha:1.0];
@@ -1446,6 +1469,17 @@ static void HideDockHoverTip(void) {
         }
       });
     });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_RENDER_TOOLS")) {
+    NSView *page = self.quickToolsPage;
+    page.wantsLayer = YES;
+    page.layer.backgroundColor = [NSColor whiteColor].CGColor;
+    [page layoutSubtreeIfNeeded];
+    NSBitmapImageRep *rep = [page bitmapImageRepForCachingDisplayInRect:page.bounds];
+    [page cacheDisplayInRect:page.bounds toBitmapImageRep:rep];
+    NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    [png writeToFile:@"/tmp/tools_page.png" atomically:YES];
+    exit(0);
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_HOVER")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -6949,33 +6983,38 @@ static BOOL ValidGroupName(NSString *raw) {
   tt.frame = NSMakeRect(16, 480, 250, 26); [toolsPage addSubview:tt];
   NSTextField *ts = [self label:@"选择工具，打开独立窗口；可钉住置顶" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   ts.frame = NSMakeRect(16, 456, 388, 18); [toolsPage addSubview:ts];
-  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(86, 300, 112, 112)];
-  transBtn.title = @"";
+  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(70, 296, 132, 140)];
+  transBtn.title = @"AI 翻译";
   transBtn.image = ToolIconImage(@"character.bubble.fill", [NSColor systemTealColor]);
-  transBtn.imagePosition = NSImageOnly;
+  transBtn.imagePosition = NSImageAbove;
   transBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
   transBtn.hoverColor = [NSColor systemTealColor];
   transBtn.target = self; transBtn.action = @selector(openTranslationToolFromPopover:);
   transBtn.hoverTitle = @"AI 翻译";
   transBtn.hoverDetail = @"截图 OCR、划词、文档/图片翻译，自动识别语言";
   [transBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  NSMutableParagraphStyle *tps = [[NSMutableParagraphStyle alloc] init]; tps.alignment = NSTextAlignmentCenter;
+  transBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"AI 翻译" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
+  transBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:transBtn];
 
-  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(222, 300, 112, 112)];
-  zipBtn.title = @"";
+  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(218, 296, 132, 140)];
+  zipBtn.title = @"压缩 / 解压";
   zipBtn.image = ToolIconImage(@"archivebox.fill", [NSColor systemOrangeColor]);
-  zipBtn.imagePosition = NSImageOnly;
+  zipBtn.imagePosition = NSImageAbove;
   zipBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
   zipBtn.hoverColor = [NSColor systemOrangeColor];
   zipBtn.target = self; zipBtn.action = @selector(openCompressToolFromPopover:);
   zipBtn.hoverTitle = @"压缩 / 解压";
   zipBtn.hoverDetail = @"ZIP / TAR.GZ，本地处理，解压前做路径安全校验";
   [zipBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  zipBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"压缩 / 解压" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
+  zipBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:zipBtn];
 
-  NSTextField *tip = [self label:@"悬停图标查看用途，点击打开独立窗口" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
+  NSTextField *tip = [self label:@"悬停查看用途，点击打开工具" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
   tip.alignment = NSTextAlignmentCenter;
-  tip.frame = NSMakeRect(16, 252, 388, 16); [toolsPage addSubview:tip];
+  tip.frame = NSMakeRect(16, 250, 388, 16); [toolsPage addSubview:tip];
 
   NSView *groupPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   groupPage.hidden = YES; self.quickGroupPage = groupPage; [root addSubview:groupPage];
