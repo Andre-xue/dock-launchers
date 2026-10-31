@@ -1470,6 +1470,16 @@ static void HideDockHoverTip(void) {
       });
     });
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_TOOLS_WINDOW")) {
+    NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,420,526) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    w.title = @"工具";
+    self.quickToolsPage.frame = NSMakeRect(0,0,420,526);
+    w.contentView = self.quickToolsPage;
+    [w center];
+    [NSApp activateIgnoringOtherApps:YES];
+    [w makeKeyAndOrderFront:nil];
+    [w orderFrontRegardless];
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_RENDER_TOOLS")) {
     NSView *page = self.quickToolsPage;
     page.wantsLayer = YES;
