@@ -5,6 +5,7 @@
 
 static NSString *gGroup = @"";
 static NSString *gListKey = @"";
+static NSString *ResolveAppPath(NSString *target);
 static void CollectDockDragURLs(id obj, NSMutableArray *out) {
   if (!obj) return;
   if ([obj isKindOfClass:[NSString class]]) {
