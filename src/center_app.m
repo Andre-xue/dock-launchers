@@ -538,7 +538,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSTextField *quickCPUSub, *quickGPUSub, *quickMemSub, *quickDiskSub, *quickNetSub, *quickPowerSub;
 @property (strong) QuickBarView *quickCPUBar, *quickGPUBar, *quickMemBar, *quickDiskBar;
 @property (strong) Sparkline *quickCPUSpark, *quickGPUSpark, *quickNetSpark;
-@property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage, *quickScenePage, *quickSceneContainer;
+@property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage, *quickScenePage, *quickSceneContainer, *quickProcessPage, *quickProcessContainer;
+@property (strong) NSTimer *quickProcessTimer;
 @property (strong) NSWindow *usageWindow;
 @property (strong) NSTableView *usageTable;
 @property (strong) NSArray *usageRows;
@@ -1834,6 +1835,13 @@ static void HideDockHoverTip(void) {
       [self quickTabChanged:nil];
       [self togglePopover:nil];
       if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI_HIDE_MAIN")) [self.window orderOut:nil];
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_PROCESS")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      self.quickTabs.selectedSegment = 4;
+      [self quickTabChanged:nil];
+      [self togglePopover:nil];
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_SCENE")) {
@@ -9014,6 +9022,7 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)buildPopover {
   NSPopover *pop = [[NSPopover alloc] init];
   pop.behavior = NSPopoverBehaviorTransient;
+  pop.delegate = self;
   self.popover = pop;
   NSViewController *vc = [[NSViewController alloc] init];
   NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0,0,420,620)];
@@ -9021,8 +9030,8 @@ static BOOL ValidGroupName(NSString *raw) {
   vc.view = root;
 
   self.quickTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(12, 574, 300, 28)];
-  self.quickTabs.segmentCount = 4;
-  NSArray *tabs = @[@"概览", @"场景", @"AI", @"工具"];
+  self.quickTabs.segmentCount = 5;
+  NSArray *tabs = @[@"概览", @"场景", @"AI", @"工具", @"进程"];
   for (NSInteger i = 0; i < tabs.count; i++) [self.quickTabs setLabel:tabs[i] forSegment:i];
   self.quickTabs.controlSize = NSControlSizeSmall;
   self.quickTabs.trackingMode = NSSegmentSwitchTrackingSelectOne;
@@ -9123,6 +9132,20 @@ static BOOL ValidGroupName(NSString *raw) {
   scenePage.hidden = YES; self.quickScenePage = scenePage; [root addSubview:scenePage];
   self.quickSceneContainer = [[NSView alloc] initWithFrame:NSMakeRect(10, 10, 400, 500)];
   [scenePage addSubview:self.quickSceneContainer];
+
+  NSView *processPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
+  processPage.hidden = YES; self.quickProcessPage = processPage; [root addSubview:processPage];
+  NSTextField *ptitle = [self label:@"进程 Top 6" size:18 bold:YES color:nil];
+  ptitle.frame = NSMakeRect(16, 480, 250, 26); [processPage addSubview:ptitle];
+  NSTextField *psub = [self label:@"按 CPU 排序，菜单栏打开时每 2 秒刷新" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+  psub.frame = NSMakeRect(16, 456, 380, 18); [processPage addSubview:psub];
+  self.quickProcessContainer = [[NSView alloc] initWithFrame:NSMakeRect(10, 66, 400, 376)];
+  [processPage addSubview:self.quickProcessContainer];
+  ColorHoverButton *openProc = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(270, 16, 120, 30)];
+  openProc.title = @"完整进程管理"; openProc.hoverColor = [NSColor systemTealColor];
+  openProc.target = self; openProc.action = @selector(openFullProcessFromPopover:);
+  [openProc applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [processPage addSubview:openProc];
 
   NSView *aiPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   aiPage.hidden = YES; self.quickAIPage = aiPage; [root addSubview:aiPage];
@@ -9430,6 +9453,61 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.popover performClose:nil];
 }
 
+- (void)popoverDidClose:(NSNotification *)notification {
+  [self.quickProcessTimer invalidate];
+  self.quickProcessTimer = nil;
+}
+
+- (void)refreshQuickProcess:(NSTimer *)timer {
+  if (!self.popover.isShown) return;
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/bin/ps";
+  t.arguments = @[@"-axo", @"pid=,pcpu=,rss=,comm="];
+  NSPipe *pipe = [NSPipe pipe]; t.standardOutput = pipe;
+  NSMutableArray *rows = [NSMutableArray array];
+  @try {
+    [t launch];
+    NSString *out = [[NSString alloc] initWithData:[pipe.fileHandleForReading readDataToEndOfFile] encoding:NSUTF8StringEncoding] ?: @"";
+    [t waitUntilExit];
+    for (NSString *line in [out componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      NSMutableArray *tok = [NSMutableArray array];
+      for (NSString *x in [line componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]) if (x.length) [tok addObject:x];
+      if (tok.count < 4) continue;
+      NSInteger pid = [tok[0] integerValue];
+      if (pid <= 1 || pid == getpid()) continue;
+      [rows addObject:@{@"pid": @(pid), @"cpu": @([tok[1] doubleValue]), @"mem": @([tok[2] doubleValue] / 1024.0), @"name": [tok[3] lastPathComponent], @"path": tok[3]}];
+    }
+  } @catch (NSException *e) {}
+  [rows sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"cpu"] compare:a[@"cpu"]]; }];
+  if (rows.count > 6) [rows removeObjectsInRange:NSMakeRange(6, rows.count - 6)];
+  for (NSView *v in [self.quickProcessContainer.subviews copy]) [v removeFromSuperview];
+  CGFloat rowH = 58;
+  for (NSInteger i = 0; i < (NSInteger)rows.count; i++) {
+    NSDictionary *p = rows[i];
+    NSView *row = [self cardAt:NSMakeRect(4, 372 - i*rowH, 392, rowH - 6)];
+    [self.quickProcessContainer addSubview:row];
+    NSTextField *rank = [self label:[NSString stringWithFormat:@"%ld", (long)(i+1)] size:12 bold:YES color:[NSColor tertiaryLabelColor]];
+    rank.frame = NSMakeRect(10, 16, 20, 18); [row addSubview:rank];
+    NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(32, 12, 28, 28)];
+    iv.image = [[NSWorkspace sharedWorkspace] iconForFile:p[@"path"]];
+    [row addSubview:iv];
+    NSTextField *name = [self label:p[@"name"] size:12 bold:YES color:nil];
+    name.lineBreakMode = NSLineBreakByTruncatingTail;
+    name.frame = NSMakeRect(68, 18, 170, 18); [row addSubview:name];
+    NSTextField *cpu = [self label:[NSString stringWithFormat:@"%.1f%%", [p[@"cpu"] doubleValue]] size:11 bold:YES color:[NSColor systemOrangeColor]];
+    cpu.alignment = NSTextAlignmentRight;
+    cpu.frame = NSMakeRect(240, 18, 65, 18); [row addSubview:cpu];
+    NSTextField *mem = [self label:[NSString stringWithFormat:@"%.0f MB", [p[@"mem"] doubleValue]] size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    mem.alignment = NSTextAlignmentRight;
+    mem.frame = NSMakeRect(305, 18, 78, 18); [row addSubview:mem];
+  }
+}
+
+- (void)openFullProcessFromPopover:(id)sender {
+  [self.popover performClose:nil];
+  [self showProcessManager:nil];
+}
+
 - (void)quickTabChanged:(id)sender {
   NSInteger idx = self.quickTabs.selectedSegment;
   self.quickOverview.hidden = (idx != 0);
@@ -9438,8 +9516,14 @@ static BOOL ValidGroupName(NSString *raw) {
   if (self.quickScenePage) self.quickScenePage.hidden = (idx != 1);
   if (self.quickAIPage) self.quickAIPage.hidden = (idx != 2);
   if (self.quickToolsPage) self.quickToolsPage.hidden = (idx != 3);
+  if (self.quickProcessPage) self.quickProcessPage.hidden = (idx != 4);
+  [self.quickProcessTimer invalidate]; self.quickProcessTimer = nil;
   if (idx == 1) [self rebuildQuickSceneTab];
   else if (idx == 2) [self rebuildQuickAITab];
+  else if (idx == 4) {
+    [self refreshQuickProcess:nil];
+    self.quickProcessTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refreshQuickProcess:) userInfo:nil repeats:YES];
+  }
 }
 
 - (void)rebuildQuickGroupTab {
@@ -9529,7 +9613,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)togglePopover:(id)sender {
-  if (self.popover.isShown) { [self.popover performClose:nil]; return; }
+  if (self.popover.isShown) { [self.quickProcessTimer invalidate]; self.quickProcessTimer = nil; [self.popover performClose:nil]; return; }
   [self rebuildQuickGroups];
   [self.popover showRelativeToRect:self.statusItem.button.bounds ofView:self.statusItem.button preferredEdge:NSRectEdgeMinY];
 }
