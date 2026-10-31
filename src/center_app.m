@@ -470,6 +470,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @class QuickPanelController;
 
 @interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate>
+- (void)hideClipboardPreview;
+- (void)installClipboardHoverMonitor;
 - (void)applyConsoleMetricSelection;
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
@@ -575,6 +577,12 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableArray *clipboardVisibleItems;
 @property NSInteger clipboardFilter;
 @property (strong) NSSegmentedControl *clipboardTabs;
+@property (strong) NSPanel *clipboardPreviewPanel;
+@property (strong) NSImageView *clipboardPreviewImageView;
+@property (strong) NSTextView *clipboardPreviewTextView;
+@property (strong) NSScrollView *clipboardPreviewScroll;
+@property (strong) id clipboardHoverMonitor;
+@property NSInteger clipboardPreviewRow;
 @property (strong) NSSearchField *clipboardSearch;
 @property BOOL clipboardFavoritesOnly;
 @property (strong) NSPopUpButton *clipboardDaysPopup;
@@ -4652,10 +4660,12 @@ static BOOL ValidGroupName(NSString *raw) {
   [NSApp activateIgnoringOtherApps:YES];
   [self.clipboardWindow makeKeyAndOrderFront:nil];
   [self.clipboardWindow orderFrontRegardless];
+  [self installClipboardHoverMonitor];
 }
 
 - (void)clipboardTabsChanged:(NSSegmentedControl *)sender {
   self.clipboardFilter = sender.selectedSegment;
+  [self hideClipboardPreview];
   [self reloadClipboardVisibleItems];
 }
 
@@ -4667,6 +4677,101 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.clipboardItems removeObject:it];
   [self saveClipboardHistory];
   [self reloadClipboardVisibleItems];
+}
+
+- (void)buildClipboardPreviewPanel {
+  if (self.clipboardPreviewPanel) return;
+  self.clipboardPreviewPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,400,300) styleMask:(NSWindowStyleMaskBorderless|NSWindowStyleMaskNonactivatingPanel) backing:NSBackingStoreBuffered defer:NO];
+  self.clipboardPreviewPanel.level = NSFloatingWindowLevel + 2;
+  self.clipboardPreviewPanel.opaque = NO;
+  self.clipboardPreviewPanel.backgroundColor = [NSColor clearColor];
+  self.clipboardPreviewPanel.hasShadow = YES;
+  NSView *card = [[NSView alloc] initWithFrame:NSMakeRect(0,0,400,300)];
+  card.wantsLayer = YES;
+  card.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
+  card.layer.cornerRadius = 14;
+  card.layer.borderWidth = 1;
+  card.layer.borderColor = [[NSColor separatorColor] colorWithAlphaComponent:0.6].CGColor;
+  card.layer.masksToBounds = YES;
+  self.clipboardPreviewPanel.contentView = card;
+  self.clipboardPreviewImageView = [[NSImageView alloc] initWithFrame:card.bounds];
+  self.clipboardPreviewImageView.imageScaling = NSImageScaleProportionallyUpOrDown;
+  self.clipboardPreviewImageView.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
+  [card addSubview:self.clipboardPreviewImageView];
+  self.clipboardPreviewScroll = [[NSScrollView alloc] initWithFrame:NSInsetRect(card.bounds, 14, 14)];
+  self.clipboardPreviewScroll.hasVerticalScroller = YES;
+  self.clipboardPreviewScroll.drawsBackground = NO;
+  self.clipboardPreviewScroll.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
+  self.clipboardPreviewTextView = [[NSTextView alloc] initWithFrame:self.clipboardPreviewScroll.contentView.bounds];
+  self.clipboardPreviewTextView.editable = NO;
+  self.clipboardPreviewTextView.selectable = YES;
+  self.clipboardPreviewTextView.font = [NSFont systemFontOfSize:13];
+  self.clipboardPreviewTextView.textContainerInset = NSMakeSize(4, 4);
+  self.clipboardPreviewScroll.documentView = self.clipboardPreviewTextView;
+  [card addSubview:self.clipboardPreviewScroll];
+  self.clipboardPreviewImageView.hidden = YES;
+  self.clipboardPreviewScroll.hidden = YES;
+}
+
+- (void)showClipboardPreviewForRow:(NSInteger)row {
+  if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return;
+  if (!self.clipboardWindow.isVisible) return;
+  [self buildClipboardPreviewPanel];
+  NSDictionary *it = self.clipboardVisibleItems[row];
+  BOOL isImage = [it[@"kind"] isEqualToString:@"image"];
+  CGFloat pw = 380, ph = 300;
+  if (isImage) {
+    NSImage *img = [[NSImage alloc] initWithContentsOfFile:[[self clipboardImagesDir] stringByAppendingPathComponent:it[@"file"] ?: @""]];
+    if (!img) return;
+    CGFloat ratio = MIN(440.0 / MAX(1, img.size.width), 340.0 / MAX(1, img.size.height));
+    pw = MAX(180, img.size.width * ratio);
+    ph = MAX(140, img.size.height * ratio);
+    self.clipboardPreviewImageView.image = img;
+    self.clipboardPreviewImageView.hidden = NO;
+    self.clipboardPreviewScroll.hidden = YES;
+  } else {
+    self.clipboardPreviewTextView.string = it[@"text"] ?: @"";
+    self.clipboardPreviewImageView.hidden = YES;
+    self.clipboardPreviewScroll.hidden = NO;
+  }
+  NSRect wf = self.clipboardWindow.frame;
+  CGFloat x = wf.origin.x - pw - 12;
+  CGFloat y = wf.origin.y + wf.size.height - ph;
+  NSScreen *screen = self.clipboardWindow.screen ?: [NSScreen mainScreen];
+  NSRect vis = screen.visibleFrame;
+  if (x < vis.origin.x + 8) x = wf.origin.x + wf.size.width + 12;
+  if (x + pw > vis.origin.x + vis.size.width - 8) x = vis.origin.x + vis.size.width - pw - 8;
+  if (y < vis.origin.y + 8) y = vis.origin.y + 8;
+  if (y + ph > vis.origin.y + vis.size.height - 8) y = vis.origin.y + vis.size.height - ph - 8;
+  [self.clipboardPreviewPanel setFrame:NSMakeRect(x, y, pw, ph) display:YES];
+  self.clipboardPreviewImageView.frame = NSMakeRect(0,0,pw,ph);
+  self.clipboardPreviewScroll.frame = NSInsetRect(NSMakeRect(0,0,pw,ph), 14, 14);
+  [self.clipboardPreviewPanel orderFrontRegardless];
+}
+
+- (void)hideClipboardPreview {
+  self.clipboardPreviewRow = -1;
+  [self.clipboardPreviewPanel orderOut:nil];
+}
+
+- (void)installClipboardHoverMonitor {
+  if (self.clipboardHoverMonitor) return;
+  __weak typeof(self) weakSelf = self;
+  self.clipboardHoverMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved handler:^NSEvent *(NSEvent *e) {
+    if (!weakSelf.clipboardWindow.isVisible) { [weakSelf hideClipboardPreview]; return e; }
+    NSPoint screen = [NSEvent mouseLocation];
+    NSPoint winPt = [weakSelf.clipboardWindow convertPointFromScreen:screen];
+    NSPoint tblPt = [weakSelf.clipboardTable convertPoint:winPt fromView:nil];
+    NSInteger row = [weakSelf.clipboardTable rowAtPoint:tblPt];
+    if (row >= 0 && row != weakSelf.clipboardPreviewRow) {
+      weakSelf.clipboardPreviewRow = row;
+      [weakSelf showClipboardPreviewForRow:row];
+    } else if (row < 0 && weakSelf.clipboardPreviewRow >= 0) {
+      weakSelf.clipboardPreviewRow = -1;
+      [weakSelf hideClipboardPreview];
+    }
+    return e;
+  }];
 }
 
 - (void)closeClipboardWindow:(id)sender { [self.clipboardWindow orderOut:nil]; }
@@ -7762,6 +7867,8 @@ static BOOL ValidGroupName(NSString *raw) {
     del.toolTip = @"删除这条记录";
     del.frame = NSMakeRect(col.width - 38, 16, 26, 26); [v addSubview:del];
     NSBox *line = [[NSBox alloc] initWithFrame:NSMakeRect(10,0,col.width-20,1)]; line.boxType = NSBoxSeparator; [v addSubview:line];
+    NSTrackingArea *ta = [[NSTrackingArea alloc] initWithRect:v.bounds options:(NSTrackingMouseEnteredAndExited|NSTrackingActiveInKeyWindow|NSTrackingInVisibleRect) owner:self userInfo:@{@"row": @(row)}];
+    [v addTrackingArea:ta];
     return v;
   }
   if (tableView == self.aiTable) {
