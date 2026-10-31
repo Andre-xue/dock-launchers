@@ -578,6 +578,11 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSPopUpButton *clipboardDaysPopup;
 @property (strong) ColorHoverButton *processMetricButton;
 @property (strong) NSWindow *promptWindow;
+@property (strong) NSWindow *promptDetailWindow;
+@property (strong) NSTextView *promptDetailTextView;
+@property (strong) NSTextField *promptDetailTitle;
+@property (strong) NSTextField *promptDetailCategory;
+@property (copy) NSString *promptDetailContent;
 @property (strong) NSTableView *promptTable;
 @property (strong) NSMutableSet *promptSelected;
 @property (strong) NSSavePanel *promptExportPanel;
@@ -7443,7 +7448,19 @@ static BOOL ValidGroupName(NSString *raw) {
     }
     NSString *text = [ident isEqualToString:@"ptitle"] ? p[@"title"] : ([ident isEqualToString:@"pcat"] ? p[@"category"] : p[@"content"]);
     if (!text.length) text = @"";
-    NSTextField *l = [self label:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:11 bold:[ident isEqualToString:@"ptitle"] color:[ident isEqualToString:@"pcontent"] ? [NSColor secondaryLabelColor] : nil];
+    if ([ident isEqualToString:@"pcontent"]) {
+      NSButton *contentBtn = [NSButton buttonWithTitle:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] target:self action:@selector(promptShowDetailAtRow:)];
+      contentBtn.bordered = NO;
+      contentBtn.tag = row;
+      contentBtn.alignment = NSTextAlignmentLeft;
+      contentBtn.font = [NSFont systemFontOfSize:11];
+      contentBtn.contentTintColor = [NSColor secondaryLabelColor];
+      contentBtn.toolTip = @"点击查看完整内容";
+      contentBtn.frame = NSMakeRect(4, 7, col.width - 8, 26);
+      [v addSubview:contentBtn];
+      return v;
+    }
+    NSTextField *l = [self label:text size:11 bold:[ident isEqualToString:@"ptitle"] color:nil];
     l.lineBreakMode = NSLineBreakByTruncatingTail;
     l.toolTip = text;
     l.frame = NSMakeRect(4, 11, col.width - 8, 18); [v addSubview:l];
@@ -9493,7 +9510,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.promptTable.rowHeight = 40;
     self.promptTable.allowsMultipleSelection = YES;
     self.promptTable.dataSource = self; self.promptTable.delegate = self;
-    self.promptTable.target = self; self.promptTable.doubleAction = @selector(promptCopySelected:);
+    self.promptTable.target = self; self.promptTable.doubleAction = @selector(promptShowDetail:);
     sv.documentView = self.promptTable; [cv addSubview:sv];
 
     ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 24, 100, 30)];
@@ -9660,6 +9677,65 @@ static BOOL ValidGroupName(NSString *raw) {
   [self reloadPromptTable];
   [self showToast:[NSString stringWithFormat:@"已删除 %ld 条提示词", (long)deleteTitles.count]];
 }
+
+- (void)promptShowDetailAtRow:(NSButton *)sender {
+  NSInteger row = sender.tag;
+  if (row < 0 || row >= (NSInteger)self.promptPageItems.count) return;
+  NSDictionary *p = self.promptPageItems[row];
+  if (!self.promptDetailWindow) {
+    self.promptDetailWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.promptDetailWindow.title = @"提示词详情";
+    self.promptDetailWindow.releasedWhenClosed = NO;
+    self.promptDetailWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.promptDetailWindow.contentView;
+    self.promptDetailTitle = [self label:@"" size:18 bold:YES color:nil];
+    self.promptDetailTitle.frame = NSMakeRect(20, 446, 560, 26); [cv addSubview:self.promptDetailTitle];
+    self.promptDetailCategory = [self label:@"" size:10.5 bold:YES color:[NSColor systemPurpleColor]];
+    self.promptDetailCategory.frame = NSMakeRect(20, 424, 560, 18); [cv addSubview:self.promptDetailCategory];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 62, 588, 350)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.promptDetailTextView = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+    self.promptDetailTextView.editable = NO;
+    self.promptDetailTextView.selectable = YES;
+    self.promptDetailTextView.font = [NSFont systemFontOfSize:13];
+    self.promptDetailTextView.textContainerInset = NSMakeSize(8, 8);
+    sv.documentView = self.promptDetailTextView;
+    [cv addSubview:sv];
+    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 22, 100, 30)];
+    copy.title = @"复制内容"; copy.hoverColor = [NSColor systemGreenColor];
+    copy.target = self; copy.action = @selector(promptCopyDetail:);
+    [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524, 22, 80, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closePromptDetail:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.promptDetailWindow center];
+  }
+  self.promptDetailTitle.stringValue = p[@"title"] ?: @"提示词";
+  self.promptDetailCategory.stringValue = [NSString stringWithFormat:@"分类：%@", p[@"category"] ?: @"未分类"];
+  self.promptDetailTextView.string = p[@"content"] ?: @"";
+  self.promptDetailContent = p[@"content"] ?: @"";
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.promptDetailWindow makeKeyAndOrderFront:nil];
+  [self.promptDetailWindow orderFrontRegardless];
+}
+
+- (void)promptShowDetail:(id)sender {
+  NSInteger row = self.promptTable.clickedRow;
+  if (row < 0) row = self.promptTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.promptPageItems.count) return;
+  NSButton *b = [[NSButton alloc] init]; b.tag = row;
+  [self promptShowDetailAtRow:b];
+}
+
+- (void)promptCopyDetail:(id)sender {
+  if (!self.promptDetailContent.length) return;
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:self.promptDetailContent forType:NSPasteboardTypeString];
+  [self showToast:@"提示词内容已复制"];
+}
+
+- (void)closePromptDetail:(id)sender { [self.promptDetailWindow orderOut:nil]; }
 
 - (void)promptCopySelected:(id)sender {
   NSInteger row = self.promptTable.selectedRow;
