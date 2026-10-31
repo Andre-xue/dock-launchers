@@ -2111,6 +2111,10 @@ static void HideDockHoverTip(void) {
       [self togglePopover:nil];
     });
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_AX")) {
+    fprintf(stderr, "AX_TRUSTED=%d\n", AXIsProcessTrusted() ? 1 : 0);
+    exit(0);
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_APP_SEARCH")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self showAppSearch:nil]; });
   }
@@ -11170,14 +11174,33 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (BOOL)ensureAccessibilityPermission {
-  NSDictionary *opts = @{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES};
-  if (AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)opts)) return YES;
+  if (AXIsProcessTrusted()) return YES;
+  static BOOL didPrompt = NO;
+  if (!didPrompt) {
+    didPrompt = YES;
+    NSDictionary *opts = @{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES};
+    AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)opts);
+  }
+  if (AXIsProcessTrusted()) return YES;
   NSAlert *a = [[NSAlert alloc] init];
-  a.messageText = @"需要辅助功能权限";
-  a.informativeText = @"窗口布局记忆需要读取和移动其他应用窗口。请在 系统设置 → 隐私与安全性 → 辅助功能 中允许 DockLaunchers 控制台。";
+  a.messageText = @"辅助功能权限未生效";
+  a.informativeText = @"你已经在系统设置里勾选，但当前运行的进程仍未获得授权。\n\n请点「重启控制台」或完全退出控制台后重新打开，再试一次；更新过版本后，可能需要在辅助功能列表中重新勾选。";
+  [a addButtonWithTitle:@"重试"];
+  [a addButtonWithTitle:@"重启控制台"];
   [a addButtonWithTitle:@"打开系统设置"];
   [a addButtonWithTitle:@"取消"];
-  if ([a runModal] == NSAlertFirstButtonReturn) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
+  NSModalResponse r = [a runModal];
+  if (r == NSAlertFirstButtonReturn) return [self ensureAccessibilityPermission];
+  if (r == NSAlertSecondButtonReturn) {
+    NSString *bundle = [[NSBundle mainBundle] bundlePath];
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/bin/sh";
+    t.arguments = @[@"-c", [NSString stringWithFormat:@"sleep 1; open \"%@\"", bundle]];
+    @try { [t launch]; } @catch (NSException *e) {}
+    [NSApp terminate:nil];
+  } else if (r == NSAlertThirdButtonReturn) {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
+  }
   return NO;
 }
 
