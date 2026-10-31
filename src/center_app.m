@@ -530,6 +530,11 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) QuickBarView *quickCPUBar, *quickGPUBar, *quickMemBar, *quickDiskBar;
 @property (strong) Sparkline *quickCPUSpark, *quickGPUSpark, *quickNetSpark;
 @property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage, *quickScenePage, *quickSceneContainer;
+@property (strong) NSPopUpButton *quickScenePopup;
+@property (strong) NSScrollView *quickSceneScroll;
+@property (strong) NSButton *quickSceneAutoCheck;
+@property (strong) NSMutableArray *quickSceneChecks;
+@property NSInteger quickSceneIndex;
 @property (strong) NSMutableArray *quickAIRowViews;
 @property NSInteger quickAISelectedRow;
 @property (strong) NSView *quickGroupContainer;
@@ -8871,34 +8876,98 @@ static BOOL ValidGroupName(NSString *raw) {
   if (!self.quickSceneContainer) return;
   [self loadScenes];
   for (NSView *v in [self.quickSceneContainer.subviews copy]) [v removeFromSuperview];
-  CGFloat cw = 124, ch = 76, gap = 10;
-  for (NSInteger i = 0; i < (NSInteger)self.scenes.count; i++) {
-    NSDictionary *sc = self.scenes[i];
-    NSInteger col = i % 3, row = i / 3;
-    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(8 + col*(cw+gap), 370 - row*(ch+gap), cw, ch)];
-    NSArray *groups = sc[@"groups"] ?: @[];
-    NSString *count = [self sceneIsAll:sc] ? @"全部分组" : (groups.count ? [NSString stringWithFormat:@"%ld 个分组", (long)groups.count] : @"不显示分组");
-    b.title = [NSString stringWithFormat:@"%@\n%@", sc[@"name"] ?: @"", count];
-    b.tag = i;
-    b.hoverColor = [NSColor systemIndigoColor];
-    b.target = self; b.action = @selector(quickSceneClicked:);
-    b.toolTip = @"点击立即切换 Dock 分组";
-    [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-    NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
-    ps.alignment = NSTextAlignmentCenter;
-    b.attributedTitle = [[NSAttributedString alloc] initWithString:b.title attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:ps}];
-    [self.quickSceneContainer addSubview:b];
-  }
-  NSTextField *hint = [self label:@"点击场景立即切换 Dock 中显示的分组" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
-  hint.alignment = NSTextAlignmentCenter;
-  hint.frame = NSMakeRect(10, 236, 380, 18); [self.quickSceneContainer addSubview:hint];
+  NSTextField *title = [self label:@"场景模式" size:17 bold:YES color:nil];
+  title.frame = NSMakeRect(16, 404, 300, 24); [self.quickSceneContainer addSubview:title];
+  NSTextField *sub = [self label:@"选择场景要显示在 Dock 里的分组" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+  sub.frame = NSMakeRect(16, 384, 380, 16); [self.quickSceneContainer addSubview:sub];
+
+  self.quickScenePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(16, 350, 200, 26) pullsDown:NO];
+  for (NSDictionary *sc in self.scenes) [self.quickScenePopup addItemWithTitle:sc[@"name"] ?: @""];
+  if (self.quickSceneIndex < 0 || self.quickSceneIndex >= (NSInteger)self.scenes.count) self.quickSceneIndex = 0;
+  [self.quickScenePopup selectItemAtIndex:self.quickSceneIndex];
+  self.quickScenePopup.target = self; self.quickScenePopup.action = @selector(quickScenePopupChanged:);
+  [self.quickSceneContainer addSubview:self.quickScenePopup];
+
+  self.quickSceneAutoCheck = [NSButton checkboxWithTitle:@"按时间自动切换（工作日 9:00-18:00 工作，其余下班）" target:self action:@selector(quickSceneAutoToggled:)];
+  self.quickSceneAutoCheck.font = [NSFont systemFontOfSize:10.5];
+  self.quickSceneAutoCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerSceneAuto"] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.quickSceneAutoCheck.frame = NSMakeRect(16, 318, 390, 22);
+  [self.quickSceneContainer addSubview:self.quickSceneAutoCheck];
+
+  NSTextField *hint = [self label:@"勾选该场景要显示的分组" size:9.5 bold:YES color:[NSColor tertiaryLabelColor]];
+  hint.frame = NSMakeRect(16, 294, 300, 16); [self.quickSceneContainer addSubview:hint];
+
+  self.quickSceneScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(12, 58, 396, 226)];
+  self.quickSceneScroll.hasVerticalScroller = YES;
+  self.quickSceneScroll.borderType = NSBezelBorder;
+  self.quickSceneScroll.drawsBackground = YES;
+  self.quickSceneScroll.backgroundColor = [NSColor controlBackgroundColor];
+  [self.quickSceneContainer addSubview:self.quickSceneScroll];
+
+  ColorHoverButton *apply = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(270, 12, 122, 32)];
+  apply.title = @"应用此场景"; apply.hoverColor = [NSColor systemIndigoColor];
+  apply.target = self; apply.action = @selector(quickSceneApply:);
+  [apply applyColor:[NSColor systemIndigoColor] textColor:[NSColor whiteColor]];
+  [self.quickSceneContainer addSubview:apply];
+
+  [self reloadQuickSceneChecks];
 }
 
-- (void)quickSceneClicked:(NSButton *)b {
-  NSInteger idx = b.tag;
+- (void)reloadQuickSceneChecks {
+  NSInteger idx = self.quickScenePopup ? self.quickScenePopup.indexOfSelectedItem : self.quickSceneIndex;
   if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
-  NSString *name = self.scenes[idx][@"name"];
-  [self applySceneNamed:name silent:NO];
+  NSDictionary *scene = self.scenes[idx];
+  NSArray *sceneGroups = scene[@"groups"] ?: @[];
+  BOOL all = [self sceneIsAll:scene];
+  NSArray *installed = [self installedGroupNames];
+  NSView *doc = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,376,MAX(226,installed.count*30))];
+  self.quickSceneChecks = [NSMutableArray array];
+  for (NSInteger i = 0; i < (NSInteger)installed.count; i++) {
+    NSString *name = installed[i];
+    NSButton *cb = [NSButton checkboxWithTitle:name target:self action:@selector(quickSceneCheckChanged:)];
+    cb.frame = NSMakeRect(10, i*30+3, 350, 22);
+    cb.tag = i;
+    cb.state = (all || [sceneGroups containsObject:name]) ? NSControlStateValueOn : NSControlStateValueOff;
+    [doc addSubview:cb];
+    [self.quickSceneChecks addObject:cb];
+  }
+  self.quickSceneScroll.documentView = doc;
+}
+
+- (void)quickScenePopupChanged:(id)sender {
+  self.quickSceneIndex = self.quickScenePopup.indexOfSelectedItem;
+  [self reloadQuickSceneChecks];
+}
+
+- (void)quickSceneCheckChanged:(id)sender {
+  NSInteger idx = self.quickScenePopup.indexOfSelectedItem;
+  if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
+  NSArray *installed = [self installedGroupNames];
+  NSMutableArray *checked = [NSMutableArray array];
+  for (NSButton *cb in self.quickSceneChecks) {
+    NSInteger tag = cb.tag;
+    if (tag >= 0 && tag < (NSInteger)installed.count && cb.state == NSControlStateValueOn) [checked addObject:installed[tag]];
+  }
+  NSMutableDictionary *scene = [self.scenes[idx] mutableCopy];
+  if (checked.count == installed.count) { scene[@"all"] = @YES; scene[@"groups"] = @[]; }
+  else { scene[@"all"] = @NO; scene[@"groups"] = checked; }
+  self.scenes[idx] = scene;
+  [self saveScenes];
+}
+
+- (void)quickSceneAutoToggled:(id)sender {
+  BOOL on = self.quickSceneAutoCheck.state == NSControlStateValueOn;
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerSceneAuto"];
+  [self.sceneTimer invalidate]; self.sceneTimer = nil;
+  if (!on) return;
+  self.sceneTimer = [NSTimer scheduledTimerWithTimeInterval:60 target:self selector:@selector(sceneAutoTick:) userInfo:nil repeats:YES];
+  [self sceneAutoTick:nil];
+}
+
+- (void)quickSceneApply:(id)sender {
+  NSInteger idx = self.quickScenePopup.indexOfSelectedItem;
+  if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
+  [self applySceneNamed:self.scenes[idx][@"name"] silent:NO];
   [self.popover performClose:nil];
 }
 
