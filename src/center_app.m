@@ -7407,26 +7407,21 @@ static BOOL ValidGroupName(NSString *raw) {
     self.translationSourceView.delegate = self;
     self.translationResultView = [self translationTextViewAtFrame:NSMakeRect(424, 140, 372, 276)];
 
-    NSArray *titles = @[@"选择文档…", @"复制译文", @"保存译文…"];
-    NSArray *sels = @[@"translationChooseDocument:", @"translationCopy:", @"translationSave:"];
-    NSArray *colors = @[[NSColor systemBlueColor], [NSColor systemGrayColor], [NSColor systemPurpleColor]];
-    CGFloat xs[3] = {24, 180, 280};
-    CGFloat ws[3] = {140, 90, 110};
-    for (NSInteger i = 0; i < 3; i++) {
-      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(xs[i], 96, ws[i], 30)];
-      b.title = titles[i]; b.target = self; b.action = NSSelectorFromString(sels[i]); b.hoverColor = colors[i];
+    NSArray *symbols = @[@"doc.badge.plus", @"doc.on.doc", @"square.and.arrow.down", @"keyboard"];
+    NSArray *tips = @[@"选择文档：txt / md / pdf / docx / 图片", @"复制译文", @"保存译文为 txt", @"快捷键设置"];
+    NSArray *tSels = @[@"translationChooseDocument:", @"translationCopy:", @"translationSave:", @"openShortcutSettings:"];
+    CGFloat txs[4] = {560, 604, 648, 692};
+    for (NSInteger i = 0; i < 4; i++) {
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(txs[i], 512, 38, 34)];
+      b.title = @"";
+      b.image = [NSImage imageWithSystemSymbolName:symbols[i] accessibilityDescription:tips[i]];
+      b.imagePosition = NSImageOnly;
+      b.hoverColor = [NSColor systemTealColor];
+      b.target = self; b.action = NSSelectorFromString(tSels[i]);
+      b.toolTip = tips[i];
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
     }
-    NSTextField *autoTip = [self label:@"截图 / 划词后自动翻译，无需点击按钮" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
-    autoTip.frame = NSMakeRect(408, 104, 160, 16); [cv addSubview:autoTip];
-    ColorHoverButton *shortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(580, 96, 208, 30)];
-    shortcutBtn.title = @"快捷键设置…";
-    shortcutBtn.hoverColor = [NSColor systemTealColor];
-    shortcutBtn.target = self; shortcutBtn.action = @selector(openShortcutSettings:);
-    shortcutBtn.toolTip = @"设置截图翻译、划词翻译、翻译当前文本的快捷键";
-    [shortcutBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-    [cv addSubview:shortcutBtn];
     CompressDropView *drop = [[CompressDropView alloc] initWithFrame:NSMakeRect(24, 34, 772, 50)];
     drop.dropTarget = self; drop.dropAction = @selector(translationFilesDropped:);
     [cv addSubview:drop];
@@ -7895,18 +7890,18 @@ static BOOL ValidGroupName(NSString *raw) {
     self.compressListLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
     self.compressListLabel.frame = NSMakeRect(20, 166, 580, 18); [cv addSubview:self.compressListLabel];
 
-    NSArray *titles = @[@"添加文件…", @"添加文件夹…", @"清空", @"压缩为 ZIP", @"压缩为 TAR.GZ", @"解压…"];
+    NSArray *symbols = @[@"doc.badge.plus", @"folder.badge.plus", @"trash", @"doc.zipper", @"archivebox", @"shippingbox.and.arrow.backward"];
+    NSArray *tips = @[@"添加文件", @"添加文件夹", @"清空已选项目", @"压缩为 ZIP", @"压缩为 TAR.GZ", @"解压 ZIP / TAR.GZ"];
     NSArray *sels = @[@"compressAddFiles:", @"compressAddFolder:", @"compressClear:", @"compressZip:", @"compressTar:", @"extractArchive:"];
-    NSArray *colors = @[[NSColor systemBlueColor], [NSColor systemTealColor], [NSColor systemGrayColor], [NSColor systemGreenColor], [NSColor systemPurpleColor], [NSColor systemOrangeColor]];
-    CGFloat xs[6] = {20, 128, 248, 340, 468, 20};
-    CGFloat ws[6] = {100, 112, 60, 120, 132, 90};
-    CGFloat ys[6] = {126, 126, 126, 126, 126, 78};
+    CGFloat xs[6] = {300, 344, 388, 432, 476, 520};
     for (NSInteger i = 0; i < 6; i++) {
-      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(xs[i], ys[i], ws[i], 30)];
-      b.title = titles[i];
-      b.target = self;
-      b.action = NSSelectorFromString(sels[i]);
-      b.hoverColor = colors[i];
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(xs[i], 414, 40, 34)];
+      b.title = @"";
+      b.image = [NSImage imageWithSystemSymbolName:symbols[i] accessibilityDescription:tips[i]];
+      b.imagePosition = NSImageOnly;
+      b.hoverColor = (i < 3) ? [NSColor systemGrayColor] : [NSColor systemOrangeColor];
+      b.target = self; b.action = NSSelectorFromString(sels[i]);
+      b.toolTip = tips[i];
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
     }
