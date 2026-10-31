@@ -9536,12 +9536,13 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)refreshPromptCategories {
   if (!self.promptCategoryPopup) return;
   NSString *cur = self.promptCategoryPopup.titleOfSelectedItem ?: @"全部分类";
-  NSMutableArray *cats = [NSMutableArray arrayWithObject:@"全部分类"];
+  NSMutableArray *cats = [NSMutableArray array];
   for (NSDictionary *p in self.prompts) {
     NSString *c = p[@"category"] ?: @"";
     if (c.length && ![cats containsObject:c]) [cats addObject:c];
   }
   [cats sortUsingSelector:@selector(localizedCompare:)];
+  [cats insertObject:@"全部分类" atIndex:0];
   [self.promptCategoryPopup removeAllItems];
   for (NSString *c in cats) [self.promptCategoryPopup addItemWithTitle:c];
   if ([cats containsObject:cur]) [self.promptCategoryPopup selectItemWithTitle:cur];
