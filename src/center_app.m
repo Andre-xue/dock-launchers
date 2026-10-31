@@ -9063,7 +9063,7 @@ static BOOL ValidGroupName(NSString *raw) {
   self.quickTabs.target = self;
   self.quickTabs.action = @selector(quickTabChanged:);
   [root addSubview:self.quickTabs];
-  self.statusMetricPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(318, 574, 100, 26) pullsDown:NO];
+  self.statusMetricPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 40, 100, 26) pullsDown:NO];
   self.statusMetricPopup.font = [NSFont systemFontOfSize:10.5];
   [self setupStatusMetricPopup:self.statusMetricPopup];
   [root addSubview:self.statusMetricPopup];
@@ -9217,6 +9217,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [quit applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [root addSubview:quit];
 
+  [root addSubview:self.statusMetricPopup positioned:NSWindowAbove relativeTo:nil];
   pop.contentViewController = vc;
   pop.contentSize = NSMakeSize(420, 620);
 }
@@ -11211,6 +11212,7 @@ static BOOL ValidGroupName(NSString *raw) {
   popup.target = self;
   popup.action = @selector(statusMetricChanged:);
   popup.toolTip = @"菜单栏状态图标显示哪个指标";
+  [self updateStatusMetricIcon];
 }
 - (void)statusMetricChanged:(NSPopUpButton *)popup {
   NSString *key = popup.selectedItem.representedObject ?: @"cpu";
@@ -11219,17 +11221,26 @@ static BOOL ValidGroupName(NSString *raw) {
     if (![p isKindOfClass:[NSPopUpButton class]]) continue;
     for (NSMenuItem *mi in p.itemArray) if ([mi.representedObject isEqualToString:key]) { [p selectItem:mi]; break; }
   }
-  [self updateStatusItemTitleCPU:self.quickCPU.stringValue.doubleValue memory:self.quickMem.stringValue.doubleValue gpu:self.gpuPercent netBps:0 power:self.quickBat.stringValue];
+  [self updateStatusMetricIcon];
 }
 - (void)updateStatusItemTitleCPU:(double)cpu memory:(double)mem gpu:(double)gpu netBps:(double)bps power:(NSString *)power {
+  self.statusItem.button.title = @"";
+}
+
+- (void)updateStatusMetricIcon {
+  if (!self.statusItem.button) return;
   NSString *key = [self statusMetricKey];
-  NSString *title = @"";
-  if ([key isEqualToString:@"cpu"]) title = [NSString stringWithFormat:@"CPU %.0f%%", cpu];
-  else if ([key isEqualToString:@"gpu"]) title = [NSString stringWithFormat:@"GPU %.0f%%", gpu];
-  else if ([key isEqualToString:@"mem"]) title = [NSString stringWithFormat:@"内存 %.0f%%", mem];
-  else if ([key isEqualToString:@"net"]) title = [NSString stringWithFormat:@"网络 %@/s", [self rate:bps]];
-  else if ([key isEqualToString:@"power"]) title = [NSString stringWithFormat:@"电源 %@", power.length ? power : @"--"];
-  self.statusItem.button.title = title;
+  NSString *symbol = @"cpu";
+  if ([key isEqualToString:@"gpu"]) symbol = @"display";
+  else if ([key isEqualToString:@"mem"]) symbol = @"memorychip";
+  else if ([key isEqualToString:@"net"]) symbol = @"wifi";
+  else if ([key isEqualToString:@"power"]) symbol = @"battery.100";
+  NSImage *img = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:@"状态指标"];
+  if (img) {
+    img.template = YES;
+    self.statusItem.button.image = img;
+    self.statusItem.button.imagePosition = NSImageOnly;
+  }
 }
 
 - (NSString *)rate:(double)bps {
