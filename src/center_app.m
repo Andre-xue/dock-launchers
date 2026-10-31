@@ -11227,6 +11227,71 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return windows;
 }
 
+- (NSString *)runAppleScriptSource:(NSString *)source {
+  NSAppleScript *script = [[NSAppleScript alloc] initWithSource:source];
+  NSDictionary *err = nil;
+  NSAppleEventDescriptor *result = [script executeAndReturnError:&err];
+  return result ? [result stringValue] : @"";
+}
+
+- (NSDictionary<NSString *, NSArray<NSString *> *> *)captureSessionPages {
+  NSMutableDictionary *out = [NSMutableDictionary dictionary];
+  NSArray *browsers = @[@[@"com.apple.Safari", @"Safari"], @[@"com.google.Chrome", @"Google Chrome"]];
+  for (NSArray *pair in browsers) {
+    BOOL running = NO;
+    for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) if ([app.bundleIdentifier isEqualToString:pair[0]]) { running = YES; break; }
+    if (!running) continue;
+    NSString *src = [NSString stringWithFormat:@"tell application \"%@\"\nset out to \"\"\nrepeat with w in windows\nrepeat with t in tabs of w\ntry\nset out to out & (URL of t as text) & linefeed\nend try\nend repeat\nend repeat\nreturn out\nend tell", pair[1]];
+    NSString *result = [self runAppleScriptSource:src];
+    NSMutableArray *urls = [NSMutableArray array];
+    for (NSString *line in [result componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      NSString *u = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+      if ([u hasPrefix:@"http"]) [urls addObject:u];
+      if (urls.count >= 30) break;
+    }
+    if (urls.count) out[pair[0]] = urls;
+  }
+  BOOL finderRunning = NO;
+  for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) if ([app.bundleIdentifier isEqualToString:@"com.apple.finder"]) { finderRunning = YES; break; }
+  if (finderRunning) {
+    NSString *src = @"tell application \"Finder\"\nset out to \"\"\nrepeat with w in windows\ntry\nset out to out & (POSIX path of (target of w as alias)) & linefeed\nend try\nend repeat\nreturn out\nend tell";
+    NSString *result = [self runAppleScriptSource:src];
+    NSMutableArray *paths = [NSMutableArray array];
+    for (NSString *line in [result componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      NSString *p = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+      if ([p hasPrefix:@"/"]) [paths addObject:p];
+    }
+    if (paths.count) out[@"com.apple.finder"] = paths;
+  }
+  return out;
+}
+
+- (BOOL)restoreSessionPages:(NSDictionary *)pages {
+  NSMutableSet *opened = [NSMutableSet set];
+  NSArray *browsers = @[@[@"com.apple.Safari", @"Safari"], @[@"com.google.Chrome", @"Google Chrome"]];
+  for (NSArray *pair in browsers) {
+    NSArray *urls = pages[pair[0]];
+    if (!urls.count) continue;
+    NSMutableArray *quoted = [NSMutableArray array];
+    for (NSString *u in urls) [quoted addObject:[NSString stringWithFormat:@"\"%@\"", [u stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""]]];
+    NSString *list = [quoted componentsJoinedByString:@", "];
+    NSString *src;
+    if ([pair[0] isEqualToString:@"com.apple.Safari"]) {
+      src = [NSString stringWithFormat:@"tell application \"Safari\"\nset urls to {%@}\nrepeat with u in urls\nmake new document with properties {URL:u}\nend repeat\nend tell", list];
+    } else {
+      src = [NSString stringWithFormat:@"tell application \"Google Chrome\"\nset urls to {%@}\nrepeat with u in urls\nmake new window\nset URL of active tab of front window to u\nend repeat\nend tell", list];
+    }
+    [self runAppleScriptSource:src];
+    [opened addObject:pair[0]];
+  }
+  NSArray *paths = pages[@"com.apple.finder"];
+  for (NSString *p in paths) {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:p]];
+    [opened addObject:@"com.apple.finder"];
+  }
+  return opened.count > 0;
+}
+
 - (NSArray<NSDictionary *> *)captureCurrentApps {
   NSMutableArray *apps = [NSMutableArray array];
   for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
@@ -11334,8 +11399,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!name.length) { [self showToast:@"布局名称不能为空"]; return; }
   NSArray *windows = [self captureCurrentWindowLayout];
   NSArray *apps = [self captureCurrentApps];
+  NSDictionary *pages = [self captureSessionPages];
   if (!windows.count && !apps.count) { [self showToast:@"没有可保存的窗口或应用"]; return; }
-  self.savedLayouts[name] = @{@"date": @([[NSDate date] timeIntervalSince1970]), @"windows": windows, @"apps": apps};
+  self.savedLayouts[name] = @{@"date": @([[NSDate date] timeIntervalSince1970]), @"windows": windows, @"apps": apps, @"pages": pages};
   [self saveWindowLayouts];
   [self.layoutTable reloadData];
   NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
@@ -11372,6 +11438,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSArray *windows = layout[@"windows"] ?: @[];
   NSArray *appList = layout[@"apps"] ?: @[];
   if (!windows.count && !appList.count) { [self showToast:@"该布局没有记录"]; return; }
+  NSDictionary *pages = layout[@"pages"] ?: @{};
+  if (autoLaunch && pages.count) {
+    BOOL opened = [self restoreSessionPages:pages];
+    if (opened) {
+      [self showToast:@"正在恢复网页/文件夹并调整窗口…"];
+      __weak typeof(self) weakSelf = self;
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [weakSelf applyWindowLayoutNamed:name];
+      });
+      return;
+    }
+  }
   NSMutableSet *required = [NSMutableSet set];
   for (NSDictionary *w in windows) if ([w[@"bundle"] length]) [required addObject:w[@"bundle"]];
   for (NSDictionary *a in appList) if ([a[@"bundle"] length]) [required addObject:a[@"bundle"]];
