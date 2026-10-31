@@ -41,6 +41,25 @@ static NSArray<NSString *> *DraggedRowPaths(NSPasteboard *pb) {
   return out;
 }
 
+static NSString *AppUsagePath(void) {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:@"usage.json"];
+}
+
+static void RecordAppUsage(NSString *target, NSString *group, NSString *label) {
+  if (!target.length) return;
+  NSString *key = ResolveAppPath(target) ?: target;
+  NSData *d = [NSData dataWithContentsOfFile:AppUsagePath()];
+  id parsed = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  NSMutableDictionary *all = [parsed isKindOfClass:[NSDictionary class]] ? [parsed mutableCopy] : [NSMutableDictionary dictionary];
+  NSDictionary *old = [all[key] isKindOfClass:[NSDictionary class]] ? all[key] : @{};
+  NSInteger count = [old[@"count"] integerValue] + 1;
+  all[key] = @{@"label": label ?: [[NSFileManager defaultManager] displayNameAtPath:key], @"count": @(count), @"last": @([[NSDate date] timeIntervalSince1970]), @"group": group ?: @""};
+  NSData *out = [NSJSONSerialization dataWithJSONObject:all options:NSJSONWritingPrettyPrinted error:NULL];
+  [out writeToFile:AppUsagePath() atomically:YES];
+}
+
 static BOOL DragIsFromDock(NSPasteboard *pb) {
   return [[pb types] containsObject:@"com.apple.dock.tile"];
 }
@@ -2221,6 +2240,7 @@ static NSString *ResolveAppPath(NSString *target) {
   task.launchPath = @"/usr/bin/open";
   if ([target hasPrefix:@"/"]) task.arguments = @[target];
   else task.arguments = @[@"-a", target];
+  RecordAppUsage(target, gGroup, self.items[self.sel][@"label"]);
   NSTimeInterval ts = [NSDate timeIntervalSinceReferenceDate];
   @try { [task launch]; } @catch (NSException *e) {}
   if (getenv("DOCKLAUNCHER_BENCH") || getenv("DOCKLAUNCHER_TEST")) fprintf(stderr, "OPEN_CALL_MS=%.2f\n", ([NSDate timeIntervalSinceReferenceDate]-ts)*1000.0);

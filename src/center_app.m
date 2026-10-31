@@ -530,6 +530,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) QuickBarView *quickCPUBar, *quickGPUBar, *quickMemBar, *quickDiskBar;
 @property (strong) Sparkline *quickCPUSpark, *quickGPUSpark, *quickNetSpark;
 @property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage, *quickScenePage, *quickSceneContainer;
+@property (strong) NSWindow *usageWindow;
+@property (strong) NSTableView *usageTable;
+@property (strong) NSArray *usageRows;
 @property (strong) NSPopUpButton *quickScenePopup;
 @property (strong) NSScrollView *quickSceneScroll;
 @property (strong) NSButton *quickSceneAutoCheck;
@@ -6954,6 +6957,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.usageTable) return self.usageRows.count;
   if (tableView == self.playerChooserTable) return self.playerChooserApps.count;
   if (tableView == self.appShortcutTable) return self.appShortcuts.count;
   if (tableView == self.clipboardTable) return self.clipboardItems.count;
@@ -6971,6 +6975,35 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.usageTable) {
+    if (row < 0 || row >= (NSInteger)self.usageRows.count) return nil;
+    NSDictionary *r = self.usageRows[row];
+    NSString *ident = col.identifier;
+    if ([ident isEqualToString:@"app"]) {
+      NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,40)];
+      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(6, 6, 28, 28)];
+      iv.image = [[NSWorkspace sharedWorkspace] iconForFile:r[@"path"]];
+      [v addSubview:iv];
+      NSTextField *l = [self label:r[@"label"] size:12 bold:YES color:nil];
+      l.lineBreakMode = NSLineBreakByTruncatingTail;
+      l.frame = NSMakeRect(42, 10, col.width - 50, 18); [v addSubview:l];
+      return v;
+    }
+    if ([ident isEqualToString:@"last"]) {
+      NSTimeInterval ts = [r[@"last"] doubleValue];
+      NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"MM-dd HH:mm";
+      NSString *s = ts > 0 ? [df stringFromDate:[NSDate dateWithTimeIntervalSince1970:ts]] : @"--";
+      NSTextField *l = [self label:s size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+      l.frame = NSMakeRect(4, 10, col.width - 8, 18); return l;
+    }
+    if ([ident isEqualToString:@"count"]) {
+      NSTextField *l = [self label:[NSString stringWithFormat:@"%@ 次", r[@"count"]] size:11 bold:YES color:[NSColor systemOrangeColor]];
+      l.alignment = NSTextAlignmentCenter;
+      l.frame = NSMakeRect(4, 10, col.width - 8, 18); return l;
+    }
+    NSTextField *l = [self label:[r[@"group"] length] ? r[@"group"] : @"未分组" size:10.5 bold:NO color:[r[@"group"] length] ? [NSColor secondaryLabelColor] : [NSColor systemOrangeColor]];
+    l.frame = NSMakeRect(4, 10, col.width - 8, 18); return l;
+  }
   if (tableView == self.playerChooserTable) {
     if (row < 0 || row >= (NSInteger)self.playerChooserApps.count) return nil;
     NSURL *app = self.playerChooserApps[row];
@@ -8291,6 +8324,91 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)closeSceneSettings:(id)sender { [self.sceneWindow orderOut:nil]; }
 
+- (NSString *)usageStorePath {
+  return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/usage.json"];
+}
+
+- (NSDictionary<NSString *, NSString *> *)groupByAppPath {
+  NSMutableDictionary *map = [NSMutableDictionary dictionary];
+  NSString *lists = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:lists error:NULL] ?: @[]) {
+    if (![f.pathExtension.lowercaseString isEqualToString:@"txt"]) continue;
+    NSString *group = f.stringByDeletingPathExtension;
+    NSString *body = [NSString stringWithContentsOfFile:[lists stringByAppendingPathComponent:f] encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+    for (NSString *line in [body componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      NSString *t = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if (!t.length || [t hasPrefix:@"#"]) continue;
+      NSRange r = [t rangeOfString:@"|"];
+      if (r.location != NSNotFound) t = [[t substringFromIndex:r.location+1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      NSString *path = ResolveAppPath(t);
+      if (path.length) map[path] = group;
+    }
+  }
+  return map;
+}
+
+- (void)showUsageStats:(id)sender {
+  NSData *d = [NSData dataWithContentsOfFile:[self usageStorePath]];
+  id parsed = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  NSDictionary *all = [parsed isKindOfClass:[NSDictionary class]] ? parsed : @{};
+  NSDictionary *groups = [self groupByAppPath];
+  NSMutableArray *rows = [NSMutableArray array];
+  for (NSString *path in all) {
+    NSDictionary *u = all[path];
+    if (![u isKindOfClass:[NSDictionary class]]) continue;
+    [rows addObject:@{@"path": path, @"label": u[@"label"] ?: path.lastPathComponent, @"count": u[@"count"] ?: @0, @"last": u[@"last"] ?: @0, @"group": groups[path] ?: @""}];
+  }
+  [rows sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+    NSComparisonResult r = [b[@"count"] compare:a[@"count"]];
+    if (r != NSOrderedSame) return r;
+    return [b[@"last"] compare:a[@"last"]];
+  }];
+  self.usageRows = rows;
+  if (!self.usageWindow) {
+    self.usageWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.usageWindow.title = @"使用统计与推荐";
+    self.usageWindow.releasedWhenClosed = NO;
+    self.usageWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.usageWindow.contentView;
+    NSTextField *title = [self label:@"使用统计与推荐" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"统计从分组启动器的应用启动次数，优先推荐高频但未分组的应用" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 448, 590, 18); [cv addSubview:sub];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 608, 360)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.usageTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"app", @"应用", @300.0], @[@"count", @"启动次数", @80.0], @[@"last", @"最近使用", @130.0], @[@"group", @"所在分组", @90.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.usageTable addTableColumn:col];
+    }
+    self.usageTable.rowHeight = 40;
+    self.usageTable.dataSource = self; self.usageTable.delegate = self;
+    sv.documentView = self.usageTable;
+    [cv addSubview:sv];
+    NSTextField *hint = [self label:@"" size:10.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    hint.frame = NSMakeRect(18, 48, 610, 18); hint.identifier = @"usageHint"; [cv addSubview:hint];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(520, 14, 100, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeUsageStats:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:close];
+    [self.usageWindow center];
+  }
+  [self.usageTable reloadData];
+  NSTextField *hint = [self.usageWindow.contentView viewWithTag:0];
+  for (NSView *v in self.usageWindow.contentView.subviews) if ([v.identifier isEqualToString:@"usageHint"]) { hint = (NSTextField *)v; break; }
+  NSMutableArray *recs = [NSMutableArray array];
+  for (NSDictionary *r in rows) if (![r[@"group"] length] && [r[@"count"] integerValue] >= 2) [recs addObject:r[@"label"]];
+  hint.stringValue = recs.count ? [NSString stringWithFormat:@"推荐加入分组：%@", [[recs subarrayWithRange:NSMakeRange(0, MIN(5, recs.count))] componentsJoinedByString:@"、"]] : @"暂无未分组的高频应用";
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.usageWindow makeKeyAndOrderFront:nil];
+  [self.usageWindow orderFrontRegardless];
+}
+
+- (void)closeUsageStats:(id)sender { [self.usageWindow orderOut:nil]; }
+
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"设置" size:24 bold:YES color:nil];
@@ -8403,6 +8521,14 @@ static BOOL ValidGroupName(NSString *raw) {
   [sceneBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   sceneBtn.toolTip = @"按工作/下班/会议切换 Dock 中显示的分组";
   [tScene addSubview:sceneBtn];
+
+  NSView *tUsage = tileAt(1, 204); tileLabel(tUsage, @"使用统计");
+  ColorHoverButton *usageBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
+  usageBtn.title = @"查看统计…"; usageBtn.hoverColor = [NSColor systemTealColor];
+  usageBtn.target = self; usageBtn.action = @selector(showUsageStats:);
+  [usageBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  usageBtn.toolTip = @"查看应用启动次数、最近使用时间和未分组推荐";
+  [tUsage addSubview:usageBtn];
 
   // 第三列：相册与磁盘
   NSView *tAlbum = tileAt(2, 500); tileLabel(tAlbum, @"图库权限");
