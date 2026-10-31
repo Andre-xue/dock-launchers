@@ -37,6 +37,24 @@ static NSString *AppPasswordHash(NSString *password, NSData *salt) {
   return [[NSData dataWithBytes:digest length:sizeof(digest)] base64EncodedStringWithOptions:0];
 }
 
+static NSImage *ProcessIconForPID(NSInteger pid, NSString *path) {
+  NSRunningApplication *ra = [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pid];
+  if (ra.icon) return ra.icon;
+  if (path.length) {
+    NSRange r = [path rangeOfString:@".app/"];
+    if (r.location != NSNotFound) {
+      NSString *bundle = [path substringToIndex:NSMaxRange(r) - 1];
+      if ([[NSFileManager defaultManager] fileExistsAtPath:bundle]) {
+        NSImage *img = [[NSWorkspace sharedWorkspace] iconForFile:bundle];
+        if (img) return img;
+      }
+    }
+    NSImage *img = [[NSWorkspace sharedWorkspace] iconForFile:path];
+    if (img) return img;
+  }
+  return [NSImage imageNamed:NSImageNameApplicationIcon];
+}
+
 static NSString *const kAIKeychainService = @"com.docklaunchers.center.ai";
 
 static NSString *AIKeychainGet(NSString *account) {
@@ -7126,7 +7144,7 @@ static BOOL ValidGroupName(NSString *raw) {
     if ([ident isEqualToString:@"proc"]) {
       NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
       NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(4, 4, 24, 24)];
-      iv.image = [[NSWorkspace sharedWorkspace] iconForFile:p[@"path"]];
+      iv.image = ProcessIconForPID([p[@"pid"] integerValue], p[@"path"]);
       [v addSubview:iv];
       NSTextField *l = [self label:p[@"name"] size:11.5 bold:YES color:nil];
       l.lineBreakMode = NSLineBreakByTruncatingTail;
@@ -9489,7 +9507,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTextField *rank = [self label:[NSString stringWithFormat:@"%ld", (long)(i+1)] size:12 bold:YES color:[NSColor tertiaryLabelColor]];
     rank.frame = NSMakeRect(10, 16, 20, 18); [row addSubview:rank];
     NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(32, 12, 28, 28)];
-    iv.image = [[NSWorkspace sharedWorkspace] iconForFile:p[@"path"]];
+    iv.image = ProcessIconForPID([p[@"pid"] integerValue], p[@"path"]);
     [row addSubview:iv];
     NSTextField *name = [self label:p[@"name"] size:12 bold:YES color:nil];
     name.lineBreakMode = NSLineBreakByTruncatingTail;
