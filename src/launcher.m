@@ -238,6 +238,18 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (NSArray<NSURL *> *)droppedURLs:(id<NSDraggingInfo>)sender {
   return ExtractDraggedURLs(sender.draggingPasteboard);
 }
+- (void)rightMouseDown:(NSEvent *)event {
+  NSMenu *m = [[NSMenu alloc] init];
+  NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:@"从 Dock 导入应用…" action:@selector(contextDockImport:) keyEquivalent:@""];
+  it.target = self;
+  it.representedObject = self.dropCtrl;
+  [m addItem:it];
+  [NSMenu popUpContextMenu:m withEvent:event forView:self];
+}
+- (void)contextDockImport:(NSMenuItem *)item {
+  id ctrl = item.representedObject;
+  if (ctrl) [ctrl performSelector:@selector(importAppsFromDock:) withObject:nil];
+}
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender { return NSDragOperationCopy; }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
   NSArray *urls = [self droppedURLs:sender];
@@ -322,6 +334,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property (strong) NSTextField *searchField;
 @property (strong) NSButton *pinBtn;
 @property BOOL pinned;
+@property (strong) NSWindow *dockImportWindow;
+@property (strong) NSArray<NSURL *> *dockImportApps;
+@property (strong) NSMutableArray *dockImportChecks;
 @property (strong) CircleButton *searchBtn;
 @property (copy) NSString *searchQuery;
 @property BOOL searchActive;
@@ -405,6 +420,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)addRowToDockAtIndex:(NSNumber *)idx;
 - (void)restoreDockEntriesForPaths:(NSArray<NSURL *> *)urls;
 - (void)promptAddAppFromDock;
+- (void)importAppsFromDock:(id)sender;
 - (void)removeRowAtIndex:(NSNumber *)idx;
 - (void)removeSelected:(id)sender;
 - (void)loadIconsFrom:(NSInteger)start;
@@ -613,10 +629,16 @@ static NSColor *ThemeSel(NSInteger t) {
   add.target = self; add.tag = self.idx; [m addItem:add];
   NSMenuItem *rm = [[NSMenuItem alloc] initWithTitle:@"从分组移除" action:@selector(contextRemoveFromGroup:) keyEquivalent:@""];
   rm.target = self; rm.tag = self.idx; [m addItem:rm];
+  [m addItem:[NSMenuItem separatorItem]];
+  NSMenuItem *di = [[NSMenuItem alloc] initWithTitle:@"从 Dock 导入应用…" action:@selector(contextDockImport:) keyEquivalent:@""];
+  di.target = self; [m addItem:di];
   [NSMenu popUpContextMenu:m withEvent:event forView:self];
 }
 - (void)contextAddToDock:(NSMenuItem *)item {
   [self.ctrl performSelector:@selector(addRowToDockAtIndex:) withObject:@(item.tag)];
+}
+- (void)contextDockImport:(NSMenuItem *)item {
+  [self.ctrl performSelector:@selector(importAppsFromDock:) withObject:nil];
 }
 - (void)contextRemoveFromGroup:(NSMenuItem *)item {
   [self.ctrl performSelector:@selector(removeRowAtIndex:) withObject:@(item.tag)];
@@ -1446,6 +1468,102 @@ static NSString *ResolveAppPath(NSString *target) {
     NSString *path = u.path.stringByStandardizingPath;
     if (![self dockContainsApp:path]) [self addAppToDock:path];
   }
+}
+
+- (NSArray<NSURL *> *)dockAppURLs {
+  NSMutableArray *out = [NSMutableArray array];
+  CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+  NSArray *apps = raw ? CFBridgingRelease(raw) : @[];
+  NSMutableSet *seen = [NSMutableSet set];
+  for (id item in apps) {
+    if (![item isKindOfClass:[NSDictionary class]]) continue;
+    NSString *u = item[@"tile-data"][@"file-data"][@"_CFURLString"];
+    if (!u.length) continue;
+    NSURL *url = [NSURL URLWithString:u];
+    if (!url.isFileURL || ![url.pathExtension.lowercaseString isEqualToString:@"app"]) continue;
+    if ([seen containsObject:url.path]) continue;
+    [seen addObject:url.path]; [out addObject:url];
+  }
+  return out;
+}
+
+- (void)importAppsFromDock:(id)sender {
+  self.dockImportApps = [self dockAppURLs];
+  if (!self.dockImportApps.count) { NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"Dock 中没有应用"; [a addButtonWithTitle:@"好"]; [a runModal]; return; }
+  if (!self.dockImportWindow) {
+    self.dockImportWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,540,460) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.dockImportWindow.title = @"从 Dock 导入应用";
+    self.dockImportWindow.releasedWhenClosed = NO;
+    self.dockImportWindow.level = NSFloatingWindowLevel;
+    [self.dockImportWindow center];
+  }
+  NSView *cv = self.dockImportWindow.contentView;
+  for (NSView *x in [cv.subviews copy]) [x removeFromSuperview];
+  NSTextField *title = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 420, 400, 24)];
+  title.stringValue = @"从 Dock 导入应用";
+  title.bezeled = NO; title.editable = NO; title.drawsBackground = NO;
+  title.font = [NSFont systemFontOfSize:17 weight:NSFontWeightSemibold];
+  [cv addSubview:title];
+  NSTextField *hint = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 398, 480, 18)];
+  hint.stringValue = @"勾选要加入当前分组的应用；已加入本组或其他分组的会被跳过";
+  hint.bezeled = NO; hint.editable = NO; hint.drawsBackground = NO;
+  hint.font = [NSFont systemFontOfSize:10];
+  hint.textColor = [NSColor secondaryLabelColor];
+  [cv addSubview:hint];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 70, 508, 320)];
+  sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+  sv.drawsBackground = YES; sv.backgroundColor = [NSColor whiteColor];
+  NSView *doc = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,490,MAX(320,self.dockImportApps.count*32))];
+  self.dockImportChecks = [NSMutableArray array];
+  NSString *body = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+  for (NSInteger i = 0; i < (NSInteger)self.dockImportApps.count; i++) {
+    NSURL *u = self.dockImportApps[i];
+    NSString *name = [[NSFileManager defaultManager] displayNameAtPath:u.path];
+    NSButton *cb = [NSButton checkboxWithTitle:name target:nil action:nil];
+    cb.frame = NSMakeRect(8, i*32+4, 460, 24);
+    BOOL exists = NO;
+    for (NSString *line in [body componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      NSRange r = [line rangeOfString:@"|"];
+      NSString *target = r.location == NSNotFound ? line : [line substringFromIndex:r.location+1];
+      if ([[target stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] isEqualToString:u.path]) { exists = YES; break; }
+    }
+    if (exists) { cb.state = NSControlStateValueOn; cb.enabled = NO; cb.title = [name stringByAppendingString:@"（已在分组）"]; }
+    [doc addSubview:cb]; [self.dockImportChecks addObject:cb];
+  }
+  sv.documentView = doc; [cv addSubview:sv];
+  NSButton *all = [NSButton buttonWithTitle:@"全选" target:self action:@selector(dockImportSelectAll:)];
+  all.frame = NSMakeRect(16, 24, 70, 30); [cv addSubview:all];
+  NSButton *none = [NSButton buttonWithTitle:@"全不选" target:self action:@selector(dockImportSelectNone:)];
+  none.frame = NSMakeRect(92, 24, 80, 30); [cv addSubview:none];
+  NSButton *add = [NSButton buttonWithTitle:@"添加所选" target:self action:@selector(confirmDockImport:)];
+  add.frame = NSMakeRect(398, 24, 100, 32); add.keyEquivalent = @"\r"; [cv addSubview:add];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.dockImportWindow makeKeyAndOrderFront:nil];
+  [self.dockImportWindow orderFrontRegardless];
+}
+
+- (void)dockImportSelectAll:(id)sender { for (NSButton *b in self.dockImportChecks) if (b.enabled) b.state = NSControlStateValueOn; }
+- (void)dockImportSelectNone:(id)sender { for (NSButton *b in self.dockImportChecks) if (b.enabled) b.state = NSControlStateValueOff; }
+
+- (void)confirmDockImport:(id)sender {
+  NSString *content = [NSString stringWithContentsOfFile:gListFile encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+  NSMutableArray *lines = [[content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
+  NSInteger added = 0;
+  for (NSInteger i = 0; i < (NSInteger)self.dockImportApps.count; i++) {
+    NSButton *cb = self.dockImportChecks[i];
+    if (!cb.enabled || cb.state != NSControlStateValueOn) continue;
+    NSURL *u = self.dockImportApps[i];
+    NSString *name = [[NSFileManager defaultManager] displayNameAtPath:u.path];
+    [lines addObject:[NSString stringWithFormat:@"%@|%@", name, u.path]];
+    added++;
+  }
+  while (lines.count && [[lines lastObject] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].length == 0) [lines removeLastObject];
+  if (added) {
+    [[lines componentsJoinedByString:@"\n"] writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"DockLaunchersGroupsChanged" object:nil];
+    [self reload];
+  }
+  [self.dockImportWindow orderOut:nil];
 }
 
 - (void)addDroppedApps:(NSArray<NSURL *> *)urls {
