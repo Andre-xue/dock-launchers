@@ -20,6 +20,62 @@
 #import <NaturalLanguage/NaturalLanguage.h>
 #import <Carbon/Carbon.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <Security/Security.h>
+
+static NSString *const kAIKeychainService = @"com.docklaunchers.center.ai";
+
+static NSString *AIKeychainGet(NSString *account) {
+  if (!account.length) return nil;
+  NSDictionary *q = @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+                      (__bridge id)kSecAttrService: kAIKeychainService,
+                      (__bridge id)kSecAttrAccount: account,
+                      (__bridge id)kSecReturnData: @YES,
+                      (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne};
+  CFTypeRef out = NULL;
+  if (SecItemCopyMatching((__bridge CFDictionaryRef)q, &out) != errSecSuccess) return nil;
+  NSData *d = CFBridgingRelease(out);
+  return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+}
+
+static BOOL AIKeychainSet(NSString *account, NSString *value) {
+  if (!account.length) return NO;
+  NSData *d = [value dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+  NSDictionary *q = @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+                      (__bridge id)kSecAttrService: kAIKeychainService,
+                      (__bridge id)kSecAttrAccount: account};
+  NSDictionary *attrs = @{(__bridge id)kSecValueData: d,
+                          (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleAfterFirstUnlock};
+  OSStatus st = SecItemUpdate((__bridge CFDictionaryRef)q, (__bridge CFDictionaryRef)attrs);
+  if (st == errSecItemNotFound) {
+    NSMutableDictionary *add = [q mutableCopy];
+    [add addEntriesFromDictionary:attrs];
+    st = SecItemAdd((__bridge CFDictionaryRef)add, NULL);
+  }
+  return st == errSecSuccess;
+}
+
+static void AIKeychainDelete(NSString *account) {
+  if (!account.length) return;
+  NSDictionary *q = @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+                      (__bridge id)kSecAttrService: kAIKeychainService,
+                      (__bridge id)kSecAttrAccount: account};
+  SecItemDelete((__bridge CFDictionaryRef)q);
+}
+
+static NSArray<NSString *> *AIKeychainAccounts(void) {
+  NSDictionary *q = @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+                      (__bridge id)kSecAttrService: kAIKeychainService,
+                      (__bridge id)kSecReturnAttributes: @YES,
+                      (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitAll};
+  CFTypeRef out = NULL;
+  if (SecItemCopyMatching((__bridge CFDictionaryRef)q, &out) != errSecSuccess) return @[];
+  NSArray *items = CFBridgingRelease(out);
+  NSMutableArray *accounts = [NSMutableArray array];
+  for (id item in items) {
+    if ([item isKindOfClass:[NSDictionary class]] && [item[@"acct"] isKindOfClass:[NSString class]]) [accounts addObject:item[@"acct"]];
+  }
+  return accounts;
+}
 
 static double gPrevCPUBusy = 0, gPrevCPUTotal = 0;
 static unsigned long long gPrevNetIn = 0, gPrevNetOut = 0;
@@ -3883,12 +3939,44 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 - (void)loadAIEntries {
   NSData *d = [NSData dataWithContentsOfFile:[self aiStorePath]];
-  self.aiEntries = d ? ([[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] mutableCopy] ?: [NSMutableArray array]) : [NSMutableArray array];
+  id parsed = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  self.aiEntries = [parsed isKindOfClass:[NSArray class]] ? [parsed mutableCopy] : [NSMutableArray array];
+  BOOL migrated = NO;
+  for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
+    if (![self.aiEntries[i] isKindOfClass:[NSDictionary class]]) continue;
+    NSMutableDictionary *e = [self.aiEntries[i] mutableCopy];
+    NSString *kid = e[@"kid"];
+    if (!kid.length) { kid = [[NSUUID UUID] UUIDString]; e[@"kid"] = kid; migrated = YES; }
+    NSString *plain = e[@"api"] ?: @"";
+    if (plain.length) {
+      AIKeychainSet(kid, plain);
+    } else {
+      NSString *stored = AIKeychainGet(kid);
+      if (stored.length) e[@"api"] = stored;
+    }
+    self.aiEntries[i] = e;
+  }
   if (!self.aiSelected) self.aiSelected = [NSMutableSet set];
   if (!self.aiRevealedNames) self.aiRevealedNames = [NSMutableSet set];
+  if (migrated) [self saveAIEntries];
 }
+
 - (void)saveAIEntries {
-  NSData *d = [NSJSONSerialization dataWithJSONObject:self.aiEntries options:NSJSONWritingPrettyPrinted error:NULL];
+  NSMutableArray *stored = [NSMutableArray array];
+  for (NSDictionary *e in self.aiEntries) {
+    if (![e isKindOfClass:[NSDictionary class]]) continue;
+    NSMutableDictionary *m = [e mutableCopy];
+    NSString *key = m[@"api"] ?: @"";
+    NSString *kid = m[@"kid"];
+    if (!kid.length) { kid = [[NSUUID UUID] UUIDString]; m[@"kid"] = kid; }
+    if (key.length) AIKeychainSet(kid, key);
+    [m removeObjectForKey:@"api"];
+    [stored addObject:m];
+  }
+  NSMutableSet *liveKids = [NSMutableSet set];
+  for (NSDictionary *e in stored) if ([e[@"kid"] isKindOfClass:[NSString class]]) [liveKids addObject:e[@"kid"]];
+  for (NSString *acct in AIKeychainAccounts()) if (![liveKids containsObject:acct]) AIKeychainDelete(acct);
+  NSData *d = [NSJSONSerialization dataWithJSONObject:stored options:NSJSONWritingPrettyPrinted error:NULL];
   [d writeToFile:[self aiStorePath] atomically:YES];
 }
 - (void)buildAIView {
@@ -3897,7 +3985,7 @@ static BOOL ValidGroupName(NSString *raw) {
   v.dropAction = @selector(aiHandleDroppedFiles:);
   NSTextField *h = [self label:@"AI 管理" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
-  NSTextField *sub = [self label:@"集中管理 AI 服务、API 地址与密钥" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *sub = [self label:@"集中管理 AI 服务、API 地址与密钥；Key 存入 macOS 钥匙串" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 500, 18); [v addSubview:sub];
 
   [self loadAIEntries];
