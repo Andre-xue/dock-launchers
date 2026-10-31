@@ -9559,7 +9559,7 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)startQuickSceneSync {
   if (self.quickSceneSyncTimer) return;
   self.quickSceneDockSignature = [self currentDockGroupSignature];
-  self.quickSceneSyncTimer = [NSTimer scheduledTimerWithTimeInterval:0.8 target:self selector:@selector(quickSceneSyncTick:) userInfo:nil repeats:YES];
+  self.quickSceneSyncTimer = [NSTimer scheduledTimerWithTimeInterval:0.2 target:self selector:@selector(quickSceneSyncTick:) userInfo:nil repeats:YES];
   [[NSRunLoop mainRunLoop] addTimer:self.quickSceneSyncTimer forMode:NSRunLoopCommonModes];
 }
 
