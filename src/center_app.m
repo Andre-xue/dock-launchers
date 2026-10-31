@@ -349,6 +349,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableArray *aiEntries;
 @property (strong) NSMutableSet *aiSelected;
 @property (strong) NSMutableSet *aiRevealedNames;
+@property (strong) NSWindow *apiKeyDialogWindow;
+@property (strong) NSString *apiKeyDialogValue;
+@property (strong) NSTextField *apiKeyDialogField;
 @property (strong) NSArray *backupAppChoices;
 @property (strong) NSDate *lastAIQuotaRefresh;
 @property (strong) NSArray *aiVisibleEntries;
@@ -4314,16 +4317,53 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)aiToggleReveal:(NSButton *)b {
   NSInteger row = b.tag;
   if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
-  NSString *name = self.aiVisibleEntries[row][@"name"] ?: @"";
-  if ([self.aiRevealedNames containsObject:name]) {
-    [self.aiRevealedNames removeObject:name];
-    [self rebuildAIDisplay];
-    return;
-  }
+  NSDictionary *e = self.aiVisibleEntries[row];
+  NSString *key = e[@"api"] ?: @"";
+  if (!key.length) { [self showToast:@"该服务未填写 API Key"]; return; }
   if (![self requestAdminAuthentication]) return;
-  [self.aiRevealedNames addObject:name];
-  [self rebuildAIDisplay];
-  [self showToast:@"已验证管理员身份，API Key 临时显示"];
+  self.apiKeyDialogValue = key;
+  if (!self.apiKeyDialogWindow) {
+    self.apiKeyDialogWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,224) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.apiKeyDialogWindow.title = @"API Key";
+    self.apiKeyDialogWindow.releasedWhenClosed = NO;
+    self.apiKeyDialogWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.apiKeyDialogWindow.contentView;
+    NSTextField *title = [self label:@"API Key" size:17 bold:YES color:nil];
+    title.frame = NSMakeRect(24, 178, 400, 24); [cv addSubview:title];
+    NSTextField *hint = [self label:@"密钥已存入 macOS 钥匙串；复制后请注意不要泄露" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    hint.frame = NSMakeRect(24, 156, 510, 18); [cv addSubview:hint];
+    self.apiKeyDialogField = [[NSTextField alloc] initWithFrame:NSMakeRect(24, 108, 512, 30)];
+    self.apiKeyDialogField.editable = NO;
+    self.apiKeyDialogField.selectable = YES;
+    self.apiKeyDialogField.bezeled = YES;
+    self.apiKeyDialogField.font = [NSFont monospacedSystemFontOfSize:11.5 weight:NSFontWeightRegular];
+    [cv addSubview:self.apiKeyDialogField];
+    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(402, 42, 100, 32)];
+    copy.title = @"复制 Key"; copy.hoverColor = [NSColor systemGreenColor];
+    copy.target = self; copy.action = @selector(copyAPIKeyFromDialog:);
+    [copy applyColor:[NSColor controlAccentColor] textColor:[NSColor whiteColor]];
+    [cv addSubview:copy];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(510, 42, 26, 32)];
+    close.title = @"×"; close.hoverColor = [NSColor systemRedColor];
+    close.target = self; close.action = @selector(closeAPIKeyDialog:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:close];
+    [self.apiKeyDialogWindow center];
+  }
+  self.apiKeyDialogField.stringValue = key;
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.apiKeyDialogWindow makeKeyAndOrderFront:nil];
+  [self.apiKeyDialogWindow orderFrontRegardless];
+}
+
+- (void)copyAPIKeyFromDialog:(id)sender {
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:self.apiKeyDialogValue ?: @"" forType:NSPasteboardTypeString];
+  [self showToast:@"API Key 已复制"];
+}
+
+- (void)closeAPIKeyDialog:(id)sender {
+  [self.apiKeyDialogWindow orderOut:nil];
 }
 
 - (NSInteger)showChoiceDialogTitle:(NSString *)title message:(NSString *)message options:(NSArray *)options colors:(NSArray *)colors {
@@ -6304,11 +6344,10 @@ static BOOL ValidGroupName(NSString *raw) {
         l.frame = NSMakeRect(2, 16, col.width-34, 20);
         NSButton *eye = [[NSButton alloc] initWithFrame:NSMakeRect(col.width-30, 14, 26, 26)];
         eye.bordered = NO;
-        BOOL revealed = [self.aiRevealedNames containsObject:e[@"name"] ?: @""];
-        NSImage *icon = [NSImage imageWithSystemSymbolName:(revealed ? @"eye.slash" : @"eye") accessibilityDescription:@"显示 API Key"];
+        NSImage *icon = [NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:@"查看 API Key"];
         eye.image = icon;
         eye.contentTintColor = [NSColor secondaryLabelColor];
-        eye.toolTip = revealed ? @"隐藏 API Key" : @"显示 API Key（需要管理员密码）";
+        eye.toolTip = @"查看并复制 API Key（需要管理员密码）";
         eye.tag = row;
         eye.target = self;
         eye.action = @selector(aiToggleReveal:);
