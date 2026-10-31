@@ -9306,20 +9306,28 @@ static BOOL ValidGroupName(NSString *raw) {
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
     NSTextField *sub = [self label:@"保存常用提示词，双击复制到剪贴板" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 448, 400, 18); [cv addSubview:sub];
-    self.promptSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(20, 410, 300, 28)];
+    self.promptSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(20, 410, 230, 28)];
     self.promptSearch.placeholderString = @"搜索提示词";
     self.promptSearch.target = self; self.promptSearch.action = @selector(promptSearchChanged:);
     [self.promptSearch setContinuous:YES];
     [cv addSubview:self.promptSearch];
-    self.promptCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(328, 410, 160, 28) pullsDown:NO];
+    self.promptCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(258, 410, 150, 28) pullsDown:NO];
     self.promptCategoryPopup.target = self;
     self.promptCategoryPopup.action = @selector(promptCategoryChanged:);
     self.promptCategoryPopup.toolTip = @"按分类快速筛选提示词";
     [cv addSubview:self.promptCategoryPopup];
-    ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(570, 408, 110, 30)];
-    add.title = @"新增提示词"; add.hoverColor = [NSColor systemGreenColor];
+    ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(416, 408, 100, 30)];
+    add.title = @"新增"; add.hoverColor = [NSColor systemGreenColor];
     add.target = self; add.action = @selector(promptAdd:);
     [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
+    ColorHoverButton *importBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524, 408, 70, 30)];
+    importBtn.title = @"导入"; importBtn.hoverColor = [NSColor systemBlueColor];
+    importBtn.target = self; importBtn.action = @selector(promptImport:);
+    [importBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:importBtn];
+    ColorHoverButton *exportBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(600, 408, 80, 30)];
+    exportBtn.title = @"导出"; exportBtn.hoverColor = [NSColor systemPurpleColor];
+    exportBtn.target = self; exportBtn.action = @selector(promptExport:);
+    [exportBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:exportBtn];
 
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 64, 668, 330)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
@@ -9331,6 +9339,7 @@ static BOOL ValidGroupName(NSString *raw) {
       [self.promptTable addTableColumn:col];
     }
     self.promptTable.rowHeight = 40;
+    self.promptTable.allowsMultipleSelection = YES;
     self.promptTable.dataSource = self; self.promptTable.delegate = self;
     self.promptTable.target = self; self.promptTable.doubleAction = @selector(promptCopySelected:);
     sv.documentView = self.promptTable; [cv addSubview:sv];
@@ -9488,6 +9497,191 @@ static BOOL ValidGroupName(NSString *raw) {
   [[NSPasteboard generalPasteboard] clearContents];
   [[NSPasteboard generalPasteboard] setString:content forType:NSPasteboardTypeString];
   [self showToast:@"提示词已复制"];
+}
+
+static NSArray<NSString *> *ParseCSVLine(NSString *line) {
+  NSMutableArray *out = [NSMutableArray array];
+  NSMutableString *cur = [NSMutableString string];
+  BOOL quoted = NO;
+  for (NSUInteger i = 0; i < line.length; i++) {
+    unichar c = [line characterAtIndex:i];
+    if (c == '"') { quoted = !quoted; continue; }
+    if (c == ',' && !quoted) { [out addObject:cur]; cur = [NSMutableString string]; continue; }
+    [cur appendFormat:@"%C", c];
+  }
+  [out addObject:cur];
+  return out;
+}
+
+- (NSString *)trimmedPromptText:(NSString *)s {
+  return [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+}
+
+- (NSArray<NSDictionary *> *)parsePromptText:(NSString *)text type:(NSString *)ext {
+  NSMutableArray *out = [NSMutableArray array];
+  NSString *trimmed = [self trimmedPromptText:text];
+  if (!trimmed.length) return out;
+  if ([ext isEqualToString:@"json"]) {
+    NSData *d = [trimmed dataUsingEncoding:NSUTF8StringEncoding];
+    id obj = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+    NSArray *arr = nil;
+    if ([obj isKindOfClass:[NSArray class]]) arr = obj;
+    else if ([obj isKindOfClass:[NSDictionary class]] && [obj[@"prompts"] isKindOfClass:[NSArray class]]) arr = obj[@"prompts"];
+    for (id raw in arr) {
+      if (![raw isKindOfClass:[NSDictionary class]]) continue;
+      NSString *title = raw[@"title"] ?: raw[@"name"] ?: raw[@"名称"] ?: @"";
+      NSString *content = raw[@"content"] ?: raw[@"prompt"] ?: raw[@"内容"] ?: @"";
+      NSString *cat = raw[@"category"] ?: raw[@"分类"] ?: @"导入";
+      if (!content.length) continue;
+      if (!title.length) title = [[content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] firstObject] ?: @"导入提示词";
+      [out addObject:@{@"title": [self trimmedPromptText:title], @"category": [self trimmedPromptText:cat], @"content": content}];
+    }
+    if (out.count) return out;
+  }
+  if ([ext isEqualToString:@"csv"]) {
+    NSArray *lines = [trimmed componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    NSInteger start = 0;
+    NSInteger ti = 0, ci = 1, cti = 2;
+    if (lines.count) {
+      NSArray *head = ParseCSVLine(lines[0]);
+      for (NSInteger i = 0; i < (NSInteger)head.count; i++) {
+        NSString *h = [head[i] lowercaseString];
+        if ([h containsString:@"title"] || [h containsString:@"名称"] || [h containsString:@"标题"]) ti = i;
+        else if ([h containsString:@"content"] || [h containsString:@"prompt"] || [h containsString:@"内容"]) ci = i;
+        else if ([h containsString:@"category"] || [h containsString:@"分类"]) cti = i;
+      }
+      if ([head[ti] lowercaseString].length || [head[ci] lowercaseString].length) start = 1;
+    }
+    for (NSInteger i = start; i < (NSInteger)lines.count; i++) {
+      if (![self trimmedPromptText:lines[i]].length) continue;
+      NSArray *cols = ParseCSVLine(lines[i]);
+      if (cols.count <= MAX(ci, MAX(ti, cti))) continue;
+      NSString *content = cols[ci];
+      if (![self trimmedPromptText:content].length) continue;
+      [out addObject:@{@"title": [self trimmedPromptText:cols[ti]], @"category": [self trimmedPromptText:cols[cti]], @"content": content}];
+    }
+    if (out.count) return out;
+  }
+  // Markdown headings or plain-text blocks
+  NSArray *lines = [trimmed componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+  NSMutableArray *blocks = [NSMutableArray array];
+  NSMutableArray *cur = [NSMutableArray array];
+  for (NSString *line in lines) {
+    if ([line hasPrefix:@"#"]) {
+      if (cur.count) [blocks addObject:[cur copy]];
+      cur = [NSMutableArray array];
+      [cur addObject:[line stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"# "]]];
+    } else if ([line isEqualToString:@"---"] || [line isEqualToString:@"***"]) {
+      if (cur.count) [blocks addObject:[cur copy]];
+      cur = [NSMutableArray array];
+    } else {
+      [cur addObject:line];
+    }
+  }
+  if (cur.count) [blocks addObject:[cur copy]];
+  if (blocks.count <= 1 && [trimmed rangeOfString:@"\n\n"].location != NSNotFound) {
+    [blocks removeAllObjects];
+    for (NSString *chunk in [trimmed componentsSeparatedByString:@"\n\n"]) {
+      if ([self trimmedPromptText:chunk].length) [blocks addObject:[chunk componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]];
+    }
+  }
+  for (NSArray *block in blocks) {
+    NSMutableArray *body = [NSMutableArray array];
+    NSString *title = @"";
+    NSString *category = @"导入";
+    for (NSString *raw in block) {
+      NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if (!line.length) continue;
+      NSString *strongCat = [line hasPrefix:@"**分类："] ? [line stringByReplacingOccurrencesOfString:@"**" withString:@""] : nil;
+      if (!strongCat) strongCat = [line hasPrefix:@"**分类:"] ? [line stringByReplacingOccurrencesOfString:@"**" withString:@""] : nil;
+      if (strongCat) line = strongCat;
+      if ([line hasPrefix:@"分类:"] || [line hasPrefix:@"分类："]) { category = [self trimmedPromptText:[line substringFromIndex:3]]; continue; }
+      if ([line hasPrefix:@"标题:"] || [line hasPrefix:@"标题："]) { title = [self trimmedPromptText:[line substringFromIndex:3]]; continue; }
+      if (!title.length) { title = line; continue; }
+      [body addObject:line];
+    }
+    if (body.count || title.length) {
+      if (!body.count) continue;
+      if (!title.length) title = body.firstObject;
+      [out addObject:@{@"title": [self trimmedPromptText:title], @"category": category, @"content": [body componentsJoinedByString:@"\n"]}];
+    }
+  }
+  return out;
+}
+
+- (void)promptImport:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = NO;
+  p.allowedFileTypes = @[@"json", @"md", @"markdown", @"txt", @"csv"];
+  p.message = @"选择要导入的提示词文本文件";
+  if ([p runModal] != NSModalResponseOK) return;
+  NSURL *u = p.URL;
+  NSString *text = [NSString stringWithContentsOfURL:u usedEncoding:NULL error:NULL];
+  if (!text) text = [NSString stringWithContentsOfURL:u encoding:NSUTF8StringEncoding error:NULL];
+  if (!text) text = [NSString stringWithContentsOfURL:u encoding:NSISOLatin1StringEncoding error:NULL];
+  if (!text.length) { [self showToast:@"文件读取失败"]; return; }
+  NSArray *parsed = [self parsePromptText:text type:u.pathExtension.lowercaseString];
+  if (!parsed.count) { [self showToast:@"未解析到提示词，请检查文件格式"]; return; }
+  NSInteger added = 0;
+  for (NSDictionary *item in parsed) {
+    BOOL exists = NO;
+    for (NSDictionary *old in self.prompts) if ([old[@"title"] isEqual:item[@"title"]] && [old[@"content"] isEqual:item[@"content"]]) { exists = YES; break; }
+    if (exists) continue;
+    [self.prompts addObject:item]; added++;
+  }
+  [self savePrompts];
+  self.promptPage = 0;
+  [self refreshPromptCategories];
+  [self reloadPromptTable];
+  [self showToast:[NSString stringWithFormat:@"已导入 %ld 条提示词", (long)added]];
+}
+
+- (void)promptExport:(id)sender {
+  NSMutableArray *selected = [NSMutableArray array];
+  for (NSNumber *n in self.promptTable.selectedRowIndexes) {
+    NSInteger row = n.integerValue;
+    if (row >= 0 && row < (NSInteger)self.promptPageItems.count) {
+      NSDictionary *sel = self.promptPageItems[row];
+      for (NSDictionary *p in self.prompts) if ([p[@"title"] isEqual:sel[@"title"]] && [p[@"content"] isEqual:sel[@"content"]]) { [selected addObject:p]; break; }
+    }
+  }
+  NSArray *items = selected.count ? selected : self.prompts;
+  if (!items.count) { [self showToast:@"没有可导出的提示词"]; return; }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"导出提示词";
+  a.informativeText = [NSString stringWithFormat:@"将导出 %ld 条提示词，选择文件格式：", (long)items.count];
+  NSPopUpButton *fmt = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,0,240,28) pullsDown:NO];
+  [fmt addItemsWithTitles:@[@"JSON", @"Markdown", @"纯文本", @"CSV"]];
+  a.accessoryView = fmt;
+  [a addButtonWithTitle:@"选择保存位置"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSInteger idx = fmt.indexOfSelectedItem;
+  NSString *ext = idx == 0 ? @"json" : (idx == 1 ? @"md" : (idx == 2 ? @"txt" : @"csv"));
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  sp.nameFieldStringValue = [NSString stringWithFormat:@"提示词库.%@", ext];
+  sp.allowedFileTypes = @[ext];
+  if ([sp runModal] != NSModalResponseOK) return;
+  NSMutableString *out = [NSMutableString string];
+  if (idx == 0) {
+    NSData *d = [NSJSONSerialization dataWithJSONObject:items options:NSJSONWritingPrettyPrinted error:NULL];
+    [d writeToFile:sp.URL.path atomically:YES];
+  } else {
+    for (NSDictionary *p in items) {
+      NSString *title = p[@"title"] ?: @"";
+      NSString *cat = p[@"category"] ?: @"";
+      NSString *content = p[@"content"] ?: @"";
+      if (idx == 1) [out appendFormat:@"# %@\n\n**分类：** %@\n\n%@\n\n---\n\n", title, cat, content];
+      else if (idx == 2) [out appendFormat:@"标题：%@\n分类：%@\n%@\n\n---\n\n", title, cat, content];
+      else {
+        NSString *(^q)(NSString *) = ^NSString *(NSString *s) { return [s stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]; };
+        [out appendFormat:@"\"%@\",\"%@\",\"%@\"\n", q(title), q(cat), q(content)];
+      }
+    }
+    if (idx == 3) [out insertString:@"title,category,content\n" atIndex:0];
+    [out writeToFile:sp.URL.path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  }
+  [self showToast:[NSString stringWithFormat:@"已导出 %ld 条提示词", (long)items.count]];
 }
 
 - (void)promptPrevPage:(id)sender {
