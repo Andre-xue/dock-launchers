@@ -1648,6 +1648,14 @@ static void HideDockHoverTip(void) {
       [self refreshDiskAnalysis];
     });
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      self.quickTabs.selectedSegment = 2;
+      [self quickTabChanged:nil];
+      [self togglePopover:nil];
+      if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI_HIDE_MAIN")) [self.window orderOut:nil];
+    });
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self togglePopover:nil];
@@ -7197,9 +7205,16 @@ static BOOL ValidGroupName(NSString *raw) {
   else if (tv == 2) ap = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
   NSApp.appearance = ap;
   self.window.appearance = ap;
+  if (self.popover) {
+    self.popover.appearance = ap;
+    if (self.popover.contentViewController.view) {
+      self.popover.contentViewController.view.appearance = ap;
+      [self applyAppearanceRecursively:self.popover.contentViewController.view appearance:ap];
+    }
+  }
   [self applyAppearanceRecursively:self.window.contentView appearance:ap];
-  if (self.popover.contentViewController.view) [self applyAppearanceRecursively:self.popover.contentViewController.view appearance:ap];
   [self refreshThemeColors];
+  if (self.popover.isShown && self.quickTabs.selectedSegment == 2) [self rebuildQuickAITab];
 }
 
 - (void)refreshThemeColors {
@@ -7286,6 +7301,7 @@ static BOOL ValidGroupName(NSString *raw) {
   self.popover = pop;
   NSViewController *vc = [[NSViewController alloc] init];
   NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0,0,420,620)];
+  root.appearance = NSApp.effectiveAppearance;
   vc.view = root;
 
   self.quickTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(12, 574, 300, 28)];
