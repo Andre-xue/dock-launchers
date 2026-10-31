@@ -221,7 +221,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 
 @class QuickPanelController;
 
-@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
+@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate>
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
 @property (strong) NSWindow *window;
@@ -235,6 +235,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSView *liveView, *groupsView, *uninstallView, *settingsView;
 @property (strong) NSMutableSet *builtSections;
 @property (strong) QuickPanelController *quickPanel;
+@property NSInteger alertCPUCount, alertMemCount;
+@property (strong) NSMutableDictionary *alertLastTimes;
+@property (strong) NSWindow *alertSettingsWindow;
 @property EventHotKeyRef quickPanelHotKey;
 - (void)showQuickPanel;
 @property (strong) NSWindow *compressWindow;
@@ -1660,6 +1663,11 @@ static void HideDockHoverTip(void) {
           [self.popover showRelativeToRect:self.statusItem.button.bounds ofView:self.statusItem.button preferredEdge:NSRectEdgeMinY];
         }
       });
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_ALERTS")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self openAlertSettings:nil];
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_QUICK")) {
@@ -6968,6 +6976,97 @@ static BOOL ValidGroupName(NSString *raw) {
   }];
 }
 
+- (BOOL)alertEnabledKey:(NSString *)key {
+  id v = [[NSUserDefaults standardUserDefaults] objectForKey:key];
+  return v ? [v boolValue] : YES;
+}
+
+- (void)postAlertWithKey:(NSString *)key title:(NSString *)title body:(NSString *)body {
+  if (!self.alertLastTimes) self.alertLastTimes = [NSMutableDictionary dictionary];
+  NSTimeInterval last = [self.alertLastTimes[key] doubleValue];
+  NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+  if (last > 0 && now - last < 1800) return;
+  self.alertLastTimes[key] = @(now);
+  NSUserNotification *n = [[NSUserNotification alloc] init];
+  n.title = title;
+  n.informativeText = body;
+  n.soundName = NSUserNotificationDefaultSoundName;
+  [[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification:n];
+  [self showToast:[NSString stringWithFormat:@"%@：%@", title, body]];
+}
+
+- (void)evaluateAlertsCPU:(double)cpu memory:(double)mem diskFree:(unsigned long long)free battery:(double)bat onBattery:(BOOL)onBattery {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  if ([self alertEnabledKey:@"centerAlertCPU"]) {
+    if (cpu >= 90) self.alertCPUCount++; else self.alertCPUCount = 0;
+    if (self.alertCPUCount >= 5) { [self postAlertWithKey:@"cpu" title:@"CPU 持续高占用" body:[NSString stringWithFormat:@"CPU 已连续 10 秒高于 90%%（当前 %.0f%%）", cpu]]; self.alertCPUCount = 0; }
+  }
+  if ([self alertEnabledKey:@"centerAlertMem"]) {
+    if (mem >= 90) self.alertMemCount++; else self.alertMemCount = 0;
+    if (self.alertMemCount >= 5) { [self postAlertWithKey:@"mem" title:@"内存占用过高" body:[NSString stringWithFormat:@"内存占用已超过 90%%（当前 %.0f%%）", mem]]; self.alertMemCount = 0; }
+  }
+  if ([self alertEnabledKey:@"centerAlertDisk"] && free > 0 && free < 10ULL*1024*1024*1024) {
+    [self postAlertWithKey:@"disk" title:@"磁盘可用空间不足" body:[NSString stringWithFormat:@"系统盘仅剩 %@", [self gbString:free]]];
+  }
+  if ([self alertEnabledKey:@"centerAlertBattery"] && onBattery && bat > 0 && bat <= 20) {
+    [self postAlertWithKey:@"battery" title:@"电量偏低" body:[NSString stringWithFormat:@"当前电量 %.0f%%，请及时充电", bat]];
+  }
+  (void)ud;
+}
+
+- (void)evaluateAIQuotaAlert {
+  if (![self alertEnabledKey:@"centerAlertAI"]) return;
+  for (NSDictionary *e in self.aiEntries) {
+    NSString *q = e[@"quota"] ?: @"";
+    if (!q.length) continue;
+    NSScanner *sc = [NSScanner scannerWithString:q];
+    double val = 0;
+    if ([sc scanDouble:&val] && val > 0 && val < 5) {
+      [self postAlertWithKey:[NSString stringWithFormat:@"ai:%@", e[@"name"] ?: @""] title:@"AI 余额不足" body:[NSString stringWithFormat:@"%@ 仅剩 %@", e[@"name"] ?: @"服务", q]];
+    }
+  }
+}
+
+- (void)openAlertSettings:(id)sender {
+  if (!self.alertSettingsWindow) {
+    self.alertSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,470,300) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.alertSettingsWindow.title = @"告警设置";
+    self.alertSettingsWindow.releasedWhenClosed = NO;
+    self.alertSettingsWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.alertSettingsWindow.contentView;
+    NSTextField *t = [self label:@"资源与余额提醒" size:17 bold:YES color:nil];
+    t.frame = NSMakeRect(24, 252, 300, 24); [cv addSubview:t];
+    NSTextField *h = [self label:@"同一告警 30 分钟内只提醒一次；阈值固定" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24, 230, 420, 18); [cv addSubview:h];
+    NSArray *items = @[@"CPU 持续高于 90%（约 10 秒）", @"内存占用高于 90%", @"系统盘可用空间低于 10 GB", @"使用电池时电量低于 20%", @"AI 服务余额低于 5"];
+    NSArray *keys = @[@"centerAlertCPU", @"centerAlertMem", @"centerAlertDisk", @"centerAlertBattery", @"centerAlertAI"];
+    for (NSInteger i = 0; i < items.count; i++) {
+      NSButton *cb = [NSButton checkboxWithTitle:items[i] target:self action:@selector(toggleAlertOption:)];
+      cb.tag = i;
+      cb.state = [self alertEnabledKey:keys[i]] ? NSControlStateValueOn : NSControlStateValueOff;
+      cb.frame = NSMakeRect(28, 184 - i * 32, 410, 24);
+      [cv addSubview:cb];
+    }
+    NSTextField *note = [self label:@"提示：告警通过 macOS 通知中心显示，请确保允许通知" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    note.frame = NSMakeRect(24, 18, 420, 16); [cv addSubview:note];
+    [self.alertSettingsWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.alertSettingsWindow makeKeyAndOrderFront:nil];
+  [self.alertSettingsWindow orderFrontRegardless];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    [self.alertSettingsWindow orderFrontRegardless];
+  });
+}
+
+- (void)toggleAlertOption:(NSButton *)b {
+  NSArray *keys = @[@"centerAlertCPU", @"centerAlertMem", @"centerAlertDisk", @"centerAlertBattery", @"centerAlertAI"];
+  if (b.tag < 0 || b.tag >= (NSInteger)keys.count) return;
+  [[NSUserDefaults standardUserDefaults] setBool:(b.state == NSControlStateValueOn) forKey:keys[b.tag]];
+}
+
+- (BOOL)userNotificationCenter:(NSUserNotificationCenter *)center shouldPresentNotification:(NSUserNotification *)notification { return YES; }
+
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"设置" size:24 bold:YES color:nil];
@@ -7361,6 +7460,7 @@ static BOOL ValidGroupName(NSString *raw) {
         m[@"quota"] = quota;
         self.aiEntries[idx] = m;
         [self saveAIEntries];
+        [self evaluateAIQuotaAlert];
       }
       if (completion) completion(quota);
     });
@@ -8949,6 +9049,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.quickMemSub.stringValue = [NSString stringWithFormat:@"%@ / %@ · 压力正常", [self gbString:memUsed], [self gbString:memTotal]];
     self.quickDiskSub.stringValue = [NSString stringWithFormat:@"可用 %@ / 总计 %@", [self gbString:diskFree], [self gbString:diskTotal]];
   }
+  [self evaluateAlertsCPU:cpuPct memory:memPct diskFree:diskFree battery:self.quickBat.stringValue.doubleValue onBattery:[self.quickBatteryState isEqualToString:@"使用电池"]];
   if (getenv("DOCKLAUNCHERS_CENTER_TRACE")) fprintf(stderr, "TRACE cpu=%.0f mem=%.0f cols=%ld\n", cpuPct, memPct, (long)self.metricColumns.count);
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
   self.statusItem.button.title = @"";
