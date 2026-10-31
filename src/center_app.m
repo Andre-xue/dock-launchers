@@ -403,6 +403,10 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSSearchField *clipboardSearch;
 @property BOOL clipboardFavoritesOnly;
 @property (strong) NSPopUpButton *clipboardDaysPopup;
+@property (strong) NSWindow *processWindow;
+@property (strong) NSTableView *processTable;
+@property (strong) NSArray *processItems;
+@property (strong) NSTimer *processTimer;
 @property (strong) NSTimer *clipboardTimer;
 @property NSInteger clipboardLastChange;
 @property (strong) NSString *clipboardLastText;
@@ -7087,6 +7091,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.processTable) return self.processItems.count;
   if (tableView == self.usageTable) return self.usageRows.count;
   if (tableView == self.playerChooserTable) return self.playerChooserApps.count;
   if (tableView == self.appShortcutTable) return self.appShortcuts.count;
@@ -7105,6 +7110,26 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.processTable) {
+    if (row < 0 || row >= (NSInteger)self.processItems.count) return nil;
+    NSDictionary *p = self.processItems[row];
+    NSString *ident = col.identifier;
+    if ([ident isEqualToString:@"proc"]) {
+      NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
+      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(4, 4, 24, 24)];
+      iv.image = [[NSWorkspace sharedWorkspace] iconForFile:p[@"path"]];
+      [v addSubview:iv];
+      NSTextField *l = [self label:p[@"name"] size:11.5 bold:YES color:nil];
+      l.lineBreakMode = NSLineBreakByTruncatingTail;
+      l.frame = NSMakeRect(34, 8, col.width - 40, 18); [v addSubview:l];
+      return v;
+    }
+    NSString *text = [ident isEqualToString:@"pid"] ? [p[@"pid"] stringValue] : ([ident isEqualToString:@"cpu"] ? [NSString stringWithFormat:@"%.1f%%", [p[@"cpu"] doubleValue]] : [NSString stringWithFormat:@"%.0f MB", [p[@"mem"] doubleValue]]);
+    NSTextField *l = [self label:text size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    l.alignment = [ident isEqualToString:@"proc"] ? NSTextAlignmentLeft : NSTextAlignmentRight;
+    l.frame = NSMakeRect(4, 8, col.width - 8, 18);
+    return l;
+  }
   if (tableView == self.usageTable) {
     if (row < 0 || row >= (NSInteger)self.usageRows.count) return nil;
     NSDictionary *r = self.usageRows[row];
@@ -8549,6 +8574,113 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)closeUsageStats:(id)sender { [self.usageWindow orderOut:nil]; }
 
+- (void)showProcessManager:(id)sender {
+  if (!self.processWindow) {
+    self.processWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.processWindow.title = @"进程管理";
+    self.processWindow.releasedWhenClosed = NO;
+    self.processWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.processWindow.contentView;
+    NSTextField *title = [self label:@"进程管理" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"按 CPU 占用排序；结束进程前会确认" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 448, 500, 18); [cv addSubview:sub];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 608, 360)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.processTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"proc", @"进程", @300.0], @[@"pid", @"PID", @70.0], @[@"cpu", @"CPU", @90.0], @[@"mem", @"内存", @110.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.processTable addTableColumn:col];
+    }
+    self.processTable.rowHeight = 34;
+    self.processTable.dataSource = self; self.processTable.delegate = self;
+    sv.documentView = self.processTable;
+    [cv addSubview:sv];
+    NSButton *autoRefresh = [NSButton checkboxWithTitle:@"自动刷新" target:self action:@selector(toggleProcessAutoRefresh:)];
+    autoRefresh.state = NSControlStateValueOn;
+    autoRefresh.frame = NSMakeRect(18, 44, 110, 22); [cv addSubview:autoRefresh];
+    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(130, 36, 90, 30)];
+    refresh.title = @"刷新"; refresh.hoverColor = [NSColor systemGreenColor];
+    refresh.target = self; refresh.action = @selector(refreshProcessList:);
+    [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *kill = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(372, 36, 110, 30)];
+    kill.title = @"结束进程"; kill.hoverColor = [NSColor systemRedColor];
+    kill.target = self; kill.action = @selector(endProcessSelected:);
+    [kill applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:kill];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(520, 36, 100, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeProcessManager:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.processWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.processWindow makeKeyAndOrderFront:nil];
+  [self.processWindow orderFrontRegardless];
+  [self refreshProcessList:nil];
+  [self.processTimer invalidate];
+  self.processTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refreshProcessList:) userInfo:nil repeats:YES];
+}
+
+- (void)refreshProcessList:(id)sender {
+  if (!self.processWindow.isVisible) return;
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/bin/ps";
+  t.arguments = @[@"-axo", @"pid=,pcpu=,rss=,comm="];
+  NSPipe *pipe = [NSPipe pipe]; t.standardOutput = pipe;
+  NSMutableArray *rows = [NSMutableArray array];
+  @try {
+    [t launch];
+    NSData *d = [pipe.fileHandleForReading readDataToEndOfFile];
+    [t waitUntilExit];
+    NSString *out = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
+    for (NSString *line in [out componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      NSArray *parts = [line componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      NSMutableArray *tok = [NSMutableArray array];
+      for (NSString *p in parts) if (p.length) [tok addObject:p];
+      if (tok.count < 4) continue;
+      NSInteger pid = [tok[0] integerValue];
+      if (pid <= 1 || pid == getpid()) continue;
+      double cpu = [tok[1] doubleValue];
+      double memMB = [tok[2] doubleValue] / 1024.0;
+      NSString *comm = tok[3];
+      NSString *name = comm.lastPathComponent;
+      [rows addObject:@{@"pid": @(pid), @"cpu": @(cpu), @"mem": @(memMB), @"name": name, @"path": comm}];
+    }
+  } @catch (NSException *e) {}
+  [rows sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"cpu"] compare:a[@"cpu"]]; }];
+  self.processItems = rows;
+  [self.processTable reloadData];
+}
+
+- (void)toggleProcessAutoRefresh:(NSButton *)sender {
+  [self.processTimer invalidate]; self.processTimer = nil;
+  if (sender.state == NSControlStateValueOn) self.processTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refreshProcessList:) userInfo:nil repeats:YES];
+}
+
+- (void)endProcessSelected:(id)sender {
+  NSInteger row = self.processTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.processItems.count) return;
+  NSDictionary *p = self.processItems[row];
+  NSInteger pid = [p[@"pid"] integerValue];
+  if (pid <= 1 || pid == getpid()) return;
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"结束进程「%@」？", p[@"name"]];
+  a.informativeText = [NSString stringWithFormat:@"PID %ld，CPU %.1f%%，内存 %.0f MB\n未保存的数据可能丢失。", (long)pid, [p[@"cpu"] doubleValue], [p[@"mem"] doubleValue]];
+  [a addButtonWithTitle:@"结束进程"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  if (kill((pid_t)pid, SIGTERM) != 0) [self showToast:@"结束失败，可能需要更高权限"];
+  else [self showToast:@"已发送结束信号"];
+  [self refreshProcessList:nil];
+}
+
+- (void)closeProcessManager:(id)sender {
+  [self.processTimer invalidate]; self.processTimer = nil;
+  [self.processWindow orderOut:nil];
+}
+
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"设置" size:24 bold:YES color:nil];
@@ -8718,6 +8850,14 @@ static BOOL ValidGroupName(NSString *raw) {
   passwordBtn.target = self; passwordBtn.action = @selector(showPasswordSettings:);
   [passwordBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [tPassword addSubview:passwordBtn];
+
+  NSView *tProcess = tileAt(2, 130); tileLabel(tProcess, @"进程管理");
+  ColorHoverButton *processBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
+  processBtn.title = @"打开进程管理…"; processBtn.hoverColor = [NSColor systemTealColor];
+  processBtn.target = self; processBtn.action = @selector(showProcessManager:);
+  [processBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  processBtn.toolTip = @"查看 CPU / 内存占用并结束进程";
+  [tProcess addSubview:processBtn];
 
   // 底部操作
   NSArray *actions = @[@[@"关于", @"showAbout:", @(24), @(90), [NSColor systemGreenColor]],
