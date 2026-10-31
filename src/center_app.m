@@ -43,14 +43,20 @@ static BOOL AIKeychainSet(NSString *account, NSString *value) {
   NSDictionary *q = @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
                       (__bridge id)kSecAttrService: kAIKeychainService,
                       (__bridge id)kSecAttrAccount: account};
-  NSDictionary *attrs = @{(__bridge id)kSecValueData: d,
-                          (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleAfterFirstUnlock};
-  OSStatus st = SecItemUpdate((__bridge CFDictionaryRef)q, (__bridge CFDictionaryRef)attrs);
-  if (st == errSecItemNotFound) {
-    NSMutableDictionary *add = [q mutableCopy];
-    [add addEntriesFromDictionary:attrs];
-    st = SecItemAdd((__bridge CFDictionaryRef)add, NULL);
-  }
+  // 删除旧项后用宽松访问控制重建，避免每次重新签名后重复弹密码
+  SecItemDelete((__bridge CFDictionaryRef)q);
+  SecAccessRef access = NULL;
+  SecTrustedApplicationRef trustedApp = NULL;
+  SecTrustedApplicationCreateFromPath(NULL, &trustedApp);
+  NSArray *trusted = trustedApp ? @[(__bridge id)trustedApp] : nil;
+  SecAccessCreate(CFSTR("DockLaunchers AI Keys"), (__bridge CFArrayRef)trusted, &access);
+  if (trustedApp) CFRelease(trustedApp);
+  NSMutableDictionary *add = [q mutableCopy];
+  add[(__bridge id)kSecValueData] = d;
+  add[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAfterFirstUnlock;
+  if (access) add[(__bridge id)kSecAttrAccess] = (__bridge id)access;
+  OSStatus st = SecItemAdd((__bridge CFDictionaryRef)add, NULL);
+  if (access) CFRelease(access);
   return st == errSecSuccess;
 }
 
@@ -3978,6 +3984,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSString *plain = e[@"api"] ?: @"";
     if (plain.length) {
       AIKeychainSet(kid, plain);
+      migrated = YES;
     } else {
       NSString *stored = AIKeychainGet(kid);
       if (stored.length) e[@"api"] = stored;
@@ -7641,114 +7648,146 @@ static BOOL ValidGroupName(NSString *raw) {
   NSTextField *sub = [self label:@"常用、同步、相册与磁盘相关选项集中管理" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 500, 18); [v addSubview:sub];
 
-  NSView *c1 = [self cardAt:NSMakeRect(24, 430, 700, 150)]; [v addSubview:c1];
-  NSTextField *t1 = [self label:@"常规" size:13 bold:YES color:nil]; t1.frame = NSMakeRect(20, 116, 200, 20); [c1 addSubview:t1];
-  NSTextField *themeLabel = [self label:@"显示主题" size:12.5 bold:NO color:nil];
-  themeLabel.frame = NSMakeRect(320, 116, 70, 20); [c1 addSubview:themeLabel];
-  self.themePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(392, 110, 110, 28) pullsDown:NO];
+  CGFloat colX[3] = {24, 264, 504};
+  CGFloat tileW = 222, tileH = 64, gap = 10;
+  NSArray *colTitles = @[@"常规", @"同步与文件", @"相册与磁盘"];
+  for (NSInteger c = 0; c < 3; c++) {
+    NSTextField *ct = [self label:colTitles[c] size:14 bold:YES color:nil];
+    ct.frame = NSMakeRect(colX[c], 540, tileW, 20);
+    ct.alignment = NSTextAlignmentCenter;
+    [v addSubview:ct];
+  }
+  NSView *(^tileAt)(NSInteger, CGFloat) = ^NSView *(NSInteger col, CGFloat y) {
+    CGFloat x = col == 0 ? 24 : (col == 1 ? 264 : 504);
+    NSView *t = [self cardAt:NSMakeRect(x, y - 34, tileW, tileH)];
+    t.layer.cornerRadius = 12;
+    [v addSubview:t];
+    return t;
+  };
+  NSTextField *(^tileLabel)(NSView *, NSString *) = ^NSTextField *(NSView *t, NSString *text) {
+    NSTextField *l = [self label:text size:10.5 bold:YES color:nil];
+    l.alignment = NSTextAlignmentCenter;
+    l.frame = NSMakeRect(10, 38, tileW - 20, 18);
+    [t addSubview:l];
+    return l;
+  };
+
+  // 第一列：常规
+  NSView *tTheme = tileAt(0, 500); tileLabel(tTheme, @"显示主题");
+  self.themePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26) pullsDown:NO];
   [self.themePopup addItemsWithTitles:@[@"跟随系统", @"亮色", @"暗色"]];
   NSInteger tv = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerTheme"];
   [self.themePopup selectItemAtIndex:(tv >= 0 && tv <= 2 ? tv : 0)];
   self.themePopup.target = self; self.themePopup.action = @selector(themeChanged:);
-  self.themePopup.toolTip = @"切换控制台整体外观：跟随系统 / 亮色 / 暗色";
-  [c1 addSubview:self.themePopup];
-  NSTextField *zoomLabel = [self label:@"界面缩放" size:12.5 bold:NO color:nil];
-  zoomLabel.frame = NSMakeRect(510, 116, 70, 20); [c1 addSubview:zoomLabel];
-  NSPopUpButton *zoomPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(582, 110, 110, 28) pullsDown:NO];
+  self.themePopup.toolTip = @"切换控制台整体外观";
+  [tTheme addSubview:self.themePopup];
+
+  NSView *tZoom = tileAt(0, 426); tileLabel(tZoom, @"界面缩放");
+  NSPopUpButton *zoomPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26) pullsDown:NO];
   [zoomPopup addItemsWithTitles:@[@"100%", @"110%", @"120%", @"135%", @"150%", @"175%"]];
   [zoomPopup selectItemAtIndex:0];
   zoomPopup.target = self; zoomPopup.action = @selector(uiZoomChanged:);
-  zoomPopup.toolTip = @"放大或缩小整个页面的文字和控件";
-  [c1 addSubview:zoomPopup];
-  self.menuBarCheck = [NSButton checkboxWithTitle:@"菜单栏仅显示图标（文字已移除）" target:nil action:nil];
-  self.menuBarCheck.state = NSControlStateValueOff;
-  self.menuBarCheck.enabled = NO;
-  self.menuBarCheck.frame = NSMakeRect(20, 82, 520, 24); self.menuBarCheck.toolTip = @"菜单栏不再显示 CPU / 内存数字"; [c1 addSubview:self.menuBarCheck];
-  NSTextField *il = [self label:@"采样间隔" size:12.5 bold:NO color:nil];
-  il.frame = NSMakeRect(20, 44, 90, 20); [c1 addSubview:il];
-  self.intervalPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(112, 38, 140, 28) pullsDown:NO];
+  zoomPopup.toolTip = @"放大或缩小整个页面";
+  [tZoom addSubview:zoomPopup];
+
+  NSView *tInterval = tileAt(0, 352); tileLabel(tInterval, @"采样间隔");
+  self.intervalPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26) pullsDown:NO];
   [self.intervalPopup addItemsWithTitles:@[@"1 秒", @"2 秒", @"5 秒", @"10 秒"]];
   NSInteger saved = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerInterval"];
   NSArray *secs = @[@1,@2,@5,@10];
   NSInteger sel = [secs indexOfObject:@(saved)];
   [self.intervalPopup selectItemAtIndex:(sel == NSNotFound ? 1 : sel)];
-  self.intervalPopup.target = self; self.intervalPopup.action = @selector(intervalChanged:); self.intervalPopup.toolTip = @"实时数据刷新间隔，越短越及时但更耗电";
-  [c1 addSubview:self.intervalPopup];
-  self.loginCheck = [NSButton checkboxWithTitle:@"开机自动启动控制台" target:self action:@selector(toggleLoginItem:)];
+  self.intervalPopup.target = self; self.intervalPopup.action = @selector(intervalChanged:);
+  [tInterval addSubview:self.intervalPopup];
+
+  NSView *tLogin = tileAt(0, 278);
+  self.loginCheck = [NSButton checkboxWithTitle:@"开机自动启动" target:self action:@selector(toggleLoginItem:)];
   self.loginCheck.state = [[NSFileManager defaultManager] fileExistsAtPath:[self loginPlistPath]] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.loginCheck.frame = NSMakeRect(20, 8, 520, 24); self.loginCheck.toolTip = @"登录 macOS 时自动启动控制台"; [c1 addSubview:self.loginCheck];
-  ColorHoverButton *alertsBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(552, 38, 128, 28)];
+  self.loginCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
+  self.loginCheck.toolTip = @"登录 macOS 时自动启动控制台";
+  [tLogin addSubview:self.loginCheck];
+
+  NSView *tAlert = tileAt(0, 204); tileLabel(tAlert, @"资源与余额提醒");
+  ColorHoverButton *alertsBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
   alertsBtn.title = @"告警设置…"; alertsBtn.hoverColor = [NSColor systemOrangeColor];
   alertsBtn.target = self; alertsBtn.action = @selector(openAlertSettings:);
-  alertsBtn.toolTip = @"设置 CPU、内存、磁盘、电量、AI 余额提醒";
   [alertsBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [c1 addSubview:alertsBtn];
-  ColorHoverButton *appShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(552, 78, 128, 28)];
+  [tAlert addSubview:alertsBtn];
+
+  NSView *tShortcut = tileAt(0, 130); tileLabel(tShortcut, @"应用内快捷键");
+  ColorHoverButton *appShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
   appShortcutBtn.title = @"快捷键设置…"; appShortcutBtn.hoverColor = [NSColor systemPurpleColor];
   appShortcutBtn.target = self; appShortcutBtn.action = @selector(showAppShortcutSettings:);
-  appShortcutBtn.toolTip = @"设置只在控制台内生效的应用快捷键";
   [appShortcutBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [c1 addSubview:appShortcutBtn];
+  [tShortcut addSubview:appShortcutBtn];
 
-  NSView *c2 = [self cardAt:NSMakeRect(24, 270, 700, 146)]; [v addSubview:c2];
-  NSTextField *t2 = [self label:@"同步与文件" size:13 bold:YES color:nil]; t2.frame = NSMakeRect(20, 112, 220, 20); [c2 addSubview:t2];
-  self.autoSyncCheck = [NSButton checkboxWithTitle:@"自动同步（外部卸载应用后清理分组）" target:self action:@selector(toggleAutoSync:)];
+  // 第二列：同步与文件
+  NSView *tSync = tileAt(1, 500);
+  self.autoSyncCheck = [NSButton checkboxWithTitle:@"自动同步分组" target:self action:@selector(toggleAutoSync:)];
   id autoSyncVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerAutoSync"];
   self.autoSyncCheck.state = (autoSyncVal ? [autoSyncVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
-  self.autoSyncCheck.frame = NSMakeRect(20, 78, 560, 24); self.autoSyncCheck.toolTip = @"应用被卸载后自动清理分组中的失效条目"; [c2 addSubview:self.autoSyncCheck];
-  self.activityCheck = [NSButton checkboxWithTitle:@"记录应用保存的文件（卸载候选）" target:self action:@selector(toggleActivityRecorder:)];
+  self.autoSyncCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
+  self.autoSyncCheck.toolTip = @"应用卸载后自动清理分组失效条目";
+  [tSync addSubview:self.autoSyncCheck];
+
+  NSView *tActivity = tileAt(1, 426);
+  self.activityCheck = [NSButton checkboxWithTitle:@"记录保存的文件" target:self action:@selector(toggleActivityRecorder:)];
   self.activityCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerFileActivity"] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.activityCheck.frame = NSMakeRect(20, 44, 560, 24); self.activityCheck.toolTip = @"记录应用保存文件的位置，卸载时作为清理候选"; [c2 addSubview:self.activityCheck];
-  self.protectedDirsCheck = [NSButton checkboxWithTitle:@"扫描受保护目录（已禁用：避免重复授权弹窗）" target:self action:nil];
+  self.activityCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
+  self.activityCheck.toolTip = @"记录应用保存文件的位置，卸载时作为候选";
+  [tActivity addSubview:self.activityCheck];
+
+  NSView *tProtected = tileAt(1, 352);
+  self.protectedDirsCheck = [NSButton checkboxWithTitle:@"受保护目录（已禁用）" target:nil action:nil];
   self.protectedDirsCheck.state = NSControlStateValueOff;
   self.protectedDirsCheck.enabled = NO;
-  self.protectedDirsCheck.frame = NSMakeRect(20, 10, 560, 24); self.protectedDirsCheck.toolTip = @"为彻底避免系统授权弹窗，已禁用文档 / 下载 / 桌面扫描"; [c2 addSubview:self.protectedDirsCheck];
+  self.protectedDirsCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
+  self.protectedDirsCheck.toolTip = @"为避免重复授权弹窗，已禁用";
+  [tProtected addSubview:self.protectedDirsCheck];
 
-  NSView *c3 = [self cardAt:NSMakeRect(24, 112, 700, 154)]; [v addSubview:c3];
-  NSTextField *t3 = [self label:@"相册与磁盘" size:13 bold:YES color:nil]; t3.frame = NSMakeRect(20, 102, 220, 20); [c3 addSubview:t3];
-  self.albumModeCheck = [NSButton checkboxWithTitle:@"相册使用完整图库（首次需授权）" target:self action:@selector(toggleAlbumMode:)];
+  // 第三列：相册与磁盘
+  NSView *tAlbum = tileAt(2, 500);
+  self.albumModeCheck = [NSButton checkboxWithTitle:@"相册完整图库" target:self action:@selector(toggleAlbumMode:)];
   self.albumModeCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAlbumFullLibrary"] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.albumModeCheck.frame = NSMakeRect(20, 68, 600, 24); self.albumModeCheck.toolTip = @"使用照片图库读取全部资源，首次需授权；关闭只读本机原文件"; [c3 addSubview:self.albumModeCheck];
-  self.mediaModeCheck = [NSButton checkboxWithTitle:@"包含个人媒体目录（音乐 / 影片 / 用户资源库，会授权）" target:self action:@selector(togglePersonalMedia:)];
+  self.albumModeCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
+  self.albumModeCheck.toolTip = @"使用完整照片图库，首次需授权";
+  [tAlbum addSubview:self.albumModeCheck];
+
+  NSView *tMedia = tileAt(2, 426);
+  self.mediaModeCheck = [NSButton checkboxWithTitle:@"包含个人媒体目录" target:self action:@selector(togglePersonalMedia:)];
   self.mediaModeCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerScanPersonalMedia"] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.mediaModeCheck.frame = NSMakeRect(20, 34, 620, 24); self.mediaModeCheck.toolTip = @"扫描音乐 / 影片 / 用户资源库，会触发系统隐私授权"; [c3 addSubview:self.mediaModeCheck];
-  NSButton *removable = [NSButton buttonWithTitle:@"可移除宗卷权限…" target:self action:@selector(showRemovableVolumeHelp:)];
-  removable.frame = NSMakeRect(20, 4, 170, 24);
-  removable.toolTip = @"外部磁盘扫描需要允许访问「可移除宗卷」，点击查看开启方法";
-  [c3 addSubview:removable];
-  ColorHoverButton *fullDisk = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(200, 4, 200, 24)];
+  self.mediaModeCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
+  self.mediaModeCheck.toolTip = @"扫描音乐 / 影片 / 用户资源库，会触发授权";
+  [tMedia addSubview:self.mediaModeCheck];
+
+  NSView *tRemovable = tileAt(2, 352);
+  ColorHoverButton *removable = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 17, tileW - 24, 28)];
+  removable.title = @"可移除宗卷权限…"; removable.hoverColor = [NSColor systemTealColor];
+  removable.target = self; removable.action = @selector(showRemovableVolumeHelp:);
+  [removable applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [tRemovable addSubview:removable];
+
+  NSView *tFull = tileAt(2, 278);
+  ColorHoverButton *fullDisk = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 17, tileW - 24, 28)];
   fullDisk.title = @"完全磁盘访问权限…"; fullDisk.hoverColor = [NSColor systemPurpleColor];
   fullDisk.target = self; fullDisk.action = @selector(showFullDiskAccessHelp:);
-  fullDisk.toolTip = @"最高权限读取本机存储，需要到系统设置的「完全磁盘访问权限」中手动开启";
   [fullDisk applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [c3 addSubview:fullDisk];
+  [tFull addSubview:fullDisk];
 
-  ColorHoverButton *about = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 24, 90, 32)];
-  about.title = @"关于"; about.hoverColor = [NSColor systemGreenColor];
-  about.target = self; about.action = @selector(showAbout:);
-  about.toolTip = @"查看版本和项目信息"; [v addSubview:about];
-
-  ColorHoverButton *openGrp = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(161, 24, 150, 32)];
-  openGrp.title = @"打开分组文件夹"; openGrp.hoverColor = [NSColor systemBlueColor];
-  openGrp.target = self; openGrp.action = @selector(openGroupsFolder:);
-  openGrp.toolTip = @"在 Finder 中打开分组 App 所在的文件夹"; [v addSubview:openGrp];
-
-  ColorHoverButton *remember = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(357, 24, 210, 32)];
-  remember.title = @"管理已记住的保存目录…"; remember.hoverColor = [NSColor systemYellowColor];
-  remember.target = self; remember.action = @selector(showRememberedSaveDirs:);
-  remember.toolTip = @"管理卸载时记住的应用保存目录"; [v addSubview:remember];
-
-  ColorHoverButton *quit = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(614, 24, 110, 32)];
-  quit.title = @"退出控制台"; quit.hoverColor = [NSColor systemRedColor];
-  quit.target = self; quit.action = @selector(quitApp:);
-  quit.toolTip = @"退出控制台，不会删除分组和数据"; [v addSubview:quit];
-  [about applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [openGrp applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [remember applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [quit applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-
+  // 底部操作
+  NSArray *actions = @[@[@"关于", @"showAbout:", @(24), @(90), [NSColor systemGreenColor]],
+                       @[@"打开分组文件夹", @"openGroupsFolder:", @(132), @(150), [NSColor systemBlueColor]],
+                       @[@"管理已记住的保存目录…", @"showRememberedSaveDirs:", @(300), @(210), [NSColor systemYellowColor]],
+                       @[@"退出控制台", @"quitApp:", @(528), @(110), [NSColor systemRedColor]]];
+  for (NSArray *a in actions) {
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([a[2] doubleValue], 68, [a[3] doubleValue], 32)];
+    b.title = a[0]; b.hoverColor = a[4]; b.target = self; b.action = NSSelectorFromString(a[1]);
+    [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [v addSubview:b];
+  }
   self.settingsView = v;
 }
+
 - (void)applyAppearanceRecursively:(NSView *)view appearance:(NSAppearance *)ap {
   if (!view) return;
   if (!ap) ap = [NSApp effectiveAppearance];
