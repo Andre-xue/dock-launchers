@@ -341,6 +341,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)addApps:(id)sender;
 - (void)addDroppedApps:(NSArray<NSURL *> *)urls;
 - (void)rowDragEnded:(NSString *)path screenPoint:(NSPoint)pt;
+- (void)addRowToDockAtIndex:(NSNumber *)idx;
+- (void)removeRowAtIndex:(NSNumber *)idx;
 - (void)removeSelected:(id)sender;
 - (void)loadIconsFrom:(NSInteger)start;
 - (void)selectRow:(NSInteger)idx;
@@ -517,6 +519,21 @@ static NSColor *ThemeSel(NSInteger t) {
   [(self.selColor ?: ThemeSel(gTheme)) setFill];
   NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 2) xRadius:10 yRadius:10];
   [p fill];
+}
+- (void)rightMouseDown:(NSEvent *)event {
+  [self.ctrl selectRow:self.idx];
+  NSMenu *m = [[NSMenu alloc] init];
+  NSMenuItem *add = [[NSMenuItem alloc] initWithTitle:@"添加到 Dock" action:@selector(contextAddToDock:) keyEquivalent:@""];
+  add.target = self; add.tag = self.idx; [m addItem:add];
+  NSMenuItem *rm = [[NSMenuItem alloc] initWithTitle:@"从分组移除" action:@selector(contextRemoveFromGroup:) keyEquivalent:@""];
+  rm.target = self; rm.tag = self.idx; [m addItem:rm];
+  [NSMenu popUpContextMenu:m withEvent:event forView:self];
+}
+- (void)contextAddToDock:(NSMenuItem *)item {
+  [self.ctrl performSelector:@selector(addRowToDockAtIndex:) withObject:@(item.tag)];
+}
+- (void)contextRemoveFromGroup:(NSMenuItem *)item {
+  [self.ctrl performSelector:@selector(removeRowAtIndex:) withObject:@(item.tag)];
 }
 - (void)mouseDown:(NSEvent *)event {
   self.dragStart = event.locationInWindow;
@@ -1437,6 +1454,25 @@ static NSString *ResolveAppPath(NSString *target) {
   }
   [[keep componentsJoinedByString:@"\n"] writeToFile:gListFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
   [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"DockLaunchersGroupsChanged" object:nil];
+}
+
+- (void)addRowToDockAtIndex:(NSNumber *)idxNum {
+  NSInteger idx = idxNum.integerValue;
+  if (idx < 0 || idx >= (NSInteger)self.items.count) return;
+  NSString *path = ResolveAppPath(self.items[idx][@"target"]);
+  if (!path.length) { NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"找不到应用"; [a addButtonWithTitle:@"好"]; [a runModal]; return; }
+  if ([self dockContainsApp:path]) { NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"Dock 中已有该应用"; a.informativeText=@"同一个应用不能重复添加。"; [a addButtonWithTitle:@"好"]; [a runModal]; return; }
+  [self addAppToDock:path];
+  [self removeAppFromList:path];
+  [self reload];
+}
+
+- (void)removeRowAtIndex:(NSNumber *)idxNum {
+  NSInteger idx = idxNum.integerValue;
+  if (idx < 0 || idx >= (NSInteger)self.items.count) return;
+  NSString *path = ResolveAppPath(self.items[idx][@"target"]);
+  if (path.length) [self removeAppFromList:path];
+  [self reload];
 }
 
 - (void)rowDragEnded:(NSString *)path screenPoint:(NSPoint)pt {
