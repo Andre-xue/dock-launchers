@@ -444,6 +444,11 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSTableView *promptTable;
 @property (strong) NSMutableArray *prompts;
 @property (strong) NSArray *promptFiltered;
+@property (strong) NSArray *promptPageItems;
+@property NSInteger promptPage;
+@property (strong) NSTextField *promptPageLabel;
+@property (strong) ColorHoverButton *promptPrevButton;
+@property (strong) ColorHoverButton *promptNextButton;
 @property (strong) NSSearchField *promptSearch;
 @property (strong) NSWindow *largeFileWindow;
 @property (strong) NSTableView *largeFileTable;
@@ -7259,7 +7264,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
-  if (tableView == self.promptTable) return self.promptFiltered.count;
+  if (tableView == self.promptTable) return self.promptPageItems.count;
   if (tableView == self.largeFileTable) return self.largeFileItems.count;
   if (tableView == self.quickLoginTable) return self.quickLoginItems.count;
   if (tableView == self.startupTable) return self.startupItems.count;
@@ -7283,8 +7288,8 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
   if (tableView == self.promptTable) {
-    if (row < 0 || row >= (NSInteger)self.promptFiltered.count) return nil;
-    NSDictionary *p = self.promptFiltered[row];
+    if (row < 0 || row >= (NSInteger)self.promptPageItems.count) return nil;
+    NSDictionary *p = self.promptPageItems[row];
     NSString *ident = col.identifier;
     NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,40)];
     NSString *text = [ident isEqualToString:@"ptitle"] ? p[@"title"] : ([ident isEqualToString:@"pcat"] ? p[@"category"] : p[@"content"]);
@@ -9336,6 +9341,17 @@ static BOOL ValidGroupName(NSString *raw) {
     del.title = @"删除"; del.hoverColor = [NSColor systemRedColor];
     del.target = self; del.action = @selector(promptDeleteSelected:);
     [del applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:del];
+    self.promptPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(382, 24, 38, 30)];
+    self.promptPrevButton.title = @"‹"; self.promptPrevButton.hoverColor = [NSColor systemBlueColor];
+    self.promptPrevButton.target = self; self.promptPrevButton.action = @selector(promptPrevPage:);
+    [self.promptPrevButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.promptPrevButton];
+    self.promptPageLabel = [self label:@"第 1/1 页" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.promptPageLabel.alignment = NSTextAlignmentCenter;
+    self.promptPageLabel.frame = NSMakeRect(424, 30, 84, 18); [cv addSubview:self.promptPageLabel];
+    self.promptNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(512, 24, 38, 30)];
+    self.promptNextButton.title = @"›"; self.promptNextButton.hoverColor = [NSColor systemBlueColor];
+    self.promptNextButton.target = self; self.promptNextButton.action = @selector(promptNextPage:);
+    [self.promptNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.promptNextButton];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(584, 24, 100, 30)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closePromptLibrary:);
@@ -9359,10 +9375,24 @@ static BOOL ValidGroupName(NSString *raw) {
     [out addObject:p];
   }
   self.promptFiltered = out;
+  NSInteger pageSize = 15;
+  NSInteger pages = MAX(1, ((NSInteger)out.count + pageSize - 1) / pageSize);
+  if (self.promptPage >= pages) self.promptPage = pages - 1;
+  if (self.promptPage < 0) self.promptPage = 0;
+  NSInteger start = self.promptPage * pageSize;
+  NSInteger end = MIN((NSInteger)out.count, start + pageSize);
+  self.promptPageItems = end > start ? [out subarrayWithRange:NSMakeRange(start, end - start)] : @[];
+  if (self.promptPageLabel) {
+    self.promptPageLabel.stringValue = [NSString stringWithFormat:@"第 %ld/%ld 页", (long)(self.promptPage + 1), (long)pages];
+    self.promptPrevButton.enabled = self.promptPage > 0;
+    self.promptPrevButton.alphaValue = self.promptPrevButton.enabled ? 1.0 : 0.4;
+    self.promptNextButton.enabled = self.promptPage < pages - 1;
+    self.promptNextButton.alphaValue = self.promptNextButton.enabled ? 1.0 : 0.4;
+  }
   [self.promptTable reloadData];
 }
 
-- (void)promptSearchChanged:(id)sender { [self reloadPromptTable]; }
+- (void)promptSearchChanged:(id)sender { self.promptPage = 0; [self reloadPromptTable]; }
 
 - (void)showPromptEditorAtIndex:(NSInteger)idx {
   BOOL editing = idx >= 0 && idx < (NSInteger)self.prompts.count;
@@ -9402,16 +9432,16 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)promptEditSelected:(id)sender {
   NSInteger row = self.promptTable.selectedRow;
-  if (row < 0 || row >= (NSInteger)self.promptFiltered.count) return;
-  NSDictionary *sel = self.promptFiltered[row];
+  if (row < 0 || row >= (NSInteger)self.promptPageItems.count) return;
+  NSDictionary *sel = self.promptPageItems[row];
   NSInteger idx = [self.prompts indexOfObjectPassingTest:^BOOL(NSDictionary *p, NSUInteger i, BOOL *stop) { return [p[@"title"] isEqual:sel[@"title"]] && [p[@"content"] isEqual:sel[@"content"]]; }];
   if (idx != NSNotFound) [self showPromptEditorAtIndex:idx];
 }
 
 - (void)promptDeleteSelected:(id)sender {
   NSInteger row = self.promptTable.selectedRow;
-  if (row < 0 || row >= (NSInteger)self.promptFiltered.count) return;
-  NSDictionary *sel = self.promptFiltered[row];
+  if (row < 0 || row >= (NSInteger)self.promptPageItems.count) return;
+  NSDictionary *sel = self.promptPageItems[row];
   NSInteger idx = [self.prompts indexOfObjectPassingTest:^BOOL(NSDictionary *p, NSUInteger i, BOOL *stop) { return [p[@"title"] isEqual:sel[@"title"]] && [p[@"content"] isEqual:sel[@"content"]]; }];
   if (idx == NSNotFound) return;
   [self.prompts removeObjectAtIndex:idx];
@@ -9423,11 +9453,25 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)promptCopySelected:(id)sender {
   NSInteger row = self.promptTable.selectedRow;
   if (row < 0) row = self.promptTable.clickedRow;
-  if (row < 0 || row >= (NSInteger)self.promptFiltered.count) { [self showToast:@"请先选择提示词"]; return; }
-  NSString *content = self.promptFiltered[row][@"content"] ?: @"";
+  if (row < 0 || row >= (NSInteger)self.promptPageItems.count) { [self showToast:@"请先选择提示词"]; return; }
+  NSString *content = self.promptPageItems[row][@"content"] ?: @"";
   [[NSPasteboard generalPasteboard] clearContents];
   [[NSPasteboard generalPasteboard] setString:content forType:NSPasteboardTypeString];
   [self showToast:@"提示词已复制"];
+}
+
+- (void)promptPrevPage:(id)sender {
+  if (self.promptPage <= 0) return;
+  self.promptPage--;
+  [self reloadPromptTable];
+}
+
+- (void)promptNextPage:(id)sender {
+  NSInteger pageSize = 15;
+  NSInteger pages = MAX(1, ((NSInteger)self.promptFiltered.count + pageSize - 1) / pageSize);
+  if (self.promptPage >= pages - 1) return;
+  self.promptPage++;
+  [self reloadPromptTable];
 }
 
 - (void)closePromptLibrary:(id)sender { [self.promptWindow orderOut:nil]; }
