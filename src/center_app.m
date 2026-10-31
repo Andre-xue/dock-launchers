@@ -9165,9 +9165,16 @@ static BOOL ValidGroupName(NSString *raw) {
           if ([rel containsString:@"/Library/"] || [rel containsString:@"/.Trash/"]) continue;
         }
         [u getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
-        if (size.unsignedLongLongValue < threshold) continue;
+        NSNumber *alloc = nil;
+        [u getResourceValue:&alloc forKey:NSURLFileAllocatedSizeKey error:NULL];
+        unsigned long long logical = size.unsignedLongLongValue;
+        unsigned long long actual = alloc.unsignedLongLongValue;
+        if (actual == 0) actual = logical;
+        if (actual < threshold) continue;
         NSDate *date = nil; [u getResourceValue:&date forKey:NSURLContentModificationDateKey error:NULL];
-        [files addObject:@{@"path": u.path, @"name": u.lastPathComponent ?: u.path, @"size": size ?: @0, @"date": date ?: [NSDate date]}];
+        NSString *ext = u.path.lowercaseString;
+        BOOL virtual = [ext hasSuffix:@".img.raw"] || [ext hasSuffix:@".vmdk"] || [ext hasSuffix:@".qcow2"] || [ext hasSuffix:@".vdi"] || [ext hasSuffix:@".sparseimage"];
+        [files addObject:@{@"path": u.path, @"name": u.lastPathComponent ?: u.path, @"size": @(actual), @"logical": @(logical), @"virtual": @(virtual), @"date": date ?: [NSDate date]}];
       }
     }
     [files sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"size"] compare:a[@"size"]]; }];
@@ -9190,8 +9197,10 @@ static BOOL ValidGroupName(NSString *raw) {
     if (idx < self.largeFileItems.count) [urls addObject:[NSURL fileURLWithPath:self.largeFileItems[idx][@"path"]]];
   }];
   NSAlert *a = [[NSAlert alloc] init];
+  BOOL hasVirtual = NO;
+  for (NSURL *u in urls) for (NSString *v in @[@".img.raw", @".vmdk", @".qcow2", @".vdi", @".sparseimage"]) if ([u.path.lowercaseString hasSuffix:v]) hasVirtual = YES;
   a.messageText = [NSString stringWithFormat:@"将 %ld 个文件移到废纸篓？", (long)urls.count];
-  a.informativeText = @"可在废纸篓中恢复。";
+  a.informativeText = hasVirtual ? @"其中包含虚拟机/Docker 磁盘镜像，删除会丢失容器和虚拟机数据；可在废纸篓中恢复。" : @"可在废纸篓中恢复。";
   [a addButtonWithTitle:@"移到废纸篓"];
   [a addButtonWithTitle:@"取消"];
   if ([a runModal] != NSAlertFirstButtonReturn) return;
