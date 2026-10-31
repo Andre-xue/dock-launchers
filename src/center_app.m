@@ -4308,6 +4308,22 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showToast:@"剪贴板历史已清空"];
 }
 
+- (void)toggleClipboardFavoriteAtRow:(NSButton *)sender {
+  NSInteger row = sender.tag;
+  if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return;
+  NSDictionary *visible = self.clipboardVisibleItems[row];
+  for (NSInteger i = 0; i < (NSInteger)self.clipboardItems.count; i++) {
+    if (self.clipboardItems[i] == visible || [self.clipboardItems[i][@"text"] isEqual:visible[@"text"]]) {
+      NSMutableDictionary *m = [self.clipboardItems[i] mutableCopy];
+      m[@"favorite"] = @(![m[@"favorite"] boolValue]);
+      self.clipboardItems[i] = m;
+      break;
+    }
+  }
+  [self saveClipboardHistory];
+  [self reloadClipboardVisibleItems];
+}
+
 - (void)toggleClipboardFavorite:(id)sender {
   NSInteger row = self.clipboardTable.selectedRow;
   if (row < 0) row = self.clipboardTable.clickedRow;
@@ -7119,17 +7135,27 @@ static BOOL ValidGroupName(NSString *raw) {
     return v;
   }
   if (tableView == self.clipboardTable) {
-    if (row < 0 || row >= (NSInteger)self.clipboardItems.count) return nil;
-    NSDictionary *it = self.clipboardItems[row];
+    if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return nil;
+    NSDictionary *it = self.clipboardVisibleItems[row];
     NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
     NSString *text = it[@"text"] ?: @"";
     v.toolTip = text;
-    NSTextField *l = [self label:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:11.5 bold:NO color:nil];
+    BOOL fav = [it[@"favorite"] boolValue];
+    NSButton *star = [NSButton buttonWithTitle:fav ? @"★" : @"☆" target:self action:@selector(toggleClipboardFavoriteAtRow:)];
+    star.bordered = NO;
+    star.tag = row;
+    star.font = [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold];
+    star.contentTintColor = fav ? [NSColor systemOrangeColor] : [NSColor tertiaryLabelColor];
+    star.toolTip = fav ? @"取消收藏" : @"收藏";
+    star.frame = NSMakeRect(col.width - 188, 9, 28, 26);
+    [v addSubview:star];
+    NSTextField *l = [self label:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:11.5 bold:fav color:nil];
     l.lineBreakMode = NSLineBreakByTruncatingTail;
     l.toolTip = text;
-    l.frame = NSMakeRect(8, 18, col.width-150, 18); [v addSubview:l];
+    l.frame = NSMakeRect(8, 18, col.width - 220, 18); [v addSubview:l];
     NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"MM-dd HH:mm:ss";
-    NSTextField *t = [self label:[df stringFromDate:it[@"date"] ?: [NSDate date]] size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+    NSDate *date = [it[@"date"] isKindOfClass:[NSDate class]] ? it[@"date"] : [NSDate date];
+    NSTextField *t = [self label:[df stringFromDate:date] size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
     t.alignment = NSTextAlignmentRight;
     t.frame = NSMakeRect(col.width-138, 20, 130, 16); [v addSubview:t];
     NSBox *line = [[NSBox alloc] initWithFrame:NSMakeRect(8,0,col.width-16,1)]; line.boxType = NSBoxSeparator; [v addSubview:line];
