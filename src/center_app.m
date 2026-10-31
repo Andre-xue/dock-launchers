@@ -9630,16 +9630,34 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)promptDeleteSelected:(id)sender {
-  NSInteger row = self.promptTable.selectedRow;
-  if (row < 0 || row >= (NSInteger)self.promptPageItems.count) return;
-  NSDictionary *sel = self.promptPageItems[row];
-  NSInteger idx = [self.prompts indexOfObjectPassingTest:^BOOL(NSDictionary *p, NSUInteger i, BOOL *stop) { return [p[@"title"] isEqual:sel[@"title"]] && [p[@"content"] isEqual:sel[@"content"]]; }];
-  if (idx == NSNotFound) return;
-  [self.prompts removeObjectAtIndex:idx];
+  NSMutableSet *keys = [NSMutableSet setWithSet:self.promptSelected ?: [NSSet set]];
+  if (!keys.count) {
+    for (NSNumber *n in self.promptTable.selectedRowIndexes) {
+      NSInteger row = n.integerValue;
+      if (row >= 0 && row < (NSInteger)self.promptPageItems.count) [keys addObject:[self promptSelectionKeyForDict:self.promptPageItems[row]]];
+    }
+  }
+  if (!keys.count) { [self showToast:@"请先勾选或选中要删除的提示词"]; return; }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"删除 %ld 条提示词？", (long)keys.count];
+  a.informativeText = @"删除后不可恢复。";
+  [a addButtonWithTitle:@"删除"];
+  [a addButtonWithTitle:@"取消"];
+  a.window.level = NSStatusWindowLevel + 2;
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSMutableArray *deleteTitles = [NSMutableArray array];
+  for (NSInteger i = (NSInteger)self.prompts.count - 1; i >= 0; i--) {
+    NSDictionary *p = self.prompts[i];
+    if ([keys containsObject:[self promptSelectionKeyForDict:p]]) {
+      [deleteTitles addObject:p[@"title"] ?: @"提示词"];
+      [self.prompts removeObjectAtIndex:i];
+    }
+  }
+  for (NSString *k in keys) [self.promptSelected removeObject:k];
   [self savePrompts];
   [self refreshPromptCategories];
   [self reloadPromptTable];
-  [self showToast:@"提示词已删除"];
+  [self showToast:[NSString stringWithFormat:@"已删除 %ld 条提示词", (long)deleteTitles.count]];
 }
 
 - (void)promptCopySelected:(id)sender {
