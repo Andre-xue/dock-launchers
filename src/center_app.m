@@ -6877,35 +6877,33 @@ static BOOL ValidGroupName(NSString *raw) {
   toolsPage.hidden = YES; self.quickToolsPage = toolsPage; [root addSubview:toolsPage];
   NSTextField *tt = [self label:@"工具" size:18 bold:YES color:nil];
   tt.frame = NSMakeRect(16, 480, 250, 26); [toolsPage addSubview:tt];
-  NSTextField *ts = [self label:@"弹出独立窗口，可选择钉住或普通窗口" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *ts = [self label:@"选择工具，打开独立窗口；可钉住置顶" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   ts.frame = NSMakeRect(16, 456, 388, 18); [toolsPage addSubview:ts];
-  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 282, 172, 166)];
-  transBtn.title = @"AI 翻译";
+  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(86, 300, 112, 112)];
+  transBtn.title = @"";
   transBtn.image = ToolIconImage(@"character.bubble.fill", [NSColor systemTealColor]);
-  transBtn.imagePosition = NSImageAbove;
+  transBtn.imagePosition = NSImageOnly;
   transBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
   transBtn.hoverColor = [NSColor systemTealColor];
   transBtn.target = self; transBtn.action = @selector(openTranslationToolFromPopover:);
+  transBtn.toolTip = @"AI 翻译：截图 OCR、划词翻译、拖入文档或图片自动识别语言并翻译";
   [transBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [toolsPage addSubview:transBtn];
-  NSTextField *td = [self label:@"截图 / 划词 / 文档翻译" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
-  td.alignment = NSTextAlignmentCenter;
-  td.frame = NSMakeRect(20, 258, 172, 16); [toolsPage addSubview:td];
-  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(228, 282, 172, 166)];
-  zipBtn.title = @"压缩 / 解压";
+
+  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(222, 300, 112, 112)];
+  zipBtn.title = @"";
   zipBtn.image = ToolIconImage(@"archivebox.fill", [NSColor systemOrangeColor]);
-  zipBtn.imagePosition = NSImageAbove;
+  zipBtn.imagePosition = NSImageOnly;
   zipBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
   zipBtn.hoverColor = [NSColor systemOrangeColor];
   zipBtn.target = self; zipBtn.action = @selector(openCompressToolFromPopover:);
+  zipBtn.toolTip = @"压缩 / 解压：支持 ZIP、TAR.GZ；可拖入文件或文件夹，解压前做路径安全校验";
   [zipBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [toolsPage addSubview:zipBtn];
-  NSTextField *zd = [self label:@"ZIP / TAR.GZ 本地处理" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
-  zd.alignment = NSTextAlignmentCenter;
-  zd.frame = NSMakeRect(228, 258, 172, 16); [toolsPage addSubview:zd];
-  NSTextField *tip = [self label:@"点击图标打开独立窗口，可钉住置顶" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
+
+  NSTextField *tip = [self label:@"悬停图标查看用途，点击打开独立窗口" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
   tip.alignment = NSTextAlignmentCenter;
-  tip.frame = NSMakeRect(16, 214, 388, 16); [toolsPage addSubview:tip];
+  tip.frame = NSMakeRect(16, 252, 388, 16); [toolsPage addSubview:tip];
 
   NSView *groupPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   groupPage.hidden = YES; self.quickGroupPage = groupPage; [root addSubview:groupPage];
