@@ -442,6 +442,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) ColorHoverButton *processMetricButton;
 @property (strong) NSWindow *promptWindow;
 @property (strong) NSTableView *promptTable;
+@property (strong) NSMutableSet *promptSelected;
+@property (strong) NSSavePanel *promptExportPanel;
+@property (strong) NSPopUpButton *promptExportFormatPopup;
 @property (strong) NSMutableArray *prompts;
 @property (strong) NSArray *promptFiltered;
 @property (strong) NSArray *promptPageItems;
@@ -7293,6 +7296,14 @@ static BOOL ValidGroupName(NSString *raw) {
     NSDictionary *p = self.promptPageItems[row];
     NSString *ident = col.identifier;
     NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,40)];
+    if ([ident isEqualToString:@"psel"]) {
+      NSButton *cb = [NSButton checkboxWithTitle:@"" target:self action:@selector(promptToggleSelect:)];
+      cb.tag = row; cb.frame = NSMakeRect(6, 11, 18, 18);
+      NSString *key = [NSString stringWithFormat:@"%@\x01%@", p[@"title"] ?: @"", p[@"content"] ?: @""];
+      cb.state = [self.promptSelected containsObject:key] ? NSControlStateValueOn : NSControlStateValueOff;
+      [v addSubview:cb];
+      return v;
+    }
     NSString *text = [ident isEqualToString:@"ptitle"] ? p[@"title"] : ([ident isEqualToString:@"pcat"] ? p[@"category"] : p[@"content"]);
     if (!text.length) text = @"";
     NSTextField *l = [self label:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:11 bold:[ident isEqualToString:@"ptitle"] color:[ident isEqualToString:@"pcontent"] ? [NSColor secondaryLabelColor] : nil];
@@ -9332,7 +9343,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 64, 668, 330)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.promptTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
-    NSArray *cols = @[@[@"ptitle", @"标题", @180.0], @[@"pcat", @"分类", @100.0], @[@"pcontent", @"内容", @360.0]];
+    NSArray *cols = @[@[@"psel", @"", @30.0], @[@"ptitle", @"标题", @170.0], @[@"pcat", @"分类", @100.0], @[@"pcontent", @"内容", @340.0]];
     for (NSArray *c in cols) {
       NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
       col.title = c[1]; col.width = [c[2] doubleValue];
@@ -9374,6 +9385,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [self.promptWindow center];
   }
   [self refreshPromptCategories];
+  if (!self.promptSelected) self.promptSelected = [NSMutableSet set];
   [self reloadPromptTable];
   [NSApp activateIgnoringOtherApps:YES];
   [self.promptWindow makeKeyAndOrderFront:nil];
@@ -9609,6 +9621,20 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return out;
 }
 
+- (NSString *)promptSelectionKeyForDict:(NSDictionary *)p {
+  return [NSString stringWithFormat:@"%@\x01%@", p[@"title"] ?: @"", p[@"content"] ?: @""];
+}
+
+- (void)promptToggleSelect:(NSButton *)cb {
+  NSInteger row = cb.tag;
+  if (row < 0 || row >= (NSInteger)self.promptPageItems.count) return;
+  if (!self.promptSelected) self.promptSelected = [NSMutableSet set];
+  NSString *key = [self promptSelectionKeyForDict:self.promptPageItems[row]];
+  if ([self.promptSelected containsObject:key]) [self.promptSelected removeObject:key];
+  else [self.promptSelected addObject:key];
+  cb.state = [self.promptSelected containsObject:key] ? NSControlStateValueOn : NSControlStateValueOff;
+}
+
 - (void)promptImport:(id)sender {
   NSOpenPanel *p = [NSOpenPanel openPanel];
   p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = NO;
@@ -9636,37 +9662,49 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self showToast:[NSString stringWithFormat:@"已导入 %ld 条提示词", (long)added]];
 }
 
+- (void)promptExportFormatChanged:(NSPopUpButton *)popup {
+  NSArray *exts = @[@"json", @"md", @"txt", @"csv"];
+  NSInteger idx = popup.indexOfSelectedItem;
+  if (idx < 0 || idx >= (NSInteger)exts.count) idx = 0;
+  self.promptExportPanel.allowedFileTypes = @[exts[idx]];
+  self.promptExportPanel.nameFieldStringValue = [NSString stringWithFormat:@"提示词库.%@", exts[idx]];
+}
+
 - (void)promptExport:(id)sender {
   NSMutableArray *selected = [NSMutableArray array];
-  for (NSNumber *n in self.promptTable.selectedRowIndexes) {
-    NSInteger row = n.integerValue;
-    if (row >= 0 && row < (NSInteger)self.promptPageItems.count) {
-      NSDictionary *sel = self.promptPageItems[row];
-      for (NSDictionary *p in self.prompts) if ([p[@"title"] isEqual:sel[@"title"]] && [p[@"content"] isEqual:sel[@"content"]]) { [selected addObject:p]; break; }
-    }
+  for (NSDictionary *p in self.prompts) {
+    if ([self.promptSelected containsObject:[self promptSelectionKeyForDict:p]]) [selected addObject:p];
   }
   NSArray *items = selected.count ? selected : self.prompts;
   if (!items.count) { [self showToast:@"没有可导出的提示词"]; return; }
-  NSAlert *a = [[NSAlert alloc] init];
-  a.messageText = @"导出提示词";
-  a.informativeText = [NSString stringWithFormat:@"将导出 %ld 条提示词，选择文件格式：", (long)items.count];
-  NSPopUpButton *fmt = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,0,240,28) pullsDown:NO];
-  [fmt addItemsWithTitles:@[@"JSON", @"Markdown", @"纯文本", @"CSV"]];
-  a.accessoryView = fmt;
-  [a addButtonWithTitle:@"选择保存位置"];
-  [a addButtonWithTitle:@"取消"];
-  if ([a runModal] != NSAlertFirstButtonReturn) return;
-  NSInteger idx = fmt.indexOfSelectedItem;
-  NSString *ext = idx == 0 ? @"json" : (idx == 1 ? @"md" : (idx == 2 ? @"txt" : @"csv"));
-  NSSavePanel *sp = [NSSavePanel savePanel];
-  sp.nameFieldStringValue = [NSString stringWithFormat:@"提示词库.%@", ext];
-  sp.allowedFileTypes = @[ext];
-  if ([sp runModal] != NSModalResponseOK) return;
-  NSMutableString *out = [NSMutableString string];
+
+  self.promptExportPanel = [NSSavePanel savePanel];
+  self.promptExportPanel.canCreateDirectories = YES;
+  self.promptExportPanel.extensionHidden = NO;
+  self.promptExportPanel.message = [NSString stringWithFormat:@"导出 %ld 条提示词", (long)items.count];
+  self.promptExportPanel.nameFieldStringValue = @"提示词库.json";
+  self.promptExportPanel.allowedFileTypes = @[@"json"];
+  NSView *av = [[NSView alloc] initWithFrame:NSMakeRect(0,0,300,54)];
+  NSTextField *label = [self label:@"文件格式" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
+  label.frame = NSMakeRect(0, 34, 300, 16); [av addSubview:label];
+  self.promptExportFormatPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 240, 28) pullsDown:NO];
+  [self.promptExportFormatPopup addItemsWithTitles:@[@"JSON", @"Markdown", @"纯文本", @"CSV"]];
+  self.promptExportFormatPopup.target = self;
+  self.promptExportFormatPopup.action = @selector(promptExportFormatChanged:);
+  [av addSubview:self.promptExportFormatPopup];
+  self.promptExportPanel.accessoryView = av;
+  if ([self.promptExportPanel runModal] != NSModalResponseOK) return;
+
+  NSInteger idx = self.promptExportFormatPopup.indexOfSelectedItem;
+  if (idx < 0) idx = 0;
+  NSString *path = self.promptExportPanel.URL.path;
+  BOOL ok = NO;
   if (idx == 0) {
     NSData *d = [NSJSONSerialization dataWithJSONObject:items options:NSJSONWritingPrettyPrinted error:NULL];
-    [d writeToFile:sp.URL.path atomically:YES];
+    ok = d && [d writeToFile:path atomically:YES];
   } else {
+    NSMutableString *out = [NSMutableString string];
+    if (idx == 3) [out appendString:@"title,category,content\n"];
     for (NSDictionary *p in items) {
       NSString *title = p[@"title"] ?: @"";
       NSString *cat = p[@"category"] ?: @"";
@@ -9678,10 +9716,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         [out appendFormat:@"\"%@\",\"%@\",\"%@\"\n", q(title), q(cat), q(content)];
       }
     }
-    if (idx == 3) [out insertString:@"title,category,content\n" atIndex:0];
-    [out writeToFile:sp.URL.path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    ok = [out writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
   }
-  [self showToast:[NSString stringWithFormat:@"已导出 %ld 条提示词", (long)items.count]];
+  if (ok) [self showToast:[NSString stringWithFormat:@"已导出 %ld 条提示词", (long)items.count]];
+  else {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"导出失败";
+    a.informativeText = @"无法写入所选位置，请换一个目录重试。";
+    [a addButtonWithTitle:@"好"];
+    [a runModal];
+  }
 }
 
 - (void)promptPrevPage:(id)sender {
