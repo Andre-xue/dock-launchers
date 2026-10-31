@@ -4493,7 +4493,7 @@ static BOOL ValidGroupName(NSString *raw) {
   v.dropAction = @selector(aiHandleDroppedFiles:);
   NSTextField *h = [self label:@"AI 管理" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
-  NSTextField *sub = [self label:@"集中管理 AI 服务、API 地址与密钥；Key 存入 macOS 钥匙串" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *sub = [self label:@"集中管理 AI 服务、API 地址与密钥；敏感操作使用应用密码" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 500, 18); [v addSubview:sub];
 
   [self loadAIEntries];
@@ -4550,7 +4550,7 @@ static BOOL ValidGroupName(NSString *raw) {
   self.aiTable.columnAutoresizingStyle = NSTableViewNoColumnAutoresizing;
   self.aiTable.dataSource = self;
   self.aiTable.delegate = self;
-  NSArray *cols = @[@[@"sel", @"", @24], @[@"ainame", @"名称", @120], @[@"quota", @"余量", @90],
+  NSArray *cols = @[@[@"sel", @"", @24], @[@"ainame", @"名称", @120], @[@"quota", @"余量", @120],
                     @[@"endpoint", @"链接地址(API)", @100], @[@"api", @"API Key", @80],
                     @[@"note", @"备注(用途)", @100], @[@"aiactions", @"操作", @130]];
   for (NSArray *c in cols) {
@@ -4960,14 +4960,20 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showToast:@"完整服务信息已复制"];
 }
 
-- (void)aiToggleQuota:(NSButton *)b {
-  NSInteger row = b.tag;
+- (void)aiToggleQuotaRow:(NSInteger)row {
   if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
   NSString *name = self.aiVisibleEntries[row][@"name"] ?: @"";
   if (!self.aiRevealedQuotas) self.aiRevealedQuotas = [NSMutableSet set];
   if ([self.aiRevealedQuotas containsObject:name]) [self.aiRevealedQuotas removeObject:name];
   else [self.aiRevealedQuotas addObject:name];
   [self.aiTable reloadData];
+}
+
+- (void)aiToggleQuota:(NSButton *)b { [self aiToggleQuotaRow:b.tag]; }
+
+- (void)aiToggleQuotaGesture:(NSClickGestureRecognizer *)g {
+  NSNumber *n = objc_getAssociatedObject(g.view, "AIQuotaRow");
+  if (n) [self aiToggleQuotaRow:n.integerValue];
 }
 
 - (void)aiToggleReveal:(NSButton *)b {
@@ -7286,9 +7292,12 @@ static BOOL ValidGroupName(NSString *raw) {
       NSString *q = e[@"quota"] ?: @"";
       BOOL revealed = [self.aiRevealedQuotas containsObject:e[@"name"] ?: @""];
       NSTextField *l = [self label:revealed ? q : (q.length ? @"••••••" : @"") size:11 bold:NO color:nil];
-      l.toolTip = revealed ? q : @"点击右侧眼睛显示余量";
+      l.toolTip = revealed ? @"点击隐藏余量" : @"点击显示余量";
       l.lineBreakMode = NSLineBreakByTruncatingMiddle;
       l.frame = NSMakeRect(2, 16, col.width - 32, 20); [v addSubview:l];
+      NSClickGestureRecognizer *qg = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(aiToggleQuotaGesture:)];
+      objc_setAssociatedObject(l, "AIQuotaRow", @(row), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+      [l addGestureRecognizer:qg];
       NSButton *qEye = [[NSButton alloc] initWithFrame:NSMakeRect(col.width-30, 14, 26, 26)];
       qEye.bordered = NO;
       qEye.image = [NSImage imageWithSystemSymbolName:revealed ? @"eye.slash" : @"eye" accessibilityDescription:@"显示余量"];
