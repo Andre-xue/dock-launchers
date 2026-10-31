@@ -1426,6 +1426,43 @@ static void HideDockHoverTip(void) {
 }
 @end
 
+@interface GroupDropRowView : NSView
+@property (weak) id dropTarget;
+@property SEL dropAction;
+@property (copy) NSString *groupName;
+@end
+@implementation GroupDropRowView
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    self.wantsLayer = YES;
+  }
+  return self;
+}
+- (NSArray<NSURL *> *)draggedURLs:(id<NSDraggingInfo>)info {
+  return [info.draggingPasteboard readObjectsForClasses:@[[NSURL class]] options:nil] ?: @[];
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+  self.layer.borderWidth = 2;
+  self.layer.borderColor = [NSColor controlAccentColor].CGColor;
+  self.layer.backgroundColor = [[NSColor controlAccentColor] colorWithAlphaComponent:0.10].CGColor;
+  return NSDragOperationCopy;
+}
+- (void)draggingExited:(id<NSDraggingInfo>)sender {
+  self.layer.borderWidth = 0;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  self.layer.borderWidth = 0;
+  NSArray *urls = [self draggedURLs:sender];
+  if (urls.count && self.dropTarget && self.dropAction) {
+    NSDictionary *info = @{@"urls": urls, @"group": self.groupName ?: @""};
+    [self.dropTarget performSelector:self.dropAction withObject:info];
+    return YES;
+  }
+  return NO;
+}
+@end
+
 @implementation Controller
 
 - (NSImage *)characterImage:(CGFloat)size {
@@ -2855,7 +2892,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"Dock 分组" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
-  NSTextField *sub = [self label:@"管理已安装的分组；新建/删除会同步 Dock 图标" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *sub = [self label:@"管理分组；拖入 .app 可直接添加应用" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 430, 18); [v addSubview:sub];
   self.groupsSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(480, 580, 246, 26)];
   self.groupsSearch.placeholderString = @"搜索分组，回车定位";
@@ -3083,7 +3120,11 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   for (NSInteger k = startIdx; k < endIdx; k++) {
     NSDictionary *g = filtered[k][@"group"];
     NSInteger idx = [filtered[k][@"index"] integerValue];
-    NSView *row = [[NSView alloc] initWithFrame:NSMakeRect(6, y, 670, rowH)];
+    GroupDropRowView *row = [[GroupDropRowView alloc] initWithFrame:NSMakeRect(6, y, 670, rowH)];
+    row.groupName = g[@"name"];
+    row.dropTarget = self;
+    row.dropAction = @selector(groupRowDropped:);
+    row.toolTip = @"拖入 .app 应用即可添加到该分组";
     row.wantsLayer = YES;
     BOOL sel = self.groupsSelectedName.length && [g[@"name"] isEqualToString:self.groupsSelectedName];
     BOOL hl = self.groupsHighlightedName.length && [g[@"name"] isEqualToString:self.groupsHighlightedName];
@@ -3128,6 +3169,36 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   [self.groupsScroll.contentView scrollToPoint:NSMakePoint(0, 0)];
   [self applyFlatButtonsInView:self.groupsView];
   [self.groupsScroll.contentView scrollToPoint:NSMakePoint(0, 0)];
+}
+
+- (void)groupRowDropped:(NSDictionary *)info {
+  NSString *groupName = info[@"group"];
+  NSArray<NSURL *> *urls = info[@"urls"];
+  if (!groupName.length || !urls.count) return;
+  NSString *listPath = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[groupName stringByAppendingPathExtension:@"txt"]];
+  NSString *old = [NSString stringWithContentsOfFile:listPath encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+  NSMutableArray *lines = [[old componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
+  NSInteger added = 0, skipped = 0;
+  for (NSURL *u in urls) {
+    if (![u.pathExtension.lowercaseString isEqualToString:@"app"]) { skipped++; continue; }
+    NSString *path = u.path.stringByStandardizingPath;
+    NSBundle *bundle = [NSBundle bundleWithPath:path];
+    NSString *display = bundle.localizedInfoDictionary[@"CFBundleDisplayName"] ?: bundle.infoDictionary[@"CFBundleDisplayName"] ?: bundle.localizedInfoDictionary[@"CFBundleName"] ?: bundle.infoDictionary[@"CFBundleName"] ?: path.lastPathComponent.stringByDeletingPathExtension;
+    BOOL exists = NO;
+    for (NSString *line in lines) {
+      NSArray *parts = [line componentsSeparatedByString:@"|"];
+      NSString *target = parts.count > 1 ? parts[1] : parts.firstObject;
+      if ([[target stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] isEqualToString:path]) { exists = YES; break; }
+    }
+    if (exists) { skipped++; continue; }
+    [lines addObject:[NSString stringWithFormat:@"%@|%@", display, path]];
+    added++;
+  }
+  while (lines.count && [[lines lastObject] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].length == 0) [lines removeLastObject];
+  [[lines componentsJoinedByString:@"\n"] writeToFile:listPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  [self refreshGroups];
+  if (added > 0) [self showToast:[NSString stringWithFormat:@"已添加 %ld 个应用到「%@」", (long)added, groupName]];
+  else if (skipped > 0) [self showToast:@"没有新增应用：已存在或不是 .app"];
 }
 
 - (void)groupsSearchChanged:(id)sender {
