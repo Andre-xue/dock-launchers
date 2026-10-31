@@ -2403,7 +2403,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 
 - (void)showSection:(NSInteger)idx {
   self.section = idx;
-  if (idx == 2) { if (!self.aiEntries) [self loadAIEntries]; [self hydrateAIKeys]; }
+  if (idx == 2 && !self.aiEntries) [self loadAIEntries];
   for (NSView *v in self.content.subviews) [v removeFromSuperview];
   NSArray *btns = @[self.sideLive, self.sideGroups, self.sideAI, self.sideDisk, self.sideUninstall, self.sideSettings];
   NSArray *navColors = @[[NSColor systemGreenColor], [NSColor systemYellowColor], [NSColor systemBlueColor],
@@ -4629,6 +4629,8 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)refreshAIQuotas:(id)sender {
   if (self.aiQuotaRefreshing) return;
+  if (!self.aiEntries) [self loadAIEntries];
+  [self hydrateAIKeys];
   NSMutableArray *targets = [NSMutableArray array];
   for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
     NSDictionary *e = self.aiEntries[i];
@@ -9335,7 +9337,6 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)rebuildQuickAITab {
   if (!self.aiEntries) [self loadAIEntries];
-  [self hydrateAIKeys];
   NSView *page = self.quickAIPage;
   if (!page) return;
   for (NSView *sub in [page.subviews copy]) [sub removeFromSuperview];
