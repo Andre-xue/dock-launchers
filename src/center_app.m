@@ -11229,18 +11229,17 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)updateStatusMetricIcon {
   if (!self.statusItem.button) return;
+  // 始终保留 DockLaunchers 原图标；指标选择只影响状态图标提示
+  self.statusItem.button.image = [self characterImage:18];
+  self.statusItem.button.imagePosition = NSImageLeft;
+  self.statusItem.button.title = @"";
   NSString *key = [self statusMetricKey];
-  NSString *symbol = @"cpu";
-  if ([key isEqualToString:@"gpu"]) symbol = @"display";
-  else if ([key isEqualToString:@"mem"]) symbol = @"memorychip";
-  else if ([key isEqualToString:@"net"]) symbol = @"wifi";
-  else if ([key isEqualToString:@"power"]) symbol = @"battery.100";
-  NSImage *img = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:@"状态指标"];
-  if (img) {
-    img.template = YES;
-    self.statusItem.button.image = img;
-    self.statusItem.button.imagePosition = NSImageOnly;
-  }
+  NSString *name = @"CPU";
+  if ([key isEqualToString:@"gpu"]) name = @"GPU";
+  else if ([key isEqualToString:@"mem"]) name = @"内存";
+  else if ([key isEqualToString:@"net"]) name = @"网络";
+  else if ([key isEqualToString:@"power"]) name = @"电源";
+  self.statusItem.button.toolTip = [NSString stringWithFormat:@"DockLaunchers · 状态指标：%@", name];
 }
 
 - (NSString *)rate:(double)bps {
