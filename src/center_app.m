@@ -61,7 +61,11 @@ static BOOL AIKeychainSet(NSString *account, NSString *value) {
   // 删除旧项后用宽松访问控制重建，避免每次重新签名后重复弹密码
   SecItemDelete((__bridge CFDictionaryRef)q);
   SecAccessRef access = NULL;
-  SecAccessCreate(CFSTR("DockLaunchers AI Keys"), (__bridge CFArrayRef)@[], &access);
+  SecTrustedApplicationRef selfApp = NULL;
+  SecTrustedApplicationCreateFromPath(NULL, &selfApp);
+  NSArray *trusted = selfApp ? @[(__bridge id)selfApp] : @[];
+  SecAccessCreate(CFSTR("DockLaunchers AI Keys"), (__bridge CFArrayRef)trusted, &access);
+  if (selfApp) CFRelease(selfApp);
   NSMutableDictionary *add = [q mutableCopy];
   add[(__bridge id)kSecValueData] = d;
   add[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAfterFirstUnlock;
@@ -3314,10 +3318,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
     row.layer.cornerRadius = 12;
     row.layer.borderWidth = (sel || hl) ? 2 : 0;
     row.layer.borderColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.65].CGColor;
-    NSClickGestureRecognizer *rowClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(groupRowClicked:)];
-    rowClick.numberOfClicksRequired = 1;
     objc_setAssociatedObject(row, "GroupRowName", g[@"name"], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [row addGestureRecognizer:rowClick];
     if (!self.selectedGroups) self.selectedGroups = [NSMutableSet set];
     NSButton *cb = [NSButton checkboxWithTitle:@"" target:self action:@selector(toggleGroupSelection:)];
     cb.frame = NSMakeRect(8, (rowH - 18) / 2.0, 18, 18);
@@ -4092,7 +4093,11 @@ static BOOL ValidGroupName(NSString *raw) {
       migrated = YES;
     } else {
       NSString *stored = AIKeychainGet(kid);
-      if (stored.length) e[@"api"] = stored;
+      if (stored.length) {
+        e[@"api"] = stored;
+        // 迁移到信任本应用的 ACL，之后重新签名不再弹钥匙串密码
+        AIKeychainSet(kid, stored);
+      }
     }
     self.aiEntries[i] = e;
   }
