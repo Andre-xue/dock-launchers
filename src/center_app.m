@@ -4429,6 +4429,18 @@ static BOOL ValidGroupName(NSString *raw) {
   return [dir stringByAppendingPathComponent:@"clipboard.json"];
 }
 
+- (NSString *)clipboardImagesDir {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/clipboard_images"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return dir;
+}
+
+- (void)deleteClipboardImageForItem:(NSDictionary *)it {
+  NSString *file = it[@"file"];
+  if (!file.length) return;
+  [[NSFileManager defaultManager] removeItemAtPath:[[self clipboardImagesDir] stringByAppendingPathComponent:file] error:NULL];
+}
+
 - (void)loadClipboardHistory {
   self.clipboardItems = [NSMutableArray array];
   NSData *d = [NSData dataWithContentsOfFile:[self clipboardStorePath]];
@@ -4436,10 +4448,19 @@ static BOOL ValidGroupName(NSString *raw) {
   if (![arr isKindOfClass:[NSArray class]]) return;
   for (id raw in arr) {
     if (![raw isKindOfClass:[NSDictionary class]]) continue;
+    NSTimeInterval ts = [raw[@"date"] doubleValue];
+    NSDate *date = ts > 0 ? [NSDate dateWithTimeIntervalSince1970:ts] : [NSDate date];
+    NSString *kind = raw[@"kind"] ?: @"text";
+    if ([kind isEqualToString:@"image"]) {
+      NSString *file = raw[@"file"] ?: @"";
+      NSString *path = [[self clipboardImagesDir] stringByAppendingPathComponent:file];
+      if (!file.length || ![[NSFileManager defaultManager] fileExistsAtPath:path]) continue;
+      [self.clipboardItems addObject:@{@"kind": @"image", @"file": file, @"date": date, @"favorite": @([raw[@"favorite"] boolValue]), @"width": raw[@"width"] ?: @0, @"height": raw[@"height"] ?: @0}];
+      continue;
+    }
     NSString *text = raw[@"text"];
     if (!text.length) continue;
-    NSTimeInterval ts = [raw[@"date"] doubleValue];
-    [self.clipboardItems addObject:@{@"text": text, @"date": ts > 0 ? [NSDate dateWithTimeIntervalSince1970:ts] : [NSDate date], @"favorite": @([raw[@"favorite"] boolValue])}];
+    [self.clipboardItems addObject:@{@"text": text, @"date": date, @"favorite": @([raw[@"favorite"] boolValue])}];
   }
   [self pruneClipboardHistory];
 }
@@ -4447,9 +4468,15 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)saveClipboardHistory {
   NSMutableArray *out = [NSMutableArray array];
   for (NSDictionary *it in self.clipboardItems) {
+    NSDate *date = it[@"date"] ?: [NSDate date];
+    if ([it[@"kind"] isEqualToString:@"image"]) {
+      NSString *file = it[@"file"] ?: @"";
+      if (!file.length) continue;
+      [out addObject:@{@"kind": @"image", @"file": file, @"date": @([date timeIntervalSince1970]), @"favorite": @([it[@"favorite"] boolValue]), @"width": it[@"width"] ?: @0, @"height": it[@"height"] ?: @0}];
+      continue;
+    }
     NSString *text = it[@"text"] ?: @"";
     if (!text.length) continue;
-    NSDate *date = it[@"date"] ?: [NSDate date];
     [out addObject:@{@"text": text, @"date": @([date timeIntervalSince1970]), @"favorite": @([it[@"favorite"] boolValue])}];
   }
   NSData *d = [NSJSONSerialization dataWithJSONObject:out options:NSJSONWritingPrettyPrinted error:NULL];
@@ -4462,7 +4489,10 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *q = [self.clipboardSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
   for (NSDictionary *it in self.clipboardItems) {
     if (self.clipboardFavoritesOnly && ![it[@"favorite"] boolValue]) continue;
-    if (q.length && [(it[@"text"] ?: @"") rangeOfString:q options:NSCaseInsensitiveSearch].location == NSNotFound) continue;
+    if (q.length) {
+      if ([it[@"kind"] isEqualToString:@"image"]) continue;
+      if ([(it[@"text"] ?: @"") rangeOfString:q options:NSCaseInsensitiveSearch].location == NSNotFound) continue;
+    }
     [self.clipboardVisibleItems addObject:it];
   }
   [self.clipboardTable reloadData];
@@ -4485,6 +4515,7 @@ static BOOL ValidGroupName(NSString *raw) {
     if ([date compare:cutoff] != NSOrderedAscending) [keep addObject:it];
   }
   if (keep.count != self.clipboardItems.count) {
+    for (NSDictionary *it in self.clipboardItems) if (![keep containsObject:it] && [it[@"kind"] isEqualToString:@"image"]) [self deleteClipboardImageForItem:it];
     self.clipboardItems = keep;
     [self saveClipboardHistory];
   }
@@ -4509,6 +4540,31 @@ static BOOL ValidGroupName(NSString *raw) {
     if (cc == self.clipboardLastChange) return;
     self.clipboardLastChange = cc;
     if (self.clipboardPaused) return;
+    NSData *imgData = [pb dataForType:NSPasteboardTypePNG];
+    if (!imgData.length) {
+      NSData *tiff = [pb dataForType:NSPasteboardTypeTIFF];
+      if (tiff.length) {
+        NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:tiff];
+        imgData = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+      }
+    }
+    if (imgData.length) {
+      NSString *file = [[[NSUUID UUID] UUIDString] stringByAppendingString:@".png"];
+      NSString *path = [[self clipboardImagesDir] stringByAppendingPathComponent:file];
+      if (![imgData writeToFile:path atomically:YES]) return;
+      NSImage *img = [[NSImage alloc] initWithData:imgData];
+      [self.clipboardItems insertObject:@{@"kind": @"image", @"file": file, @"date": [NSDate date], @"favorite": @NO, @"width": @(img.size.width), @"height": @(img.size.height)} atIndex:0];
+      self.clipboardLastText = @"";
+      while (self.clipboardItems.count > 200) {
+        NSDictionary *last = self.clipboardItems.lastObject;
+        if ([last[@"kind"] isEqualToString:@"image"]) [self deleteClipboardImageForItem:last];
+        [self.clipboardItems removeLastObject];
+      }
+      [self pruneClipboardHistory];
+      [self saveClipboardHistory];
+      if (self.clipboardWindow.isVisible) [self reloadClipboardVisibleItems];
+      return;
+    }
     NSString *text = [pb stringForType:NSPasteboardTypeString];
     if (!text.length || [text isEqualToString:self.clipboardLastText]) return;
     self.clipboardLastText = text;
@@ -4529,7 +4585,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *cv = self.clipboardWindow.contentView;
     NSTextField *title = [self label:@"剪贴板历史" size:16 bold:YES color:nil];
     title.frame = NSMakeRect(20, 396, 200, 22); [cv addSubview:title];
-    NSTextField *hint = [self label:@"只记录文字，最多 200 条；支持搜索、收藏，双击重新复制" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *hint = [self label:@"记录文字和图片，最多 200 条；支持搜索、收藏，双击重新复制" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     hint.frame = NSMakeRect(20, 376, 450, 16); [cv addSubview:hint];
     self.clipboardSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(20, 340, 250, 26)];
     self.clipboardSearch.placeholderString = @"搜索剪贴板内容";
@@ -4579,15 +4635,25 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger row = self.clipboardTable.clickedRow;
   if (row < 0) row = self.clipboardTable.selectedRow;
   if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return;
-  NSString *text = self.clipboardVisibleItems[row][@"text"] ?: @"";
+  NSDictionary *it = self.clipboardVisibleItems[row];
+  NSString *text = it[@"text"] ?: @"";
   [[NSPasteboard generalPasteboard] clearContents];
-  [[NSPasteboard generalPasteboard] setString:text forType:NSPasteboardTypeString];
+  if ([it[@"kind"] isEqualToString:@"image"]) {
+    NSString *path = [[self clipboardImagesDir] stringByAppendingPathComponent:it[@"file"] ?: @""];
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (!data.length) { [self showToast:@"图片文件已不存在"]; return; }
+    [[NSPasteboard generalPasteboard] setData:data forType:NSPasteboardTypePNG];
+    text = @"";
+  } else {
+    [[NSPasteboard generalPasteboard] setString:text forType:NSPasteboardTypeString];
+  }
   self.clipboardLastChange = [NSPasteboard generalPasteboard].changeCount;
   self.clipboardLastText = text;
   [self showToast:@"已复制到剪贴板"];
 }
 
 - (void)clearClipboardHistory:(id)sender {
+  for (NSDictionary *it in self.clipboardItems) if ([it[@"kind"] isEqualToString:@"image"]) [self deleteClipboardImageForItem:it];
   [self.clipboardItems removeAllObjects];
   [self saveClipboardHistory];
   [self reloadClipboardVisibleItems];
@@ -7692,9 +7758,24 @@ static BOOL ValidGroupName(NSString *raw) {
     if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return nil;
     NSDictionary *it = self.clipboardVisibleItems[row];
     NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
+    BOOL isImage = [it[@"kind"] isEqualToString:@"image"];
     NSString *text = it[@"text"] ?: @"";
-    v.toolTip = text;
+    v.toolTip = isImage ? @"图片" : text;
     BOOL fav = [it[@"favorite"] boolValue];
+    if (isImage) {
+      NSImage *img = [[NSImage alloc] initWithContentsOfFile:[[self clipboardImagesDir] stringByAppendingPathComponent:it[@"file"] ?: @""]];
+      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(8, 5, 34, 34)];
+      iv.image = img; iv.imageScaling = NSImageScaleProportionallyUpOrDown;
+      iv.wantsLayer = YES; iv.layer.cornerRadius = 5; iv.layer.masksToBounds = YES;
+      [v addSubview:iv];
+      NSTextField *l = [self label:[NSString stringWithFormat:@"图片 %ld×%ld", (long)[it[@"width"] integerValue], (long)[it[@"height"] integerValue]] size:11.5 bold:fav color:nil];
+      l.frame = NSMakeRect(50, 18, col.width - 250, 18); [v addSubview:l];
+    } else {
+      NSTextField *l = [self label:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:11.5 bold:fav color:nil];
+      l.lineBreakMode = NSLineBreakByTruncatingTail;
+      l.toolTip = text;
+      l.frame = NSMakeRect(8, 18, col.width - 220, 18); [v addSubview:l];
+    }
     NSButton *star = [NSButton buttonWithTitle:fav ? @"★" : @"☆" target:self action:@selector(toggleClipboardFavoriteAtRow:)];
     star.bordered = NO;
     star.tag = row;
@@ -7703,10 +7784,6 @@ static BOOL ValidGroupName(NSString *raw) {
     star.toolTip = fav ? @"取消收藏" : @"收藏";
     star.frame = NSMakeRect(col.width - 188, 9, 28, 26);
     [v addSubview:star];
-    NSTextField *l = [self label:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:11.5 bold:fav color:nil];
-    l.lineBreakMode = NSLineBreakByTruncatingTail;
-    l.toolTip = text;
-    l.frame = NSMakeRect(8, 18, col.width - 220, 18); [v addSubview:l];
     NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"MM-dd HH:mm:ss";
     NSDate *date = [it[@"date"] isKindOfClass:[NSDate class]] ? it[@"date"] : [NSDate date];
     NSTextField *t = [self label:[df stringFromDate:date] size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
