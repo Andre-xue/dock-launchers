@@ -473,6 +473,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 - (void)hideClipboardPreview;
 - (void)installClipboardHoverMonitor;
 - (void)scheduleDockLiveApply;
+- (void)restoreWindowLayoutNamed:(NSString *)name autoLaunch:(BOOL)autoLaunch;
 - (void)applyConsoleMetricSelection;
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
@@ -554,6 +555,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSPopUpButton *videoPlayerPopup;
 @property (strong) NSWindow *sceneWindow;
 @property (strong) NSPopUpButton *scenePopup;
+@property (strong) ColorHoverButton *sceneLayoutButton;
 @property (strong) NSMutableArray *sceneChecks;
 @property (strong) NSMutableArray *scenes;
 @property (strong) NSButton *sceneAutoCheck;
@@ -620,6 +622,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *layoutWindow;
 @property (strong) NSTableView *layoutTable;
 @property (strong) NSMutableDictionary *savedLayouts;
+@property (strong) NSButton *layoutAutoLaunchCheck;
 @property (strong) NSWindow *dockAppearanceWindow;
 @property (strong) NSSlider *dockSizeSlider, *dockMagnifySlider;
 @property (strong) NSTextField *dockSizeValue, *dockMagnifyValue;
@@ -9262,6 +9265,12 @@ static BOOL ValidGroupName(NSString *raw) {
   for (NSDictionary *sc in self.scenes) [self.scenePopup addItemWithTitle:sc[@"name"] ?: @""];
   self.scenePopup.target = self; self.scenePopup.action = @selector(scenePopupChanged:);
   [cv addSubview:self.scenePopup];
+  self.sceneLayoutButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250, 448, 150, 28)];
+  self.sceneLayoutButton.title = @"窗口布局：无";
+  self.sceneLayoutButton.hoverColor = [NSColor systemPurpleColor];
+  self.sceneLayoutButton.target = self; self.sceneLayoutButton.action = @selector(sceneLayoutChanged:);
+  [self.sceneLayoutButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [cv addSubview:self.sceneLayoutButton];
 
   self.sceneAutoCheck = [NSButton checkboxWithTitle:@"按时间自动切换（工作日 9:00-18:00 工作，其余下班）" target:self action:@selector(sceneAutoChanged:)];
   self.sceneAutoCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerSceneAuto"] ? NSControlStateValueOn : NSControlStateValueOff;
@@ -9319,6 +9328,8 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger idx = self.scenePopup.indexOfSelectedItem;
   if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
   NSDictionary *scene = self.scenes[idx];
+  NSString *bound = scene[@"layout"] ?: @"";
+  if (self.sceneLayoutButton) self.sceneLayoutButton.title = bound.length ? [NSString stringWithFormat:@"布局：%@", bound] : @"窗口布局：无";
   NSArray *sceneGroups = scene[@"groups"] ?: @[];
   BOOL all = [self sceneIsAll:scene];
   NSArray *installed = [self installedGroupNames];
@@ -9334,6 +9345,32 @@ static BOOL ValidGroupName(NSString *raw) {
     [self.sceneChecks addObject:cb];
   }
   self.sceneScroll.documentView = doc;
+}
+
+- (void)sceneLayoutChanged:(id)sender {
+  [self loadScenes];
+  [self loadWindowLayouts];
+  NSInteger idx = self.scenePopup.indexOfSelectedItem;
+  if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
+  NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
+  NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,0,300,28) pullsDown:NO];
+  [popup addItemWithTitle:@"不绑定窗口布局"];
+  for (NSString *n in names) [popup addItemWithTitle:n];
+  NSString *cur = self.scenes[idx][@"layout"] ?: @"";
+  if (cur.length && [names containsObject:cur]) [popup selectItemWithTitle:cur];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"绑定窗口布局";
+  a.informativeText = @"应用这个场景时，同时恢复对应的窗口布局。";
+  a.accessoryView = popup;
+  [a addButtonWithTitle:@"保存"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSMutableDictionary *scene = [self.scenes[idx] mutableCopy];
+  if (popup.indexOfSelectedItem <= 0) [scene removeObjectForKey:@"layout"];
+  else scene[@"layout"] = popup.titleOfSelectedItem;
+  self.scenes[idx] = scene;
+  [self saveScenes];
+  [self reloadSceneChecks];
 }
 
 - (void)scenePopupChanged:(id)sender { [self reloadSceneChecks]; }
@@ -9408,6 +9445,11 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   [self killDock];
   self.lastAppliedScene = name;
+  NSString *layoutName = scene[@"layout"] ?: @"";
+  if (layoutName.length) {
+    BOOL autoLaunch = !self.layoutAutoLaunchCheck || self.layoutAutoLaunchCheck.state == NSControlStateValueOn;
+    [self restoreWindowLayoutNamed:layoutName autoLaunch:autoLaunch];
+  }
   if (!silent) [self showToast:[NSString stringWithFormat:@"已切换到「%@」场景", name]];
 }
 
@@ -11190,6 +11232,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.layoutTable.rowHeight = 36;
     self.layoutTable.dataSource = self; self.layoutTable.delegate = self;
     sv.documentView = self.layoutTable; [cv addSubview:sv];
+    self.layoutAutoLaunchCheck = [NSButton checkboxWithTitle:@"恢复布局时自动启动缺失的应用" target:self action:nil];
+    self.layoutAutoLaunchCheck.state = NSControlStateValueOn;
+    self.layoutAutoLaunchCheck.frame = NSMakeRect(16, 52, 300, 20); [cv addSubview:self.layoutAutoLaunchCheck];
     NSArray *actions = @[@[@"保存当前布局", @"saveCurrentWindowLayout:", @16.0, @130.0, [NSColor systemGreenColor]],
                          @[@"恢复选中布局", @"restoreSelectedWindowLayout:", @154.0, @130.0, [NSColor systemBlueColor]],
                          @[@"删除", @"deleteSelectedWindowLayout:", @292.0, @72.0, [NSColor systemRedColor]],
@@ -11234,7 +11279,47 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger row = self.layoutTable.selectedRow;
   NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
   if (row < 0 || row >= (NSInteger)names.count) { [self showToast:@"请先选择一个布局"]; return; }
-  NSString *name = names[row];
+  BOOL autoLaunch = !self.layoutAutoLaunchCheck || self.layoutAutoLaunchCheck.state == NSControlStateValueOn;
+  [self restoreWindowLayoutNamed:names[row] autoLaunch:autoLaunch];
+}
+
+- (void)restoreWindowLayoutNamed:(NSString *)name autoLaunch:(BOOL)autoLaunch {
+  [self loadWindowLayouts];
+  if (![self ensureAccessibilityPermission]) return;
+  NSArray *windows = self.savedLayouts[name][@"windows"] ?: @[];
+  if (!windows.count) { [self showToast:@"该布局没有窗口记录"]; return; }
+  if (autoLaunch) {
+    NSMutableSet *running = [NSMutableSet set];
+    for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) if (app.bundleIdentifier.length) [running addObject:app.bundleIdentifier];
+    NSMutableArray *missing = [NSMutableArray array];
+    for (NSDictionary *w in windows) {
+      NSString *bundle = w[@"bundle"] ?: @"";
+      if (bundle.length && ![running containsObject:bundle] && ![missing containsObject:bundle]) [missing addObject:bundle];
+    }
+    if (missing.count) {
+      NSInteger launched = 0;
+      for (NSString *bundle in missing) {
+        NSURL *url = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bundle];
+        if (!url) continue;
+        NSWorkspaceOpenConfiguration *cfg = [NSWorkspaceOpenConfiguration configuration];
+        cfg.activates = NO;
+        [[NSWorkspace sharedWorkspace] openApplicationAtURL:url configuration:cfg completionHandler:nil];
+        launched++;
+      }
+      if (launched) {
+        [self showToast:[NSString stringWithFormat:@"正在启动 %ld 个应用并恢复布局…", (long)launched]];
+        __weak typeof(self) weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+          [weakSelf applyWindowLayoutNamed:name];
+        });
+        return;
+      }
+    }
+  }
+  [self applyWindowLayoutNamed:name];
+}
+
+- (void)applyWindowLayoutNamed:(NSString *)name {
   NSArray *windows = self.savedLayouts[name][@"windows"] ?: @[];
   NSMutableDictionary *apps = [NSMutableDictionary dictionary];
   for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
