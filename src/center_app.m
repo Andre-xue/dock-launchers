@@ -11206,27 +11206,25 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (NSArray<NSDictionary *> *)captureCurrentWindowLayout {
   NSMutableArray *windows = [NSMutableArray array];
+  NSArray *infoList = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+  NSMutableDictionary *appsByPID = [NSMutableDictionary dictionary];
   for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
-    if (app.activationPolicy != NSApplicationActivationPolicyRegular) continue;
-    if (app.processIdentifier == getpid()) continue;
+    if (app.activationPolicy == NSApplicationActivationPolicyRegular && app.processIdentifier != getpid()) appsByPID[@(app.processIdentifier)] = app;
+  }
+  for (NSDictionary *info in infoList) {
+    NSNumber *layer = info[(__bridge NSString *)kCGWindowLayer];
+    if (layer.integerValue != 0) continue;
+    NSNumber *pidNum = info[(__bridge NSString *)kCGWindowOwnerPID];
+    NSRunningApplication *app = appsByPID[pidNum];
+    if (!app) continue;
     NSString *bundle = app.bundleIdentifier ?: @"";
     if (!bundle.length) continue;
-    AXUIElementRef axApp = AXUIElementCreateApplication(app.processIdentifier);
-    CFTypeRef raw = NULL;
-    if (AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute, &raw) != kAXErrorSuccess || !raw) { CFRelease(axApp); continue; }
-    NSArray *axWindows = CFBridgingRelease(raw);
-    for (id w in axWindows) {
-      AXUIElementRef win = (__bridge AXUIElementRef)w;
-      CFTypeRef posRef = NULL, sizeRef = NULL, titleRef = NULL;
-      CGPoint p = CGPointZero; CGSize sz = CGSizeZero;
-      if (AXUIElementCopyAttributeValue(win, kAXPositionAttribute, &posRef) == kAXErrorSuccess && posRef) { AXValueGetValue((AXValueRef)posRef, kAXValueCGPointType, &p); CFRelease(posRef); }
-      else continue;
-      if (AXUIElementCopyAttributeValue(win, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess && sizeRef) { AXValueGetValue((AXValueRef)sizeRef, kAXValueCGSizeType, &sz); CFRelease(sizeRef); }
-      NSString *title = @"";
-      if (AXUIElementCopyAttributeValue(win, kAXTitleAttribute, &titleRef) == kAXErrorSuccess && titleRef) { title = CFBridgingRelease(titleRef); }
-      [windows addObject:@{@"bundle": bundle, @"app": app.localizedName ?: bundle, @"title": title ?: @"", @"x": @(p.x), @"y": @(p.y), @"w": @(sz.width), @"h": @(sz.height)}];
-    }
-    CFRelease(axApp);
+    CGRect rect = CGRectZero;
+    NSDictionary *bounds = info[(__bridge NSString *)kCGWindowBounds];
+    if (!bounds || !CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)bounds, &rect)) continue;
+    if (rect.size.width < 120 || rect.size.height < 80) continue;
+    NSString *title = info[(__bridge NSString *)kCGWindowName] ?: @"";
+    [windows addObject:@{@"bundle": bundle, @"app": app.localizedName ?: bundle, @"title": title, @"x": @(rect.origin.x), @"y": @(rect.origin.y), @"w": @(rect.size.width), @"h": @(rect.size.height)}];
   }
   return windows;
 }
@@ -11241,7 +11239,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.layoutWindow.contentView;
     NSTextField *title = [self label:@"窗口布局记忆" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 390, 300, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"保存当前所有应用窗口的位置和大小，一键恢复" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *sub = [self label:@"保存不需要权限；恢复窗口时需要辅助功能权限" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 368, 520, 18); [cv addSubview:sub];
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 568, 276)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
@@ -11277,7 +11275,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)saveCurrentWindowLayout:(id)sender {
-  if (![self ensureAccessibilityPermission]) return;
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"保存窗口布局";
   a.informativeText = @"输入一个布局名称，例如：工作、下班、剪辑。";
