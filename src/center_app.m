@@ -219,6 +219,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
   return [NSFont systemFontOfSize:size + bump weight:bold ? NSFontWeightBold : NSFontWeightSemibold];
 }
 
+@class QuickPanelController;
+
 @interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
@@ -232,6 +234,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property NSInteger section;
 @property (strong) NSView *liveView, *groupsView, *uninstallView, *settingsView;
 @property (strong) NSMutableSet *builtSections;
+@property (strong) QuickPanelController *quickPanel;
+@property EventHotKeyRef quickPanelHotKey;
+- (void)showQuickPanel;
 @property (strong) NSWindow *compressWindow;
 @property (strong) NSButton *compressPinButton, *translationPinButton;
 @property (strong) NSView *quickToolsPage;
@@ -1271,6 +1276,156 @@ static void HideDockHoverTip(void) {
 }
 @end
 
+
+@interface QuickPanelController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate>
+@property (strong) NSWindow *window;
+@property (strong) NSSearchField *search;
+@property (strong) NSTableView *table;
+@property (strong) NSArray<NSDictionary *> *items;
+@property (strong) NSArray<NSDictionary *> *filtered;
+@property (copy) NSArray<NSDictionary *> *(^dataProvider)(void);
+@property (copy) void (^openHandler)(NSDictionary *item);
+- (void)showPanel;
+- (void)hidePanel;
+@end
+
+@implementation QuickPanelController
+- (void)buildWindow {
+  self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,470) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+  self.window.title = @"快速面板";
+  self.window.releasedWhenClosed = NO;
+  self.window.level = NSStatusWindowLevel;
+  self.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+  self.window.backgroundColor = [NSColor colorWithCalibratedWhite:0.98 alpha:1.0];
+  NSView *cv = self.window.contentView;
+  self.search = [[NSSearchField alloc] initWithFrame:NSMakeRect(16, 420, 528, 34)];
+  self.search.placeholderString = @"搜索分组、应用、页面、AI 服务、工具…";
+  self.search.delegate = self;
+  self.search.target = self; self.search.action = @selector(searchChanged:);
+  self.search.sendsSearchStringImmediately = YES;
+  [cv addSubview:self.search];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 16, 528, 392)];
+  sv.hasVerticalScroller = YES;
+  sv.borderType = NSNoBorder;
+  sv.drawsBackground = YES;
+  sv.backgroundColor = [NSColor whiteColor];
+  self.table = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+  NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"main"];
+  col.width = 510;
+  [self.table addTableColumn:col];
+  self.table.headerView = nil;
+  self.table.rowHeight = 54;
+  self.table.intercellSpacing = NSMakeSize(0, 2);
+  self.table.dataSource = self;
+  self.table.delegate = self;
+  self.table.selectionHighlightStyle = NSTableViewSelectionHighlightStyleRegular;
+  sv.documentView = self.table;
+  [cv addSubview:sv];
+  [self.window center];
+}
+
+- (void)showPanel {
+  if (!self.window) [self buildWindow];
+  if (self.dataProvider) self.items = self.dataProvider() ?: @[];
+  self.search.stringValue = @"";
+  [self filterWithQuery:@""];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.window makeKeyAndOrderFront:nil];
+  [self.window orderFrontRegardless];
+  [self.window makeFirstResponder:self.search];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    [self.window orderFrontRegardless];
+    [self.window makeKeyWindow];
+  });
+}
+- (void)hidePanel { [self.window orderOut:nil]; }
+
+- (void)searchChanged:(id)sender { [self filterWithQuery:self.search.stringValue]; }
+
+- (void)filterWithQuery:(NSString *)q {
+  NSString *needle = [q stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  if (!needle.length) {
+    self.filtered = self.items ?: @[];
+  } else {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *it in self.items) {
+      NSString *hay = [NSString stringWithFormat:@"%@ %@ %@", it[@"title"] ?: @"", it[@"subtitle"] ?: @"", it[@"type"] ?: @""].lowercaseString;
+      if ([hay containsString:needle]) [out addObject:it];
+    }
+    [out sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+      BOOL ap = [[(a[@"title"] ?: @"") lowercaseString] hasPrefix:needle];
+      BOOL bp = [[(b[@"title"] ?: @"") lowercaseString] hasPrefix:needle];
+      if (ap != bp) return ap ? NSOrderedAscending : NSOrderedDescending;
+      return [a[@"title"] compare:b[@"title"]];
+    }];
+    self.filtered = out;
+  }
+  [self.table reloadData];
+  if (self.filtered.count) {
+    [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+    [self.table scrollRowToVisible:0];
+  }
+}
+
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView { return self.filtered.count; }
+
+- (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)row {
+  if (row < 0 || row >= (NSInteger)self.filtered.count) return nil;
+  NSDictionary *it = self.filtered[row];
+  NSTableCellView *cell = [tableView makeViewWithIdentifier:@"quick" owner:self];
+  if (!cell) {
+    cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0,0,510,52)];
+    cell.identifier = @"quick";
+    NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(10, 11, 30, 30)];
+    iv.imageScaling = NSImageScaleProportionallyUpOrDown;
+    iv.tag = 100; [cell addSubview:iv];
+    NSTextField *t = [[NSTextField alloc] initWithFrame:NSMakeRect(50, 26, 350, 18)];
+    t.editable = NO; t.bordered = NO; t.drawsBackground = NO; t.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]; t.tag = 101; [cell addSubview:t];
+    NSTextField *st = [[NSTextField alloc] initWithFrame:NSMakeRect(50, 8, 380, 14)];
+    st.editable = NO; st.bordered = NO; st.drawsBackground = NO; st.font = [NSFont systemFontOfSize:10]; st.textColor = [NSColor secondaryLabelColor]; st.tag = 102; [cell addSubview:st];
+    NSTextField *badge = [[NSTextField alloc] initWithFrame:NSMakeRect(455, 18, 45, 16)];
+    badge.editable = NO; badge.bordered = NO; badge.drawsBackground = NO; badge.font = [NSFont systemFontOfSize:9 weight:NSFontWeightMedium]; badge.textColor = [NSColor tertiaryLabelColor]; badge.alignment = NSTextAlignmentRight; badge.tag = 103; [cell addSubview:badge];
+  }
+  NSImageView *iv = [cell viewWithTag:100];
+  NSTextField *t = [cell viewWithTag:101];
+  NSTextField *st = [cell viewWithTag:102];
+  NSTextField *badge = [cell viewWithTag:103];
+  t.stringValue = it[@"title"] ?: @"";
+  st.stringValue = it[@"subtitle"] ?: @"";
+  badge.stringValue = it[@"type"] ?: @"";
+  NSImage *icon = it[@"icon"];
+  if (!icon) icon = [NSImage imageWithSystemSymbolName:@"circle" accessibilityDescription:nil];
+  iv.image = icon;
+  return cell;
+}
+
+- (void)tableViewSelectionDidChange:(NSNotification *)note {}
+
+- (void)openSelected {
+  NSInteger row = self.table.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.filtered.count) return;
+  NSDictionary *it = self.filtered[row];
+  [self.window orderOut:nil];
+  if (self.openHandler) self.openHandler(it);
+}
+
+- (void)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)sel {
+  NSInteger row = self.table.selectedRow;
+  if (sel == @selector(moveDown:)) {
+    row = MIN((NSInteger)self.filtered.count - 1, row + 1); if (row < 0) row = 0;
+    [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+    [self.table scrollRowToVisible:row]; return;
+  }
+  if (sel == @selector(moveUp:)) {
+    row = MAX(0, row - 1);
+    [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+    [self.table scrollRowToVisible:row]; return;
+  }
+  if (sel == @selector(insertNewline:)) { [self openSelected]; return; }
+  if (sel == @selector(cancelOperation:)) { [self hidePanel]; return; }
+}
+@end
+
 @implementation Controller
 
 - (NSImage *)characterImage:(CGFloat)size {
@@ -1468,6 +1623,12 @@ static void HideDockHoverTip(void) {
           [self.popover showRelativeToRect:self.statusItem.button.bounds ofView:self.statusItem.button preferredEdge:NSRectEdgeMinY];
         }
       });
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_QUICK")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self showQuickPanel];
+      if (getenv("DOCKLAUNCHERS_CENTER_TEST_QUICK_HIDE_MAIN")) [self.window orderOut:nil];
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_TOOLS_WINDOW")) {
@@ -1714,6 +1875,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
     [c beginScreenshotTranslation];
   } else if (hk.id == 2) [c translateSelectedText];
   else if (hk.id == 3) [c translateCurrentText];
+  else if (hk.id == 4) [c showQuickPanel];
   return noErr;
 }
 
@@ -1757,6 +1919,8 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   [self registerHotKeyForAction:0 code:self.shotKeyCode modifiers:self.shotModifiers display:self.shotShortcutDisplay];
   [self registerHotKeyForAction:1 code:self.selectionKeyCode modifiers:self.selectionModifiers display:self.selectionShortcutDisplay];
   [self registerHotKeyForAction:2 code:self.translateKeyCode modifiers:self.translateModifiers display:self.translateShortcutDisplay];
+  EventHotKeyID qhid = {'DLTR', 4};
+  RegisterEventHotKey(kVK_ANSI_K, cmdKey, qhid, GetApplicationEventTarget(), 0, &_quickPanelHotKey);
 }
 
 - (NSString *)shortcutDisplayForAction:(NSInteger)action {
@@ -8211,6 +8375,86 @@ static BOOL ValidGroupName(NSString *raw) {
       }];
     });
   });
+}
+
+- (NSString *)resolveApplicationPathForName:(NSString *)name {
+  if (!name.length) return nil;
+  NSString *base = name;
+  if (![base hasSuffix:@".app"]) base = [base stringByAppendingPathExtension:@"app"];
+  NSArray *dirs = @[@"/Applications", @"/System/Applications", [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"]];
+  for (NSString *d in dirs) {
+    NSString *p = [d stringByAppendingPathComponent:base];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:p]) return p;
+  }
+  return nil;
+}
+
+- (NSArray<NSDictionary *> *)quickPanelItems {
+  NSMutableArray *out = [NSMutableArray array];
+  NSArray *pages = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
+  NSArray *pageIcons = @[@"chart.line.uptrend.xyaxis", @"square.grid.2x2", @"sparkles", @"externaldrive", @"trash", @"gearshape"];
+  for (NSInteger i = 0; i < pages.count; i++) {
+    NSImage *ic = [NSImage imageWithSystemSymbolName:pageIcons[i] accessibilityDescription:nil];
+    [out addObject:@{@"title": pages[i], @"subtitle": @"控制台页面", @"type": @"页面", @"page": @(i), @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+  }
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSArray *groups = [[fm contentsOfDirectoryAtPath:GroupDir() error:NULL] sortedArrayUsingSelector:@selector(localizedCompare:)];
+  for (NSString *f in groups) {
+    if (![f hasSuffix:@".app"]) continue;
+    NSString *path = [GroupDir() stringByAppendingPathComponent:f];
+    NSImage *icon = [[NSImage alloc] initWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"]];
+    if (!icon) icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
+    [out addObject:@{@"title": [f stringByDeletingPathExtension], @"subtitle": @"Dock 分组", @"type": @"分组", @"path": path, @"icon": icon ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+  }
+  NSString *listsDir = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  NSMutableSet *seenApps = [NSMutableSet set];
+  for (NSString *list in [[fm contentsOfDirectoryAtPath:listsDir error:NULL] sortedArrayUsingSelector:@selector(localizedCompare:)]) {
+    if (![list.pathExtension isEqualToString:@"txt"]) continue;
+    NSString *body = [NSString stringWithContentsOfFile:[listsDir stringByAppendingPathComponent:list] encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+    for (NSString *line in [body componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      if (!line.length) continue;
+      NSArray *parts = [line componentsSeparatedByString:@"|"];
+      NSString *name = parts.firstObject;
+      NSString *path = [self resolveApplicationPathForName:name];
+      if (!path || [seenApps containsObject:path]) continue;
+      [seenApps addObject:path];
+      NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
+      [out addObject:@{@"title": name, @"subtitle": [NSString stringWithFormat:@"应用 · %@", list.stringByDeletingPathExtension], @"type": @"应用", @"path": path, @"icon": icon ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+    }
+  }
+  [self loadAIEntries];
+  for (NSDictionary *e in self.aiEntries) {
+    NSImage *ic = [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil];
+    [out addObject:@{@"title": e[@"name"] ?: @"AI 服务", @"subtitle": @"AI 管理 · 查看余额", @"type": @"AI", @"page": @2, @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+  }
+  [out addObject:@{@"title": @"AI 翻译", @"subtitle": @"截图 / 划词 / 文档翻译", @"type": @"工具", @"tool": @"translate", @"icon": [NSImage imageWithSystemSymbolName:@"character.bubble" accessibilityDescription:nil]}];
+  [out addObject:@{@"title": @"压缩 / 解压", @"subtitle": @"ZIP / TAR.GZ", @"type": @"工具", @"tool": @"compress", @"icon": [NSImage imageWithSystemSymbolName:@"archivebox" accessibilityDescription:nil]}];
+  return out;
+}
+
+- (void)quickPanelOpenItem:(NSDictionary *)item {
+  NSString *type = item[@"type"];
+  if ([type isEqualToString:@"页面"] || [type isEqualToString:@"AI"]) {
+    [self.window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    [self showSection:[item[@"page"] integerValue]];
+  } else if ([type isEqualToString:@"分组"] || [type isEqualToString:@"应用"]) {
+    NSString *path = item[@"path"];
+    if (path.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+  } else if ([type isEqualToString:@"工具"]) {
+    if ([item[@"tool"] isEqualToString:@"translate"]) [self showTranslationWindow:nil];
+    else [self showCompressWindow:nil];
+  }
+}
+
+- (void)showQuickPanel {
+  if (!self.quickPanel) {
+    self.quickPanel = [[QuickPanelController alloc] init];
+    __weak typeof(self) weakSelf = self;
+    self.quickPanel.dataProvider = ^NSArray<NSDictionary *> *{ return [weakSelf quickPanelItems]; };
+    self.quickPanel.openHandler = ^(NSDictionary *item) { [weakSelf quickPanelOpenItem:item]; };
+  }
+  [self.quickPanel showPanel];
 }
 
 - (void)openConsoleFromPopover:(id)sender {
