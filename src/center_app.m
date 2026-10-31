@@ -577,6 +577,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableArray *clipboardVisibleItems;
 @property NSInteger clipboardFilter;
 @property (strong) NSSegmentedControl *clipboardTabs;
+@property (strong) NSMutableSet *clipboardSelected;
+@property (strong) NSButton *clipboardSelectAll;
 @property (strong) NSPanel *clipboardPreviewPanel;
 @property (strong) NSImageView *clipboardPreviewImageView;
 @property (strong) NSTextView *clipboardPreviewTextView;
@@ -4510,6 +4512,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [self.clipboardVisibleItems addObject:it];
   }
   [self.clipboardTable reloadData];
+  [self updateClipboardSelectAllState];
 }
 
 - (void)clipboardSearchChanged:(id)sender { [self reloadClipboardVisibleItems]; }
@@ -4598,7 +4601,12 @@ static BOOL ValidGroupName(NSString *raw) {
     self.clipboardWindow.level = NSFloatingWindowLevel;
     NSView *cv = self.clipboardWindow.contentView;
     NSTextField *title = [self label:@"剪贴板" size:17 bold:YES color:nil];
-    title.frame = NSMakeRect(20, 516, 240, 24); [cv addSubview:title];
+    title.frame = NSMakeRect(20, 516, 180, 24); [cv addSubview:title];
+    if (!self.clipboardSelected) self.clipboardSelected = [NSMutableSet set];
+    self.clipboardSelectAll = [NSButton checkboxWithTitle:@"全选" target:self action:@selector(toggleClipboardSelectAll:)];
+    self.clipboardSelectAll.font = [NSFont systemFontOfSize:10.5];
+    self.clipboardSelectAll.frame = NSMakeRect(224, 516, 76, 22);
+    [cv addSubview:self.clipboardSelectAll];
     ColorHoverButton *clearTop = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(326, 516, 34, 26)];
     clearTop.title = @""; clearTop.image = [NSImage imageWithSystemSymbolName:@"trash" accessibilityDescription:@"清空剪贴板"];
     clearTop.hoverColor = [NSColor systemRedColor];
@@ -4641,15 +4649,19 @@ static BOOL ValidGroupName(NSString *raw) {
     self.clipboardTable.doubleAction = @selector(copyClipboardRow:);
     sv.documentView = self.clipboardTable;
     [cv addSubview:sv];
-    ColorHoverButton *pause = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 22, 100, 30)];
+    ColorHoverButton *pause = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(14, 22, 92, 30)];
     pause.title = @"暂停监听"; pause.hoverColor = [NSColor systemOrangeColor];
     pause.target = self; pause.action = @selector(toggleClipboardPause:);
     [pause applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:pause];
-    ColorHoverButton *fav = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(124, 22, 110, 30)];
+    ColorHoverButton *fav = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(112, 22, 100, 30)];
     fav.title = @"收藏 / 取消"; fav.hoverColor = [NSColor systemYellowColor];
     fav.target = self; fav.action = @selector(toggleClipboardFavorite:);
     [fav applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:fav];
-    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(320, 22, 84, 30)];
+    ColorHoverButton *delSel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(218, 22, 100, 30)];
+    delSel.title = @"删除选中"; delSel.hoverColor = [NSColor systemRedColor];
+    delSel.target = self; delSel.action = @selector(deleteClipboardSelected:);
+    [delSel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:delSel];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(324, 22, 80, 30)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeClipboardWindow:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
@@ -4677,6 +4689,60 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.clipboardItems removeObject:it];
   [self saveClipboardHistory];
   [self reloadClipboardVisibleItems];
+}
+
+- (NSString *)clipboardKeyForItem:(NSDictionary *)it {
+  NSDate *d = it[@"date"] ?: [NSDate date];
+  return [NSString stringWithFormat:@"%.3f|%@|%@|%@", [d timeIntervalSince1970], it[@"kind"] ?: @"text", it[@"file"] ?: @"", [it[@"text"] ?: @"" substringToIndex:MIN(60, [it[@"text"] ?: @"" length])]];
+}
+
+- (void)updateClipboardSelectAllState {
+  if (!self.clipboardSelectAll) return;
+  BOOL all = self.clipboardVisibleItems.count > 0;
+  for (NSDictionary *it in self.clipboardVisibleItems) {
+    if (![self.clipboardSelected containsObject:[self clipboardKeyForItem:it]]) { all = NO; break; }
+  }
+  self.clipboardSelectAll.state = all ? NSControlStateValueOn : NSControlStateValueOff;
+}
+
+- (void)clipboardToggleSelect:(NSButton *)sender {
+  NSInteger row = sender.tag;
+  if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return;
+  if (!self.clipboardSelected) self.clipboardSelected = [NSMutableSet set];
+  NSString *key = [self clipboardKeyForItem:self.clipboardVisibleItems[row]];
+  if (sender.state == NSControlStateValueOn) [self.clipboardSelected addObject:key];
+  else [self.clipboardSelected removeObject:key];
+  [self updateClipboardSelectAllState];
+}
+
+- (void)toggleClipboardSelectAll:(NSButton *)sender {
+  if (!self.clipboardSelected) self.clipboardSelected = [NSMutableSet set];
+  if (sender.state == NSControlStateValueOn) {
+    for (NSDictionary *it in self.clipboardVisibleItems) [self.clipboardSelected addObject:[self clipboardKeyForItem:it]];
+  } else {
+    for (NSDictionary *it in self.clipboardVisibleItems) [self.clipboardSelected removeObject:[self clipboardKeyForItem:it]];
+  }
+  [self.clipboardTable reloadData];
+  [self updateClipboardSelectAllState];
+}
+
+- (void)deleteClipboardSelected:(id)sender {
+  NSMutableArray *targets = [NSMutableArray array];
+  for (NSDictionary *it in self.clipboardItems) if ([self.clipboardSelected containsObject:[self clipboardKeyForItem:it]]) [targets addObject:it];
+  if (!targets.count) { [self showToast:@"请先勾选要删除的记录"]; return; }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"删除 %ld 条剪贴板记录？", (long)targets.count];
+  [a addButtonWithTitle:@"删除"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  for (NSDictionary *it in targets) {
+    if ([it[@"kind"] isEqualToString:@"image"]) [self deleteClipboardImageForItem:it];
+    [self.clipboardItems removeObject:it];
+    [self.clipboardSelected removeObject:[self clipboardKeyForItem:it]];
+  }
+  [self saveClipboardHistory];
+  [self reloadClipboardVisibleItems];
+  [self showToast:[NSString stringWithFormat:@"已删除 %ld 条记录", (long)targets.count]];
 }
 
 - (void)buildClipboardPreviewPanel {
@@ -7833,27 +7899,32 @@ static BOOL ValidGroupName(NSString *raw) {
     BOOL fav = [it[@"favorite"] boolValue];
     NSString *text = it[@"text"] ?: @"";
     v.toolTip = isImage ? @"图片，双击复制" : text;
+    if (!self.clipboardSelected) self.clipboardSelected = [NSMutableSet set];
+    NSButton *cb = [NSButton checkboxWithTitle:@"" target:self action:@selector(clipboardToggleSelect:)];
+    cb.tag = row; cb.frame = NSMakeRect(6, 21, 18, 18);
+    cb.state = [self.clipboardSelected containsObject:[self clipboardKeyForItem:it]] ? NSControlStateValueOn : NSControlStateValueOff;
+    [v addSubview:cb];
     if (isImage) {
       NSImage *img = [[NSImage alloc] initWithContentsOfFile:[[self clipboardImagesDir] stringByAppendingPathComponent:it[@"file"] ?: @""]];
-      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(10, 10, 38, 38)];
+      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(32, 10, 38, 38)];
       iv.image = img; iv.imageScaling = NSImageScaleProportionallyUpOrDown;
       iv.wantsLayer = YES; iv.layer.cornerRadius = 7; iv.layer.masksToBounds = YES;
       [v addSubview:iv];
       NSTextField *l = [self label:[NSString stringWithFormat:@"图片 %ld × %ld", (long)[it[@"width"] integerValue], (long)[it[@"height"] integerValue]] size:12 bold:YES color:nil];
-      l.frame = NSMakeRect(58, 24, col.width - 145, 18); [v addSubview:l];
+      l.frame = NSMakeRect(78, 24, col.width - 160, 18); [v addSubview:l];
     } else {
       NSImage *icon = [NSImage imageWithSystemSymbolName:@"text.alignleft" accessibilityDescription:@"文本"];
-      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(14, 17, 28, 24)];
+      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(36, 17, 28, 24)];
       iv.image = icon; iv.contentTintColor = [NSColor secondaryLabelColor];
       [v addSubview:iv];
       NSTextField *l = [self label:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:11.5 bold:YES color:nil];
       l.lineBreakMode = NSLineBreakByTruncatingTail;
-      l.frame = NSMakeRect(58, 24, col.width - 145, 18); [v addSubview:l];
+      l.frame = NSMakeRect(78, 24, col.width - 160, 18); [v addSubview:l];
     }
     NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"MM-dd HH:mm:ss";
     NSDate *date = [it[@"date"] isKindOfClass:[NSDate class]] ? it[@"date"] : [NSDate date];
     NSTextField *t = [self label:[df stringFromDate:date] size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
-    t.frame = NSMakeRect(58, 11, 180, 15); [v addSubview:t];
+    t.frame = NSMakeRect(78, 11, 160, 15); [v addSubview:t];
     NSButton *star = [NSButton buttonWithTitle:fav ? @"★" : @"☆" target:self action:@selector(toggleClipboardFavoriteAtRow:)];
     star.bordered = NO; star.tag = row;
     star.font = [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold];
