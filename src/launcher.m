@@ -5176,10 +5176,8 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
   NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
   if (!img) return;
   NSImage *icon = [self composeIconWithImage:img];
-  // 运行中的 App：立刻替换 Dock / 程序切换器里的图标
+  // 只替换运行中的 Dock / 程序切换器图标，避免写入 App 包触发 macOS App Management 拦截
   [NSApp setApplicationIconImage:icon];
-  // 同时写入 App 包，退出后 Dock / Finder 也保持新图标
-  [[NSWorkspace sharedWorkspace] setIcon:icon forFile:[[NSBundle mainBundle] bundlePath] options:0];
   self.customIconPath = path;
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   [d setObject:path forKey:@"customIconPath"];
@@ -5198,9 +5196,7 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
 }
 
 - (void)resetCustomIcon:(id)sender {
-  NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
   [NSApp setApplicationIconImage:nil];
-  [[NSWorkspace sharedWorkspace] setIcon:nil forFile:bundlePath options:0];
   self.customIconPath = nil;
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   [d removeObjectForKey:@"customIconPath"];
