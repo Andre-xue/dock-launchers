@@ -4314,6 +4314,18 @@ static BOOL ValidGroupName(NSString *raw) {
   return t.terminationStatus == 0;
 }
 
+- (void)aiCopyRow:(NSButton *)b {
+  NSInteger row = b.tag;
+  if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
+  NSDictionary *e = self.aiVisibleEntries[row];
+  if (![self requestAdminAuthentication]) return;
+  NSString *text = [NSString stringWithFormat:@"名称：%@\n余量：%@\n链接地址：%@\nAPI Key：%@\n备注：%@",
+                    e[@"name"] ?: @"", e[@"quota"] ?: @"", e[@"endpoint"] ?: @"", e[@"api"] ?: @"", e[@"note"] ?: @""];
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:text forType:NSPasteboardTypeString];
+  [self showToast:@"完整服务信息已复制"];
+}
+
 - (void)aiToggleReveal:(NSButton *)b {
   NSInteger row = b.tag;
   if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
@@ -6326,6 +6338,7 @@ static BOOL ValidGroupName(NSString *raw) {
       for (NSInteger i = 0; i < 3; i++) {
         ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(i*38, 14, 36, 26)];
         b.title = titles[i]; b.hoverColor = colors[i]; b.tag = row;
+        if (i == 0) b.toolTip = @"复制完整服务信息（含 API Key，需要管理员密码）";
         b.target = self; b.action = NSSelectorFromString(sels[i]);
         [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
         b.font = [NSFont systemFontOfSize:9];
