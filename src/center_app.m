@@ -580,6 +580,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSSegmentedControl *clipboardTabs;
 @property (strong) NSMutableSet *clipboardSelected;
 @property (strong) NSButton *clipboardSelectAll;
+@property (strong) NSMutableArray *quickReplyItems;
+@property (strong) ColorHoverButton *clipboardPauseBtn, *clipboardFavBtn, *clipboardAddQuickBtn, *clipboardEditQuickBtn;
 @property (strong) NSPanel *clipboardPreviewPanel;
 @property (strong) NSImageView *clipboardPreviewImageView;
 @property (strong) NSTextView *clipboardPreviewTextView;
@@ -4461,6 +4463,42 @@ static BOOL ValidGroupName(NSString *raw) {
   [[NSFileManager defaultManager] removeItemAtPath:[[self clipboardImagesDir] stringByAppendingPathComponent:file] error:NULL];
 }
 
+- (NSString *)quickReplyStorePath {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:@"quick_replies.json"];
+}
+
+- (void)loadQuickReplies {
+  NSData *d = [NSData dataWithContentsOfFile:[self quickReplyStorePath]];
+  NSArray *arr = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  NSMutableArray *out = [NSMutableArray array];
+  if ([arr isKindOfClass:[NSArray class]]) {
+    for (NSDictionary *raw in arr) {
+      if (![raw isKindOfClass:[NSDictionary class]]) continue;
+      NSString *text = raw[@"text"] ?: @"";
+      if (!text.length) continue;
+      [out addObject:@{@"quick": @YES, @"title": raw[@"title"] ?: @"快捷回复", @"text": text, @"date": [NSDate date], @"favorite": @NO}];
+    }
+  }
+  self.quickReplyItems = out;
+}
+
+- (void)saveQuickReplies {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *it in self.quickReplyItems) [out addObject:@{@"title": it[@"title"] ?: @"快捷回复", @"text": it[@"text"] ?: @""}];
+  NSData *d = [NSJSONSerialization dataWithJSONObject:out options:NSJSONWritingPrettyPrinted error:NULL];
+  [d writeToFile:[self quickReplyStorePath] atomically:YES];
+}
+
+- (void)updateClipboardTabButtons {
+  BOOL quick = self.clipboardFilter == 4;
+  self.clipboardPauseBtn.hidden = quick;
+  self.clipboardFavBtn.hidden = quick;
+  self.clipboardAddQuickBtn.hidden = !quick;
+  self.clipboardEditQuickBtn.hidden = !quick;
+}
+
 - (void)loadClipboardHistory {
   self.clipboardItems = [NSMutableArray array];
   NSData *d = [NSData dataWithContentsOfFile:[self clipboardStorePath]];
@@ -4508,6 +4546,19 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.clipboardVisibleItems removeAllObjects];
   NSString *q = [self.clipboardSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
   NSInteger filter = self.clipboardFilter;
+  if (filter == 4) {
+    if (!self.quickReplyItems) [self loadQuickReplies];
+    for (NSDictionary *it in self.quickReplyItems) {
+      if (q.length) {
+        NSString *hay = [NSString stringWithFormat:@"%@ %@", it[@"title"] ?: @"", it[@"text"] ?: @""].lowercaseString;
+        if ([hay rangeOfString:q].location == NSNotFound) continue;
+      }
+      [self.clipboardVisibleItems addObject:it];
+    }
+    [self.clipboardTable reloadData];
+    [self updateClipboardSelectAllState];
+    return;
+  }
   for (NSDictionary *it in self.clipboardItems) {
     BOOL img = [it[@"kind"] isEqualToString:@"image"];
     if ((filter == 3 || self.clipboardFavoritesOnly) && ![it[@"favorite"] boolValue]) continue;
@@ -4632,11 +4683,12 @@ static BOOL ValidGroupName(NSString *raw) {
     self.clipboardSearch.target = self; self.clipboardSearch.action = @selector(clipboardSearchChanged:);
     [cv addSubview:self.clipboardSearch];
     self.clipboardTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(20, 440, 380, 28)];
-    self.clipboardTabs.segmentCount = 4;
+    self.clipboardTabs.segmentCount = 5;
     [self.clipboardTabs setLabel:@"全部" forSegment:0];
     [self.clipboardTabs setLabel:@"文本" forSegment:1];
     [self.clipboardTabs setLabel:@"图片" forSegment:2];
     [self.clipboardTabs setLabel:@"收藏" forSegment:3];
+    [self.clipboardTabs setLabel:@"快捷回复" forSegment:4];
     self.clipboardTabs.selectedSegment = self.clipboardFilter;
     self.clipboardTabs.target = self;
     self.clipboardTabs.action = @selector(clipboardTabsChanged:);
@@ -4657,14 +4709,24 @@ static BOOL ValidGroupName(NSString *raw) {
     self.clipboardTable.doubleAction = @selector(copyClipboardRow:);
     sv.documentView = self.clipboardTable;
     [cv addSubview:sv];
-    ColorHoverButton *pause = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(14, 22, 92, 30)];
-    pause.title = @"暂停监听"; pause.hoverColor = [NSColor systemOrangeColor];
-    pause.target = self; pause.action = @selector(toggleClipboardPause:);
-    [pause applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:pause];
-    ColorHoverButton *fav = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(112, 22, 100, 30)];
-    fav.title = @"收藏 / 取消"; fav.hoverColor = [NSColor systemYellowColor];
-    fav.target = self; fav.action = @selector(toggleClipboardFavorite:);
-    [fav applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:fav];
+    self.clipboardPauseBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(14, 22, 92, 30)];
+    self.clipboardPauseBtn.title = @"暂停监听"; self.clipboardPauseBtn.hoverColor = [NSColor systemOrangeColor];
+    self.clipboardPauseBtn.target = self; self.clipboardPauseBtn.action = @selector(toggleClipboardPause:);
+    [self.clipboardPauseBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.clipboardPauseBtn];
+    self.clipboardFavBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(112, 22, 100, 30)];
+    self.clipboardFavBtn.title = @"收藏 / 取消"; self.clipboardFavBtn.hoverColor = [NSColor systemYellowColor];
+    self.clipboardFavBtn.target = self; self.clipboardFavBtn.action = @selector(toggleClipboardFavorite:);
+    [self.clipboardFavBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.clipboardFavBtn];
+    self.clipboardAddQuickBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(14, 22, 92, 30)];
+    self.clipboardAddQuickBtn.title = @"新增"; self.clipboardAddQuickBtn.hoverColor = [NSColor systemGreenColor];
+    self.clipboardAddQuickBtn.target = self; self.clipboardAddQuickBtn.action = @selector(addQuickReply:);
+    [self.clipboardAddQuickBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.clipboardAddQuickBtn];
+    self.clipboardEditQuickBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(112, 22, 100, 30)];
+    self.clipboardEditQuickBtn.title = @"编辑"; self.clipboardEditQuickBtn.hoverColor = [NSColor systemBlueColor];
+    self.clipboardEditQuickBtn.target = self; self.clipboardEditQuickBtn.action = @selector(editQuickReply:);
+    [self.clipboardEditQuickBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.clipboardEditQuickBtn];
+    self.clipboardAddQuickBtn.hidden = YES;
+    self.clipboardEditQuickBtn.hidden = YES;
     ColorHoverButton *delSel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(218, 22, 100, 30)];
     delSel.title = @"删除选中"; delSel.hoverColor = [NSColor systemRedColor];
     delSel.target = self; delSel.action = @selector(deleteClipboardSelected:);
@@ -4675,7 +4737,9 @@ static BOOL ValidGroupName(NSString *raw) {
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.clipboardWindow center];
   }
+  [self loadQuickReplies];
   [self.clipboardTabs setSelectedSegment:self.clipboardFilter];
+  [self updateClipboardTabButtons];
   [self reloadClipboardVisibleItems];
   [NSApp activateIgnoringOtherApps:YES];
   [self.clipboardWindow makeKeyAndOrderFront:nil];
@@ -4686,6 +4750,7 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)clipboardTabsChanged:(NSSegmentedControl *)sender {
   self.clipboardFilter = sender.selectedSegment;
   [self hideClipboardPreview];
+  [self updateClipboardTabButtons];
   [self reloadClipboardVisibleItems];
 }
 
@@ -4693,9 +4758,14 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger row = sender.tag;
   if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return;
   NSDictionary *it = self.clipboardVisibleItems[row];
-  if ([it[@"kind"] isEqualToString:@"image"]) [self deleteClipboardImageForItem:it];
-  [self.clipboardItems removeObject:it];
-  [self saveClipboardHistory];
+  if ([it[@"quick"] boolValue]) {
+    [self.quickReplyItems removeObject:it];
+    [self saveQuickReplies];
+  } else {
+    if ([it[@"kind"] isEqualToString:@"image"]) [self deleteClipboardImageForItem:it];
+    [self.clipboardItems removeObject:it];
+    [self saveClipboardHistory];
+  }
   [self reloadClipboardVisibleItems];
 }
 
@@ -4735,8 +4805,10 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)deleteClipboardSelected:(id)sender {
+  BOOL quickMode = self.clipboardFilter == 4;
   NSMutableArray *targets = [NSMutableArray array];
-  for (NSDictionary *it in self.clipboardItems) if ([self.clipboardSelected containsObject:[self clipboardKeyForItem:it]]) [targets addObject:it];
+  NSArray *source = quickMode ? (self.quickReplyItems ?: @[]) : self.clipboardItems;
+  for (NSDictionary *it in source) if ([self.clipboardSelected containsObject:[self clipboardKeyForItem:it]]) [targets addObject:it];
   if (!targets.count) { [self showToast:@"请先勾选要删除的记录"]; return; }
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = [NSString stringWithFormat:@"删除 %ld 条剪贴板记录？", (long)targets.count];
@@ -4744,13 +4816,69 @@ static BOOL ValidGroupName(NSString *raw) {
   [a addButtonWithTitle:@"取消"];
   if ([a runModal] != NSAlertFirstButtonReturn) return;
   for (NSDictionary *it in targets) {
-    if ([it[@"kind"] isEqualToString:@"image"]) [self deleteClipboardImageForItem:it];
-    [self.clipboardItems removeObject:it];
+    if ([it[@"quick"] boolValue]) {
+      [self.quickReplyItems removeObject:it];
+    } else {
+      if ([it[@"kind"] isEqualToString:@"image"]) [self deleteClipboardImageForItem:it];
+      [self.clipboardItems removeObject:it];
+    }
     [self.clipboardSelected removeObject:[self clipboardKeyForItem:it]];
   }
-  [self saveClipboardHistory];
+  if (quickMode) [self saveQuickReplies]; else [self saveClipboardHistory];
   [self reloadClipboardVisibleItems];
   [self showToast:[NSString stringWithFormat:@"已删除 %ld 条记录", (long)targets.count]];
+}
+
+- (void)showQuickReplyEditorAtIndex:(NSInteger)idx {
+  BOOL editing = idx >= 0 && idx < (NSInteger)self.quickReplyItems.count;
+  NSDictionary *old = editing ? self.quickReplyItems[idx] : @{};
+  NSView *av = [[NSView alloc] initWithFrame:NSMakeRect(0,0,520,240)];
+  NSTextField *tl = [self label:@"标题" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
+  tl.frame = NSMakeRect(4, 212, 60, 16); [av addSubview:tl];
+  NSTextField *titleField = [[NSTextField alloc] initWithFrame:NSMakeRect(70, 206, 440, 26)];
+  titleField.stringValue = old[@"title"] ?: @""; [av addSubview:titleField];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(4, 8, 506, 188)];
+  sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+  NSTextView *tv = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+  tv.font = [NSFont systemFontOfSize:12];
+  tv.string = old[@"text"] ?: @"";
+  sv.documentView = tv; [av addSubview:sv];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = editing ? @"编辑快捷回复" : @"新增快捷回复";
+  a.accessoryView = av;
+  [a addButtonWithTitle:@"保存"];
+  [a addButtonWithTitle:@"取消"];
+  a.window.level = NSStatusWindowLevel + 2;
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSString *text = [tv.string stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!text.length) { [self showToast:@"快捷回复内容不能为空"]; return; }
+  NSString *title = [titleField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!title.length) title = @"快捷回复";
+  NSDictionary *item = @{@"quick": @YES, @"title": title, @"text": text, @"date": [NSDate date], @"favorite": @NO};
+  if (!self.quickReplyItems) self.quickReplyItems = [NSMutableArray array];
+  if (editing) [(NSMutableArray *)self.quickReplyItems replaceObjectAtIndex:idx withObject:item];
+  else [(NSMutableArray *)self.quickReplyItems insertObject:item atIndex:0];
+  [self saveQuickReplies];
+  self.clipboardFilter = 4;
+  [self.clipboardTabs setSelectedSegment:4];
+  [self updateClipboardTabButtons];
+  [self reloadClipboardVisibleItems];
+  [self showToast:editing ? @"快捷回复已更新" : @"快捷回复已添加"];
+}
+
+- (void)addQuickReply:(id)sender {
+  [self loadQuickReplies];
+  [self showQuickReplyEditorAtIndex:-1];
+}
+
+- (void)editQuickReply:(id)sender {
+  [self loadQuickReplies];
+  NSInteger row = self.clipboardTable.selectedRow;
+  if (row < 0) row = self.clipboardTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) { [self showToast:@"请先选择一条快捷回复"]; return; }
+  NSDictionary *sel = self.clipboardVisibleItems[row];
+  NSInteger idx = [self.quickReplyItems indexOfObjectPassingTest:^BOOL(NSDictionary *it, NSUInteger i, BOOL *stop) { return [it[@"text"] isEqual:sel[@"text"]] && [it[@"title"] isEqual:sel[@"title"]]; }];
+  if (idx != NSNotFound) [self showQuickReplyEditorAtIndex:idx];
 }
 
 - (void)buildClipboardPreviewPanel {
@@ -7912,7 +8040,18 @@ static BOOL ValidGroupName(NSString *raw) {
     cb.tag = row; cb.frame = NSMakeRect(6, 21, 18, 18);
     cb.state = [self.clipboardSelected containsObject:[self clipboardKeyForItem:it]] ? NSControlStateValueOn : NSControlStateValueOff;
     [v addSubview:cb];
-    if (isImage) {
+    BOOL isQuick = [it[@"quick"] boolValue];
+    if (isQuick) {
+      NSImage *icon = [NSImage imageWithSystemSymbolName:@"bolt.fill" accessibilityDescription:@"快捷回复"];
+      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(36, 17, 26, 24)];
+      iv.image = icon; iv.contentTintColor = [NSColor systemPurpleColor];
+      [v addSubview:iv];
+      NSTextField *qt = [self label:it[@"title"] ?: @"快捷回复" size:11.5 bold:YES color:nil];
+      qt.frame = NSMakeRect(78, 24, col.width - 160, 18); [v addSubview:qt];
+      NSTextField *qs = [self label:[it[@"text"] ?: @"" stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+      qs.lineBreakMode = NSLineBreakByTruncatingTail;
+      qs.frame = NSMakeRect(78, 11, col.width - 160, 15); [v addSubview:qs];
+    } else if (isImage) {
       NSImage *img = [[NSImage alloc] initWithContentsOfFile:[[self clipboardImagesDir] stringByAppendingPathComponent:it[@"file"] ?: @""]];
       NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(32, 10, 38, 38)];
       iv.image = img; iv.imageScaling = NSImageScaleProportionallyUpOrDown;
@@ -7938,7 +8077,7 @@ static BOOL ValidGroupName(NSString *raw) {
     star.font = [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold];
     star.contentTintColor = fav ? [NSColor systemOrangeColor] : [NSColor tertiaryLabelColor];
     star.toolTip = fav ? @"取消收藏" : @"收藏";
-    star.frame = NSMakeRect(col.width - 74, 16, 28, 26); [v addSubview:star];
+    star.frame = NSMakeRect(col.width - 74, 16, 28, 26); star.hidden = isQuick; [v addSubview:star];
     NSButton *del = [NSButton buttonWithTitle:@"×" target:self action:@selector(deleteClipboardRow:)];
     del.bordered = NO; del.tag = row;
     del.font = [NSFont systemFontOfSize:16 weight:NSFontWeightMedium];
