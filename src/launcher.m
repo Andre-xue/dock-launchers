@@ -702,10 +702,12 @@ static NSColor *ThemeSel(NSInteger t) {
   NSPasteboardItem *pbItem = [[NSPasteboardItem alloc] init];
   [pbItem setString:[paths componentsJoinedByString:@"\n"] forType:kRowDragType];
   NSString *first = paths.firstObject ?: self.targetPath;
-  [pbItem setString:[[NSURL fileURLWithPath:first] absoluteString] forType:NSPasteboardTypeFileURL];
-  [pbItem setPropertyList:@[first] forType:NSFilenamesPboardType];
+  NSString *firstResolved = ResolveAppPath(first) ?: first;
+  [pbItem setString:[[NSURL fileURLWithPath:firstResolved] absoluteString] forType:NSPasteboardTypeFileURL];
+  [pbItem setPropertyList:@[firstResolved] forType:NSFilenamesPboardType];
   NSDraggingItem *item = [[NSDraggingItem alloc] initWithPasteboardWriter:pbItem];
-  NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:first];
+  NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:firstResolved];
+  if (!icon) icon = [NSImage imageNamed:NSImageNameApplicationIcon];
   [item setDraggingFrame:NSMakeRect(0, 0, 48, 48) contents:icon];
   [self beginDraggingSessionWithItems:@[item] event:event source:self];
 }
