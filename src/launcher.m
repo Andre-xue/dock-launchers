@@ -5202,10 +5202,6 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
   [d removeObjectForKey:@"customIconPath"];
   [d removeObjectForKey:@"customIconApplied"];
   [d synchronize];
-  NSTask *md = [[NSTask alloc] init];
-  md.launchPath = @"/usr/bin/mdimport";
-  md.arguments = @[bundlePath];
-  @try { [md launch]; } @catch (NSException *e) {}
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     NSTask *t = [[NSTask alloc] init];
     t.launchPath = @"/usr/bin/killall";
