@@ -57,63 +57,48 @@ static NSImage *ProcessIconForPID(NSInteger pid, NSString *path) {
 
 static NSString *const kAIKeychainService = @"com.docklaunchers.center.ai";
 
+static NSString *AIKeysFilePath(void) {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:@"ai_keys.json"];
+}
+
+static NSMutableDictionary *AIKeysLoad(void) {
+  NSData *d = [NSData dataWithContentsOfFile:AIKeysFilePath()];
+  id obj = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  return [obj isKindOfClass:[NSDictionary class]] ? [obj mutableCopy] : [NSMutableDictionary dictionary];
+}
+
+static void AIKeysSave(NSDictionary *dict) {
+  NSData *d = [NSJSONSerialization dataWithJSONObject:dict options:NSJSONWritingPrettyPrinted error:NULL];
+  NSString *path = AIKeysFilePath();
+  [d writeToFile:path atomically:YES];
+  [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions: @0600} ofItemAtPath:path error:NULL];
+}
+
 static NSString *AIKeychainGet(NSString *account) {
   if (!account.length) return nil;
-  NSDictionary *q = @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-                      (__bridge id)kSecAttrService: kAIKeychainService,
-                      (__bridge id)kSecAttrAccount: account,
-                      (__bridge id)kSecReturnData: @YES,
-                      (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne};
-  CFTypeRef out = NULL;
-  if (SecItemCopyMatching((__bridge CFDictionaryRef)q, &out) != errSecSuccess) return nil;
-  NSData *d = CFBridgingRelease(out);
-  return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+  NSString *v = AIKeysLoad()[account];
+  return [v isKindOfClass:[NSString class]] ? v : nil;
 }
 
 static BOOL AIKeychainSet(NSString *account, NSString *value) {
   if (!account.length) return NO;
-  NSData *d = [value dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
-  NSDictionary *q = @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-                      (__bridge id)kSecAttrService: kAIKeychainService,
-                      (__bridge id)kSecAttrAccount: account};
-  // 删除旧项后用宽松访问控制重建，避免每次重新签名后重复弹密码
-  SecItemDelete((__bridge CFDictionaryRef)q);
-  SecAccessRef access = NULL;
-  SecTrustedApplicationRef selfApp = NULL;
-  SecTrustedApplicationCreateFromPath(NULL, &selfApp);
-  NSArray *trusted = selfApp ? @[(__bridge id)selfApp] : @[];
-  SecAccessCreate(CFSTR("DockLaunchers AI Keys"), (__bridge CFArrayRef)trusted, &access);
-  if (selfApp) CFRelease(selfApp);
-  NSMutableDictionary *add = [q mutableCopy];
-  add[(__bridge id)kSecValueData] = d;
-  add[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAfterFirstUnlock;
-  if (access) add[(__bridge id)kSecAttrAccess] = (__bridge id)access;
-  OSStatus st = SecItemAdd((__bridge CFDictionaryRef)add, NULL);
-  if (access) CFRelease(access);
-  return st == errSecSuccess;
+  NSMutableDictionary *d = AIKeysLoad();
+  d[account] = value ?: @"";
+  AIKeysSave(d);
+  return YES;
 }
 
 static void AIKeychainDelete(NSString *account) {
   if (!account.length) return;
-  NSDictionary *q = @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-                      (__bridge id)kSecAttrService: kAIKeychainService,
-                      (__bridge id)kSecAttrAccount: account};
-  SecItemDelete((__bridge CFDictionaryRef)q);
+  NSMutableDictionary *d = AIKeysLoad();
+  [d removeObjectForKey:account];
+  AIKeysSave(d);
 }
 
 static NSArray<NSString *> *AIKeychainAccounts(void) {
-  NSDictionary *q = @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-                      (__bridge id)kSecAttrService: kAIKeychainService,
-                      (__bridge id)kSecReturnAttributes: @YES,
-                      (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitAll};
-  CFTypeRef out = NULL;
-  if (SecItemCopyMatching((__bridge CFDictionaryRef)q, &out) != errSecSuccess) return @[];
-  NSArray *items = CFBridgingRelease(out);
-  NSMutableArray *accounts = [NSMutableArray array];
-  for (id item in items) {
-    if ([item isKindOfClass:[NSDictionary class]] && [item[@"acct"] isKindOfClass:[NSString class]]) [accounts addObject:item[@"acct"]];
-  }
-  return accounts;
+  return AIKeysLoad().allKeys ?: @[];
 }
 
 static double gPrevCPUBusy = 0, gPrevCPUTotal = 0;
@@ -2665,6 +2650,17 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 
 - (void)liveAIBalanceClicked:(NSButton *)b {
   NSInteger idx = b.tag;
+  if (![self hasAppPassword]) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"需要先设置应用密码";
+    a.informativeText = @"查询 AI 余量需要应用密码保护，不会使用系统钥匙串密码。";
+    [a addButtonWithTitle:@"去设置"];
+    [a addButtonWithTitle:@"取消"];
+    a.window.level = NSFloatingWindowLevel;
+    if ([a runModal] == NSAlertFirstButtonReturn) [self showPasswordSettings:nil];
+    return;
+  }
+  if (![self promptForAppPassword]) return;
   if (!self.aiEntries) [self loadAIEntries];
   [self hydrateAIKeys];
   if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
