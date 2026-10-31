@@ -100,6 +100,22 @@ static BOOL DLThemeIsDark(void) {
 static NSColor *DLButtonBackground(void) {
   return DLThemeIsDark() ? [NSColor colorWithCalibratedWhite:0.24 alpha:1.0] : [NSColor colorWithCalibratedWhite:0.975 alpha:1.0];
 }
+
+static NSImage *ToolIconImage(NSString *symbol, NSColor *color) {
+  return [NSImage imageWithSize:NSMakeSize(64, 64) flipped:NO drawingHandler:^BOOL(NSRect r) {
+    NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(0, 0, 64, 64) xRadius:16 yRadius:16];
+    NSColor *top = [color blendedColorWithFraction:0.18 ofColor:[NSColor whiteColor]] ?: color;
+    NSGradient *g = [[NSGradient alloc] initWithStartingColor:top endingColor:color];
+    [g drawInBezierPath:p angle:-90];
+    NSImage *sym = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
+    sym = [sym imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:32 weight:NSFontWeightSemibold]];
+    sym.template = YES;
+    [[NSColor whiteColor] set];
+    [sym drawInRect:NSMakeRect(15, 15, 34, 34)];
+    return YES;
+  }];
+}
+
 static NSColor *DLRowBackground(void) {
   return DLThemeIsDark() ? [NSColor colorWithCalibratedWhite:0.16 alpha:1.0] : [NSColor colorWithCalibratedWhite:0.985 alpha:1.0];
 }
@@ -1360,6 +1376,11 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
       self.quickTabs.selectedSegment = 3;
       [self quickTabChanged:nil];
       [self togglePopover:nil];
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (!self.popover.isShown && self.statusItem.button) {
+          [self.popover showRelativeToRect:self.statusItem.button.bounds ofView:self.statusItem.button preferredEdge:NSRectEdgeMinY];
+        }
+      });
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_CONFIRM")) {
@@ -6858,20 +6879,33 @@ static BOOL ValidGroupName(NSString *raw) {
   tt.frame = NSMakeRect(16, 480, 250, 26); [toolsPage addSubview:tt];
   NSTextField *ts = [self label:@"弹出独立窗口，可选择钉住或普通窗口" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   ts.frame = NSMakeRect(16, 456, 388, 18); [toolsPage addSubview:ts];
-  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 356, 380, 74)];
-  transBtn.title = @"AI 翻译"; transBtn.hoverColor = [NSColor systemTealColor];
+  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 282, 172, 166)];
+  transBtn.title = @"AI 翻译";
+  transBtn.image = ToolIconImage(@"character.bubble.fill", [NSColor systemTealColor]);
+  transBtn.imagePosition = NSImageAbove;
+  transBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
+  transBtn.hoverColor = [NSColor systemTealColor];
   transBtn.target = self; transBtn.action = @selector(openTranslationToolFromPopover:);
   [transBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [toolsPage addSubview:transBtn];
-  NSTextField *td = [self label:@"截图 OCR / 文档 / 图片翻译" size:10 bold:NO color:[NSColor secondaryLabelColor]];
-  td.frame = NSMakeRect(32, 370, 340, 16); [toolsPage addSubview:td];
-  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 256, 380, 74)];
-  zipBtn.title = @"压缩 / 解压"; zipBtn.hoverColor = [NSColor systemOrangeColor];
+  NSTextField *td = [self label:@"截图 / 划词 / 文档翻译" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+  td.alignment = NSTextAlignmentCenter;
+  td.frame = NSMakeRect(20, 258, 172, 16); [toolsPage addSubview:td];
+  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(228, 282, 172, 166)];
+  zipBtn.title = @"压缩 / 解压";
+  zipBtn.image = ToolIconImage(@"archivebox.fill", [NSColor systemOrangeColor]);
+  zipBtn.imagePosition = NSImageAbove;
+  zipBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
+  zipBtn.hoverColor = [NSColor systemOrangeColor];
   zipBtn.target = self; zipBtn.action = @selector(openCompressToolFromPopover:);
   [zipBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [toolsPage addSubview:zipBtn];
-  NSTextField *zd = [self label:@"ZIP / TAR.GZ，本地处理不联网" size:10 bold:NO color:[NSColor secondaryLabelColor]];
-  zd.frame = NSMakeRect(32, 270, 340, 16); [toolsPage addSubview:zd];
+  NSTextField *zd = [self label:@"ZIP / TAR.GZ 本地处理" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+  zd.alignment = NSTextAlignmentCenter;
+  zd.frame = NSMakeRect(228, 258, 172, 16); [toolsPage addSubview:zd];
+  NSTextField *tip = [self label:@"点击图标打开独立窗口，可钉住置顶" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
+  tip.alignment = NSTextAlignmentCenter;
+  tip.frame = NSMakeRect(16, 214, 388, 16); [toolsPage addSubview:tip];
 
   NSView *groupPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   groupPage.hidden = YES; self.quickGroupPage = groupPage; [root addSubview:groupPage];
