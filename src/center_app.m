@@ -7289,10 +7289,15 @@ static BOOL ValidGroupName(NSString *raw) {
       NSTextField *l = [self label:[df stringFromDate:it[@"date"] ?: [NSDate date]] size:10 bold:NO color:[NSColor secondaryLabelColor]];
       l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
     } else {
-      NSTextField *l = [self label:it[@"path"] size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
-      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
-      l.toolTip = it[@"path"];
-      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
+      NSButton *link = [NSButton buttonWithTitle:it[@"path"] target:self action:@selector(revealLargeFileAtRow:)];
+      link.bordered = NO;
+      link.tag = row;
+      link.alignment = NSTextAlignmentLeft;
+      link.font = [NSFont systemFontOfSize:9.5];
+      link.contentTintColor = [NSColor controlAccentColor];
+      link.toolTip = [NSString stringWithFormat:@"点击在 Finder 中显示：%@", it[@"path"]];
+      link.frame = NSMakeRect(4, 5, col.width - 8, 22);
+      [v addSubview:link];
     }
     return v;
   }
@@ -9125,6 +9130,8 @@ static BOOL ValidGroupName(NSString *raw) {
     self.largeFileTable.rowHeight = 32;
     self.largeFileTable.allowsMultipleSelection = YES;
     self.largeFileTable.dataSource = self; self.largeFileTable.delegate = self;
+    self.largeFileTable.target = self;
+    self.largeFileTable.doubleAction = @selector(revealLargeFileRow:);
     sv.documentView = self.largeFileTable;
     [cv addSubview:sv];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(644, 20, 100, 30)];
@@ -9213,6 +9220,21 @@ static BOOL ValidGroupName(NSString *raw) {
   for (NSURL *u in urls) if ([fm trashItemAtURL:u resultingItemURL:nil error:NULL]) ok++;
   [self showToast:[NSString stringWithFormat:@"已移到废纸篓 %ld 个文件", (long)ok]];
   [self scanLargeFiles:nil];
+}
+
+- (void)revealLargeFileAtRow:(NSButton *)sender {
+  NSInteger row = sender.tag;
+  if (row < 0 || row >= (NSInteger)self.largeFileItems.count) return;
+  NSString *path = self.largeFileItems[row][@"path"];
+  if (path.length) [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];
+}
+
+- (void)revealLargeFileRow:(id)sender {
+  NSInteger row = self.largeFileTable.clickedRow;
+  if (row < 0) row = self.largeFileTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.largeFileItems.count) return;
+  NSString *path = self.largeFileItems[row][@"path"];
+  if (path.length) [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];
 }
 
 - (void)closeLargeFileCleaner:(id)sender { [self.largeFileWindow orderOut:nil]; }
