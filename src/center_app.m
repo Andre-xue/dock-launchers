@@ -11203,7 +11203,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (NSArray<NSDictionary *> *)captureCurrentWindowLayout {
   NSMutableArray *windows = [NSMutableArray array];
-  NSArray *infoList = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+  NSArray *infoList = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
   NSMutableDictionary *appsByPID = [NSMutableDictionary dictionary];
   for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
     if (app.activationPolicy == NSApplicationActivationPolicyRegular && app.processIdentifier != getpid()) appsByPID[@(app.processIdentifier)] = app;
@@ -11221,9 +11221,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if (!bounds || !CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)bounds, &rect)) continue;
     if (rect.size.width < 120 || rect.size.height < 80) continue;
     NSString *title = info[(__bridge NSString *)kCGWindowName] ?: @"";
-    [windows addObject:@{@"bundle": bundle, @"app": app.localizedName ?: bundle, @"title": title, @"x": @(rect.origin.x), @"y": @(rect.origin.y), @"w": @(rect.size.width), @"h": @(rect.size.height)}];
+    BOOL onscreen = [info[(__bridge NSString *)kCGWindowIsOnscreen] boolValue];
+    [windows addObject:@{@"bundle": bundle, @"app": app.localizedName ?: bundle, @"title": title, @"onscreen": @(onscreen), @"x": @(rect.origin.x), @"y": @(rect.origin.y), @"w": @(rect.size.width), @"h": @(rect.size.height)}];
   }
   return windows;
+}
+
+- (NSArray<NSDictionary *> *)captureCurrentApps {
+  NSMutableArray *apps = [NSMutableArray array];
+  for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
+    if (app.activationPolicy != NSApplicationActivationPolicyRegular) continue;
+    if (app.processIdentifier == getpid()) continue;
+    NSString *bundle = app.bundleIdentifier ?: @"";
+    if (!bundle.length) continue;
+    [apps addObject:@{@"bundle": bundle, @"app": app.localizedName ?: bundle}];
+  }
+  return apps;
 }
 
 - (void)showWindowLayouts:(id)sender {
@@ -11321,14 +11334,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *name = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
   if (!name.length) { [self showToast:@"布局名称不能为空"]; return; }
   NSArray *windows = [self captureCurrentWindowLayout];
-  if (!windows.count) { [self showToast:@"没有可保存的窗口"]; return; }
-  self.savedLayouts[name] = @{@"date": @([[NSDate date] timeIntervalSince1970]), @"windows": windows};
+  NSArray *apps = [self captureCurrentApps];
+  if (!windows.count && !apps.count) { [self showToast:@"没有可保存的窗口或应用"]; return; }
+  self.savedLayouts[name] = @{@"date": @([[NSDate date] timeIntervalSince1970]), @"windows": windows, @"apps": apps};
   [self saveWindowLayouts];
   [self.layoutTable reloadData];
   NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
   NSInteger idx = [names indexOfObject:name];
   if (idx != NSNotFound) [self.layoutTable selectRowIndexes:[NSIndexSet indexSetWithIndex:idx] byExtendingSelection:NO];
-  [self showToast:[NSString stringWithFormat:@"已保存布局「%@」", name]];
+  [self showToast:[NSString stringWithFormat:@"已保存「%@」：%ld 个窗口、%ld 个应用", name, (long)windows.count, (long)apps.count]];
 }
 
 - (void)restoreSelectedWindowLayout:(id)sender {
@@ -11340,51 +11354,73 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self restoreWindowLayoutNamed:names[row] autoLaunch:autoLaunch];
 }
 
+- (NSInteger)axWindowCountForPID:(pid_t)pid {
+  AXUIElementRef axApp = AXUIElementCreateApplication(pid);
+  CFTypeRef raw = NULL;
+  NSInteger count = 0;
+  if (AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute, &raw) == kAXErrorSuccess && raw) {
+    NSArray *wins = CFBridgingRelease(raw);
+    count = wins.count;
+  }
+  CFRelease(axApp);
+  return count;
+}
+
 - (void)restoreWindowLayoutNamed:(NSString *)name autoLaunch:(BOOL)autoLaunch {
   [self loadWindowLayouts];
   if (![self ensureAccessibilityPermission]) return;
-  NSArray *windows = self.savedLayouts[name][@"windows"] ?: @[];
-  if (!windows.count) { [self showToast:@"该布局没有窗口记录"]; return; }
-  if (autoLaunch) {
-    NSMutableSet *running = [NSMutableSet set];
-    for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) if (app.bundleIdentifier.length) [running addObject:app.bundleIdentifier];
-    NSMutableArray *missing = [NSMutableArray array];
-    for (NSDictionary *w in windows) {
-      NSString *bundle = w[@"bundle"] ?: @"";
-      if (bundle.length && ![running containsObject:bundle] && ![missing containsObject:bundle]) [missing addObject:bundle];
+  NSDictionary *layout = self.savedLayouts[name];
+  NSArray *windows = layout[@"windows"] ?: @[];
+  NSArray *appList = layout[@"apps"] ?: @[];
+  if (!windows.count && !appList.count) { [self showToast:@"该布局没有记录"]; return; }
+  NSMutableSet *required = [NSMutableSet set];
+  for (NSDictionary *w in windows) if ([w[@"bundle"] length]) [required addObject:w[@"bundle"]];
+  for (NSDictionary *a in appList) if ([a[@"bundle"] length]) [required addObject:a[@"bundle"]];
+  if (autoLaunch && required.count) {
+    NSMutableDictionary *running = [NSMutableDictionary dictionary];
+    for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
+      if (app.activationPolicy == NSApplicationActivationPolicyRegular && app.bundleIdentifier.length) running[app.bundleIdentifier] = app;
     }
-    if (missing.count) {
-      NSInteger launched = 0;
-      for (NSString *bundle in missing) {
+    NSInteger launched = 0, reopened = 0;
+    for (NSString *bundle in required) {
+      NSRunningApplication *app = running[bundle];
+      if (!app) {
         NSURL *url = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bundle];
         if (!url) continue;
         NSWorkspaceOpenConfiguration *cfg = [NSWorkspaceOpenConfiguration configuration];
         cfg.activates = NO;
         [[NSWorkspace sharedWorkspace] openApplicationAtURL:url configuration:cfg completionHandler:nil];
         launched++;
+      } else if ([self axWindowCountForPID:app.processIdentifier] == 0) {
+        NSURL *url = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bundle];
+        if (!url) continue;
+        NSWorkspaceOpenConfiguration *cfg = [NSWorkspaceOpenConfiguration configuration];
+        cfg.activates = NO;
+        [[NSWorkspace sharedWorkspace] openApplicationAtURL:url configuration:cfg completionHandler:nil];
+        reopened++;
       }
-      if (launched) {
-        [self showToast:[NSString stringWithFormat:@"正在启动 %ld 个应用并恢复布局…", (long)launched]];
-        __weak typeof(self) weakSelf = self;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-          [weakSelf applyWindowLayoutNamed:name];
-        });
-        return;
-      }
+    }
+    if (launched + reopened > 0) {
+      [self showToast:[NSString stringWithFormat:@"正在启动 %ld 个应用、重开 %ld 个窗口…", (long)launched, (long)reopened]];
+      __weak typeof(self) weakSelf = self;
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [weakSelf applyWindowLayoutNamed:name];
+      });
+      return;
     }
   }
   [self applyWindowLayoutNamed:name];
 }
 
 - (void)applyWindowLayoutNamed:(NSString *)name {
-  NSArray *windows = self.savedLayouts[name][@"windows"] ?: @[];
+  NSDictionary *layout = self.savedLayouts[name] ?: @{};
+  NSArray *windows = layout[@"windows"] ?: @[];
   NSMutableDictionary *apps = [NSMutableDictionary dictionary];
   for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
     if (app.activationPolicy == NSApplicationActivationPolicyRegular && app.bundleIdentifier.length) apps[app.bundleIdentifier] = app;
   }
-  NSInteger restored = 0;
-  NSInteger failed = 0;
-  NSMutableDictionary *used = [NSMutableDictionary dictionary];
+  NSInteger restored = 0, failed = 0;
+  NSMutableDictionary *usedIndexes = [NSMutableDictionary dictionary];
   for (NSDictionary *w in windows) {
     NSRunningApplication *app = apps[w[@"bundle"] ?: @""];
     if (!app) continue;
@@ -11392,10 +11428,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     CFTypeRef raw = NULL;
     if (AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute, &raw) != kAXErrorSuccess || !raw) { CFRelease(axApp); continue; }
     NSArray *axWindows = CFBridgingRelease(raw);
-    NSInteger idx = [used[w[@"bundle"]] integerValue];
-    used[w[@"bundle"]] = @(idx + 1);
-    if (idx >= (NSInteger)axWindows.count) { CFRelease(axApp); continue; }
+    NSMutableIndexSet *used = usedIndexes[w[@"bundle"]];
+    if (!used) { used = [NSMutableIndexSet indexSet]; usedIndexes[w[@"bundle"]] = used; }
+    NSInteger idx = NSNotFound;
+    NSString *wantTitle = w[@"title"] ?: @"";
+    if (wantTitle.length) {
+      for (NSInteger i = 0; i < (NSInteger)axWindows.count; i++) {
+        if ([used containsIndex:i]) continue;
+        AXUIElementRef win = (__bridge AXUIElementRef)axWindows[i];
+        CFTypeRef tr = NULL;
+        NSString *t = @"";
+        if (AXUIElementCopyAttributeValue(win, kAXTitleAttribute, &tr) == kAXErrorSuccess && tr) t = CFBridgingRelease(tr);
+        if ([t isEqualToString:wantTitle]) { idx = i; break; }
+      }
+    }
+    if (idx == NSNotFound) {
+      for (NSInteger i = 0; i < (NSInteger)axWindows.count; i++) if (![used containsIndex:i]) { idx = i; break; }
+    }
+    if (idx == NSNotFound || idx >= (NSInteger)axWindows.count) { CFRelease(axApp); failed++; continue; }
+    [used addIndex:idx];
     AXUIElementRef win = (__bridge AXUIElementRef)axWindows[idx];
+    AXUIElementSetAttributeValue(win, kAXMinimizedAttribute, kCFBooleanFalse);
     CGPoint p = CGPointMake([w[@"x"] doubleValue], [w[@"y"] doubleValue]);
     CGSize sz = CGSizeMake([w[@"w"] doubleValue], [w[@"h"] doubleValue]);
     AXValueRef posVal = AXValueCreate(kAXValueCGPointType, &p);
