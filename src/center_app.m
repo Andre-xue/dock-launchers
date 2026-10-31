@@ -440,6 +440,11 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property BOOL clipboardFavoritesOnly;
 @property (strong) NSPopUpButton *clipboardDaysPopup;
 @property (strong) ColorHoverButton *processMetricButton;
+@property (strong) NSWindow *promptWindow;
+@property (strong) NSTableView *promptTable;
+@property (strong) NSMutableArray *prompts;
+@property (strong) NSArray *promptFiltered;
+@property (strong) NSSearchField *promptSearch;
 @property (strong) NSWindow *largeFileWindow;
 @property (strong) NSTableView *largeFileTable;
 @property (strong) NSArray *largeFileItems;
@@ -4668,35 +4673,40 @@ static BOOL ValidGroupName(NSString *raw) {
   NSScrollView *aiScroll = sv;
   aiScroll.frame = NSMakeRect(8, 8, 684, 390);
 
-  ColorHoverButton *decrypt = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 26, 140, 30)];
+  ColorHoverButton *decrypt = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 26, 110, 30)];
   decrypt.title = @"解密备份…"; decrypt.hoverColor = [NSColor systemTealColor];
   decrypt.target = self; decrypt.action = @selector(aiDecryptBackup:);
   [decrypt applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:decrypt];
-  ColorHoverButton *importBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(174, 26, 110, 30)];
+  ColorHoverButton *importBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(142, 26, 100, 30)];
   importBtn.title = @"导入数据…"; importBtn.hoverColor = [NSColor systemBlueColor];
   importBtn.target = self; importBtn.action = @selector(aiImportData:);
   [importBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:importBtn];
-  ColorHoverButton *exportBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(294, 26, 110, 30)];
+  ColorHoverButton *exportBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250, 26, 100, 30)];
   exportBtn.title = @"导出数据…"; exportBtn.hoverColor = [NSColor systemPurpleColor];
   exportBtn.target = self; exportBtn.action = @selector(aiExportData:);
   [exportBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:exportBtn];
-  ColorHoverButton *quotaBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(414, 26, 110, 30)];
+  ColorHoverButton *quotaBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(358, 26, 100, 30)];
   quotaBtn.title = @"刷新余量"; quotaBtn.hoverColor = [NSColor systemGreenColor];
   quotaBtn.target = self; quotaBtn.action = @selector(refreshAIQuotas:);
   [quotaBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:quotaBtn];
-  self.aiPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(540, 26, 40, 30)];
+  ColorHoverButton *promptBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(466, 26, 110, 30)];
+  promptBtn.title = @"提示词库…"; promptBtn.hoverColor = [NSColor systemPurpleColor];
+  promptBtn.target = self; promptBtn.action = @selector(showPromptLibrary:);
+  [promptBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:promptBtn];
+  self.aiPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(590, 26, 40, 30)];
   self.aiPrevButton.title = @"‹"; self.aiPrevButton.hoverColor = [NSColor systemBlueColor];
   self.aiPrevButton.target = self; self.aiPrevButton.action = @selector(aiPrevPage:);
   [self.aiPrevButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:self.aiPrevButton];
   self.aiPageLabel = [self label:@"第 1/1 页" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   self.aiPageLabel.alignment = NSTextAlignmentCenter;
-  self.aiPageLabel.frame = NSMakeRect(584, 32, 80, 18); [v addSubview:self.aiPageLabel];
-  self.aiNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(668, 26, 40, 30)];
+  self.aiPageLabel.frame = NSMakeRect(634, 32, 80, 18); [v addSubview:self.aiPageLabel];
+  self.aiNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(688, 26, 40, 30)];
   self.aiNextButton.title = @"›"; self.aiNextButton.hoverColor = [NSColor systemBlueColor];
   self.aiNextButton.target = self; self.aiNextButton.action = @selector(aiNextPage:);
   [self.aiNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
@@ -7249,6 +7259,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.promptTable) return self.promptFiltered.count;
   if (tableView == self.largeFileTable) return self.largeFileItems.count;
   if (tableView == self.quickLoginTable) return self.quickLoginItems.count;
   if (tableView == self.startupTable) return self.startupItems.count;
@@ -7271,6 +7282,19 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.promptTable) {
+    if (row < 0 || row >= (NSInteger)self.promptFiltered.count) return nil;
+    NSDictionary *p = self.promptFiltered[row];
+    NSString *ident = col.identifier;
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,40)];
+    NSString *text = [ident isEqualToString:@"ptitle"] ? p[@"title"] : ([ident isEqualToString:@"pcat"] ? p[@"category"] : p[@"content"]);
+    if (!text.length) text = @"";
+    NSTextField *l = [self label:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:11 bold:[ident isEqualToString:@"ptitle"] color:[ident isEqualToString:@"pcontent"] ? [NSColor secondaryLabelColor] : nil];
+    l.lineBreakMode = NSLineBreakByTruncatingTail;
+    l.toolTip = text;
+    l.frame = NSMakeRect(4, 11, col.width - 8, 18); [v addSubview:l];
+    return v;
+  }
   if (tableView == self.largeFileTable) {
     if (row < 0 || row >= (NSInteger)self.largeFileItems.count) return nil;
     NSDictionary *it = self.largeFileItems[row];
@@ -9238,6 +9262,175 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)closeLargeFileCleaner:(id)sender { [self.largeFileWindow orderOut:nil]; }
+
+- (NSString *)promptStorePath {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:@"prompts.json"];
+}
+
+- (void)loadPrompts {
+  NSData *d = [NSData dataWithContentsOfFile:[self promptStorePath]];
+  id arr = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  if ([arr isKindOfClass:[NSArray class]]) self.prompts = [arr mutableCopy];
+  if (!self.prompts) {
+    self.prompts = [@[
+      @{@"title": @"翻译并润色", @"category": @"翻译", @"content": @"请翻译下面的内容并润色，保持原意，输出中文：\n\n"},
+      @{@"title": @"总结要点", @"category": @"总结", @"content": @"请总结下面内容的核心要点，用简洁的条目列出：\n\n"},
+      @{@"title": @"代码解释", @"category": @"代码", @"content": @"请解释下面代码的作用，指出潜在问题并给出改进建议：\n\n"}
+    ] mutableCopy];
+    [self savePrompts];
+  }
+}
+
+- (void)savePrompts {
+  NSData *d = [NSJSONSerialization dataWithJSONObject:self.prompts ?: @[] options:NSJSONWritingPrettyPrinted error:NULL];
+  [d writeToFile:[self promptStorePath] atomically:YES];
+}
+
+- (void)showPromptLibrary:(id)sender {
+  [self loadPrompts];
+  if (!self.promptWindow) {
+    self.promptWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,700,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.promptWindow.title = @"提示词库";
+    self.promptWindow.releasedWhenClosed = NO;
+    self.promptWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.promptWindow.contentView;
+    NSTextField *title = [self label:@"提示词库" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"保存常用提示词，双击复制到剪贴板" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 448, 400, 18); [cv addSubview:sub];
+    self.promptSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(20, 410, 300, 28)];
+    self.promptSearch.placeholderString = @"搜索提示词";
+    self.promptSearch.target = self; self.promptSearch.action = @selector(promptSearchChanged:);
+    [self.promptSearch setContinuous:YES];
+    [cv addSubview:self.promptSearch];
+    ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(570, 408, 110, 30)];
+    add.title = @"新增提示词"; add.hoverColor = [NSColor systemGreenColor];
+    add.target = self; add.action = @selector(promptAdd:);
+    [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
+
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 64, 668, 330)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.promptTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"ptitle", @"标题", @180.0], @[@"pcat", @"分类", @100.0], @[@"pcontent", @"内容", @360.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.promptTable addTableColumn:col];
+    }
+    self.promptTable.rowHeight = 40;
+    self.promptTable.dataSource = self; self.promptTable.delegate = self;
+    self.promptTable.target = self; self.promptTable.doubleAction = @selector(promptCopySelected:);
+    sv.documentView = self.promptTable; [cv addSubview:sv];
+
+    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 24, 100, 30)];
+    copy.title = @"复制"; copy.hoverColor = [NSColor systemGreenColor];
+    copy.target = self; copy.action = @selector(promptCopySelected:);
+    [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
+    ColorHoverButton *edit = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(124, 24, 100, 30)];
+    edit.title = @"编辑"; edit.hoverColor = [NSColor systemBlueColor];
+    edit.target = self; edit.action = @selector(promptEditSelected:);
+    [edit applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:edit];
+    ColorHoverButton *del = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(232, 24, 100, 30)];
+    del.title = @"删除"; del.hoverColor = [NSColor systemRedColor];
+    del.target = self; del.action = @selector(promptDeleteSelected:);
+    [del applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:del];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(584, 24, 100, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closePromptLibrary:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.promptWindow center];
+  }
+  [self reloadPromptTable];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.promptWindow makeKeyAndOrderFront:nil];
+  [self.promptWindow orderFrontRegardless];
+}
+
+- (void)reloadPromptTable {
+  NSString *q = [self.promptSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *p in self.prompts) {
+    if (q.length) {
+      NSString *hay = [NSString stringWithFormat:@"%@ %@ %@", p[@"title"] ?: @"", p[@"category"] ?: @"", p[@"content"] ?: @""].lowercaseString;
+      if ([hay rangeOfString:q].location == NSNotFound) continue;
+    }
+    [out addObject:p];
+  }
+  self.promptFiltered = out;
+  [self.promptTable reloadData];
+}
+
+- (void)promptSearchChanged:(id)sender { [self reloadPromptTable]; }
+
+- (void)showPromptEditorAtIndex:(NSInteger)idx {
+  BOOL editing = idx >= 0 && idx < (NSInteger)self.prompts.count;
+  NSDictionary *old = editing ? self.prompts[idx] : @{};
+  NSView *av = [[NSView alloc] initWithFrame:NSMakeRect(0,0,560,300)];
+  NSTextField *tl = [self label:@"标题" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
+  tl.frame = NSMakeRect(4, 276, 80, 16); [av addSubview:tl];
+  NSTextField *titleField = [[NSTextField alloc] initWithFrame:NSMakeRect(82, 270, 470, 26)];
+  titleField.stringValue = old[@"title"] ?: @""; [av addSubview:titleField];
+  NSTextField *cl = [self label:@"分类" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
+  cl.frame = NSMakeRect(4, 242, 80, 16); [av addSubview:cl];
+  NSTextField *catField = [[NSTextField alloc] initWithFrame:NSMakeRect(82, 236, 200, 26)];
+  catField.stringValue = old[@"category"] ?: @""; [av addSubview:catField];
+  NSTextField *nl = [self label:@"内容" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
+  nl.frame = NSMakeRect(4, 208, 80, 16); [av addSubview:nl];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(82, 8, 470, 192)];
+  sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+  NSTextView *tv = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+  tv.font = [NSFont systemFontOfSize:12];
+  tv.string = old[@"content"] ?: @"";
+  sv.documentView = tv; [av addSubview:sv];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = editing ? @"编辑提示词" : @"新增提示词";
+  a.accessoryView = av;
+  [a addButtonWithTitle:@"保存"];
+  [a addButtonWithTitle:@"取消"];
+  a.window.level = NSStatusWindowLevel + 2;
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSString *title = titleField.stringValue.length ? titleField.stringValue : @"未命名提示词";
+  NSMutableDictionary *p = [@{@"title": title, @"category": catField.stringValue ?: @"", @"content": tv.string ?: @""} mutableCopy];
+  if (editing) self.prompts[idx] = p; else [self.prompts addObject:p];
+  [self savePrompts];
+  [self reloadPromptTable];
+}
+
+- (void)promptAdd:(id)sender { [self showPromptEditorAtIndex:-1]; }
+
+- (void)promptEditSelected:(id)sender {
+  NSInteger row = self.promptTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.promptFiltered.count) return;
+  NSDictionary *sel = self.promptFiltered[row];
+  NSInteger idx = [self.prompts indexOfObjectPassingTest:^BOOL(NSDictionary *p, NSUInteger i, BOOL *stop) { return [p[@"title"] isEqual:sel[@"title"]] && [p[@"content"] isEqual:sel[@"content"]]; }];
+  if (idx != NSNotFound) [self showPromptEditorAtIndex:idx];
+}
+
+- (void)promptDeleteSelected:(id)sender {
+  NSInteger row = self.promptTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.promptFiltered.count) return;
+  NSDictionary *sel = self.promptFiltered[row];
+  NSInteger idx = [self.prompts indexOfObjectPassingTest:^BOOL(NSDictionary *p, NSUInteger i, BOOL *stop) { return [p[@"title"] isEqual:sel[@"title"]] && [p[@"content"] isEqual:sel[@"content"]]; }];
+  if (idx == NSNotFound) return;
+  [self.prompts removeObjectAtIndex:idx];
+  [self savePrompts];
+  [self reloadPromptTable];
+  [self showToast:@"提示词已删除"];
+}
+
+- (void)promptCopySelected:(id)sender {
+  NSInteger row = self.promptTable.selectedRow;
+  if (row < 0) row = self.promptTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.promptFiltered.count) { [self showToast:@"请先选择提示词"]; return; }
+  NSString *content = self.promptFiltered[row][@"content"] ?: @"";
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:content forType:NSPasteboardTypeString];
+  [self showToast:@"提示词已复制"];
+}
+
+- (void)closePromptLibrary:(id)sender { [self.promptWindow orderOut:nil]; }
 
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
