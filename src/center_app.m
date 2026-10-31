@@ -37,6 +37,37 @@ static NSString *AppPasswordHash(NSString *password, NSData *salt) {
   return [[NSData dataWithBytes:digest length:sizeof(digest)] base64EncodedStringWithOptions:0];
 }
 
+static NSArray<NSString *> *RunAppleScriptList(NSString *script) {
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/osascript";
+  t.arguments = @[@"-e", script];
+  NSPipe *pipe = [NSPipe pipe];
+  t.standardOutput = pipe; t.standardError = [NSPipe pipe];
+  @try {
+    [t launch];
+    NSData *d = [pipe.fileHandleForReading readDataToEndOfFile];
+    [t waitUntilExit];
+    NSString *out = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
+    out = [out stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (!out.length) return @[];
+    return [out componentsSeparatedByString:@", "];
+  } @catch (NSException *e) { return @[]; }
+}
+
+static NSArray<NSDictionary *> *ReadLoginItems(void) {
+  NSArray *names = RunAppleScriptList(@"tell application \"System Events\" to get name of every login item");
+  NSArray *paths = RunAppleScriptList(@"tell application \"System Events\" to get path of every login item");
+  NSMutableArray *result = [NSMutableArray array];
+  for (NSInteger i = 0; i < (NSInteger)MIN(names.count, paths.count); i++) {
+    NSString *name = names[i];
+    NSString *path = paths[i];
+    if (!path.length || ![path hasPrefix:@"/"]) continue;
+    [result addObject:@{@"name": name.length ? name : path.lastPathComponent.stringByDeletingPathExtension,
+                        @"path": path, @"type": @"登录项", @"user": @NO, @"loaded": @YES, @"domain": @"login"}];
+  }
+  return result;
+}
+
 static NSImage *ProcessIconForPID(NSInteger pid, NSString *path) {
   NSRunningApplication *ra = [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pid];
   if (ra.icon) return ra.icon;
@@ -412,6 +443,10 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *startupWindow;
 @property (strong) NSTableView *startupTable;
 @property (strong) NSArray *startupItems;
+@property NSInteger startupMode;
+@property (strong) NSSegmentedControl *startupTabs;
+@property (strong) NSTableView *quickLoginTable;
+@property (strong) NSArray *quickLoginItems;
 @property (strong) NSWindow *processWindow;
 @property (strong) NSTableView *processTable;
 @property (strong) NSArray *processItems;
@@ -7201,6 +7236,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.quickLoginTable) return self.quickLoginItems.count;
   if (tableView == self.startupTable) return self.startupItems.count;
   if (tableView == self.processTable) return self.processItems.count;
   if (tableView == self.usageTable) return self.usageRows.count;
@@ -7221,6 +7257,18 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.quickLoginTable) {
+    if (row < 0 || row >= (NSInteger)self.quickLoginItems.count) return nil;
+    NSDictionary *it = self.quickLoginItems[row];
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,30)];
+    NSTextField *l = [self label:it[@"name"] size:10.5 bold:YES color:nil];
+    l.lineBreakMode = NSLineBreakByTruncatingTail;
+    l.frame = NSMakeRect(6, 6, col.width - 80, 18); [v addSubview:l];
+    NSTextField *st = [self label:[it[@"loaded"] boolValue] ? @"已启用" : @"已禁用" size:9.5 bold:NO color:[it[@"loaded"] boolValue] ? [NSColor systemGreenColor] : [NSColor secondaryLabelColor]];
+    st.alignment = NSTextAlignmentRight;
+    st.frame = NSMakeRect(col.width - 74, 6, 68, 16); [v addSubview:st];
+    return v;
+  }
   if (tableView == self.startupTable) {
     if (row < 0 || row >= (NSInteger)self.startupItems.count) return nil;
     NSDictionary *it = self.startupItems[row];
@@ -8893,8 +8941,15 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *cv = self.startupWindow.contentView;
     NSTextField *title = [self label:@"启动项管理" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"管理用户 LaunchAgents；系统级启动项仅展示" size:10 bold:NO color:[NSColor secondaryLabelColor]];
-    sub.frame = NSMakeRect(20, 448, 600, 18); [cv addSubview:sub];
+    NSTextField *sub = [self label:@"启动项与登录时自动打开的应用；系统级项目只读" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 448, 500, 18); [cv addSubview:sub];
+    self.startupTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(500, 462, 200, 28)];
+    self.startupTabs.segmentCount = 2;
+    [self.startupTabs setLabel:@"启动项" forSegment:0];
+    [self.startupTabs setLabel:@"登录项" forSegment:1];
+    self.startupTabs.selectedSegment = self.startupMode;
+    self.startupTabs.target = self; self.startupTabs.action = @selector(startupTabChanged:);
+    [cv addSubview:self.startupTabs];
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 688, 360)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.startupTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
@@ -8918,13 +8973,24 @@ static BOOL ValidGroupName(NSString *raw) {
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.startupWindow center];
   }
+  if (self.startupTabs) self.startupTabs.selectedSegment = self.startupMode;
   [self refreshStartupItems:nil];
   [NSApp activateIgnoringOtherApps:YES];
   [self.startupWindow makeKeyAndOrderFront:nil];
   [self.startupWindow orderFrontRegardless];
 }
 
+- (void)startupTabChanged:(NSSegmentedControl *)sender {
+  self.startupMode = sender.selectedSegment;
+  [self refreshStartupItems:nil];
+}
+
 - (void)refreshStartupItems:(id)sender {
+  if (self.startupMode == 1) {
+    self.startupItems = ReadLoginItems();
+    [self.startupTable reloadData];
+    return;
+  }
   NSFileManager *fm = [NSFileManager defaultManager];
   NSMutableArray *rows = [NSMutableArray array];
   NSString *userAgents = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/LaunchAgents"];
@@ -9406,6 +9472,19 @@ static BOOL ValidGroupName(NSString *raw) {
   NSTextField *tip = [self label:@"悬停查看用途，点击打开工具" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
   tip.alignment = NSTextAlignmentCenter;
   tip.frame = NSMakeRect(16, 250, 388, 16); [toolsPage addSubview:tip];
+  NSTextField *loginTitle = [self label:@"登录时自动打开" size:11 bold:YES color:[NSColor secondaryLabelColor]];
+  loginTitle.frame = NSMakeRect(16, 226, 300, 18); [toolsPage addSubview:loginTitle];
+  NSScrollView *loginScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(12, 66, 396, 154)];
+  loginScroll.hasVerticalScroller = YES; loginScroll.borderType = NSBezelBorder;
+  loginScroll.drawsBackground = YES; loginScroll.backgroundColor = [NSColor controlBackgroundColor];
+  self.quickLoginTable = [[NSTableView alloc] initWithFrame:loginScroll.contentView.bounds];
+  NSTableColumn *loginCol = [[NSTableColumn alloc] initWithIdentifier:@"login"];
+  loginCol.width = 370; [self.quickLoginTable addTableColumn:loginCol];
+  self.quickLoginTable.headerView = nil;
+  self.quickLoginTable.rowHeight = 30;
+  self.quickLoginTable.dataSource = self; self.quickLoginTable.delegate = self;
+  loginScroll.documentView = self.quickLoginTable;
+  [toolsPage addSubview:loginScroll];
 
   NSView *groupPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   groupPage.hidden = YES; self.quickGroupPage = groupPage; [root addSubview:groupPage];
@@ -9832,6 +9911,11 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showProcessManager:nil];
 }
 
+- (void)refreshQuickLoginItems {
+  self.quickLoginItems = ReadLoginItems();
+  [self.quickLoginTable reloadData];
+}
+
 - (void)quickTabChanged:(id)sender {
   NSInteger idx = self.quickTabs.selectedSegment;
   self.quickOverview.hidden = (idx != 0);
@@ -9846,6 +9930,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (idx != 1) [self stopQuickSceneSync];
   if (idx == 1) [self rebuildQuickSceneTab];
   else if (idx == 2) [self rebuildQuickAITab];
+  else if (idx == 3) [self refreshQuickLoginItems];
   else if (idx == 4) {
     [self refreshQuickProcess:nil];
     self.quickProcessTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refreshQuickProcess:) userInfo:nil repeats:YES];
