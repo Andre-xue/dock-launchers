@@ -5849,31 +5849,6 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   NSMutableArray *roots = [NSMutableArray array];
   NSString *label = @"";
-  if (![srcKind isEqualToString:@"external"]) {
-    label = @"本地磁盘";
-    [roots addObject:@"/Applications"];
-    [roots addObject:@"/Library"];
-    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerScanPersonalMedia"]) {
-      [roots addObject:[NSHomeDirectory() stringByAppendingPathComponent:@"Music"]];
-      [roots addObject:[NSHomeDirectory() stringByAppendingPathComponent:@"Movies"]];
-      [roots addObject:[NSHomeDirectory() stringByAppendingPathComponent:@"Library"]];
-    }
-  } else {
-    NSArray *ext = [self scanExternalVolumes];
-    if (!ext.count) {
-      [self refreshDiskSourcePopup];
-      self.diskStatus.stringValue = @"外部磁盘已断开，已切回本地磁盘";
-      self.diskStatus.textColor = [NSColor systemRedColor];
-      [self.diskSpinner stopAnimation:nil];
-      return;
-    }
-    NSMutableArray *names = [NSMutableArray array];
-    for (NSDictionary *vol in ext) {
-      [roots addObject:[vol[@"url"] path]];
-      if (vol[@"name"]) [names addObject:vol[@"name"]];
-    }
-    label = names.count ? [names componentsJoinedByString:@" + "] : @"外部磁盘";
-  }
   NSString *photoMode = [self photoMode];
   if (isPhotoSource) {
     if (!photoMode.length) {
