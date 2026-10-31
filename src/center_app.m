@@ -21,6 +21,19 @@
 #import <Carbon/Carbon.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <Security/Security.h>
+#import <CommonCrypto/CommonDigest.h>
+
+static NSString *AppPasswordFilePath(void) {
+  return [[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"] stringByAppendingPathComponent:@"app_password.json"];
+}
+
+static NSString *AppPasswordHash(NSString *password, NSData *salt) {
+  NSMutableData *input = [NSMutableData dataWithData:salt ?: [NSData data]];
+  [input appendData:[password dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data]];
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+  CC_SHA256(input.bytes, (CC_LONG)input.length, digest);
+  return [[NSData dataWithBytes:digest length:sizeof(digest)] base64EncodedStringWithOptions:0];
+}
 
 static NSString *const kAIKeychainService = @"com.docklaunchers.center.ai";
 
@@ -46,11 +59,7 @@ static BOOL AIKeychainSet(NSString *account, NSString *value) {
   // 删除旧项后用宽松访问控制重建，避免每次重新签名后重复弹密码
   SecItemDelete((__bridge CFDictionaryRef)q);
   SecAccessRef access = NULL;
-  SecTrustedApplicationRef trustedApp = NULL;
-  SecTrustedApplicationCreateFromPath(NULL, &trustedApp);
-  NSArray *trusted = trustedApp ? @[(__bridge id)trustedApp] : nil;
-  SecAccessCreate(CFSTR("DockLaunchers AI Keys"), (__bridge CFArrayRef)trusted, &access);
-  if (trustedApp) CFRelease(trustedApp);
+  SecAccessCreate(CFSTR("DockLaunchers AI Keys"), (__bridge CFArrayRef)@[], &access);
   NSMutableDictionary *add = [q mutableCopy];
   add[(__bridge id)kSecValueData] = d;
   add[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAfterFirstUnlock;
@@ -355,6 +364,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableArray *aiEntries;
 @property (strong) NSMutableSet *aiSelected;
 @property (strong) NSMutableSet *aiRevealedNames;
+@property (strong) NSWindow *appPasswordWindow;
+@property (strong) NSSecureTextField *pwCurrentField, *pwNewField, *pwConfirmField;
+@property (strong) NSTextField *pwStatusLabel;
 @property (strong) NSMutableArray *appShortcuts;
 @property (strong) NSWindow *appShortcutWindow;
 @property (strong) NSTableView *appShortcutTable;
@@ -4503,15 +4515,136 @@ static BOOL ValidGroupName(NSString *raw) {
   if ([self.aiSelected containsObject:name]) [self.aiSelected removeObject:name]; else [self.aiSelected addObject:name];
   [self rebuildAIDisplay];
 }
-- (BOOL)requestAdminAuthentication {
-  NSTask *t = [[NSTask alloc] init];
-  t.launchPath = @"/usr/bin/osascript";
-  t.arguments = @[@"-e", @"do shell script \"exit 0\" with administrator privileges"];
-  t.standardOutput = [NSPipe pipe];
-  t.standardError = [NSPipe pipe];
-  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) { return NO; }
-  return t.terminationStatus == 0;
+- (NSDictionary *)appPasswordRecord {
+  NSData *d = [NSData dataWithContentsOfFile:AppPasswordFilePath()];
+  id obj = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  return [obj isKindOfClass:[NSDictionary class]] ? obj : nil;
 }
+
+- (BOOL)hasAppPassword { return [self appPasswordRecord][@"hash"] != nil; }
+
+- (BOOL)verifyAppPassword:(NSString *)password {
+  NSDictionary *rec = [self appPasswordRecord];
+  NSData *salt = [[NSData alloc] initWithBase64EncodedString:rec[@"salt"] ?: @"" options:0];
+  if (!salt.length || !password.length) return NO;
+  return [AppPasswordHash(password, salt) isEqualToString:rec[@"hash"] ?: @""];
+}
+
+- (BOOL)promptForAppPassword {
+  NSSecureTextField *field = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(0,0,260,26)];
+  field.placeholderString = @"应用密码";
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"输入应用密码";
+  a.informativeText = @"仅用于 DockLaunchers 内的敏感操作，不使用系统密码。";
+  a.accessoryView = field;
+  [a addButtonWithTitle:@"解锁"];
+  [a addButtonWithTitle:@"取消"];
+  a.window.level = NSFloatingWindowLevel;
+  [NSApp activateIgnoringOtherApps:YES];
+  if ([a runModal] != NSAlertFirstButtonReturn) return NO;
+  if ([self verifyAppPassword:field.stringValue]) return YES;
+  [self showToast:@"应用密码错误"];
+  return NO;
+}
+
+- (BOOL)requestAdminAuthentication {
+  if (![self hasAppPassword]) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"尚未设置应用密码";
+    a.informativeText = @"敏感操作需要先在「设置 → 应用密码」中设置自定义密码；不会使用系统密码。";
+    [a addButtonWithTitle:@"去设置"];
+    [a addButtonWithTitle:@"取消"];
+    a.window.level = NSFloatingWindowLevel;
+    [NSApp activateIgnoringOtherApps:YES];
+    if ([a runModal] == NSAlertFirstButtonReturn) [self showPasswordSettings:nil];
+    return NO;
+  }
+  return [self promptForAppPassword];
+}
+
+- (void)showPasswordSettings:(id)sender {
+  if (!self.appPasswordWindow) {
+    self.appPasswordWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,470,340) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.appPasswordWindow.title = @"应用密码";
+    self.appPasswordWindow.releasedWhenClosed = NO;
+    self.appPasswordWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.appPasswordWindow.contentView;
+    NSTextField *t = [self label:@"应用密码" size:17 bold:YES color:nil];
+    t.frame = NSMakeRect(24, 292, 300, 24); [cv addSubview:t];
+    NSTextField *hint = [self label:@"只作用于 DockLaunchers 的敏感操作，不影响系统密码" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    hint.frame = NSMakeRect(24, 270, 420, 16); [cv addSubview:hint];
+    __block NSTextField *cl = nil;
+    if ([self hasAppPassword]) {
+      cl = [self label:@"当前密码" size:11 bold:NO color:nil];
+      cl.frame = NSMakeRect(24, 230, 110, 18); [cv addSubview:cl];
+      self.pwCurrentField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(140, 224, 290, 28)];
+      [cv addSubview:self.pwCurrentField];
+    }
+    NSTextField *nl = [self label:@"新密码" size:11 bold:NO color:nil];
+    nl.frame = NSMakeRect(24, 184, 110, 18); [cv addSubview:nl];
+    self.pwNewField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(140, 178, 290, 28)];
+    [cv addSubview:self.pwNewField];
+    NSTextField *rl = [self label:@"确认新密码" size:11 bold:NO color:nil];
+    rl.frame = NSMakeRect(24, 138, 110, 18); [cv addSubview:rl];
+    self.pwConfirmField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(140, 132, 290, 28)];
+    [cv addSubview:self.pwConfirmField];
+    self.pwStatusLabel = [self label:@"" size:10.5 bold:NO color:[NSColor systemRedColor]];
+    self.pwStatusLabel.frame = NSMakeRect(24, 100, 420, 18); [cv addSubview:self.pwStatusLabel];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 30, 120, 32)];
+    save.title = @"保存密码"; save.hoverColor = [NSColor systemGreenColor];
+    save.target = self; save.action = @selector(saveAppPassword:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(154, 30, 120, 32)];
+    clear.title = @"清除密码"; clear.hoverColor = [NSColor systemRedColor];
+    clear.target = self; clear.action = @selector(clearAppPassword:);
+    [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(354, 30, 90, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closePasswordSettings:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.appPasswordWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.appPasswordWindow makeKeyAndOrderFront:nil];
+  [self.appPasswordWindow orderFrontRegardless];
+}
+
+- (void)saveAppPassword:(id)sender {
+  if ([self hasAppPassword] && ![self verifyAppPassword:self.pwCurrentField.stringValue]) {
+    self.pwStatusLabel.stringValue = @"当前密码错误";
+    return;
+  }
+  NSString *pw = self.pwNewField.stringValue;
+  if (pw.length < 4) { self.pwStatusLabel.stringValue = @"新密码至少 4 位"; return; }
+  if (![pw isEqualToString:self.pwConfirmField.stringValue]) { self.pwStatusLabel.stringValue = @"两次输入不一致"; return; }
+  unsigned char raw[16];
+  if (SecRandomCopyBytes(kSecRandomDefault, sizeof(raw), raw) != errSecSuccess) {
+    for (NSInteger i = 0; i < 16; i++) raw[i] = (unsigned char)(arc4random() & 0xff);
+  }
+  NSData *salt = [NSData dataWithBytes:raw length:sizeof(raw)];
+  NSDictionary *rec = @{@"salt": [salt base64EncodedStringWithOptions:0], @"hash": AppPasswordHash(pw, salt)};
+  NSData *d = [NSJSONSerialization dataWithJSONObject:rec options:NSJSONWritingPrettyPrinted error:NULL];
+  [d writeToFile:AppPasswordFilePath() atomically:YES];
+  self.pwStatusLabel.stringValue = @"密码已保存";
+  [self showToast:@"应用密码已保存"];
+  [self.appPasswordWindow orderOut:nil];
+  self.appPasswordWindow = nil;
+}
+
+- (void)clearAppPassword:(id)sender {
+  if ([self hasAppPassword] && ![self verifyAppPassword:self.pwCurrentField.stringValue]) {
+    self.pwStatusLabel.stringValue = @"当前密码错误";
+    return;
+  }
+  [[NSFileManager defaultManager] removeItemAtPath:AppPasswordFilePath() error:NULL];
+  [self showToast:@"应用密码已清除"];
+  [self.appPasswordWindow orderOut:nil];
+  self.appPasswordWindow = nil;
+}
+
+- (void)closePasswordSettings:(id)sender { [self.appPasswordWindow orderOut:nil]; }
+
+
 
 - (void)aiCopyRow:(NSButton *)b {
   NSInteger row = b.tag;
@@ -7774,13 +7907,20 @@ static BOOL ValidGroupName(NSString *raw) {
   [fullDisk applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [tFull addSubview:fullDisk];
 
+  NSView *tPassword = tileAt(2, 204); tileLabel(tPassword, @"应用密码");
+  ColorHoverButton *passwordBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
+  passwordBtn.title = @"密码管理…"; passwordBtn.hoverColor = [NSColor systemRedColor];
+  passwordBtn.target = self; passwordBtn.action = @selector(showPasswordSettings:);
+  [passwordBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [tPassword addSubview:passwordBtn];
+
   // 底部操作
   NSArray *actions = @[@[@"关于", @"showAbout:", @(24), @(90), [NSColor systemGreenColor]],
                        @[@"打开分组文件夹", @"openGroupsFolder:", @(132), @(150), [NSColor systemBlueColor]],
                        @[@"管理已记住的保存目录…", @"showRememberedSaveDirs:", @(300), @(210), [NSColor systemYellowColor]],
                        @[@"退出控制台", @"quitApp:", @(528), @(110), [NSColor systemRedColor]]];
   for (NSArray *a in actions) {
-    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([a[2] doubleValue], 68, [a[3] doubleValue], 32)];
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([a[2] doubleValue], 22, [a[3] doubleValue], 32)];
     b.title = a[0]; b.hoverColor = a[4]; b.target = self; b.action = NSSelectorFromString(a[1]);
     [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [v addSubview:b];
