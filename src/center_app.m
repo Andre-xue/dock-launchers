@@ -440,6 +440,14 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property BOOL clipboardFavoritesOnly;
 @property (strong) NSPopUpButton *clipboardDaysPopup;
 @property (strong) ColorHoverButton *processMetricButton;
+@property (strong) NSWindow *largeFileWindow;
+@property (strong) NSTableView *largeFileTable;
+@property (strong) NSArray *largeFileItems;
+@property BOOL largeFileScanning;
+@property (strong) NSPopUpButton *largeFileScopePopup;
+@property (strong) NSPopUpButton *largeFileThresholdPopup;
+@property (strong) NSTextField *largeFileStatus;
+@property (strong) ColorHoverButton *largeFileScanButton;
 @property (strong) NSWindow *startupWindow;
 @property (strong) NSTableView *startupTable;
 @property (strong) NSArray *startupItems;
@@ -5943,6 +5951,11 @@ static BOOL ValidGroupName(NSString *raw) {
   NSTextField *readonly = [self label:@"只读浏览 · 不会修改或删除文件" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
   readonly.frame = NSMakeRect(270, 414, 260, 16);
   [card addSubview:readonly];
+  ColorHoverButton *largeBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(556, 406, 128, 28)];
+  largeBtn.title = @"大文件清理…"; largeBtn.hoverColor = [NSColor systemOrangeColor];
+  largeBtn.target = self; largeBtn.action = @selector(showLargeFileCleaner:);
+  [largeBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [card addSubview:largeBtn];
 
   self.diskHintLabel = [self label:@"选择磁盘并点击「刷新分析」后显示文件" size:12 bold:NO color:[NSColor tertiaryLabelColor]];
   self.diskHintLabel.alignment = NSTextAlignmentCenter;
@@ -7236,6 +7249,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.largeFileTable) return self.largeFileItems.count;
   if (tableView == self.quickLoginTable) return self.quickLoginItems.count;
   if (tableView == self.startupTable) return self.startupItems.count;
   if (tableView == self.processTable) return self.processItems.count;
@@ -7257,6 +7271,31 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.largeFileTable) {
+    if (row < 0 || row >= (NSInteger)self.largeFileItems.count) return nil;
+    NSDictionary *it = self.largeFileItems[row];
+    NSString *ident = col.identifier;
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,32)];
+    if ([ident isEqualToString:@"lname"]) {
+      NSTextField *l = [self label:it[@"name"] size:11 bold:YES color:nil];
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
+    } else if ([ident isEqualToString:@"lsize"]) {
+      NSTextField *l = [self label:[self gbString:[it[@"size"] unsignedLongLongValue]] size:10.5 bold:YES color:[NSColor systemOrangeColor]];
+      l.alignment = NSTextAlignmentRight;
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
+    } else if ([ident isEqualToString:@"ldate"]) {
+      NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyy-MM-dd HH:mm";
+      NSTextField *l = [self label:[df stringFromDate:it[@"date"] ?: [NSDate date]] size:10 bold:NO color:[NSColor secondaryLabelColor]];
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
+    } else {
+      NSTextField *l = [self label:it[@"path"] size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.toolTip = it[@"path"];
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
+    }
+    return v;
+  }
   if (tableView == self.quickLoginTable) {
     if (row < 0 || row >= (NSInteger)self.quickLoginItems.count) return nil;
     NSDictionary *it = self.quickLoginItems[row];
@@ -9039,6 +9078,131 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)closeStartupItems:(id)sender { [self.startupWindow orderOut:nil]; }
+
+- (void)showLargeFileCleaner:(id)sender {
+  if (!self.largeFileWindow) {
+    self.largeFileWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.largeFileWindow.title = @"大文件清理";
+    self.largeFileWindow.releasedWhenClosed = NO;
+    self.largeFileWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.largeFileWindow.contentView;
+    NSTextField *title = [self label:@"大文件清理" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 490, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"扫描大文件；移到废纸篓前会验证应用密码" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 468, 520, 18); [cv addSubview:sub];
+
+    self.largeFileScopePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(20, 428, 170, 26) pullsDown:NO];
+    NSArray *scopes = @[@[@"主目录", NSHomeDirectory()], @[@"下载", [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"]], @[@"桌面", [NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"]], @[@"影片", [NSHomeDirectory() stringByAppendingPathComponent:@"Movies"]]];
+    for (NSArray *sc in scopes) { [self.largeFileScopePopup addItemWithTitle:sc[0]]; self.largeFileScopePopup.lastItem.representedObject = sc[1]; }
+    [cv addSubview:self.largeFileScopePopup];
+    self.largeFileThresholdPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(200, 428, 130, 26) pullsDown:NO];
+    NSArray *thresholds = @[@100, @500, @1024, @5120];
+    for (NSNumber *mb in thresholds) { [self.largeFileThresholdPopup addItemWithTitle:[NSString stringWithFormat:@"≥ %@ MB", mb]]; self.largeFileThresholdPopup.lastItem.representedObject = mb; }
+    [self.largeFileThresholdPopup selectItemAtIndex:0];
+    [cv addSubview:self.largeFileThresholdPopup];
+    self.largeFileScanButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(340, 426, 110, 30)];
+    self.largeFileScanButton.title = @"开始扫描"; self.largeFileScanButton.hoverColor = [NSColor systemGreenColor];
+    self.largeFileScanButton.target = self; self.largeFileScanButton.action = @selector(scanLargeFiles:);
+    [self.largeFileScanButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:self.largeFileScanButton];
+    ColorHoverButton *trash = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(600, 426, 140, 30)];
+    trash.title = @"移到废纸篓"; trash.hoverColor = [NSColor systemRedColor];
+    trash.target = self; trash.action = @selector(trashLargeFiles:);
+    [trash applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:trash];
+
+    self.largeFileStatus = [self label:@"选择范围和大小后开始扫描" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    self.largeFileStatus.frame = NSMakeRect(20, 400, 720, 18); [cv addSubview:self.largeFileStatus];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 60, 728, 330)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.largeFileTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"lname", @"文件", @240.0], @[@"lsize", @"大小", @90.0], @[@"ldate", @"修改时间", @130.0], @[@"lpath", @"路径", @260.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.largeFileTable addTableColumn:col];
+    }
+    self.largeFileTable.rowHeight = 32;
+    self.largeFileTable.allowsMultipleSelection = YES;
+    self.largeFileTable.dataSource = self; self.largeFileTable.delegate = self;
+    sv.documentView = self.largeFileTable;
+    [cv addSubview:sv];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(644, 20, 100, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeLargeFileCleaner:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:close];
+    [self.largeFileWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.largeFileWindow makeKeyAndOrderFront:nil];
+  [self.largeFileWindow orderFrontRegardless];
+}
+
+- (void)scanLargeFiles:(id)sender {
+  if (self.largeFileScanning) return;
+  self.largeFileScanning = YES;
+  self.largeFileScanButton.enabled = NO;
+  self.largeFileStatus.stringValue = @"正在扫描…";
+  NSString *root = self.largeFileScopePopup.selectedItem.representedObject ?: NSHomeDirectory();
+  unsigned long long threshold = (unsigned long long)[self.largeFileThresholdPopup.selectedItem.representedObject integerValue] * 1024ULL * 1024ULL;
+  BOOL homeScan = [root isEqualToString:NSHomeDirectory()];
+  __weak typeof(self) weakSelf = self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    NSMutableArray *files = [NSMutableArray array];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSURL *rootURL = [NSURL fileURLWithPath:root];
+    NSDirectoryEnumerator *en = [fm enumeratorAtURL:rootURL includingPropertiesForKeys:@[NSURLFileSizeKey, NSURLContentModificationDateKey, NSURLIsRegularFileKey, NSURLIsSymbolicLinkKey] options:(NSDirectoryEnumerationSkipsHiddenFiles|NSDirectoryEnumerationSkipsPackageDescendants) errorHandler:nil];
+    for (NSURL *u in en) {
+      if (files.count >= 400) break;
+      @autoreleasepool {
+        NSNumber *isReg = nil, *isLink = nil, *size = nil;
+        [u getResourceValue:&isReg forKey:NSURLIsRegularFileKey error:NULL];
+        [u getResourceValue:&isLink forKey:NSURLIsSymbolicLinkKey error:NULL];
+        if (!isReg.boolValue || isLink.boolValue) continue;
+        if (homeScan) {
+          NSString *rel = u.path;
+          if ([rel containsString:@"/Library/"] || [rel containsString:@"/.Trash/"]) continue;
+        }
+        [u getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];
+        if (size.unsignedLongLongValue < threshold) continue;
+        NSDate *date = nil; [u getResourceValue:&date forKey:NSURLContentModificationDateKey error:NULL];
+        [files addObject:@{@"path": u.path, @"name": u.lastPathComponent ?: u.path, @"size": size ?: @0, @"date": date ?: [NSDate date]}];
+      }
+    }
+    [files sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"size"] compare:a[@"size"]]; }];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      weakSelf.largeFileItems = files;
+      weakSelf.largeFileScanning = NO;
+      weakSelf.largeFileScanButton.enabled = YES;
+      weakSelf.largeFileStatus.stringValue = [NSString stringWithFormat:@"找到 %ld 个大于阈值的文件（最多显示 400 个）", (long)files.count];
+      [weakSelf.largeFileTable reloadData];
+    });
+  });
+}
+
+- (void)trashLargeFiles:(id)sender {
+  NSIndexSet *sel = self.largeFileTable.selectedRowIndexes;
+  if (!sel.count) { [self showToast:@"请先选择要清理的文件"]; return; }
+  if (![self requestAdminAuthentication]) return;
+  NSMutableArray<NSURL *> *urls = [NSMutableArray array];
+  [sel enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
+    if (idx < self.largeFileItems.count) [urls addObject:[NSURL fileURLWithPath:self.largeFileItems[idx][@"path"]]];
+  }];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"将 %ld 个文件移到废纸篓？", (long)urls.count];
+  a.informativeText = @"可在废纸篓中恢复。";
+  [a addButtonWithTitle:@"移到废纸篓"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSInteger ok = 0;
+  for (NSURL *u in urls) if ([fm trashItemAtURL:u resultingItemURL:nil error:NULL]) ok++;
+  [self showToast:[NSString stringWithFormat:@"已移到废纸篓 %ld 个文件", (long)ok]];
+  [self scanLargeFiles:nil];
+}
+
+- (void)closeLargeFileCleaner:(id)sender { [self.largeFileWindow orderOut:nil]; }
 
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
