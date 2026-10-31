@@ -3962,6 +3962,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (!self.aiSelected) self.aiSelected = [NSMutableSet set];
   if (!self.aiRevealedNames) self.aiRevealedNames = [NSMutableSet set];
   if (migrated) [self saveAIEntries];
+  else if (self.aiEntries.count) [self recordAIHistorySnapshot];
 }
 
 - (void)saveAIEntries {
@@ -3981,7 +3982,67 @@ static BOOL ValidGroupName(NSString *raw) {
   for (NSString *acct in AIKeychainAccounts()) if (![liveKids containsObject:acct]) AIKeychainDelete(acct);
   NSData *d = [NSJSONSerialization dataWithJSONObject:stored options:NSJSONWritingPrettyPrinted error:NULL];
   [d writeToFile:[self aiStorePath] atomically:YES];
+  [self recordAIHistorySnapshot];
 }
+- (NSString *)aiHistoryDir {
+  NSString *dir = [[self backupBaseDir] stringByAppendingPathComponent:@"ai-history"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return dir;
+}
+
+- (void)recordAIHistorySnapshot {
+  static NSTimeInterval lastSnapshot = 0;
+  NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+  if (lastSnapshot > 0 && now - lastSnapshot < 300) return;
+  if (!self.aiEntries.count) return;
+  lastSnapshot = now;
+  NSMutableArray *sanitized = [NSMutableArray array];
+  for (NSDictionary *e in self.aiEntries) {
+    NSMutableDictionary *m = [e mutableCopy];
+    [m removeObjectForKey:@"api"];
+    if (![m[@"kid"] length]) m[@"kid"] = [[NSUUID UUID] UUIDString];
+    [sanitized addObject:m];
+  }
+  NSDateFormatter *df = [[NSDateFormatter alloc] init];
+  df.dateFormat = @"yyyyMMdd-HHmmss";
+  NSString *name = [[df stringFromDate:[NSDate date]] stringByAppendingString:@".json"];
+  NSString *path = [[self aiHistoryDir] stringByAppendingPathComponent:name];
+  NSData *d = [NSJSONSerialization dataWithJSONObject:sanitized options:NSJSONWritingPrettyPrinted error:NULL];
+  [d writeToFile:path atomically:YES];
+  NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:[self aiHistoryDir] error:NULL];
+  NSArray *sorted = [files sortedArrayUsingSelector:@selector(compare:)];
+  if (sorted.count > 20) {
+    for (NSUInteger i = 0; i + 20 < sorted.count; i++) {
+      [[NSFileManager defaultManager] removeItemAtPath:[[self aiHistoryDir] stringByAppendingPathComponent:sorted[i]] error:NULL];
+    }
+  }
+}
+
+- (void)showAIHistory:(id)sender {
+  NSArray *files = [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:[self aiHistoryDir] error:NULL] sortedArrayUsingSelector:@selector(compare:)] ?: @[];
+  if (!files.count) { [self showToast:@"暂无历史版本，修改 AI 数据后会自动生成"]; return; }
+  NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,0,320,28) pullsDown:NO];
+  for (NSString *f in [files reverseObjectEnumerator]) [popup addItemWithTitle:[f stringByDeletingPathExtension]];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"AI 数据历史版本";
+  a.informativeText = @"选择要恢复的版本；恢复前会覆盖当前 AI 服务列表。";
+  a.accessoryView = popup;
+  [a addButtonWithTitle:@"恢复此版本"];
+  [a addButtonWithTitle:@"取消"];
+  a.window.level = NSFloatingWindowLevel;
+  [NSApp activateIgnoringOtherApps:YES];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSString *selected = [popup.titleOfSelectedItem stringByAppendingString:@".json"];
+  NSString *path = [[self aiHistoryDir] stringByAppendingPathComponent:selected];
+  NSData *d = [NSData dataWithContentsOfFile:path];
+  if (!d.length) { [self showToast:@"历史版本读取失败"]; return; }
+  [d writeToFile:[self aiStorePath] atomically:YES];
+  self.aiEntries = nil;
+  [self loadAIEntries];
+  [self rebuildAIDisplay];
+  [self showToast:@"已恢复 AI 数据历史版本"];
+}
+
 - (void)buildAIView {
   AIDropView *v = [[AIDropView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   v.dropTarget = self;
@@ -4030,6 +4091,12 @@ static BOOL ValidGroupName(NSString *raw) {
   self.aiSearchField.action = @selector(aiSearchChanged:);
   [self.aiSearchField setContinuous:YES];
   [card addSubview:self.aiSearchField];
+  ColorHoverButton *historyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(500, 410, 160, 28)];
+  historyBtn.title = @"历史版本…"; historyBtn.hoverColor = [NSColor systemTealColor];
+  historyBtn.target = self; historyBtn.action = @selector(showAIHistory:);
+  historyBtn.toolTip = @"查看并恢复最近 20 次 AI 数据备份";
+  [historyBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [card addSubview:historyBtn];
   self.aiCategory = @"全部";
   self.aiTable = [[NSTableView alloc] initWithFrame:NSMakeRect(8, 8, 684, 390)];
   self.aiTable.backgroundColor = PageBackgroundForAppearance(NSApp.effectiveAppearance);
