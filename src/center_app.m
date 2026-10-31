@@ -558,6 +558,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) Sparkline *quickCPUSpark, *quickGPUSpark, *quickNetSpark;
 @property (strong) NSView *quickOverview, *quickDetail, *quickGroupPage, *quickAIPage, *quickScenePage, *quickSceneContainer, *quickProcessPage, *quickProcessContainer;
 @property (strong) NSTimer *quickProcessTimer;
+@property (strong) NSPopUpButton *statusMetricPopup;
+@property (strong) NSPopUpButton *consoleMetricPopup;
 @property (strong) NSWindow *usageWindow;
 @property (strong) NSTableView *usageTable;
 @property (strong) NSArray *usageRows;
@@ -2453,7 +2455,11 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   NSTextField *h = [self label:@"本机实时状态" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
   NSTextField *sub = [self label:@"点击任一指标可在本机查看详细报告" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-  sub.frame = NSMakeRect(24, 584, 420, 18); [v addSubview:sub];
+  sub.frame = NSMakeRect(24, 584, 340, 18); [v addSubview:sub];
+  self.consoleMetricPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(370, 580, 150, 26) pullsDown:NO];
+  self.consoleMetricPopup.font = [NSFont systemFontOfSize:10.5];
+  [self setupStatusMetricPopup:self.consoleMetricPopup];
+  [v addSubview:self.consoleMetricPopup];
   self.uptimeLabel = [self label:@"" size:9 bold:NO color:[NSColor tertiaryLabelColor]];
   self.uptimeLabel.alignment = NSTextAlignmentRight;
   self.uptimeLabel.maximumNumberOfLines = 1;
@@ -9057,6 +9063,10 @@ static BOOL ValidGroupName(NSString *raw) {
   self.quickTabs.target = self;
   self.quickTabs.action = @selector(quickTabChanged:);
   [root addSubview:self.quickTabs];
+  self.statusMetricPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(318, 574, 100, 26) pullsDown:NO];
+  self.statusMetricPopup.font = [NSFont systemFontOfSize:10.5];
+  [self setupStatusMetricPopup:self.statusMetricPopup];
+  [root addSubview:self.statusMetricPopup];
 
   NSView *ov = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   self.quickOverview = ov;
@@ -11178,7 +11188,48 @@ static BOOL ValidGroupName(NSString *raw) {
   [self evaluateAlertsCPU:cpuPct memory:memPct diskFree:diskFree battery:self.quickBat.stringValue.doubleValue onBattery:[self.quickBatteryState isEqualToString:@"使用电池"]];
   if (getenv("DOCKLAUNCHERS_CENTER_TRACE")) fprintf(stderr, "TRACE cpu=%.0f mem=%.0f cols=%ld\n", cpuPct, memPct, (long)self.metricColumns.count);
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-  self.statusItem.button.title = @"";
+  [self updateStatusItemTitleCPU:cpuPct memory:memPct gpu:self.gpuPercent netBps:(inRate + outRate) power:self.quickBat.stringValue];
+}
+
+- (NSArray<NSString *> *)statusMetricKeys { return @[@"cpu", @"gpu", @"mem", @"net", @"power"]; }
+- (NSArray<NSString *> *)statusMetricTitles { return @[@"CPU", @"GPU", @"内存", @"网络", @"电源"]; }
+- (NSString *)statusMetricKey {
+  NSString *k = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerStatusMetric"];
+  return [self statusMetricKeys].count && [[self statusMetricKeys] containsObject:k] ? k : @"cpu";
+}
+- (void)setupStatusMetricPopup:(NSPopUpButton *)popup {
+  if (!popup) return;
+  [popup removeAllItems];
+  NSArray *keys = [self statusMetricKeys];
+  NSArray *titles = [self statusMetricTitles];
+  for (NSInteger i = 0; i < keys.count; i++) {
+    [popup addItemWithTitle:titles[i]];
+    popup.lastItem.representedObject = keys[i];
+  }
+  NSString *cur = [self statusMetricKey];
+  for (NSMenuItem *mi in popup.itemArray) if ([mi.representedObject isEqualToString:cur]) { [popup selectItem:mi]; break; }
+  popup.target = self;
+  popup.action = @selector(statusMetricChanged:);
+  popup.toolTip = @"菜单栏状态图标显示哪个指标";
+}
+- (void)statusMetricChanged:(NSPopUpButton *)popup {
+  NSString *key = popup.selectedItem.representedObject ?: @"cpu";
+  [[NSUserDefaults standardUserDefaults] setObject:key forKey:@"centerStatusMetric"];
+  for (NSPopUpButton *p in @[self.statusMetricPopup ?: (id)[NSNull null], self.consoleMetricPopup ?: (id)[NSNull null]]) {
+    if (![p isKindOfClass:[NSPopUpButton class]]) continue;
+    for (NSMenuItem *mi in p.itemArray) if ([mi.representedObject isEqualToString:key]) { [p selectItem:mi]; break; }
+  }
+  [self updateStatusItemTitleCPU:self.quickCPU.stringValue.doubleValue memory:self.quickMem.stringValue.doubleValue gpu:self.gpuPercent netBps:0 power:self.quickBat.stringValue];
+}
+- (void)updateStatusItemTitleCPU:(double)cpu memory:(double)mem gpu:(double)gpu netBps:(double)bps power:(NSString *)power {
+  NSString *key = [self statusMetricKey];
+  NSString *title = @"";
+  if ([key isEqualToString:@"cpu"]) title = [NSString stringWithFormat:@"CPU %.0f%%", cpu];
+  else if ([key isEqualToString:@"gpu"]) title = [NSString stringWithFormat:@"GPU %.0f%%", gpu];
+  else if ([key isEqualToString:@"mem"]) title = [NSString stringWithFormat:@"内存 %.0f%%", mem];
+  else if ([key isEqualToString:@"net"]) title = [NSString stringWithFormat:@"网络 %@/s", [self rate:bps]];
+  else if ([key isEqualToString:@"power"]) title = [NSString stringWithFormat:@"电源 %@", power.length ? power : @"--"];
+  self.statusItem.button.title = title;
 }
 
 - (NSString *)rate:(double)bps {
