@@ -595,6 +595,12 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) ColorHoverButton *promptPrevButton;
 @property (strong) ColorHoverButton *promptNextButton;
 @property (strong) NSSearchField *promptSearch;
+@property (strong) NSWindow *appSearchWindow;
+@property (strong) NSTableView *appSearchTable;
+@property (strong) NSSearchField *appSearchField;
+@property (strong) NSArray *appSearchItems;
+@property (strong) NSArray *appSearchFiltered;
+@property (strong) NSTextField *appSearchStatus;
 @property (strong) NSPopUpButton *promptCategoryPopup;
 @property (strong) NSWindow *largeFileWindow;
 @property (strong) NSTableView *largeFileTable;
@@ -2068,6 +2074,9 @@ static void HideDockHoverTip(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self togglePopover:nil];
     });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_APP_SEARCH")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self showAppSearch:nil]; });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_TOOLS")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -7410,6 +7419,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.appSearchTable) return self.appSearchFiltered.count;
   if (tableView == self.promptTable) return self.promptPageItems.count;
   if (tableView == self.largeFileTable) return self.largeFileItems.count;
   if (tableView == self.quickLoginTable) return self.quickLoginItems.count;
@@ -7433,6 +7443,25 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.appSearchTable) {
+    if (row < 0 || row >= (NSInteger)self.appSearchFiltered.count) return nil;
+    NSDictionary *it = self.appSearchFiltered[row];
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,42)];
+    if ([col.identifier isEqualToString:@"aname"]) {
+      NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:it[@"path"]];
+      icon.size = NSMakeSize(24, 24);
+      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(4, 9, 24, 24)];
+      iv.image = icon; [v addSubview:iv];
+      NSTextField *l = [self label:it[@"name"] size:12 bold:YES color:nil];
+      l.frame = NSMakeRect(34, 12, col.width - 38, 18); [v addSubview:l];
+    } else {
+      NSTextField *l = [self label:it[@"path"] size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.toolTip = it[@"path"];
+      l.frame = NSMakeRect(4, 12, col.width - 8, 18); [v addSubview:l];
+    }
+    return v;
+  }
   if (tableView == self.promptTable) {
     if (row < 0 || row >= (NSInteger)self.promptPageItems.count) return nil;
     NSDictionary *p = self.promptPageItems[row];
@@ -10158,6 +10187,114 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)closePromptLibrary:(id)sender { [self.promptWindow orderOut:nil]; }
 
+- (void)showAppSearch:(id)sender {
+  if (!self.appSearchWindow) {
+    self.appSearchWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.appSearchWindow.title = @"应用搜索";
+    self.appSearchWindow.releasedWhenClosed = NO;
+    self.appSearchWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.appSearchWindow.contentView;
+    NSTextField *title = [self label:@"应用搜索" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 450, 300, 28); [cv addSubview:title];
+    self.appSearchField = [[NSSearchField alloc] initWithFrame:NSMakeRect(20, 408, 500, 30)];
+    self.appSearchField.placeholderString = @"输入应用名称，回车打开";
+    self.appSearchField.target = self; self.appSearchField.action = @selector(appSearchChanged:);
+    [self.appSearchField setContinuous:YES];
+    [cv addSubview:self.appSearchField];
+    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(530, 408, 70, 30)];
+    refresh.title = @"刷新"; refresh.hoverColor = [NSColor systemGreenColor];
+    refresh.target = self; refresh.action = @selector(refreshAppSearch:);
+    [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    self.appSearchStatus = [self label:@"正在载入应用…" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    self.appSearchStatus.frame = NSMakeRect(20, 384, 580, 18); [cv addSubview:self.appSearchStatus];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 64, 588, 310)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.appSearchTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"aname", @"应用", @300.0], @[@"apath", @"路径", @260.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.appSearchTable addTableColumn:col];
+    }
+    self.appSearchTable.rowHeight = 42;
+    self.appSearchTable.dataSource = self; self.appSearchTable.delegate = self;
+    self.appSearchTable.target = self; self.appSearchTable.doubleAction = @selector(openAppSearchSelected:);
+    sv.documentView = self.appSearchTable; [cv addSubview:sv];
+    ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 24, 100, 30)];
+    open.title = @"打开应用"; open.hoverColor = [NSColor systemBlueColor];
+    open.target = self; open.action = @selector(openAppSearchSelected:);
+    [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    ColorHoverButton *finder = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(124, 24, 90, 30)];
+    finder.title = @"Finder"; finder.hoverColor = [NSColor systemTealColor];
+    finder.target = self; finder.action = @selector(revealAppSearchSelected:);
+    [finder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:finder];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524, 24, 80, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeAppSearch:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.appSearchWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.appSearchWindow makeKeyAndOrderFront:nil];
+  [self.appSearchWindow orderFrontRegardless];
+  [self.appSearchWindow makeFirstResponder:self.appSearchField];
+  [self refreshAppSearch:nil];
+}
+
+- (void)refreshAppSearch:(id)sender {
+  NSMutableArray *apps = [NSMutableArray array];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSMutableSet *seen = [NSMutableSet set];
+  NSArray *roots = @[@"/Applications", @"/System/Applications", @"/System/Applications/Utilities", [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"]];
+  for (NSString *root in roots) {
+    NSDirectoryEnumerator *en = [fm enumeratorAtPath:root];
+    for (NSString *rel in en) {
+      if (![rel.pathExtension.lowercaseString isEqualToString:@"app"]) continue;
+      NSString *path = [root stringByAppendingPathComponent:rel];
+      if ([seen containsObject:path]) continue;
+      [seen addObject:path];
+      NSString *name = path.lastPathComponent.stringByDeletingPathExtension;
+      [apps addObject:@{@"name": name ?: @"应用", @"path": path}];
+      [en skipDescendants];
+    }
+  }
+  [apps sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [a[@"name"] localizedCaseInsensitiveCompare:b[@"name"]]; }];
+  self.appSearchItems = apps;
+  self.appSearchStatus.stringValue = [NSString stringWithFormat:@"共 %ld 个应用", (long)apps.count];
+  [self reloadAppSearch];
+}
+
+- (void)reloadAppSearch {
+  NSString *q = [self.appSearchField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *a in self.appSearchItems) {
+    if (!q.length || [[a[@"name"] lowercaseString] containsString:q] || [[a[@"path"] lowercaseString] containsString:q]) [out addObject:a];
+  }
+  self.appSearchFiltered = out;
+  [self.appSearchTable reloadData];
+}
+
+- (void)appSearchChanged:(id)sender { [self reloadAppSearch]; }
+
+- (void)openAppSearchSelected:(id)sender {
+  NSInteger row = self.appSearchTable.selectedRow;
+  if (row < 0) row = self.appSearchTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.appSearchFiltered.count) {
+    if (self.appSearchFiltered.count) row = 0; else return;
+  }
+  NSString *path = self.appSearchFiltered[row][@"path"];
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+  [self.appSearchWindow orderOut:nil];
+}
+
+- (void)revealAppSearchSelected:(id)sender {
+  NSInteger row = self.appSearchTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.appSearchFiltered.count) return;
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.appSearchFiltered[row][@"path"]]]];
+}
+
+- (void)closeAppSearch:(id)sender { [self.appSearchWindow orderOut:nil]; }
+
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"设置" size:24 bold:YES color:nil];
@@ -10501,6 +10638,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.quickTabs.target = self;
   self.quickTabs.action = @selector(quickTabChanged:);
   [root addSubview:self.quickTabs];
+  NSButton *searchBtn = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"magnifyingglass" accessibilityDescription:@"应用搜索"] target:self action:@selector(showAppSearch:)];
+  searchBtn.bordered = NO;
+  searchBtn.frame = NSMakeRect(322, 574, 26, 28);
+  searchBtn.toolTip = @"搜索并打开应用";
+  searchBtn.contentTintColor = [NSColor secondaryLabelColor];
+  [root addSubview:searchBtn];
   self.statusMetricButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 56, 120, 30)];
   self.statusMetricButton.title = @"指标 CPU";
   self.statusMetricButton.hoverColor = [NSColor systemTealColor];
