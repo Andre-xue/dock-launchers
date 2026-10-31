@@ -11180,8 +11180,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   if (AXIsProcessTrusted()) return YES;
   NSAlert *a = [[NSAlert alloc] init];
-  a.messageText = @"辅助功能权限未生效";
-  a.informativeText = @"你已经在系统设置里勾选，但当前运行的进程仍未获得授权。\n\n请点「重启控制台」或完全退出控制台后重新打开，再试一次；更新过版本后，可能需要在辅助功能列表中重新勾选。";
+  a.messageText = @"窗口控制权限未生效";
+  a.informativeText = @"请在 系统设置 → 隐私与安全性 → 设备控制和数据访问 中打开 DockLaunchers 控制台（旧版 macOS 叫「辅助功能」）。\n\n切换开关后，请点「重启控制台」让权限生效。";
   [a addButtonWithTitle:@"重试"];
   [a addButtonWithTitle:@"重启控制台"];
   [a addButtonWithTitle:@"打开系统设置"];
@@ -11254,7 +11254,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.layoutAutoLaunchCheck.state = NSControlStateValueOn;
     self.layoutAutoLaunchCheck.frame = NSMakeRect(16, 52, 300, 20); [cv addSubview:self.layoutAutoLaunchCheck];
     self.layoutAXButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(322, 52, 150, 20)];
-    self.layoutAXButton.title = @"申请辅助功能权限"; self.layoutAXButton.hoverColor = [NSColor systemOrangeColor];
+    self.layoutAXButton.title = @"窗口控制权限"; self.layoutAXButton.hoverColor = [NSColor systemOrangeColor];
     self.layoutAXButton.target = self; self.layoutAXButton.action = @selector(requestLayoutAccessibility:);
     [self.layoutAXButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [cv addSubview:self.layoutAXButton];
@@ -11273,7 +11273,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.layoutTable reloadData];
   if (self.layoutAXButton) {
     BOOL trusted = AXIsProcessTrusted();
-    self.layoutAXButton.title = trusted ? @"辅助功能：已授权" : @"申请辅助功能权限";
+    self.layoutAXButton.title = trusted ? @"窗口控制：已授权" : @"窗口控制权限";
     [self.layoutAXButton applyColor:trusted ? [NSColor systemGreenColor] : DLButtonBackground() textColor:trusted ? [NSColor whiteColor] : [NSColor labelColor]];
   }
   [NSApp activateIgnoringOtherApps:YES];
@@ -11283,14 +11283,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)requestLayoutAccessibility:(id)sender {
   if (AXIsProcessTrusted()) {
-    self.layoutAXButton.title = @"辅助功能：已授权";
+    self.layoutAXButton.title = @"窗口控制：已授权";
     [self.layoutAXButton applyColor:[NSColor systemGreenColor] textColor:[NSColor whiteColor]];
-    [self showToast:@"辅助功能权限已生效"];
+    [self showToast:@"窗口控制权限已生效"];
     return;
   }
   NSAlert *a = [[NSAlert alloc] init];
-  a.messageText = @"需要添加当前应用到辅助功能";
-  a.informativeText = [NSString stringWithFormat:@"请按以下步骤操作：\n\n1. 打开 系统设置 → 隐私与安全性 → 辅助功能\n2. 点列表下方的「+」\n3. 选择：%@\n4. 打开开关\n5. 完全退出控制台后重新打开\n\n如果列表里已经有多个 DockLaunchers，请先删除旧条目。", [[NSBundle mainBundle] bundlePath]];
+  a.messageText = @"需要开启窗口控制权限";
+  a.informativeText = [NSString stringWithFormat:@"macOS 27 的路径是：\n系统设置 → 隐私与安全性 → 设备控制和数据访问\n（旧版 macOS 叫「辅助功能」）\n\n在列表里找到 DockLaunchers控制台.app，打开开关。\n\n当前应用路径：%@\n\n如果没有条目，点列表下方的「+」添加；如果有多条旧记录，先删除再重新添加。开启后请重启控制台。", [[NSBundle mainBundle] bundlePath]];
   [a addButtonWithTitle:@"打开系统设置"];
   [a addButtonWithTitle:@"在 Finder 中显示"];
   [a addButtonWithTitle:@"好"];
