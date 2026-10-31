@@ -9469,6 +9469,8 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 - (void)openClipboardFromPopover:(id)sender {
   [self.popover performClose:nil];
+  // 从菜单栏打开时隐藏控制台主窗口，关闭剪贴板后不会跳回主页面
+  [self.window orderOut:nil];
   [self showClipboardWindow:sender];
 }
 - (void)openCompressToolFromPopover:(id)sender {
