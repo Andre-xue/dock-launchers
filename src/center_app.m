@@ -11343,12 +11343,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSView *toolsPage = [[NSView alloc] initWithFrame:NSMakeRect(0, 40, 420, 526)];
   toolsPage.hidden = YES; self.quickToolsPage = toolsPage; [root addSubview:toolsPage];
   NSTextField *tt = [self label:@"工具" size:18 bold:YES color:nil];
-  tt.frame = NSMakeRect(16, 480, 180, 26); [toolsPage addSubview:tt];
-  ColorHoverButton *dockLookBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(294, 480, 110, 26)];
-  dockLookBtn.title = @"Dock 外观"; dockLookBtn.hoverColor = [NSColor systemBlueColor];
-  dockLookBtn.target = self; dockLookBtn.action = @selector(showDockAppearance:);
-  [dockLookBtn applyColor:[NSColor systemBlueColor] textColor:[NSColor whiteColor]];
-  [toolsPage addSubview:dockLookBtn];
+  tt.frame = NSMakeRect(16, 480, 250, 26); [toolsPage addSubview:tt];
   NSTextField *ts = [self label:@"选择工具，打开独立窗口；可钉住置顶" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   ts.frame = NSMakeRect(16, 456, 388, 18); [toolsPage addSubview:ts];
   ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(50, 296, 100, 140)];
@@ -11459,23 +11454,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.quickDetailExtra.maximumNumberOfLines = 5;
   self.quickDetailExtra.frame = NSMakeRect(24, 30, 372, 88); [detail addSubview:self.quickDetailExtra];
 
-  ColorHoverButton *settings = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 6, 70, 28)];
-  settings.title = @"退出"; settings.hoverColor = [NSColor systemGreenColor];
-  settings.target = self; settings.action = @selector(closePopover:);
-  settings.toolTip = @"关闭菜单栏面板，不退出应用";
-  [settings applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [root addSubview:settings];
-  ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(146, 6, 128, 28)];
-  open.title = @"打开控制台"; open.hoverColor = [NSColor systemGreenColor];
-  open.target = self; open.action = @selector(openConsoleFromPopover:);
-  [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [root addSubview:open];
-  ColorHoverButton *quit = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(338, 6, 70, 28)];
-  quit.title = @"刷新"; quit.hoverColor = [NSColor systemGreenColor];
-  quit.target = self; quit.action = @selector(refreshPopover:);
-  quit.toolTip = @"刷新菜单栏数据";
-  [quit applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [root addSubview:quit];
+  NSArray *footerDefs = @[
+    @[@"退出", @"closePopover:", @"关闭菜单栏面板，不退出应用", [NSColor systemGreenColor]],
+    @[@"打开控制台", @"openConsoleFromPopover:", @"打开控制台主窗口", [NSColor systemGreenColor]],
+    @[@"刷新", @"refreshPopover:", @"刷新菜单栏数据", [NSColor systemGreenColor]],
+    @[@"Dock 外观", @"showDockAppearance:", @"调整 Dock 图标大小、放大、自动隐藏和位置", [NSColor systemBlueColor]]
+  ];
+  CGFloat fw = 84, fgap = 20, fx = 12;
+  for (NSArray *d in footerDefs) {
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(fx, 6, fw, 28)];
+    b.title = d[0]; b.hoverColor = d[3];
+    b.target = self; b.action = NSSelectorFromString(d[1]);
+    b.toolTip = d[2];
+    [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [root addSubview:b];
+    fx += fw + fgap;
+  }
 
   [root addSubview:self.statusMetricButton positioned:NSWindowAbove relativeTo:nil];
   pop.contentViewController = vc;
