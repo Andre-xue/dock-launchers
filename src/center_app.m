@@ -7110,6 +7110,12 @@ static BOOL ValidGroupName(NSString *raw) {
   self.loginCheck = [NSButton checkboxWithTitle:@"开机自动启动控制台" target:self action:@selector(toggleLoginItem:)];
   self.loginCheck.state = [[NSFileManager defaultManager] fileExistsAtPath:[self loginPlistPath]] ? NSControlStateValueOn : NSControlStateValueOff;
   self.loginCheck.frame = NSMakeRect(20, 8, 520, 24); self.loginCheck.toolTip = @"登录 macOS 时自动启动控制台"; [c1 addSubview:self.loginCheck];
+  ColorHoverButton *alertsBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(552, 38, 128, 28)];
+  alertsBtn.title = @"告警设置…"; alertsBtn.hoverColor = [NSColor systemOrangeColor];
+  alertsBtn.target = self; alertsBtn.action = @selector(openAlertSettings:);
+  alertsBtn.toolTip = @"设置 CPU、内存、磁盘、电量、AI 余额提醒";
+  [alertsBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [c1 addSubview:alertsBtn];
 
   NSView *c2 = [self cardAt:NSMakeRect(24, 270, 700, 146)]; [v addSubview:c2];
   NSTextField *t2 = [self label:@"同步与文件" size:13 bold:YES color:nil]; t2.frame = NSMakeRect(20, 112, 220, 20); [c2 addSubview:t2];
