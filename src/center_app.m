@@ -4320,7 +4320,6 @@ static BOOL ValidGroupName(NSString *raw) {
   NSDictionary *e = self.aiVisibleEntries[row];
   NSString *key = e[@"api"] ?: @"";
   if (!key.length) { [self showToast:@"该服务未填写 API Key"]; return; }
-  if (![self requestAdminAuthentication]) return;
   self.apiKeyDialogValue = key;
   if (!self.apiKeyDialogWindow) {
     self.apiKeyDialogWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,224) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
@@ -4330,7 +4329,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *cv = self.apiKeyDialogWindow.contentView;
     NSTextField *title = [self label:@"API Key" size:17 bold:YES color:nil];
     title.frame = NSMakeRect(24, 178, 400, 24); [cv addSubview:title];
-    NSTextField *hint = [self label:@"密钥已存入 macOS 钥匙串；复制后请注意不要泄露" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *hint = [self label:@"点击复制需要管理员密码，复制的是完整 Key；请勿泄露" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     hint.frame = NSMakeRect(24, 156, 510, 18); [cv addSubview:hint];
     self.apiKeyDialogField = [[NSTextField alloc] initWithFrame:NSMakeRect(24, 108, 512, 30)];
     self.apiKeyDialogField.editable = NO;
@@ -4350,16 +4349,20 @@ static BOOL ValidGroupName(NSString *raw) {
     [cv addSubview:close];
     [self.apiKeyDialogWindow center];
   }
-  self.apiKeyDialogField.stringValue = key;
+  self.apiKeyDialogField.stringValue = @"••••••••••••••••••••";
   [NSApp activateIgnoringOtherApps:YES];
   [self.apiKeyDialogWindow makeKeyAndOrderFront:nil];
   [self.apiKeyDialogWindow orderFrontRegardless];
 }
 
 - (void)copyAPIKeyFromDialog:(id)sender {
+  if (![self requestAdminAuthentication]) return;
+  NSString *full = self.apiKeyDialogValue ?: @"";
+  if (!full.length) return;
   [[NSPasteboard generalPasteboard] clearContents];
-  [[NSPasteboard generalPasteboard] setString:self.apiKeyDialogValue ?: @"" forType:NSPasteboardTypeString];
-  [self showToast:@"API Key 已复制"];
+  [[NSPasteboard generalPasteboard] setString:full forType:NSPasteboardTypeString];
+  self.apiKeyDialogField.stringValue = full;
+  [self showToast:@"完整 API Key 已复制"];
 }
 
 - (void)closeAPIKeyDialog:(id)sender {
@@ -6347,7 +6350,7 @@ static BOOL ValidGroupName(NSString *raw) {
         NSImage *icon = [NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:@"查看 API Key"];
         eye.image = icon;
         eye.contentTintColor = [NSColor secondaryLabelColor];
-        eye.toolTip = @"查看并复制 API Key（需要管理员密码）";
+        eye.toolTip = @"查看 API Key；复制需要管理员密码";
         eye.tag = row;
         eye.target = self;
         eye.action = @selector(aiToggleReveal:);
