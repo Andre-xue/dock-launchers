@@ -8501,6 +8501,24 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.sceneWindow orderFrontRegardless];
 }
 
+- (NSArray<NSString *> *)dockGroupNames {
+  NSMutableArray *names = [NSMutableArray array];
+  CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+  NSArray *apps = raw ? CFBridgingRelease(raw) : @[];
+  NSString *groupDir = [GroupDir() stringByStandardizingPath];
+  for (id item in apps) {
+    if (![item isKindOfClass:[NSDictionary class]]) continue;
+    NSString *u = item[@"tile-data"][@"file-data"][@"_CFURLString"];
+    if (!u.length) continue;
+    NSURL *url = [NSURL URLWithString:u];
+    NSString *path = url.path.stringByStandardizingPath;
+    if (![path hasPrefix:[groupDir stringByAppendingString:@"/"]]) continue;
+    NSString *name = path.lastPathComponent.stringByDeletingPathExtension;
+    if (name.length && ![names containsObject:name]) [names addObject:name];
+  }
+  return names;
+}
+
 - (void)reloadSceneChecks {
   NSInteger idx = self.scenePopup.indexOfSelectedItem;
   if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
@@ -9533,10 +9551,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)reloadQuickSceneChecks {
   NSInteger idx = self.quickScenePopup ? self.quickScenePopup.indexOfSelectedItem : self.quickSceneIndex;
   if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
-  NSDictionary *scene = self.scenes[idx];
-  NSArray *sceneGroups = scene[@"groups"] ?: @[];
-  BOOL all = [self sceneIsAll:scene];
   NSArray *installed = [self installedGroupNames];
+  NSArray *dockGroups = [self dockGroupNames];
   NSView *doc = [[FlippedView alloc] initWithFrame:NSMakeRect(0,0,376,MAX(226,installed.count*30))];
   self.quickSceneChecks = [NSMutableArray array];
   for (NSInteger i = 0; i < (NSInteger)installed.count; i++) {
@@ -9544,7 +9560,8 @@ static BOOL ValidGroupName(NSString *raw) {
     NSButton *cb = [NSButton checkboxWithTitle:name target:self action:@selector(quickSceneCheckChanged:)];
     cb.frame = NSMakeRect(10, i*30+3, 350, 22);
     cb.tag = i;
-    cb.state = (all || [sceneGroups containsObject:name]) ? NSControlStateValueOn : NSControlStateValueOff;
+    // 菜单栏以 Dock 实际存在的分组为准，保证勾选状态与 Dock 一致
+    cb.state = [dockGroups containsObject:name] ? NSControlStateValueOn : NSControlStateValueOff;
     [doc addSubview:cb];
     [self.quickSceneChecks addObject:cb];
   }
