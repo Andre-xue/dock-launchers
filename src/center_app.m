@@ -903,6 +903,19 @@ static NSImage *DiskVideoFrameForPath(NSString *path) {
   self.view.layer.borderWidth = selected ? 3 : 0;
   self.view.layer.borderColor = [NSColor controlAccentColor].CGColor;
 }
+- (void)loadQuickLookVideoThumbnail:(NSString *)path {
+  __weak typeof(self) weakSelf = self;
+  QLThumbnailGenerationRequest *req = [[QLThumbnailGenerationRequest alloc] initWithFileAtURL:[NSURL fileURLWithPath:path] size:CGSizeMake(800, 800) scale:2 representationTypes:QLThumbnailGenerationRequestRepresentationTypeThumbnail];
+  [[QLThumbnailGenerator sharedGenerator] generateBestRepresentationForRequest:req completionHandler:^(QLThumbnailRepresentation *rep, NSError *error) {
+    NSImage *img = rep.CGImage ? [[NSImage alloc] initWithCGImage:rep.CGImage size:NSMakeSize(800, 800)] : nil;
+    if (!img) return;
+    [DiskThumbnailCache() setObject:img forKey:path];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = img;
+    });
+  }];
+}
+
 - (void)setFile:(NSDictionary *)file {
   CGFloat w = MAX(100, self.view.bounds.size.width), h = MAX(100, self.view.bounds.size.height);
   BOOL browser = [file[@"browser"] boolValue];
@@ -960,37 +973,27 @@ static NSImage *DiskVideoFrameForPath(NSString *path) {
     });
   } else if ([file[@"kind"] isEqualToString:@"视频"]) {
     NSString *vext = path.pathExtension.lowercaseString;
-    if ([@[@"mp4", @"mov", @"m4v"] containsObject:vext]) {
+    BOOL avFirst = [@[@"mp4", @"mov", @"m4v"] containsObject:vext];
+    if (avFirst) {
       dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSImage *frame = DiskVideoFrameForPath(path);
-        if (!frame) return;
-        [DiskThumbnailCache() setObject:frame forKey:path];
-        dispatch_async(dispatch_get_main_queue(), ^{
-          if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = frame;
-        });
+        if (frame) {
+          [DiskThumbnailCache() setObject:frame forKey:path];
+          dispatch_async(dispatch_get_main_queue(), ^{
+            if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = frame;
+          });
+        } else {
+          dispatch_async(dispatch_get_main_queue(), ^{
+            if ([weakSelf.file[@"path"] isEqualToString:path]) [weakSelf loadQuickLookVideoThumbnail:path];
+          });
+        }
       });
       return;
     }
-    NSURL *url = [NSURL fileURLWithPath:path];
-    QLThumbnailGenerationRequest *req = [[QLThumbnailGenerationRequest alloc] initWithFileAtURL:url size:CGSizeMake(800, 800) scale:2 representationTypes:QLThumbnailGenerationRequestRepresentationTypeThumbnail];
-    [[QLThumbnailGenerator sharedGenerator] generateBestRepresentationForRequest:req completionHandler:^(QLThumbnailRepresentation *rep, NSError *error) {
-      NSImage *img = rep.CGImage ? [[NSImage alloc] initWithCGImage:rep.CGImage size:NSMakeSize(800, 800)] : nil;
-      if (!img) {
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-          NSImage *fallback = DiskVideoFrameForPath(path);
-          if (!fallback) return;
-          [DiskThumbnailCache() setObject:fallback forKey:path];
-          dispatch_async(dispatch_get_main_queue(), ^{
-            if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = fallback;
-          });
-        });
-        return;
-      }
-      [DiskThumbnailCache() setObject:img forKey:path];
-      dispatch_async(dispatch_get_main_queue(), ^{
-        if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = img;
-      });
-    }];
+    [self loadQuickLookVideoThumbnail:path];
+    __weak typeof(self) weakSelf2 = self;
+    QLThumbnailGenerationRequest *req = nil;
+    (void)req; (void)weakSelf2;
   }
 }
 @end
@@ -1695,7 +1698,7 @@ static void HideDockHoverTip(void) {
   [self buildPopover];
   [self applyThemeFromDefaults];
   self.diskKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
-    if (e.keyCode == 49 && self.section == 2 && self.diskCollectionScroll.hidden == NO) {
+    if (e.keyCode == 49 && self.section == 3 && self.diskCollectionScroll.hidden == NO) {
       [self previewSelectedDiskFile];
       return nil;
     }
@@ -6216,6 +6219,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger idx = [self.diskGalleryItems indexOfObject:item.file];
   if (idx == NSNotFound) return;
   self.diskSelectedIndex = idx;
+  [self.diskCollection deselectAll:nil];
   NSIndexPath *ip = [NSIndexPath indexPathForItem:idx inSection:0];
   [self.diskCollection selectItemsAtIndexPaths:[NSSet setWithObject:ip] scrollPosition:NSCollectionViewScrollPositionNone];
 }
