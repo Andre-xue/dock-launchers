@@ -349,6 +349,12 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableArray *aiEntries;
 @property (strong) NSMutableSet *aiSelected;
 @property (strong) NSMutableSet *aiRevealedNames;
+@property (strong) NSMutableArray *appShortcuts;
+@property (strong) NSWindow *appShortcutWindow;
+@property (strong) NSTableView *appShortcutTable;
+@property (strong) id appShortcutMonitor;
+@property (strong) id appShortcutRecorder;
+@property NSInteger recordingShortcutRow;
 @property (strong) NSWindow *clipboardWindow;
 @property (strong) NSTableView *clipboardTable;
 @property (strong) NSMutableArray *clipboardItems;
@@ -1617,6 +1623,7 @@ static void HideDockHoverTip(void) {
   [self setupMainMenu];
   [self installTranslationHotKey];
   [self startClipboardMonitor];
+  [self loadAppShortcuts];
   [self buildWindow];
   [self buildPopover];
   [self applyThemeFromDefaults];
@@ -1743,6 +1750,11 @@ static void HideDockHoverTip(void) {
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_ALERTS")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self openAlertSettings:nil];
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_APPSHORTCUT")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self showAppShortcutSettings:nil];
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_CLIPBOARD")) {
@@ -6487,6 +6499,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.appShortcutTable) return self.appShortcuts.count;
   if (tableView == self.clipboardTable) return self.clipboardItems.count;
   if (tableView == self.aiTable) return self.aiVisibleEntries.count;
   if (tableView == self.diskTable) return self.diskFileFiltered.count;
@@ -6502,13 +6515,35 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.appShortcutTable) {
+    if (row < 0 || row >= (NSInteger)self.appShortcuts.count) return nil;
+    NSDictionary *it = self.appShortcuts[row];
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
+    NSTextField *name = [self label:it[@"title"] ?: @"" size:12.5 bold:YES color:nil];
+    name.frame = NSMakeRect(12, 12, 250, 20); [v addSubview:name];
+    ColorHoverButton *key = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(270, 7, 180, 30)];
+    key.title = [it[@"display"] length] ? it[@"display"] : @"点击设置";
+    key.hoverColor = [NSColor systemPurpleColor];
+    key.tag = row; key.target = self; key.action = @selector(recordAppShortcutRow:);
+    [key applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [v addSubview:key];
+    ColorHoverButton *del = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(462, 7, 32, 30)];
+    del.title = @"×"; del.hoverColor = [NSColor systemRedColor]; del.tag = row;
+    del.target = self; del.action = @selector(deleteAppShortcutRow:);
+    [del applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [v addSubview:del];
+    NSBox *line = [[NSBox alloc] initWithFrame:NSMakeRect(8,0,col.width-16,1)]; line.boxType = NSBoxSeparator; [v addSubview:line];
+    return v;
+  }
   if (tableView == self.clipboardTable) {
     if (row < 0 || row >= (NSInteger)self.clipboardItems.count) return nil;
     NSDictionary *it = self.clipboardItems[row];
     NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
     NSString *text = it[@"text"] ?: @"";
+    v.toolTip = text;
     NSTextField *l = [self label:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:11.5 bold:NO color:nil];
     l.lineBreakMode = NSLineBreakByTruncatingTail;
+    l.toolTip = text;
     l.frame = NSMakeRect(8, 18, col.width-150, 18); [v addSubview:l];
     NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"MM-dd HH:mm:ss";
     NSTextField *t = [self label:[df stringFromDate:it[@"date"] ?: [NSDate date]] size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
@@ -7417,6 +7452,188 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (BOOL)userNotificationCenter:(NSUserNotificationCenter *)center shouldPresentNotification:(NSUserNotification *)notification { return YES; }
 
+- (NSString *)appShortcutsPath {
+  return [[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"] stringByAppendingPathComponent:@"app_shortcuts.json"];
+}
+
+- (NSArray<NSDictionary *> *)appShortcutActionDefs {
+  NSMutableArray *a = [NSMutableArray arrayWithArray:@[
+    @{@"action": @"translation", @"title": @"打开 AI 翻译"},
+    @{@"action": @"compress", @"title": @"打开压缩 / 解压"},
+    @{@"action": @"clipboard", @"title": @"打开剪贴板历史"},
+    @{@"action": @"quick", @"title": @"打开快速面板"}]];
+  NSArray *pages = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
+  for (NSInteger i = 0; i < pages.count; i++) {
+    [a addObject:@{@"action": [NSString stringWithFormat:@"page%ld", (long)i], @"title": [NSString stringWithFormat:@"切换到 %@", pages[i]]}];
+  }
+  return a;
+}
+
+- (void)loadAppShortcuts {
+  NSData *d = [NSData dataWithContentsOfFile:[self appShortcutsPath]];
+  id obj = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  self.appShortcuts = [obj isKindOfClass:[NSArray class]] ? [obj mutableCopy] : [NSMutableArray array];
+  __weak typeof(self) weakSelf = self;
+  self.appShortcutMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    if (weakSelf.appShortcutRecorder) return e;
+    NSUInteger flags = e.modifierFlags & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift);
+    for (NSDictionary *it in weakSelf.appShortcuts) {
+      NSInteger kc = [it[@"keyCode"] integerValue];
+      NSUInteger mods = [it[@"modifiers"] unsignedIntegerValue];
+      if (kc >= 0 && (NSInteger)e.keyCode == kc && flags == mods) {
+        [weakSelf performAppShortcutAction:it[@"action"] ?: @""];
+        return nil;
+      }
+    }
+    return e;
+  }];
+}
+
+- (void)saveAppShortcuts {
+  NSString *dir = [[self appShortcutsPath] stringByDeletingLastPathComponent];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSData *d = [NSJSONSerialization dataWithJSONObject:self.appShortcuts ?: @[] options:NSJSONWritingPrettyPrinted error:NULL];
+  [d writeToFile:[self appShortcutsPath] atomically:YES];
+}
+
+- (void)performAppShortcutAction:(NSString *)action {
+  if ([action isEqualToString:@"translation"]) { [self showTranslationWindow:nil]; return; }
+  if ([action isEqualToString:@"compress"]) { [self showCompressWindow:nil]; return; }
+  if ([action isEqualToString:@"clipboard"]) { [self showClipboardWindow:nil]; return; }
+  if ([action isEqualToString:@"quick"]) { [self showQuickPanel]; return; }
+  if ([action hasPrefix:@"page"]) {
+    NSInteger idx = [[action substringFromIndex:4] integerValue];
+    [self.window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    [self showSection:idx];
+  }
+}
+
+- (void)showAppShortcutSettings:(id)sender {
+  if (!self.appShortcuts) self.appShortcuts = [NSMutableArray array];
+  if (!self.appShortcutWindow) {
+    self.appShortcutWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,600,430) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.appShortcutWindow.title = @"应用内快捷键";
+    self.appShortcutWindow.releasedWhenClosed = NO;
+    self.appShortcutWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.appShortcutWindow.contentView;
+    NSTextField *title = [self label:@"应用内快捷键" size:17 bold:YES color:nil];
+    title.frame = NSMakeRect(24, 386, 300, 24); [cv addSubview:title];
+    NSTextField *hint = [self label:@"只在控制台应用内生效，不影响系统和其他应用" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    hint.frame = NSMakeRect(24, 366, 500, 16); [cv addSubview:hint];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 66, 568, 290)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder; sv.drawsBackground = YES; sv.backgroundColor = [NSColor whiteColor];
+    self.appShortcutTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"appshortcut"]; col.width = 550;
+    [self.appShortcutTable addTableColumn:col];
+    self.appShortcutTable.headerView = nil;
+    self.appShortcutTable.rowHeight = 44;
+    self.appShortcutTable.dataSource = self;
+    self.appShortcutTable.delegate = self;
+    sv.documentView = self.appShortcutTable;
+    [cv addSubview:sv];
+    ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 22, 130, 32)];
+    add.title = @"+ 添加快捷键"; add.hoverColor = [NSColor systemPurpleColor];
+    add.target = self; add.action = @selector(addAppShortcut:);
+    [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:add];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(484, 22, 100, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeAppShortcutSettings:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:close];
+    [self.appShortcutWindow center];
+  }
+  [self.appShortcutTable reloadData];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.appShortcutWindow makeKeyAndOrderFront:nil];
+  [self.appShortcutWindow orderFrontRegardless];
+}
+
+- (void)addAppShortcut:(id)sender {
+  NSMutableSet *used = [NSMutableSet set];
+  for (NSDictionary *it in self.appShortcuts) [used addObject:it[@"action"] ?: @""];
+  NSMutableArray *choices = [NSMutableArray array];
+  for (NSDictionary *d in [self appShortcutActionDefs]) if (![used containsObject:d[@"action"]]) [choices addObject:d];
+  if (!choices.count) { [self showToast:@"所有功能都已添加"]; return; }
+  NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,0,280,28) pullsDown:NO];
+  for (NSDictionary *d in choices) [popup addItemWithTitle:d[@"title"]];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"添加快捷键";
+  a.informativeText = @"选择要绑定快捷键的功能";
+  a.accessoryView = popup;
+  [a addButtonWithTitle:@"下一步"];
+  [a addButtonWithTitle:@"取消"];
+  a.window.level = NSFloatingWindowLevel;
+  [NSApp activateIgnoringOtherApps:YES];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSDictionary *choice = choices[popup.indexOfSelectedItem];
+  [self.appShortcuts addObject:@{@"action": choice[@"action"], @"title": choice[@"title"], @"keyCode": @-1, @"modifiers": @0, @"display": @""}];
+  [self saveAppShortcuts];
+  [self.appShortcutTable reloadData];
+  [self recordAppShortcutRowTag:(NSInteger)self.appShortcuts.count - 1];
+}
+
+- (void)recordAppShortcutRow:(ColorHoverButton *)sender { [self recordAppShortcutRowTag:sender.tag]; }
+
+- (void)recordAppShortcutRowTag:(NSInteger)row {
+  if (row < 0 || row >= (NSInteger)self.appShortcuts.count) return;
+  if (self.appShortcutRecorder) { [NSEvent removeMonitor:self.appShortcutRecorder]; self.appShortcutRecorder = nil; }
+  self.recordingShortcutRow = row;
+  [self showToast:@"请按下新的快捷键，Esc 取消"];
+  __weak typeof(self) weakSelf = self;
+  self.appShortcutRecorder = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    if (e.keyCode == 53) { [weakSelf stopAppShortcutRecording]; return nil; }
+    NSEventModifierFlags f = e.modifierFlags & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift);
+    if (!(f & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption))) {
+      [weakSelf showToast:@"请至少使用 Command / Control / Option 之一"];
+      return nil;
+    }
+    NSInteger rowNow = weakSelf.recordingShortcutRow;
+    if (rowNow < 0 || rowNow >= (NSInteger)weakSelf.appShortcuts.count) return nil;
+    for (NSInteger i = 0; i < (NSInteger)weakSelf.appShortcuts.count; i++) {
+      if (i == rowNow) continue;
+      NSDictionary *other = weakSelf.appShortcuts[i];
+      if ([other[@"keyCode"] integerValue] == e.keyCode && [other[@"modifiers"] unsignedIntegerValue] == f) {
+        [weakSelf showToast:@"该快捷键已被其他功能占用"];
+        return nil;
+      }
+    }
+    NSString *key = e.charactersIgnoringModifiers.uppercaseString;
+    if (!key.length) key = [NSString stringWithFormat:@"Key%u", (unsigned)e.keyCode];
+    NSMutableString *disp = [NSMutableString string];
+    if (f & NSEventModifierFlagControl) [disp appendString:@"⌃"];
+    if (f & NSEventModifierFlagOption) [disp appendString:@"⌥"];
+    if (f & NSEventModifierFlagShift) [disp appendString:@"⇧"];
+    if (f & NSEventModifierFlagCommand) [disp appendString:@"⌘"];
+    [disp appendString:key];
+    NSMutableDictionary *m = [weakSelf.appShortcuts[rowNow] mutableCopy];
+    m[@"keyCode"] = @(e.keyCode); m[@"modifiers"] = @(f); m[@"display"] = disp;
+    weakSelf.appShortcuts[rowNow] = m;
+    [weakSelf saveAppShortcuts];
+    [weakSelf stopAppShortcutRecording];
+    [weakSelf.appShortcutTable reloadData];
+    return nil;
+  }];
+}
+
+- (void)stopAppShortcutRecording {
+  if (self.appShortcutRecorder) { [NSEvent removeMonitor:self.appShortcutRecorder]; self.appShortcutRecorder = nil; }
+  self.recordingShortcutRow = -1;
+}
+
+- (void)deleteAppShortcutRow:(NSButton *)b {
+  if (b.tag < 0 || b.tag >= (NSInteger)self.appShortcuts.count) return;
+  [self.appShortcuts removeObjectAtIndex:b.tag];
+  [self saveAppShortcuts];
+  [self.appShortcutTable reloadData];
+}
+
+- (void)closeAppShortcutSettings:(id)sender {
+  [self stopAppShortcutRecording];
+  [self.appShortcutWindow orderOut:nil];
+}
+
 - (void)buildSettingsView {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"设置" size:24 bold:YES color:nil];
@@ -7466,6 +7683,12 @@ static BOOL ValidGroupName(NSString *raw) {
   alertsBtn.toolTip = @"设置 CPU、内存、磁盘、电量、AI 余额提醒";
   [alertsBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [c1 addSubview:alertsBtn];
+  ColorHoverButton *appShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(552, 78, 128, 28)];
+  appShortcutBtn.title = @"快捷键设置…"; appShortcutBtn.hoverColor = [NSColor systemPurpleColor];
+  appShortcutBtn.target = self; appShortcutBtn.action = @selector(showAppShortcutSettings:);
+  appShortcutBtn.toolTip = @"设置只在控制台内生效的应用快捷键";
+  [appShortcutBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [c1 addSubview:appShortcutBtn];
 
   NSView *c2 = [self cardAt:NSMakeRect(24, 270, 700, 146)]; [v addSubview:c2];
   NSTextField *t2 = [self label:@"同步与文件" size:13 bold:YES color:nil]; t2.frame = NSMakeRect(20, 112, 220, 20); [c2 addSubview:t2];
