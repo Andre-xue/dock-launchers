@@ -290,6 +290,26 @@ static NSString *SignatureForEvent(NSEvent *e);
   if ([self.glyph isEqualToString:@"+"]) {
     [g moveToPoint:NSMakePoint(c-arm, c)]; [g lineToPoint:NSMakePoint(c+arm, c)];
     [g moveToPoint:NSMakePoint(c, c-arm)]; [g lineToPoint:NSMakePoint(c, c+arm)];
+  } else if ([self.glyph isEqualToString:@"import"]) {
+    // 托盘 + 向下箭头
+    CGFloat half = d * 0.20;
+    NSBezierPath *tray = [NSBezierPath bezierPath];
+    tray.lineWidth = 2.0; tray.lineCapStyle = NSLineCapStyleRound;
+    [tray moveToPoint:NSMakePoint(c - half, c - d*0.16)];
+    [tray lineToPoint:NSMakePoint(c - half, c - d*0.24)];
+    [tray lineToPoint:NSMakePoint(c + half, c - d*0.24)];
+    [tray lineToPoint:NSMakePoint(c + half, c - d*0.16)];
+    [[NSColor whiteColor] setStroke]; [tray stroke];
+    NSBezierPath *arrow = [NSBezierPath bezierPath];
+    arrow.lineWidth = 2.2; arrow.lineCapStyle = NSLineCapStyleRound;
+    [arrow moveToPoint:NSMakePoint(c, c + d*0.20)];
+    [arrow lineToPoint:NSMakePoint(c, c - d*0.02)];
+    [arrow moveToPoint:NSMakePoint(c - d*0.12, c + d*0.06)];
+    [arrow lineToPoint:NSMakePoint(c, c - d*0.02)];
+    [arrow moveToPoint:NSMakePoint(c + d*0.12, c + d*0.06)];
+    [arrow lineToPoint:NSMakePoint(c, c - d*0.02)];
+    [arrow stroke];
+    return;
   } else if ([self.glyph isEqualToString:@"search"]) {
     CGFloat r = d * 0.26;
     NSBezierPath *mag = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(c - r - d*0.04, c - r + d*0.04, r*2, r*2)];
@@ -1256,7 +1276,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
   CGFloat btnSize = 30.0;
 
-  CircleButton *add = [[CircleButton alloc] initWithFrame:NSMakeRect(16, H-12-btnSize, btnSize, btnSize)];
+  CircleButton *add = [[CircleButton alloc] initWithFrame:NSMakeRect(385, H-12-btnSize, btnSize, btnSize)];
   add.circleColor = [NSColor colorWithCalibratedRed:0.16 green:0.78 blue:0.25 alpha:1.0];
   add.glyph = @"+";
   add.bordered = NO;
@@ -1264,10 +1284,11 @@ static NSString *ResolveAppPath(NSString *target) {
   add.focusRingType = NSFocusRingTypeNone;
   add.target = self;
   add.action = @selector(addApps:);
+  add.toolTip = @"添加应用到当前分组";
   [cv addSubview:add];
   self.addBtn = add;
 
-  CircleButton *remove = [[CircleButton alloc] initWithFrame:NSMakeRect(W-16-btnSize, H-12-btnSize, btnSize, btnSize)];
+  CircleButton *remove = [[CircleButton alloc] initWithFrame:NSMakeRect(65, H-12-btnSize, btnSize, btnSize)];
   remove.circleColor = [NSColor colorWithCalibratedRed:1.0 green:0.37 blue:0.34 alpha:1.0];
   remove.glyph = @"-";
   remove.bordered = NO;
@@ -1275,21 +1296,23 @@ static NSString *ResolveAppPath(NSString *target) {
   remove.focusRingType = NSFocusRingTypeNone;
   remove.target = self;
   remove.action = @selector(removeSelected:);
+  remove.toolTip = @"从当前分组移除所选应用";
   [cv addSubview:remove];
   self.removeBtn = remove;
 
   // 中间：皮肤按钮（黄色圆形 + 🎨）
   self.skinBtn = [NSButton buttonWithTitle:@"🎨" target:self action:@selector(showSkinMenu:)];
-  self.skinBtn.frame = NSMakeRect((W-btnSize)/2.0, H-12-btnSize, btnSize, btnSize);
+  self.skinBtn.frame = NSMakeRect(225, H-12-btnSize, btnSize, btnSize);
   self.skinBtn.font = [NSFont systemFontOfSize:16];
   self.skinBtn.bordered = NO;
   self.skinBtn.focusRingType = NSFocusRingTypeNone;
+  self.skinBtn.toolTip = @"更换分组图标 / 皮肤";
   self.skinBtn.wantsLayer = YES;
   self.skinBtn.layer.backgroundColor = [NSColor colorWithCalibratedRed:1.0 green:0.80 blue:0.10 alpha:1.0].CGColor;
   self.skinBtn.layer.cornerRadius = 15;
   [cv addSubview:self.skinBtn];
 
-  self.searchBtn = [[CircleButton alloc] initWithFrame:NSMakeRect(W-16-30-38, H-88, 30, 30)];
+  self.searchBtn = [[CircleButton alloc] initWithFrame:NSMakeRect(305, H-12-btnSize, 30, 30)];
   self.searchBtn.circleColor = [NSColor colorWithCalibratedRed:0.04 green:0.52 blue:1.0 alpha:1.0];
   self.searchBtn.glyph = @"search";
   self.searchBtn.bordered = NO;
@@ -1338,11 +1361,15 @@ static NSString *ResolveAppPath(NSString *target) {
   [cv addSubview:add positioned:NSWindowAbove relativeTo:nil];
   [cv addSubview:remove positioned:NSWindowAbove relativeTo:nil];
 
-  NSButton *dockImport = [NSButton buttonWithTitle:@"从 Dock 导入" target:self action:@selector(importAppsFromDock:)];
-  dockImport.frame = NSMakeRect(56, H - 12 - btnSize, 96, 30);
-  dockImport.bezelStyle = NSBezelStyleRounded;
-  dockImport.font = [NSFont systemFontOfSize:10.5 weight:NSFontWeightMedium];
-  dockImport.toolTip = @"从系统 Dock 选择应用批量加入当前分组";
+  CircleButton *dockImport = [[CircleButton alloc] initWithFrame:NSMakeRect(145, H - 12 - btnSize, btnSize, btnSize)];
+  dockImport.circleColor = [NSColor colorWithCalibratedRed:0.55 green:0.35 blue:0.95 alpha:1.0];
+  dockImport.glyph = @"import";
+  dockImport.bordered = NO;
+  dockImport.title = @"";
+  dockImport.focusRingType = NSFocusRingTypeNone;
+  dockImport.target = self;
+  dockImport.action = @selector(importAppsFromDock:);
+  dockImport.toolTip = @"从系统 Dock 导入应用";
   [cv addSubview:dockImport];
 
   self.scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, W-32, H-54-76)];
