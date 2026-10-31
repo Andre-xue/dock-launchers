@@ -6368,6 +6368,15 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.playerChooserWindow orderOut:nil];
 }
 
+- (void)openVideoPathWithPreferredOrChooser:(NSString *)path {
+  NSString *preferred = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerVideoPlayerPath"] ?: @"";
+  if (preferred.length && [[NSFileManager defaultManager] fileExistsAtPath:preferred]) {
+    [[NSWorkspace sharedWorkspace] openURLs:@[[NSURL fileURLWithPath:path]] withApplicationAtURL:[NSURL fileURLWithPath:preferred] configuration:[NSWorkspaceOpenConfiguration configuration] completionHandler:nil];
+  } else {
+    [self showPlayerChooserForPath:path];
+  }
+}
+
 - (void)previewSelectedDiskFile {
   if (self.diskSelectedIndex < 0 || self.diskSelectedIndex >= (NSInteger)self.diskGalleryItems.count) return;
   NSDictionary *item = self.diskGalleryItems[self.diskSelectedIndex];
@@ -6375,8 +6384,13 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *assetID = item[@"assetID"];
   if (!path.length && assetID.length) {
     __weak typeof(self) weakSelf = self;
+    BOOL isVideo = [item[@"kind"] isEqualToString:@"视频"];
     [self exportAlbumAssetID:assetID completion:^(NSString *exported) {
       if (!exported.length) return;
+      if (isVideo) {
+        [weakSelf openVideoPathWithPreferredOrChooser:exported];
+        return;
+      }
       weakSelf.userFilesPreviewPath = exported;
       weakSelf.diskPreviewMode = NO;
       QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
@@ -6389,12 +6403,7 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   if (!path) return;
   if ([item[@"kind"] isEqualToString:@"视频"]) {
-    NSString *preferred = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerVideoPlayerPath"] ?: @"";
-    if (preferred.length && [[NSFileManager defaultManager] fileExistsAtPath:preferred]) {
-      [[NSWorkspace sharedWorkspace] openURLs:@[[NSURL fileURLWithPath:path]] withApplicationAtURL:[NSURL fileURLWithPath:preferred] configuration:[NSWorkspaceOpenConfiguration configuration] completionHandler:nil];
-    } else {
-      [self showPlayerChooserForPath:path];
-    }
+    [self openVideoPathWithPreferredOrChooser:path];
     return;
   }
   self.userFilesPreviewPath = path;
