@@ -1338,6 +1338,13 @@ static NSString *ResolveAppPath(NSString *target) {
   [cv addSubview:add positioned:NSWindowAbove relativeTo:nil];
   [cv addSubview:remove positioned:NSWindowAbove relativeTo:nil];
 
+  NSButton *dockImport = [NSButton buttonWithTitle:@"从 Dock 导入" target:self action:@selector(importAppsFromDock:)];
+  dockImport.frame = NSMakeRect(56, H - 12 - btnSize, 96, 30);
+  dockImport.bezelStyle = NSBezelStyleRounded;
+  dockImport.font = [NSFont systemFontOfSize:10.5 weight:NSFontWeightMedium];
+  dockImport.toolTip = @"从系统 Dock 选择应用批量加入当前分组";
+  [cv addSubview:dockImport];
+
   self.scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, W-32, H-54-76)];
   self.scroll.hasVerticalScroller = YES;
   self.scroll.drawsBackground = YES;
