@@ -15,6 +15,7 @@
 #import <ImageIO/ImageIO.h>
 #import <QuickLookThumbnailing/QuickLookThumbnailing.h>
 #import <Photos/Photos.h>
+#import <AVFoundation/AVFoundation.h>
 #import <Vision/Vision.h>
 #import <PDFKit/PDFKit.h>
 #import <NaturalLanguage/NaturalLanguage.h>
@@ -829,6 +830,29 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
 - (NSView *)hitTest:(NSPoint)point { return nil; }
 @end
 
+static NSImage *DiskVideoFrameForPath(NSString *path) {
+  if (!path.length) return nil;
+  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
+  if (!asset) return nil;
+  AVAssetImageGenerator *gen = [[AVAssetImageGenerator alloc] initWithAsset:asset];
+  gen.appliesPreferredTrackTransform = YES;
+  gen.maximumSize = CGSizeMake(800, 800);
+  NSError *err = nil;
+  CMTime dur = asset.duration;
+  double sec = CMTimeGetSeconds(dur);
+  if (!isfinite(sec) || sec <= 0) sec = 1.0;
+  CMTime t = CMTimeMakeWithSeconds(MIN(MAX(0.1, sec * 0.1), MAX(0.1, sec - 0.1)), 600);
+  CGImageRef cg = [gen copyCGImageAtTime:t actualTime:NULL error:&err];
+  if (!cg) {
+    t = CMTimeMakeWithSeconds(0.1, 600);
+    cg = [gen copyCGImageAtTime:t actualTime:NULL error:&err];
+  }
+  if (!cg) return nil;
+  NSImage *img = [[NSImage alloc] initWithCGImage:cg size:NSMakeSize(800, 800)];
+  CGImageRelease(cg);
+  return img;
+}
+
 @interface DiskGalleryItem : NSCollectionViewItem
 @property (strong) NSImageView *thumbView;
 @property (strong) NSTextField *nameLabel;
@@ -934,12 +958,33 @@ static NSImage *DiskThumbnailForPath(NSString *path) {
       });
     });
   } else if ([file[@"kind"] isEqualToString:@"视频"]) {
+    NSString *vext = path.pathExtension.lowercaseString;
+    if ([@[@"mp4", @"mov", @"m4v"] containsObject:vext]) {
+      dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSImage *frame = DiskVideoFrameForPath(path);
+        if (!frame) return;
+        [DiskThumbnailCache() setObject:frame forKey:path];
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = frame;
+        });
+      });
+      return;
+    }
     NSURL *url = [NSURL fileURLWithPath:path];
     QLThumbnailGenerationRequest *req = [[QLThumbnailGenerationRequest alloc] initWithFileAtURL:url size:CGSizeMake(800, 800) scale:2 representationTypes:QLThumbnailGenerationRequestRepresentationTypeThumbnail];
     [[QLThumbnailGenerator sharedGenerator] generateBestRepresentationForRequest:req completionHandler:^(QLThumbnailRepresentation *rep, NSError *error) {
-      if (!rep.CGImage) return;
-      NSImage *img = [[NSImage alloc] initWithCGImage:rep.CGImage size:NSMakeSize(800, 800)];
-      if (!img) return;
+      NSImage *img = rep.CGImage ? [[NSImage alloc] initWithCGImage:rep.CGImage size:NSMakeSize(800, 800)] : nil;
+      if (!img) {
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+          NSImage *fallback = DiskVideoFrameForPath(path);
+          if (!fallback) return;
+          [DiskThumbnailCache() setObject:fallback forKey:path];
+          dispatch_async(dispatch_get_main_queue(), ^{
+            if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = fallback;
+          });
+        });
+        return;
+      }
       [DiskThumbnailCache() setObject:img forKey:path];
       dispatch_async(dispatch_get_main_queue(), ^{
         if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = img;
