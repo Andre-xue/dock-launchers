@@ -9304,6 +9304,19 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)quickAIBalanceClicked:(NSButton *)b {
   NSInteger idx = b.tag;
+  if (![self hasAppPassword]) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"需要先设置应用密码";
+    a.informativeText = @"查询 AI 余量需要应用密码保护，不会使用系统钥匙串密码。";
+    [a addButtonWithTitle:@"去设置"];
+    [a addButtonWithTitle:@"取消"];
+    a.window.level = NSFloatingWindowLevel;
+    if ([a runModal] == NSAlertFirstButtonReturn) [self showPasswordSettings:nil];
+    return;
+  }
+  if (![self promptForAppPassword]) return;
+  if (!self.aiEntries) [self loadAIEntries];
+  [self hydrateAIKeys];
   if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
   self.quickAISelectedRow = idx;
   for (NSInteger i = 0; i < (NSInteger)self.quickAIRowViews.count; i++) {
