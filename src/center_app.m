@@ -366,6 +366,12 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableArray *aiEntries;
 @property (strong) NSMutableSet *aiSelected;
 @property (strong) NSMutableSet *aiRevealedNames;
+@property (strong) NSWindow *playerChooserWindow;
+@property (strong) NSTableView *playerChooserTable;
+@property (strong) NSArray<NSURL *> *playerChooserApps;
+@property (strong) NSString *playerChooserPath;
+@property (strong) id playerChooserKeyMonitor;
+@property (strong) NSPopUpButton *videoPlayerPopup;
 @property (strong) NSWindow *photoPermissionWindow;
 @property (strong) NSButton *photoSystemRadio, *photoLocalRadio;
 @property (strong) NSTextField *photoPermissionStatus;
@@ -6243,6 +6249,102 @@ static BOOL ValidGroupName(NSString *raw) {
   }];
 }
 
+- (void)videoPlayerChanged:(NSPopUpButton *)popup {
+  NSString *path = popup.selectedItem.representedObject ?: @"";
+  [[NSUserDefaults standardUserDefaults] setObject:path forKey:@"centerVideoPlayerPath"];
+  [self showToast:path.length ? [NSString stringWithFormat:@"视频播放器：%@", popup.titleOfSelectedItem] : @"空格预览视频时每次询问播放器"];
+}
+
+- (NSArray<NSURL *> *)videoPlayersForPath:(NSString *)path {
+  NSMutableArray *urls = [NSMutableArray array];
+  NSArray *apps = CFBridgingRelease(LSCopyApplicationURLsForURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], kLSRolesViewer));
+  for (NSURL *u in apps) {
+    if ([u.path isEqualToString:[[NSBundle mainBundle] bundlePath]]) continue;
+    if (![urls containsObject:u]) [urls addObject:u];
+  }
+  if (!urls.count) {
+    for (NSString *p in @[@"/System/Applications/QuickTime Player.app", @"/Applications/VLC.app", @"/Applications/IINA.app"]) {
+      if ([[NSFileManager defaultManager] fileExistsAtPath:p]) [urls addObject:[NSURL fileURLWithPath:p]];
+    }
+  }
+  [urls sortUsingComparator:^NSComparisonResult(NSURL *a, NSURL *b) {
+    return [[[NSFileManager defaultManager] displayNameAtPath:a.path] compare:[[NSFileManager defaultManager] displayNameAtPath:b.path]];
+  }];
+  return urls;
+}
+
+- (void)showPlayerChooserForPath:(NSString *)path {
+  self.playerChooserPath = path;
+  self.playerChooserApps = [self videoPlayersForPath:path];
+  if (!self.playerChooserApps.count) { [self showToast:@"没有可用于播放该视频的应用"]; return; }
+  if (!self.playerChooserWindow) {
+    self.playerChooserWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,420,320) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.playerChooserWindow.title = @"选择播放器";
+    self.playerChooserWindow.releasedWhenClosed = NO;
+    self.playerChooserWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.playerChooserWindow.contentView;
+    NSTextField *t = [self label:@"选择播放器" size:16 bold:YES color:nil];
+    t.frame = NSMakeRect(20, 278, 300, 22); [cv addSubview:t];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 70, 388, 196)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder; sv.drawsBackground = YES; sv.backgroundColor = [NSColor whiteColor];
+    self.playerChooserTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"player"]; col.width = 370;
+    [self.playerChooserTable addTableColumn:col];
+    self.playerChooserTable.headerView = nil;
+    self.playerChooserTable.rowHeight = 44;
+    self.playerChooserTable.dataSource = self;
+    self.playerChooserTable.delegate = self;
+    self.playerChooserTable.target = self;
+    self.playerChooserTable.doubleAction = @selector(playPlayerChooser:);
+    sv.documentView = self.playerChooserTable;
+    [cv addSubview:sv];
+    ColorHoverButton *play = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 22, 110, 32)];
+    play.title = @"播放"; play.hoverColor = [NSColor systemGreenColor];
+    play.target = self; play.action = @selector(playPlayerChooser:);
+    [play applyColor:[NSColor controlAccentColor] textColor:[NSColor whiteColor]];
+    [cv addSubview:play];
+    ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(136, 22, 90, 32)];
+    cancel.title = @"取消"; cancel.hoverColor = [NSColor systemGrayColor];
+    cancel.target = self; cancel.action = @selector(closePlayerChooser);
+    [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:cancel];
+    NSTextField *hint = [self label:@"↑↓ 选择 · Enter 播放 · Esc 取消" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    hint.alignment = NSTextAlignmentRight;
+    hint.frame = NSMakeRect(232, 28, 172, 16); [cv addSubview:hint];
+    [self.playerChooserWindow center];
+  }
+  [self.playerChooserTable reloadData];
+  [self.playerChooserTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.playerChooserWindow makeKeyAndOrderFront:nil];
+  [self.playerChooserWindow orderFrontRegardless];
+  if (!self.playerChooserKeyMonitor) {
+    __weak typeof(self) weakSelf = self;
+    self.playerChooserKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+      if (!weakSelf.playerChooserWindow.isVisible) return e;
+      if (e.keyCode == 53) { [weakSelf closePlayerChooser]; return nil; }
+      if (e.keyCode == 36) { [weakSelf playPlayerChooser:nil]; return nil; }
+      NSInteger row = weakSelf.playerChooserTable.selectedRow;
+      if (e.keyCode == 125) { row = MIN((NSInteger)weakSelf.playerChooserApps.count - 1, row + 1); [weakSelf.playerChooserTable selectRowIndexes:[NSIndexSet indexSetWithIndex:MAX(0,row)] byExtendingSelection:NO]; return nil; }
+      if (e.keyCode == 126) { row = MAX(0, row - 1); [weakSelf.playerChooserTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO]; return nil; }
+      return e;
+    }];
+  }
+}
+
+- (void)playPlayerChooser:(id)sender {
+  NSInteger row = self.playerChooserTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.playerChooserApps.count) return;
+  NSURL *app = self.playerChooserApps[row];
+  NSURL *file = [NSURL fileURLWithPath:self.playerChooserPath ?: @""];
+  [[NSWorkspace sharedWorkspace] openURLs:@[file] withApplicationAtURL:app configuration:[NSWorkspaceOpenConfiguration configuration] completionHandler:nil];
+  [self closePlayerChooser];
+}
+
+- (void)closePlayerChooser {
+  [self.playerChooserWindow orderOut:nil];
+}
+
 - (void)previewSelectedDiskFile {
   if (self.diskSelectedIndex < 0 || self.diskSelectedIndex >= (NSInteger)self.diskGalleryItems.count) return;
   NSDictionary *item = self.diskGalleryItems[self.diskSelectedIndex];
@@ -6263,6 +6365,15 @@ static BOOL ValidGroupName(NSString *raw) {
     return;
   }
   if (!path) return;
+  if ([item[@"kind"] isEqualToString:@"视频"]) {
+    NSString *preferred = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerVideoPlayerPath"] ?: @"";
+    if (preferred.length && [[NSFileManager defaultManager] fileExistsAtPath:preferred]) {
+      [[NSWorkspace sharedWorkspace] openURLs:@[[NSURL fileURLWithPath:path]] withApplicationAtURL:[NSURL fileURLWithPath:preferred] configuration:[NSWorkspaceOpenConfiguration configuration] completionHandler:nil];
+    } else {
+      [self showPlayerChooserForPath:path];
+    }
+    return;
+  }
   self.userFilesPreviewPath = path;
   self.diskPreviewMode = YES;
   QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
@@ -6745,6 +6856,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.playerChooserTable) return self.playerChooserApps.count;
   if (tableView == self.appShortcutTable) return self.appShortcuts.count;
   if (tableView == self.clipboardTable) return self.clipboardItems.count;
   if (tableView == self.aiTable) return self.aiVisibleEntries.count;
@@ -6761,6 +6873,17 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.playerChooserTable) {
+    if (row < 0 || row >= (NSInteger)self.playerChooserApps.count) return nil;
+    NSURL *app = self.playerChooserApps[row];
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
+    NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(8, 8, 28, 28)];
+    iv.image = [[NSWorkspace sharedWorkspace] iconForFile:app.path];
+    [v addSubview:iv];
+    NSTextField *l = [self label:[[NSFileManager defaultManager] displayNameAtPath:app.path] size:12.5 bold:NO color:nil];
+    l.frame = NSMakeRect(46, 12, col.width - 56, 20); [v addSubview:l];
+    return v;
+  }
   if (tableView == self.appShortcutTable) {
     if (row < 0 || row >= (NSInteger)self.appShortcuts.count) return nil;
     NSDictionary *it = self.appShortcuts[row];
