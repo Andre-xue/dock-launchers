@@ -3514,10 +3514,10 @@ static void HideDockHoverTip(void) {
   if (!getenv("DOCKLAUNCHERS_CENTER_SKIP_DOCK")) {
     NSString *selfPath = [[NSBundle mainBundle] bundlePath];
     [self removeDockEntry:selfPath];
+    [self addDockEntry:selfPath label:@"DockLaunchers控制台"];
     [self ensureGroupDockEntries];
     [self repairGroupDockIconsIfNeeded];
     [self killDock];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")) {
     NSString *arg = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")];
