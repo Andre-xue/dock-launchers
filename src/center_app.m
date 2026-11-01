@@ -3162,6 +3162,8 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
   }
   if (show) {
     self.radialMediaBar.hidden = YES;
+    self.popover.contentViewController.view.wantsLayer = YES;
+    self.popover.contentViewController.view.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
     self.radialRootView.wantsLayer = YES;
     self.radialRootView.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
     self.radialRootView.frame = NSMakeRect(0,0,340,560);
@@ -15850,14 +15852,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSClickGestureRecognizer *barClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openRadialPlayerPage:)];
     [mediaBar addGestureRecognizer:barClick];
 
-    NSView *playerPage = [[NSView alloc] initWithFrame:NSMakeRect(8,8,324,544)];
+    NSView *playerPage = [[NSView alloc] initWithFrame:NSMakeRect(0,0,340,560)];
     playerPage.wantsLayer = YES;
     playerPage.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
     playerPage.layer.cornerRadius = 20;
     playerPage.layer.masksToBounds = YES;
     playerPage.hidden = YES;
 
-    NSImageView *part = [[NSImageView alloc] initWithFrame:NSMakeRect(42, 236, 240, 240)];
+    NSImageView *part = [[NSImageView alloc] initWithFrame:NSMakeRect(50, 236, 240, 240)];
     part.imageScaling = NSImageScaleProportionallyUpOrDown; part.wantsLayer = YES; part.layer.cornerRadius = 16; part.layer.masksToBounds = YES;
     part.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.15 alpha:1].CGColor;
     [playerPage addSubview:part];
