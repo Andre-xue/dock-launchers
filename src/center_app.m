@@ -1487,6 +1487,11 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSVisualEffectView *radialMediaBar;
 @property (strong) NSButton *radialMediaArtButton, *radialMediaPlayButton;
 @property (strong) NSTextField *radialMediaTitleLabel, *radialMediaArtistLabel;
+@property (strong) NSView *radialPlayerPage;
+@property (strong) NSImageView *radialPlayerArt;
+@property (strong) NSButton *radialPlayerTitleButton, *radialPlayerPlayButton;
+@property (strong) NSTextField *radialPlayerArtist, *radialPlayerTime;
+@property (strong) NSSlider *radialPlayerProgress;
 @property (strong) NSMutableSet *pinnedWindows;
 @property (strong) NSArray<NSArray<NSDictionary *> *> *radialPages;
 @property NSInteger radialPage;
@@ -2912,19 +2917,60 @@ static void HideDockHoverTip(void) {
 }
 
 - (void)radialMediaArtClicked:(id)sender {
-  if (!self.mediaPopover) {
-    [self buildMediaCardIfNeeded];
-  }
-  [self buildMediaCardIfNeeded];
-  [self updateMediaCard];
-  [self.mediaPopover showRelativeToRect:self.radialMediaArtButton.bounds ofView:self.radialMediaArtButton preferredEdge:NSRectEdgeMinY];
+  [self showRadialPlayerPage:YES];
 }
+
+- (void)showRadialPlayerPage:(BOOL)show {
+  if (!self.radialPlayerPage) return;
+  self.radialPlayerPage.hidden = !show;
+  self.radialMenu.hidden = show;
+  self.radialPageLabel.hidden = show;
+  for (NSView *v in self.radialRootView.subviews) {
+    if ([v isKindOfClass:[ColorHoverButton class]] && (v.frame.origin.x == 96 || v.frame.origin.x == 212) && v.frame.origin.y == 4) v.hidden = show;
+  }
+  if (show) {
+    self.radialMediaBar.hidden = YES;
+    self.radialRootView.frame = NSMakeRect(0,0,340,520);
+    self.popover.contentSize = NSMakeSize(340, 520);
+    [self updateRadialPlayerPage];
+  } else {
+    BOOL bar = self.mediaPlaying && [self mediaCurrentTitle].length;
+    self.radialMediaBar.hidden = !bar;
+    self.radialRootView.frame = NSMakeRect(0,0,340,bar ? 412 : 360);
+    self.popover.contentSize = NSMakeSize(340, bar ? 412 : 360);
+  }
+}
+
+- (void)updateRadialPlayerPage {
+  if (!self.radialPlayerPage) return;
+  NSString *title = [self mediaCurrentTitle];
+  NSString *artist = [self mediaCurrentArtist];
+  self.radialPlayerTitleButton.title = title;
+  self.radialPlayerArtist.stringValue = artist;
+  self.radialPlayerPlayButton.image = [NSImage imageWithSystemSymbolName:(self.mediaPlaying ? @"pause.fill" : @"play.fill") accessibilityDescription:nil];
+  NSData *artData = self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoArtworkData"];
+  NSImage *img = [artData isKindOfClass:[NSData class]] ? [[NSImage alloc] initWithData:artData] : nil;
+  self.radialPlayerArt.image = img ?: [self mediaPlaceholderArtwork:NO];
+  double dur = [self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoDuration"] doubleValue];
+  double el = [self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoElapsedTime"] doubleValue];
+  self.radialPlayerProgress.maxValue = MAX(1, dur);
+  self.radialPlayerProgress.doubleValue = MIN(dur, MAX(0, el));
+  NSInteger e = MAX(0, (NSInteger)el), d = MAX(0, (NSInteger)dur);
+  self.radialPlayerTime.stringValue = [NSString stringWithFormat:@"%ld:%02ld / %ld:%02ld", (long)(e/60), (long)(e%60), (long)(d/60), (long)(d%60)];
+}
+
+- (void)closeRadialPlayerPage:(id)sender {
+  [self showRadialPlayerPage:NO];
+}
+
+- (void)openRadialPlayerPage:(id)sender { [self showRadialPlayerPage:YES]; }
 
 - (void)showRadialMediaMenu:(id)sender {
   NSMenu *menu = [[NSMenu alloc] initWithTitle:@"媒体"];
   NSMenuItem *header = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"%@ — %@", [self mediaCurrentTitle], [self mediaCurrentArtist]] action:nil keyEquivalent:@""];
   header.enabled = NO; [menu addItem:header];
   [menu addItem:[NSMenuItem separatorItem]];
+  [menu addItemWithTitle:@"打开播放页" action:@selector(openRadialPlayerPage:) keyEquivalent:@""].target = self;
   [menu addItemWithTitle:self.mediaPlaying ? @"暂停" : @"播放" action:@selector(mediaTogglePlayPause:) keyEquivalent:@""].target = self;
   [menu addItemWithTitle:@"上一首" action:@selector(mediaPreviousTrack:) keyEquivalent:@""].target = self;
   [menu addItemWithTitle:@"下一首" action:@selector(mediaNextTrack:) keyEquivalent:@""].target = self;
@@ -3115,6 +3161,7 @@ static void HideDockHoverTip(void) {
     return;
   }
   [self updateMediaCard];
+  if (self.radialPlayerPage && !self.radialPlayerPage.hidden) [self updateRadialPlayerPage];
 }
 
 - (void)updateMediaCard {
@@ -3305,6 +3352,7 @@ static void HideDockHoverTip(void) {
   header.enabled = NO;
   [menu addItem:header];
   [menu addItem:[NSMenuItem separatorItem]];
+  [menu addItemWithTitle:@"打开播放页" action:@selector(openRadialPlayerPage:) keyEquivalent:@""].target = self;
   [menu addItemWithTitle:self.mediaPlaying ? @"暂停" : @"播放" action:@selector(mediaTogglePlayPause:) keyEquivalent:@""].target = self;
   [menu addItemWithTitle:@"上一首" action:@selector(mediaPreviousTrack:) keyEquivalent:@""].target = self;
   [menu addItemWithTitle:@"下一首" action:@selector(mediaNextTrack:) keyEquivalent:@""].target = self;
@@ -15515,6 +15563,48 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.radialMediaTitleLabel = mt;
     self.radialMediaArtistLabel = ma;
     self.radialMediaPlayButton = mplay;
+    NSClickGestureRecognizer *barClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openRadialPlayerPage:)];
+    [mediaBar addGestureRecognizer:barClick];
+
+    NSView *playerPage = [[NSView alloc] initWithFrame:NSMakeRect(0,0,340,520)];
+    playerPage.wantsLayer = YES;
+    playerPage.layer.backgroundColor = [[NSColor windowBackgroundColor] colorWithAlphaComponent:0.97].CGColor;
+    playerPage.layer.cornerRadius = 14;
+    playerPage.hidden = YES;
+    NSButton *back = [NSButton buttonWithTitle:@"‹" target:self action:@selector(closeRadialPlayerPage:)];
+    back.frame = NSMakeRect(10, 480, 32, 30); back.bezelStyle = NSBezelStyleInline; back.font = [NSFont systemFontOfSize:24 weight:NSFontWeightLight];
+    [playerPage addSubview:back];
+    NSButton *pplist = [NSButton buttonWithTitle:@"播放列表" target:self action:@selector(showMediaPlaylistMenuFromButton:)];
+    pplist.frame = NSMakeRect(190, 484, 76, 24); pplist.bezelStyle = NSBezelStyleRounded; pplist.font = [NSFont systemFontOfSize:10];
+    [playerPage addSubview:pplist];
+    NSButton *pplayers = [self mediaIconButton:@"gearshape.fill" action:@selector(showMediaPlayersMenuFromButton:) frame:NSMakeRect(276, 484, 28, 24)];
+    [playerPage addSubview:pplayers];
+
+    NSImageView *part = [[NSImageView alloc] initWithFrame:NSMakeRect(28, 180, 284, 284)];
+    part.imageScaling = NSImageScaleProportionallyUpOrDown; part.wantsLayer = YES; part.layer.cornerRadius = 14; part.layer.masksToBounds = YES;
+    [playerPage addSubview:part];
+    NSButton *ptitle = [NSButton buttonWithTitle:@"" target:self action:@selector(openCurrentMediaPlayer:)];
+    ptitle.frame = NSMakeRect(24, 140, 292, 30); ptitle.bezelStyle = NSBezelStyleInline; ptitle.bordered = NO; ptitle.alignment = NSTextAlignmentLeft; ptitle.font = [NSFont systemFontOfSize:19 weight:NSFontWeightBold];
+    [playerPage addSubview:ptitle];
+    NSTextField *partist = [self label:@"" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    partist.frame = NSMakeRect(24, 120, 292, 18); [playerPage addSubview:partist];
+    NSSlider *pprog = [[NSSlider alloc] initWithFrame:NSMakeRect(24, 94, 292, 18)];
+    pprog.enabled = NO; pprog.minValue = 0; pprog.maxValue = 1; [playerPage addSubview:pprog];
+    NSTextField *ptime = [self label:@"0:00 / 0:00" size:9 bold:NO color:[NSColor secondaryLabelColor]];
+    ptime.frame = NSMakeRect(24, 76, 292, 14); [playerPage addSubview:ptime];
+    NSButton *pprev = [self mediaIconButton:@"backward.fill" action:@selector(mediaPreviousTrack:) frame:NSMakeRect(88, 22, 38, 34)];
+    NSButton *pplay = [self mediaIconButton:@"play.fill" action:@selector(mediaTogglePlayPause:) frame:NSMakeRect(148, 18, 42, 42)];
+    NSButton *pnext = [self mediaIconButton:@"forward.fill" action:@selector(mediaNextTrack:) frame:NSMakeRect(212, 22, 38, 34)];
+    [playerPage addSubview:pprev]; [playerPage addSubview:pplay]; [playerPage addSubview:pnext];
+    [root addSubview:playerPage];
+    self.radialPlayerPage = playerPage;
+    self.radialPlayerArt = part;
+    self.radialPlayerTitleButton = ptitle;
+    self.radialPlayerArtist = partist;
+    self.radialPlayerProgress = pprog;
+    self.radialPlayerTime = ptime;
+    self.radialPlayerPlayButton = pplay;
+
     [self radialApplyPage];
     pop.contentSize = NSMakeSize(340, 360);
   } else {
