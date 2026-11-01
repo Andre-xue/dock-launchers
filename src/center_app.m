@@ -12369,6 +12369,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   toolsPage.hidden = YES; self.quickToolsPage = toolsPage; [root addSubview:toolsPage];
   NSTextField *tt = [self label:@"工具" size:18 bold:YES color:nil];
   tt.frame = NSMakeRect(16, 480, 180, 26); [toolsPage addSubview:tt];
+  ColorHoverButton *quickPanelBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(198, 480, 88, 26)];
+  quickPanelBtn.title = @"快速面板"; quickPanelBtn.hoverColor = [NSColor systemTealColor];
+  quickPanelBtn.target = self; quickPanelBtn.action = @selector(showQuickPanel);
+  [quickPanelBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [toolsPage addSubview:quickPanelBtn];
   ColorHoverButton *layoutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(294, 480, 110, 26)];
   layoutBtn.title = @"窗口布局"; layoutBtn.hoverColor = [NSColor systemBlueColor];
   layoutBtn.target = self; layoutBtn.action = @selector(showWindowLayouts:);
