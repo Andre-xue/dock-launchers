@@ -12228,6 +12228,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     clear.title = @"清空"; clear.hoverColor = [NSColor systemRedColor];
     clear.target = self; clear.action = @selector(pdfClear:);
     [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    ColorHoverButton *finderImport = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(194, 388, 96, 30)];
+    finderImport.title = @"访达导入"; finderImport.hoverColor = [NSColor systemGreenColor];
+    finderImport.target = self; finderImport.action = @selector(pdfImportFinderSelection:);
+    finderImport.toolTip = @"先在访达选中多个 PDF，再点这里一键导入；也可按住 Command 双击列表";
+    [finderImport applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:finderImport];
     ColorHoverButton *merge = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(300, 388, 100, 30)];
     merge.title = @"合并 PDF"; merge.hoverColor = [NSColor systemGreenColor];
     merge.target = self; merge.action = @selector(pdfMerge:);
@@ -12258,7 +12263,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.pdfTable.allowsMultipleSelection = YES;
     self.pdfTable.dataSource = self; self.pdfTable.delegate = self;
     self.pdfTable.target = self;
-    self.pdfTable.doubleAction = @selector(pdfPreviewSelected:);
+    self.pdfTable.doubleAction = @selector(pdfTableDoubleClicked:);
     [self.pdfTable registerForDraggedTypes:@[@"DockLaunchersPDFRow"]];
     sv.documentView = self.pdfTable; [cv addSubview:sv];
     NSTextField *pl = [self label:@"页码" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
@@ -12564,6 +12569,35 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (![out writeToURL:sp.URL]) { [self showToast:@"提取失败"]; return; }
   [self showToast:[NSString stringWithFormat:@"已提取第 %ld–%ld 页", (long)start, (long)end]];
   [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[sp.URL]];
+}
+
+- (NSArray<NSString *> *)finderSelectedPaths {
+  NSString *source = @"tell application \"Finder\"\nset sel to selection as alias list\nset out to \"\"\nrepeat with f in sel\nset out to out & (POSIX path of f) & linefeed\nend repeat\nreturn out\nend tell";
+  NSAppleScript *script = [[NSAppleScript alloc] initWithSource:source];
+  NSDictionary *err = nil;
+  NSAppleEventDescriptor *result = [script executeAndReturnError:&err];
+  if (!result || err) return @[];
+  NSString *out = result.stringValue ?: @"";
+  NSMutableArray *paths = [NSMutableArray array];
+  for (NSString *line in [out componentsSeparatedByString:@"\n"]) {
+    NSString *p = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (p.length) [paths addObject:p];
+  }
+  return paths;
+}
+
+- (void)pdfImportFinderSelection:(id)sender {
+  NSArray *paths = [self finderSelectedPaths];
+  if (!paths.count) {
+    [self showToast:@"请先在访达选中 PDF 文件"];
+    return;
+  }
+  [self addPDFPaths:paths];
+}
+
+- (void)pdfTableDoubleClicked:(id)sender {
+  if (([NSEvent modifierFlags] & NSEventModifierFlagCommand) != 0) [self pdfImportFinderSelection:nil];
+  else [self pdfPreviewSelected:nil];
 }
 
 - (void)pdfPreviewSelected:(id)sender {
