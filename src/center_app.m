@@ -767,6 +767,10 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSColorSampler *colorSampler;
 @property (strong) NSWindow *colorWindow;
 @property (strong) NSWindow *fileSearchWindow;
+@property (strong) NSWindow *groupPanelWindow;
+@property (strong) NSTableView *groupPanelTable;
+@property (strong) NSArray *groupPanelItems;
+@property (strong) NSSearchField *groupPanelSearch;
 @property (strong) NSSearchField *fileSearchField;
 @property (strong) NSTableView *fileSearchTable;
 @property (strong) NSArray *fileSearchItems;
@@ -8577,6 +8581,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.dupTable) return self.dupItems.count;
+  if (tableView == self.groupPanelTable) return self.groupPanelItems.count;
   if (tableView == self.fileSearchTable) return self.fileSearchItems.count;
   if (tableView == self.imageToolTable) return self.imageToolItems.count;
   if (tableView == self.pdfTable) return self.pdfItems.count;
@@ -8629,6 +8634,27 @@ static BOOL ValidGroupName(NSString *raw) {
       link.frame = NSMakeRect(4, 5, col.width - 8, 22); [v addSubview:link];
     }
     return v;
+  }
+  if (tableView == self.groupPanelTable) {
+    if (row < 0 || row >= (NSInteger)self.groupPanelItems.count) return nil;
+    NSDictionary *g = self.groupPanelItems[row];
+    NSTableCellView *cell = [tableView makeViewWithIdentifier:@"gcell" owner:self];
+    if (!cell) {
+      cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0,0,390,60)];
+      cell.identifier = @"gcell";
+      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(10, 12, 40, 40)];
+      iv.imageScaling = NSImageScaleProportionallyUpOrDown; iv.tag = 200; [cell addSubview:iv];
+      NSTextField *t = [self label:@"" size:14 bold:YES color:nil];
+      t.tag = 201; t.frame = NSMakeRect(62, 28, 300, 20); [cell addSubview:t];
+      NSTextField *st = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+      st.tag = 202; st.frame = NSMakeRect(62, 10, 300, 16); [cell addSubview:st];
+    }
+    NSImage *icon = [[NSImage alloc] initWithContentsOfFile:[g[@"path"] stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"]];
+    if (!icon) icon = [[NSWorkspace sharedWorkspace] iconForFile:g[@"path"]];
+    ((NSImageView *)[cell viewWithTag:200]).image = icon;
+    ((NSTextField *)[cell viewWithTag:201]).stringValue = g[@"display"] ?: g[@"name"] ?: @"";
+    ((NSTextField *)[cell viewWithTag:202]).stringValue = @"Dock 分组 · 双击打开";
+    return cell;
   }
   if (tableView == self.fileSearchTable) {
     if (row < 0 || row >= (NSInteger)self.fileSearchItems.count) return nil;
@@ -13248,6 +13274,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"image"]) [self showImageTools:nil];
   else if ([action isEqualToString:@"rename"]) [self showBatchRenamer:nil];
   else if ([action isEqualToString:@"clipboard"]) [self showClipboardWindow:nil];
+  else if ([action isEqualToString:@"groups"]) [self showGroupPanel:nil];
   else if ([action isEqualToString:@"scene"]) { [self rebuildQuickSceneTab]; [self showDetachedPage:self.quickScenePage title:@"场景模式"]; }
   else if ([action isEqualToString:@"ai"]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; }
   else if ([action isEqualToString:@"layouts"]) [self showWindowLayouts:nil];
@@ -14269,9 +14296,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"PDF", @"symbol": @"doc.richtext", @"action": @"pdf"},
         @{@"title": @"图片", @"symbol": @"photo.on.rectangle.angled", @"action": @"image"},
         @{@"title": @"重命名", @"symbol": @"square.and.pencil", @"action": @"rename"},
+        @{@"title": @"分组", @"symbol": @"square.grid.2x2.fill", @"action": @"groups"},
         @{@"title": @"剪贴板", @"symbol": @"doc.on.clipboard.fill", @"action": @"clipboard"},
-        @{@"title": @"场景", @"symbol": @"rectangle.3.group.fill", @"action": @"scene"},
-        @{@"title": @"AI", @"symbol": @"sparkles", @"action": @"ai"}
+        @{@"title": @"场景", @"symbol": @"rectangle.3.group.fill", @"action": @"scene"}
       ],
       @[
         @{@"title": @"窗口布局", @"symbol": @"rectangle.split.2x2", @"action": @"layouts"},
@@ -14289,7 +14316,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"应用密码", @"symbol": @"lock.fill", @"action": @"password"},
         @{@"title": @"应用快捷键", @"symbol": @"keyboard", @"action": @"appshortcuts"},
         @{@"title": @"全局快捷键", @"symbol": @"globe", @"action": @"globalshortcuts"},
-        @{@"title": @"磁盘分析", @"symbol": @"internaldrive.fill", @"action": @"disk"}
+        @{@"title": @"磁盘分析", @"symbol": @"internaldrive.fill", @"action": @"disk"},
+        @{@"title": @"AI", @"symbol": @"sparkles", @"action": @"ai"}
       ]
     ];
     NSInteger savedPage = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerRadialLastPage"];
@@ -16054,6 +16082,77 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
 }
+
+- (void)showGroupPanel:(id)sender {
+  if (!self.groupPanelWindow) {
+    self.groupPanelWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,440,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.groupPanelWindow.title = @"Dock 分组";
+    self.groupPanelWindow.releasedWhenClosed = NO;
+    self.groupPanelWindow.level = NSNormalWindowLevel;
+    NSView *cv = self.groupPanelWindow.contentView;
+    NSTextField *title = [self label:@"Dock 分组" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 490, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"选择分组打开；双击或回车进入" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 468, 380, 18); [cv addSubview:sub];
+    self.groupPanelSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(20, 426, 400, 28)];
+    self.groupPanelSearch.placeholderString = @"搜索分组";
+    self.groupPanelSearch.target = self; self.groupPanelSearch.action = @selector(groupPanelFilterChanged:);
+    [self.groupPanelSearch setContinuous:YES];
+    [cv addSubview:self.groupPanelSearch];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 56, 408, 356)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.groupPanelTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"gmain"];
+    col.width = 390; [self.groupPanelTable addTableColumn:col];
+    self.groupPanelTable.headerView = nil;
+    self.groupPanelTable.rowHeight = 64;
+    self.groupPanelTable.intercellSpacing = NSMakeSize(0, 2);
+    self.groupPanelTable.dataSource = self; self.groupPanelTable.delegate = self;
+    self.groupPanelTable.target = self;
+    self.groupPanelTable.doubleAction = @selector(openGroupPanelRow:);
+    sv.documentView = self.groupPanelTable; [cv addSubview:sv];
+    ColorHoverButton *folderBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 16, 130, 30)];
+    folderBtn.title = @"打开分组文件夹"; folderBtn.hoverColor = [NSColor systemTealColor];
+    folderBtn.target = self; folderBtn.action = @selector(openGroupsFolder:);
+    [folderBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:folderBtn];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(320, 16, 100, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeGroupPanel:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.groupPanelWindow center];
+  }
+  [self refreshGroups];
+  [self reloadGroupPanel];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.groupPanelWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)groupPanelFilterChanged:(id)sender { [self reloadGroupPanel]; }
+
+- (void)reloadGroupPanel {
+  NSString *q = [self.groupPanelSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *g in self.groups ?: @[]) {
+    if (q.length) {
+      NSString *hay = [NSString stringWithFormat:@"%@ %@", g[@"name"] ?: @"", g[@"display"] ?: @""].lowercaseString;
+      if (![hay containsString:q]) continue;
+    }
+    [out addObject:g];
+  }
+  self.groupPanelItems = out;
+  [self.groupPanelTable reloadData];
+  if (out.count) [self.groupPanelTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+}
+
+- (void)openGroupPanelRow:(id)sender {
+  NSInteger row = self.groupPanelTable.selectedRow;
+  if (row < 0) row = self.groupPanelTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.groupPanelItems.count) return;
+  NSString *path = self.groupPanelItems[row][@"path"];
+  if (path.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+}
+
+- (void)closeGroupPanel:(id)sender { [self.groupPanelWindow orderOut:nil]; }
 
 - (void)showFileSearch:(id)sender {
   if (!self.fileSearchWindow) {
