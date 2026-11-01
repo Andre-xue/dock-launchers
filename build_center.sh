@@ -34,7 +34,6 @@ cat > "$OUT/Contents/Info.plist" <<'PL'
   <string>录屏时显示前置摄像头画面。</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>录制屏幕时按需采集麦克风声音。</string>
-  <key>NSAppleEventsUsageDescription</key><string>用于读取正在播放的音乐/视频信息并控制播放。仅在你使用菜单栏媒体小组件时调用。</string>
 <key>NSPhotoLibraryUsageDescription</key><string>用于读取照片图库中的照片和视频，仅在本机「文件管理」中展示，不上传、不修改。</string>
 </dict></plist>
 PL
