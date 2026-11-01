@@ -2041,6 +2041,14 @@ static void HideDockHoverTip(void) {
       return e;
     }];
   }
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  self.category = [ud integerForKey:@"centerQuickPanelCategory"];
+  if (self.category < 0 || self.category > 6) self.category = 0;
+  [self.categoryPopup selectItemAtIndex:self.category];
+  self.selectedGroup = [ud stringForKey:@"centerQuickPanelGroup"] ?: @"";
+  BOOL showGroup = (self.category == 2);
+  self.groupLabel.hidden = !showGroup;
+  self.groupPopup.hidden = !showGroup;
   if (self.dataProvider) self.items = self.dataProvider() ?: @[];
   self.search.stringValue = @"";
   [self rebuildGroupPopup];
@@ -2074,6 +2082,7 @@ static void HideDockHoverTip(void) {
 
 - (void)categoryChanged:(id)sender {
   self.category = self.categoryPopup.indexOfSelectedItem;
+  [[NSUserDefaults standardUserDefaults] setInteger:self.category forKey:@"centerQuickPanelCategory"];
   BOOL showGroup = (self.category == 2);
   self.groupLabel.hidden = !showGroup;
   self.groupPopup.hidden = !showGroup;
@@ -2082,6 +2091,7 @@ static void HideDockHoverTip(void) {
 
 - (void)groupChanged:(id)sender {
   self.selectedGroup = self.groupPopup.indexOfSelectedItem > 0 ? self.groupPopup.titleOfSelectedItem : @"";
+  if (self.selectedGroup.length) [[NSUserDefaults standardUserDefaults] setObject:self.selectedGroup forKey:@"centerQuickPanelGroup"];
   [self filterWithQuery:self.search.stringValue];
 }
 
