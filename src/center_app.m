@@ -769,6 +769,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSView *colorSwatch;
 @property (strong) NSTextField *colorHexLabel;
 @property (strong) NSColor *pickedColor;
+@property (strong) NSMutableArray<NSButton *> *colorHistoryButtons;
 @property (strong) NSTextField *clipboardSaveNameField, *clipboardSaveDirField;
 @property (strong) NSDictionary *clipboardSaveItem;
 @property BOOL clipboardFavoritesOnly;
@@ -16008,31 +16009,44 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSColor *c = [color colorUsingColorSpace:[NSColorSpace sRGBColorSpace]] ?: color;
   self.pickedColor = c;
   if (!self.colorWindow) {
-    self.colorWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,360,280) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.colorWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,360,340) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.colorWindow.title = @"屏幕取色器";
     self.colorWindow.releasedWhenClosed = NO;
     self.colorWindow.level = NSNormalWindowLevel;
     NSView *cv = self.colorWindow.contentView;
-    self.colorSwatch = [[NSView alloc] initWithFrame:NSMakeRect(20, 120, 140, 120)];
+    NSTextField *title = [self label:@"屏幕取色器" size:18 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 310, 300, 24); [cv addSubview:title];
+    self.colorSwatch = [[NSView alloc] initWithFrame:NSMakeRect(20, 170, 140, 120)];
     self.colorSwatch.wantsLayer = YES;
     self.colorSwatch.layer.cornerRadius = 12;
     self.colorSwatch.layer.borderWidth = 1;
     self.colorSwatch.layer.borderColor = [[NSColor separatorColor] colorWithAlphaComponent:0.6].CGColor;
     [cv addSubview:self.colorSwatch];
-    NSTextField *title = [self label:@"屏幕取色器" size:18 bold:YES color:nil];
-    title.frame = NSMakeRect(20, 250, 300, 24); [cv addSubview:title];
     self.colorHexLabel = [self label:@"#000000" size:20 bold:YES color:[NSColor labelColor]];
-    self.colorHexLabel.frame = NSMakeRect(176, 196, 160, 28); [cv addSubview:self.colorHexLabel];
+    self.colorHexLabel.frame = NSMakeRect(176, 246, 160, 28); [cv addSubview:self.colorHexLabel];
     NSTextField *hint = [self label:@"取色完成后自动复制色值" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
-    hint.frame = NSMakeRect(176, 170, 170, 18); [cv addSubview:hint];
-    ColorHoverButton *again = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(176, 84, 110, 32)];
+    hint.frame = NSMakeRect(176, 224, 170, 18); [cv addSubview:hint];
+    ColorHoverButton *again = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(176, 184, 110, 32)];
     again.title = @"再次取色"; again.hoverColor = [NSColor systemTealColor];
     again.target = self; again.action = @selector(showColorSampler:);
     [again applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:again];
-    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(292, 84, 48, 32)];
+    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(292, 184, 48, 32)];
     copy.title = @"复制"; copy.hoverColor = [NSColor systemGreenColor];
     copy.target = self; copy.action = @selector(copyPickedColor:);
     [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
+    NSTextField *histLabel = [self label:@"最近取色" size:9.5 bold:YES color:[NSColor secondaryLabelColor]];
+    histLabel.frame = NSMakeRect(20, 140, 80, 16); [cv addSubview:histLabel];
+    self.colorHistoryButtons = [NSMutableArray array];
+    for (NSInteger i = 0; i < 8; i++) {
+      NSButton *b = [NSButton buttonWithTitle:@"" target:self action:@selector(useRecentColor:)];
+      b.bordered = NO; b.tag = i;
+      b.frame = NSMakeRect(20 + i * 40, 100, 32, 30);
+      b.wantsLayer = YES; b.layer.cornerRadius = 7; b.layer.borderWidth = 1;
+      b.layer.borderColor = [[NSColor separatorColor] colorWithAlphaComponent:0.6].CGColor;
+      b.hidden = YES;
+      [cv addSubview:b];
+      [self.colorHistoryButtons addObject:b];
+    }
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(176, 44, 164, 30)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeColorSampler:);
@@ -16045,10 +16059,54 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *hex = [NSString stringWithFormat:@"#%02lX%02lX%02lX", (long)r, (long)g, (long)b];
   self.colorSwatch.layer.backgroundColor = c.CGColor;
   self.colorHexLabel.stringValue = hex;
+  NSMutableArray *history = [[[NSUserDefaults standardUserDefaults] arrayForKey:@"centerColorHistory"] mutableCopy] ?: [NSMutableArray array];
+  [history removeObject:hex];
+  [history insertObject:hex atIndex:0];
+  while (history.count > 8) [history removeLastObject];
+  [[NSUserDefaults standardUserDefaults] setObject:history forKey:@"centerColorHistory"];
+  [self refreshColorHistoryButtons];
   [[NSPasteboard generalPasteboard] clearContents];
   [[NSPasteboard generalPasteboard] setString:hex forType:NSPasteboardTypeString];
+  [self refreshColorHistoryButtons];
   [NSApp activateIgnoringOtherApps:YES];
   [self.colorWindow makeKeyAndOrderFront:nil];
+  [self showToast:[NSString stringWithFormat:@"已复制 %@", hex]];
+}
+
+- (NSColor *)colorFromHexString:(NSString *)hex {
+  NSString *s = [hex stringByReplacingOccurrencesOfString:@"#" withString:@""];
+  if (s.length != 6) return nil;
+  unsigned int v = 0;
+  if (![[NSScanner scannerWithString:s] scanHexInt:&v]) return nil;
+  return [NSColor colorWithSRGBRed:((v >> 16) & 0xFF) / 255.0 green:((v >> 8) & 0xFF) / 255.0 blue:(v & 0xFF) / 255.0 alpha:1.0];
+}
+
+- (void)refreshColorHistoryButtons {
+  NSArray *history = [[NSUserDefaults standardUserDefaults] arrayForKey:@"centerColorHistory"] ?: @[];
+  for (NSInteger i = 0; i < (NSInteger)self.colorHistoryButtons.count; i++) {
+    NSButton *b = self.colorHistoryButtons[i];
+    if (i < (NSInteger)history.count) {
+      NSColor *c = [self colorFromHexString:history[i]];
+      b.hidden = (c == nil);
+      b.layer.backgroundColor = (c ?: [NSColor clearColor]).CGColor;
+      b.toolTip = history[i];
+    } else {
+      b.hidden = YES;
+    }
+  }
+}
+
+- (void)useRecentColor:(NSButton *)sender {
+  NSArray *history = [[NSUserDefaults standardUserDefaults] arrayForKey:@"centerColorHistory"] ?: @[];
+  if (sender.tag < 0 || sender.tag >= (NSInteger)history.count) return;
+  NSString *hex = history[sender.tag];
+  NSColor *c = [self colorFromHexString:hex];
+  if (!c) return;
+  self.pickedColor = c;
+  self.colorSwatch.layer.backgroundColor = c.CGColor;
+  self.colorHexLabel.stringValue = hex;
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:hex forType:NSPasteboardTypeString];
   [self showToast:[NSString stringWithFormat:@"已复制 %@", hex]];
 }
 
