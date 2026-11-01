@@ -12049,7 +12049,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.pdfWindow.contentView;
     NSTextField *title = [self label:@"PDF 工具" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 450, 300, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"合并多个 PDF，或按页拆分；拖动列表可调整合并顺序" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *sub = [self label:@"合并多个 PDF，或按页拆分；拖动列表或上移/下移调整合并顺序" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 428, 500, 18); [cv addSubview:sub];
     ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 388, 100, 30)];
     add.title = @"添加 PDF"; add.hoverColor = [NSColor systemBlueColor];
@@ -12104,6 +12104,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     preview.toolTip = @"预览选中的 PDF，双击列表项也可以";
     [preview applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [cv addSubview:preview];
+    ColorHoverButton *up = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(400, 24, 56, 30)];
+    up.title = @"上移"; up.hoverColor = [NSColor systemBlueColor];
+    up.target = self; up.action = @selector(pdfMoveSelectedUp:);
+    [up applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:up];
+    ColorHoverButton *down = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(462, 24, 56, 30)];
+    down.title = @"下移"; down.hoverColor = [NSColor systemBlueColor];
+    down.target = self; down.action = @selector(pdfMoveSelectedDown:);
+    [down applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:down];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(544, 24, 100, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closePDFTools:);
@@ -12203,6 +12213,30 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.pdfItems = items;
   [self.pdfTable reloadData];
   return YES;
+}
+
+- (NSDragOperation)tableView:(NSTableView *)tableView draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
+  return tableView == self.pdfTable ? NSDragOperationMove : NSDragOperationNone;
+}
+
+- (void)pdfMoveSelectedUp:(id)sender {
+  NSInteger row = self.pdfTable.selectedRow;
+  if (row <= 0 || row >= (NSInteger)self.pdfItems.count) return;
+  NSMutableArray *items = [self.pdfItems mutableCopy];
+  [items exchangeObjectAtIndex:row withObjectAtIndex:row - 1];
+  self.pdfItems = items;
+  [self.pdfTable reloadData];
+  [self.pdfTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row - 1] byExtendingSelection:NO];
+}
+
+- (void)pdfMoveSelectedDown:(id)sender {
+  NSInteger row = self.pdfTable.selectedRow;
+  if (row < 0 || row + 1 >= (NSInteger)self.pdfItems.count) return;
+  NSMutableArray *items = [self.pdfItems mutableCopy];
+  [items exchangeObjectAtIndex:row withObjectAtIndex:row + 1];
+  self.pdfItems = items;
+  [self.pdfTable reloadData];
+  [self.pdfTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row + 1] byExtendingSelection:NO];
 }
 
 - (void)pdfExtractPages:(id)sender {
