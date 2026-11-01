@@ -12066,6 +12066,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [self.imageToolTable addTableColumn:col];
     }
     self.imageToolTable.rowHeight = 32;
+    self.imageToolTable.allowsMultipleSelection = YES;
     self.imageToolTable.dataSource = self; self.imageToolTable.delegate = self;
     [self.imageToolTable registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
     self.imageToolTable.target = self;
@@ -12209,6 +12210,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [self.pdfTable addTableColumn:col];
     }
     self.pdfTable.rowHeight = 32;
+    self.pdfTable.allowsMultipleSelection = YES;
     self.pdfTable.dataSource = self; self.pdfTable.delegate = self;
     self.pdfTable.target = self;
     self.pdfTable.doubleAction = @selector(pdfPreviewSelected:);
@@ -12325,28 +12327,50 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (NSDragOperation)tableView:(NSTableView *)tableView validateDrop:(id<NSDraggingInfo>)info proposedRow:(NSInteger)row proposedDropOperation:(NSTableViewDropOperation)dropOperation {
   if (tableView != self.pdfTable && tableView != self.imageToolTable) return NSDragOperationNone;
-  if ([[info draggingPasteboard] availableTypeFromArray:@[NSPasteboardTypeFileURL]]) return NSDragOperationCopy;
-  if (tableView != self.pdfTable) return NSDragOperationNone;
   [tableView setDropRow:row dropOperation:NSTableViewDropAbove];
+  if ([[info draggingPasteboard] availableTypeFromArray:@[NSPasteboardTypeFileURL, NSFilenamesPboardType]]) return NSDragOperationCopy;
+  if (tableView != self.pdfTable) return NSDragOperationNone;
   return NSDragOperationMove;
 }
 
 - (BOOL)tableView:(NSTableView *)tableView acceptDrop:(id<NSDraggingInfo>)info row:(NSInteger)row dropOperation:(NSTableViewDropOperation)dropOperation {
   if (tableView != self.pdfTable && tableView != self.imageToolTable) return NO;
-  NSArray *urls = [[info draggingPasteboard] readObjectsForClasses:@[[NSURL class]] options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
-  if (urls.count) {
+  NSPasteboard *pb = [info draggingPasteboard];
+  NSMutableArray<NSString *> *incoming = [NSMutableArray array];
+  NSArray *urls = [pb readObjectsForClasses:@[[NSURL class]] options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+  for (NSURL *u in urls) if (u.path.length) [incoming addObject:u.path];
+  if (!incoming.count) {
+    NSArray *names = [pb propertyListForType:NSFilenamesPboardType];
+    if ([names isKindOfClass:[NSArray class]]) for (id n in names) if ([n isKindOfClass:[NSString class]]) [incoming addObject:n];
+  }
+  if (incoming.count) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *expanded = [NSMutableArray array];
+    for (NSString *path in incoming) {
+      BOOL isDir = NO;
+      if ([fm fileExistsAtPath:path isDirectory:&isDir] && isDir) {
+        NSDirectoryEnumerator *en = [fm enumeratorAtPath:path];
+        for (NSString *rel in en) {
+          if ((tableView == self.pdfTable) ? [rel.pathExtension.lowercaseString isEqualToString:@"pdf"] : [@[@"jpg", @"jpeg", @"png", @"heic", @"tiff", @"gif"] containsObject:rel.pathExtension.lowercaseString]) [expanded addObject:[path stringByAppendingPathComponent:rel]];
+        }
+      } else {
+        [expanded addObject:path];
+      }
+    }
+    NSInteger added = 0;
     if (tableView == self.pdfTable) {
       NSMutableArray *paths = [self.pdfItems mutableCopy] ?: [NSMutableArray array];
-      for (NSURL *u in urls) if ([u.pathExtension.lowercaseString isEqualToString:@"pdf"] && ![paths containsObject:u.path]) [paths addObject:u.path];
+      for (NSString *path in expanded) if ([path.pathExtension.lowercaseString isEqualToString:@"pdf"] && ![paths containsObject:path]) { [paths addObject:path]; added++; }
       self.pdfItems = paths;
       [self.pdfTable reloadData];
     } else {
       NSMutableArray *paths = [self.imageToolItems mutableCopy] ?: [NSMutableArray array];
       NSSet *exts = [NSSet setWithArray:@[@"jpg", @"jpeg", @"png", @"heic", @"tiff", @"gif"]];
-      for (NSURL *u in urls) if ([exts containsObject:u.pathExtension.lowercaseString] && ![paths containsObject:u.path]) [paths addObject:u.path];
+      for (NSString *path in expanded) if ([exts containsObject:path.pathExtension.lowercaseString] && ![paths containsObject:path]) { [paths addObject:path]; added++; }
       self.imageToolItems = paths;
       [self.imageToolTable reloadData];
     }
+    [self showToast:[NSString stringWithFormat:@"已添加 %ld 个文件", (long)added]];
     return YES;
   }
   if (tableView != self.pdfTable) return NO;
