@@ -14127,18 +14127,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     dh.frame = NSMakeRect(24, 49, 772, 18); [cv addSubview:dh];
     self.translationStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.translationStatus.frame = NSMakeRect(24, 10, 772, 18); [cv addSubview:self.translationStatus];
-    self.translationPinButton = [[NSButton alloc] initWithFrame:NSMakeRect(768, 516, 30, 26)];
-    self.translationPinButton.bordered = NO;
-    self.translationPinButton.target = self;
-    self.translationPinButton.action = @selector(toggleToolPin:);
-    self.translationPinButton.tag = 1;
-    [cv addSubview:self.translationPinButton];
     [self.translationWindow center];
   }
   [self reloadTranslationProviders];
-  BOOL pinned = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerTranslatePinned"];
-  self.translationWindow.level = pinned ? NSFloatingWindowLevel : NSNormalWindowLevel;
-  [self applyPinLook:self.translationPinButton pinned:pinned];
   [NSApp activateIgnoringOtherApps:YES];
   [self.translationWindow makeKeyAndOrderFront:nil];
   [self.translationWindow orderFrontRegardless];
@@ -14792,18 +14783,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [cv addSubview:self.compressSpinner];
     self.compressStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.compressStatus.frame = NSMakeRect(50, 30, 540, 18); [cv addSubview:self.compressStatus];
-    self.compressPinButton = [[NSButton alloc] initWithFrame:NSMakeRect(572, 418, 30, 26)];
-    self.compressPinButton.bordered = NO;
-    self.compressPinButton.target = self;
-    self.compressPinButton.action = @selector(toggleToolPin:);
-    self.compressPinButton.tag = 0;
-    [cv addSubview:self.compressPinButton];
     self.compressPaths = [NSMutableArray array];
     [self.compressWindow center];
   }
-  BOOL cpinned = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCompressPinned"];
-  self.compressWindow.level = cpinned ? NSFloatingWindowLevel : NSNormalWindowLevel;
-  [self applyPinLook:self.compressPinButton pinned:cpinned];
   [NSApp activateIgnoringOtherApps:YES];
   [self.compressWindow makeKeyAndOrderFront:nil];
   [self.compressWindow orderFrontRegardless];
