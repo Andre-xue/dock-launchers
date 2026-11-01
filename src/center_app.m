@@ -4935,24 +4935,38 @@ static BOOL ValidGroupName(NSString *raw) {
   BOOL isImage = [it[@"kind"] isEqualToString:@"image"];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     [NSApp activateIgnoringOtherApps:YES];
-    NSSavePanel *sp = [NSSavePanel savePanel];
-    NSString *defaultName = isImage ? (it[@"file"] ?: @"剪贴板图片.png") : @"剪贴板文本.txt";
-    sp.nameFieldStringValue = defaultName;
-    sp.allowedFileTypes = isImage ? @[@"png"] : @[@"txt"];
-    if ([sp runModal] != NSModalResponseOK) return;
+    NSOpenPanel *op = [NSOpenPanel openPanel];
+    op.canChooseDirectories = YES;
+    op.canChooseFiles = NO;
+    op.allowsMultipleSelection = NO;
+    op.canCreateDirectories = YES;
+    op.prompt = @"保存到这里";
+    op.message = isImage ? @"选择保存图片的文件夹" : @"选择保存文本的文件夹";
+    NSView *av = [[NSView alloc] initWithFrame:NSMakeRect(0,0,380,56)];
+    NSTextField *label = [self label:@"文件名" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
+    label.frame = NSMakeRect(0, 34, 80, 18); [av addSubview:label];
+    NSTextField *nameField = [[NSTextField alloc] initWithFrame:NSMakeRect(84, 28, 290, 26)];
+    nameField.stringValue = isImage ? (it[@"file"] ?: @"剪贴板图片.png") : @"剪贴板文本.txt";
+    [av addSubview:nameField];
+    op.accessoryView = av;
+    if ([op runModal] != NSModalResponseOK || !op.URL) return;
+    NSString *name = nameField.stringValue;
+    NSString *ext = isImage ? @"png" : @"txt";
+    if (![name.pathExtension.lowercaseString isEqualToString:ext]) name = [name stringByAppendingPathExtension:ext];
+    NSString *path = [op.URL.path stringByAppendingPathComponent:name];
     if (isImage) {
       NSString *src = [[self clipboardImagesDir] stringByAppendingPathComponent:(it[@"file"] ?: @"")];
       NSData *data = [NSData dataWithContentsOfFile:src];
       if (!data) { [self showToast:@"图片文件不存在"]; return; }
       NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:data];
       NSData *png = rep ? [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] : data;
-      if (![png writeToURL:sp.URL atomically:YES]) { [self showToast:@"保存失败"]; return; }
+      if (![png writeToFile:path atomically:YES]) { [self showToast:@"保存失败"]; return; }
     } else {
       NSString *text = it[@"text"] ?: @"";
-      if (![text writeToURL:sp.URL atomically:YES encoding:NSUTF8StringEncoding error:NULL]) { [self showToast:@"保存失败"]; return; }
+      if (![text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL]) { [self showToast:@"保存失败"]; return; }
     }
     [self showToast:@"已保存"];
-    [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[sp.URL]];
+    [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];
   });
 }
 
