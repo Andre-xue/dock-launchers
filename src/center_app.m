@@ -17008,11 +17008,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   ex.videoComposition = vc;
   NSInteger micGainDB = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
   if (audioTracks.count) {
+    NSInteger micIndex = [self micTrackIndexForAudioTracks:screenAudios];
     AVMutableAudioMix *am = [AVMutableAudioMix audioMix];
     NSMutableArray *params = [NSMutableArray array];
     for (NSInteger ai = 0; ai < (NSInteger)audioTracks.count; ai++) {
       AVMutableAudioMixInputParameters *ap = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:audioTracks[ai]];
-      float vol = (ai == 0) ? 1.0f : pow(10.0, micGainDB / 20.0);
+      float vol = (ai == micIndex) ? pow(10.0, micGainDB / 20.0) : 1.0f;
       [ap setVolume:vol atTime:kCMTimeZero];
       [params addObject:ap];
     }
@@ -17482,6 +17483,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }];
 }
 
+- (NSInteger)micTrackIndexForAudioTracks:(NSArray<AVAssetTrack *> *)audios {
+  if (audios.count < 2) return 0;
+  for (NSInteger i = 0; i < (NSInteger)audios.count; i++) {
+    CMFormatDescriptionRef desc = (__bridge CMFormatDescriptionRef)audios[i].formatDescriptions.firstObject;
+    const AudioStreamBasicDescription *asbd = desc ? CMAudioFormatDescriptionGetStreamBasicDescription(desc) : NULL;
+    if (asbd && asbd->mChannelsPerFrame == 1) return i;
+  }
+  return 1;
+}
+
 - (BOOL)fileNeedsAudioMix:(NSString *)path {
   if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return NO;
   AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
@@ -17503,11 +17514,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [at insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:audios[i] atTime:kCMTimeZero error:NULL];
     [audioTracks addObject:at];
   }
+  NSInteger micIndex = [self micTrackIndexForAudioTracks:audios];
   AVMutableAudioMix *mix = [AVMutableAudioMix audioMix];
   NSMutableArray *params = [NSMutableArray array];
   for (NSInteger i = 0; i < (NSInteger)audioTracks.count; i++) {
     AVMutableAudioMixInputParameters *ap = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:audioTracks[i]];
-    float vol = (i == 0) ? 1.0f : pow(10.0, gainDB / 20.0);
+    float vol = (i == micIndex) ? pow(10.0, gainDB / 20.0) : 1.0f;
     [ap setVolume:vol atTime:kCMTimeZero];
     [params addObject:ap];
   }
