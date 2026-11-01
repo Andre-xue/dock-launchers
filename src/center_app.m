@@ -845,6 +845,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *processWindow;
 @property (strong) NSTableView *processTable;
 @property (strong) NSArray *processItems;
+@property (strong) NSArray *processAllItems;
+@property (strong) NSSearchField *processSearchField;
 @property (strong) NSTimer *processTimer;
 @property (copy) NSString *processSortKey;
 @property (strong) NSTimer *clipboardTimer;
@@ -10227,8 +10229,14 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *cv = self.processWindow.contentView;
     NSTextField *title = [self label:@"进程管理" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"按 CPU 或内存排序；结束进程前会确认" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *sub = [self label:@"按 CPU 或内存排序；可搜索进程；结束进程前会确认" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 448, 500, 18); [cv addSubview:sub];
+    self.processSearchField = [[NSSearchField alloc] initWithFrame:NSMakeRect(360, 470, 328, 27)];
+    self.processSearchField.placeholderString = @"搜索进程名称";
+    self.processSearchField.target = self;
+    self.processSearchField.action = @selector(processFilterChanged:);
+    [self.processSearchField setContinuous:YES];
+    [cv addSubview:self.processSearchField];
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 688, 360)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.processTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
@@ -10310,7 +10318,26 @@ static BOOL ValidGroupName(NSString *raw) {
   } @catch (NSException *e) {}
   NSString *sortKey = self.processSortKey.length ? self.processSortKey : @"cpu";
   [rows sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[sortKey] compare:a[sortKey]]; }];
-  self.processItems = rows;
+  self.processAllItems = rows;
+  [self applyProcessFilter];
+}
+
+- (void)processFilterChanged:(id)sender {
+  [self applyProcessFilter];
+}
+
+- (void)applyProcessFilter {
+  NSString *q = [self.processSearchField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  if (!q.length) {
+    self.processItems = self.processAllItems ?: @[];
+  } else {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *p in self.processAllItems ?: @[]) {
+      NSString *hay = [NSString stringWithFormat:@"%@ %@ %@", p[@"name"] ?: @"", p[@"path"] ?: @"", p[@"pid"] ?: @""].lowercaseString;
+      if ([hay containsString:q]) [out addObject:p];
+    }
+    self.processItems = out;
+  }
   [self.processTable reloadData];
 }
 
