@@ -12079,6 +12079,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
     self.pdfTable.rowHeight = 32;
     self.pdfTable.dataSource = self; self.pdfTable.delegate = self;
+    self.pdfTable.target = self;
+    self.pdfTable.doubleAction = @selector(pdfPreviewSelected:);
     sv.documentView = self.pdfTable; [cv addSubview:sv];
     NSTextField *pl = [self label:@"页码" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     pl.frame = NSMakeRect(20, 34, 40, 18); [cv addSubview:pl];
@@ -12095,6 +12097,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     extract.target = self; extract.action = @selector(pdfExtractPages:);
     [extract applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [cv addSubview:extract];
+    ColorHoverButton *preview = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(310, 24, 84, 30)];
+    preview.title = @"预览"; preview.hoverColor = [NSColor systemTealColor];
+    preview.target = self; preview.action = @selector(pdfPreviewSelected:);
+    preview.toolTip = @"预览选中的 PDF，双击列表项也可以";
+    [preview applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:preview];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(544, 24, 100, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closePDFTools:);
@@ -12194,6 +12202,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (![out writeToURL:sp.URL]) { [self showToast:@"提取失败"]; return; }
   [self showToast:[NSString stringWithFormat:@"已提取第 %ld–%ld 页", (long)start, (long)end]];
   [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[sp.URL]];
+}
+
+- (void)pdfPreviewSelected:(id)sender {
+  if (!self.pdfItems.count) { [self showToast:@"请先添加 PDF"]; return; }
+  NSInteger row = self.pdfTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.pdfItems.count) row = 0;
+  self.diskPreviewMode = NO;
+  self.userFilesPreviewPath = self.pdfItems[row];
+  QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
+  panel.dataSource = self;
+  panel.delegate = self;
+  [panel makeKeyAndOrderFront:nil];
+  [panel reloadData];
 }
 
 - (void)closePDFTools:(id)sender { [self.pdfWindow orderOut:nil]; }
