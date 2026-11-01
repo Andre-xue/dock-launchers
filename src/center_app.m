@@ -821,6 +821,14 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
     config.captureMicrophone = micAudio;
     config.sampleRate = 48000;
     config.channelCount = 2;
+    id curObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowCursor"];
+    id clickObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowClicks"];
+    config.showsCursor = (!curObj || [curObj boolValue]);
+    config.showMouseClicks = (!clickObj || [clickObj boolValue]);
+    if (config.showMouseClicks) config.pixelFormat = kCVPixelFormatType_32BGRA;
+    NSInteger fps = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureFPS"];
+    if (fps <= 0) fps = 30;
+    config.minimumFrameInterval = CMTimeMake(1, (int32_t)fps);
     NSInteger targetH = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureQuality"];
     if (targetH <= 0) targetH = 1440;
     if (scene == DLRecordSceneRegion && region.size.width > 1) {
@@ -967,6 +975,14 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
   config.captureMicrophone = micAudio;
   config.sampleRate = 48000;
   config.channelCount = 2;
+  id curObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowCursor"];
+  id clickObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowClicks"];
+  config.showsCursor = (!curObj || [curObj boolValue]);
+  config.showMouseClicks = (!clickObj || [clickObj boolValue]);
+  if (config.showMouseClicks) config.pixelFormat = kCVPixelFormatType_32BGRA;
+  NSInteger fps = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureFPS"];
+  if (fps <= 0) fps = 30;
+  config.minimumFrameInterval = CMTimeMake(1, (int32_t)fps);
   NSInteger targetH = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureQuality"];
   if (targetH <= 0) targetH = 1440;
   config.height = (size_t)targetH;
@@ -1133,7 +1149,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSArray *captureHistoryItems;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
-@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup;
+@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup;
+@property (strong) NSButton *captureCursorCheck, *captureClickCheck;
 @property (strong) NSButton *captureSystemAudioCheck, *captureMicCheck;
 @property (strong) DLScreenRecorder *captureRecorder;
 @property (strong) NSWindow *captureRegionWindow;
@@ -16892,17 +16909,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   CGSize renderSize = screenVideo.naturalSize;
   AVMutableVideoComposition *vc = [AVMutableVideoComposition videoComposition];
   vc.renderSize = renderSize;
-  vc.frameDuration = CMTimeMake(1, 30);
+  NSInteger outFPS = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureFPS"];
+  if (outFPS <= 0) outFPS = 30;
+  vc.frameDuration = CMTimeMake(1, (int32_t)outFPS);
   AVMutableVideoCompositionInstruction *inst = [[AVMutableVideoCompositionInstruction alloc] init];
   inst.timeRange = CMTimeRangeMake(kCMTimeZero, screenAsset.duration);
   AVMutableVideoCompositionLayerInstruction *screenLayer = [AVMutableVideoCompositionLayerInstruction videoCompositionLayerInstructionWithAssetTrack:sv];
   AVMutableVideoCompositionLayerInstruction *camLayer = [AVMutableVideoCompositionLayerInstruction videoCompositionLayerInstructionWithAssetTrack:cv];
-  CGFloat targetW = renderSize.width * 0.24;
+  NSString *pipPreset = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCapturePiPPreset"] ?: @"br-medium";
+  CGFloat pipFrac = 0.24;
+  if ([pipPreset hasSuffix:@"small"]) pipFrac = 0.18;
+  else if ([pipPreset hasSuffix:@"large"]) pipFrac = 0.30;
+  BOOL pipLeft = [pipPreset hasPrefix:@"bl"] || [pipPreset hasPrefix:@"tl"];
+  BOOL pipTop = [pipPreset hasPrefix:@"tr"] || [pipPreset hasPrefix:@"tl"];
+  CGFloat targetW = renderSize.width * pipFrac;
   CGFloat scale = targetW / MAX(1, cameraVideo.naturalSize.width);
   CGFloat targetH = MAX(1, cameraVideo.naturalSize.height * scale);
   CGFloat margin = renderSize.width * 0.02;
+  CGFloat pipX = pipLeft ? margin : (renderSize.width - targetW - margin);
+  CGFloat pipY = pipTop ? margin : (renderSize.height - targetH - margin);
   CGAffineTransform t = CGAffineTransformMakeScale(scale, scale);
-  t = CGAffineTransformTranslate(t, (renderSize.width - targetW - margin) / scale, (renderSize.height - targetH - margin) / scale);
+  t = CGAffineTransformTranslate(t, pipX / scale, pipY / scale);
   [camLayer setTransform:t atTime:kCMTimeZero];
   inst.layerInstructions = @[camLayer, screenLayer];
   vc.instructions = @[inst];
@@ -16945,9 +16972,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)captureQualityChanged:(id)sender {
-  NSInteger h = [self.captureQualityPopup.selectedItem.representedObject integerValue];
-  if (h <= 0) h = 1440;
+  NSDictionary *v = self.captureQualityPopup.selectedItem.representedObject;
+  NSInteger h = [v[@"height"] integerValue] > 0 ? [v[@"height"] integerValue] : 1440;
+  NSInteger fps = [v[@"fps"] integerValue] > 0 ? [v[@"fps"] integerValue] : 30;
   [[NSUserDefaults standardUserDefaults] setInteger:h forKey:@"centerCaptureQuality"];
+  [[NSUserDefaults standardUserDefaults] setInteger:fps forKey:@"centerCaptureFPS"];
+}
+
+- (void)capturePiPChanged:(id)sender {
+  NSString *v = self.capturePiPPopup.selectedItem.representedObject ?: @"br-medium";
+  [[NSUserDefaults standardUserDefaults] setObject:v forKey:@"centerCapturePiPPreset"];
+}
+
+- (void)capturePointerChanged:(id)sender {
+  [[NSUserDefaults standardUserDefaults] setBool:(self.captureCursorCheck.state == NSControlStateValueOn) forKey:@"centerCaptureShowCursor"];
+  [[NSUserDefaults standardUserDefaults] setBool:(self.captureClickCheck.state == NSControlStateValueOn) forKey:@"centerCaptureShowClicks"];
 }
 
 - (void)captureVideoPathChanged:(id)sender {
@@ -16961,7 +17000,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)showCaptureTool:(id)sender {
   if (!self.captureWindow) {
-    self.captureWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,430) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.captureWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,430) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.captureWindow.title = @"截图 / 录屏";
     self.captureWindow.releasedWhenClosed = NO;
     self.captureWindow.level = NSNormalWindowLevel;
@@ -16986,6 +17025,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     for (NSMenuItem *mi in self.captureCameraPopup.itemArray) if ([mi.representedObject isEqualToString:savedCam ?: @""]) [self.captureCameraPopup selectItem:mi];
     self.captureCameraPopup.target = self; self.captureCameraPopup.action = @selector(captureCameraChanged:);
     [cv addSubview:self.captureCameraPopup];
+    NSTextField *pipLabel = [self label:@"画中画" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    pipLabel.frame = NSMakeRect(548, 390, 50, 18); [cv addSubview:pipLabel];
+    self.capturePiPPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(600, 382, 100, 26) pullsDown:NO];
+    NSArray *pipTitles = @[@"右下 · 中", @"右下 · 小", @"右下 · 大", @"左下 · 中", @"右上 · 中", @"左上 · 中"];
+    NSArray *pipVals = @[@"br-medium", @"br-small", @"br-large", @"bl-medium", @"tr-medium", @"tl-medium"];
+    for (NSInteger i = 0; i < pipTitles.count; i++) { [self.capturePiPPopup addItemWithTitle:pipTitles[i]]; self.capturePiPPopup.lastItem.representedObject = pipVals[i]; }
+    NSString *savedPiP = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCapturePiPPreset"];
+    for (NSMenuItem *mi in self.capturePiPPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedPiP ?: @"br-medium"]) [self.capturePiPPopup selectItem:mi];
+    self.capturePiPPopup.target = self; self.capturePiPPopup.action = @selector(capturePiPChanged:);
+    [cv addSubview:self.capturePiPPopup];
     NSArray *modes = @[@"全屏截图", @"区域截图", @"窗口截图"];
     NSArray *sels = @[@"captureFullScreen:", @"captureRegion:", @"captureWindowShot:"];
     for (NSInteger i = 0; i < 3; i++) {
@@ -17011,14 +17060,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *ql = [self label:@"画质" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     ql.frame = NSMakeRect(372, 270, 32, 18); [cv addSubview:ql];
     self.captureQualityPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(406, 264, 124, 26) pullsDown:NO];
-    NSArray *qTitles = @[@"1080p", @"2K", @"4K"];
-    NSArray *qHeights = @[@1080, @1440, @2160];
+    NSArray *qTitles = @[@"1080p 30", @"2K 30", @"4K 30", @"2K 60"];
+    NSArray *qHeights = @[@1080, @1440, @2160, @1440];
+    NSArray *qFPS = @[@30, @30, @30, @60];
     for (NSInteger i = 0; i < qTitles.count; i++) {
       [self.captureQualityPopup addItemWithTitle:qTitles[i]];
-      self.captureQualityPopup.lastItem.representedObject = qHeights[i];
+      self.captureQualityPopup.lastItem.representedObject = @{@"height": qHeights[i], @"fps": qFPS[i]};
     }
     NSInteger qh = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureQuality"];
-    NSInteger qidx = qh == 1080 ? 0 : (qh == 2160 ? 2 : 1);
+    NSInteger qf = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureFPS"];
+    NSInteger qidx = 1;
+    if (qh == 1080) qidx = 0; else if (qh == 2160) qidx = 2; else if (qh == 1440 && qf == 60) qidx = 3;
     [self.captureQualityPopup selectItemAtIndex:qidx];
     self.captureQualityPopup.target = self; self.captureQualityPopup.action = @selector(captureQualityChanged:);
     [cv addSubview:self.captureQualityPopup];
@@ -17052,9 +17104,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureMicCheck.frame = NSMakeRect(492, 212, 90, 22);
     self.captureMicCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"] ? NSControlStateValueOn : NSControlStateValueOff;
     [cv addSubview:self.captureMicCheck];
+    self.captureCursorCheck = [NSButton checkboxWithTitle:@"显示光标" target:self action:@selector(capturePointerChanged:)];
+    self.captureCursorCheck.frame = NSMakeRect(20, 158, 96, 22);
+    id curObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowCursor"];
+    self.captureCursorCheck.state = (!curObj || [curObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
+    [cv addSubview:self.captureCursorCheck];
+    self.captureClickCheck = [NSButton checkboxWithTitle:@"点击高亮" target:self action:@selector(capturePointerChanged:)];
+    self.captureClickCheck.frame = NSMakeRect(126, 158, 110, 22);
+    id clickObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowClicks"];
+    self.captureClickCheck.state = (!clickObj || [clickObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
+    [cv addSubview:self.captureClickCheck];
     self.captureStatusLabel = [self label:@"截图会保存到 ~/Pictures/DockLaunchers Captures" size:10 bold:NO color:[NSColor secondaryLabelColor]];
-    self.captureStatusLabel.frame = NSMakeRect(20, 158, 520, 40);
-    self.captureStatusLabel.maximumNumberOfLines = 2;
+    self.captureStatusLabel.frame = NSMakeRect(20, 130, 670, 20);
+    self.captureStatusLabel.maximumNumberOfLines = 1;
     [cv addSubview:self.captureStatusLabel];
     NSTextField *imgLabel = [self label:@"截图保存" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     imgLabel.frame = NSMakeRect(20, 104, 70, 18); [cv addSubview:imgLabel];
@@ -17093,6 +17155,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   id sysObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureSystemAudio"];
   self.captureSystemAudioCheck.state = (!sysObj || [sysObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
   self.captureMicCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"] ? NSControlStateValueOn : NSControlStateValueOff;
+  id curObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowCursor"];
+  self.captureCursorCheck.state = (!curObj || [curObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
+  id clickObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowClicks"];
+  self.captureClickCheck.state = (!clickObj || [clickObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
   NSString *savedCam = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureCameraID"];
   for (NSMenuItem *mi in self.captureCameraPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedCam ?: @""]) [self.captureCameraPopup selectItem:mi];
   [NSApp activateIgnoringOtherApps:YES];
