@@ -954,6 +954,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSView *quickGroupContainer;
 @property (strong) NSSegmentedControl *quickTabs;
 @property (strong) DLCircularMenuView *radialMenu;
+@property (strong) NSMapTable *detachedPanels;
+@property (strong) NSMapTable *detachedScrolls;
 @property (strong) NSTextField *quickDetailTitle, *quickDetailValue, *quickDetailSub, *quickDetailExtra;
 @property (strong) Sparkline *quickDetailChart;
 @property (strong) QuickBarView *quickDetailBar;
@@ -2258,6 +2260,9 @@ static void HideDockHoverTip(void) {
       [self quickTabChanged:nil];
       [self togglePopover:nil];
     });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DETACH")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self showDetachedPage:self.quickOverview title:@"概览"]; });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_RADIAL")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self togglePopover:nil]; });
@@ -12261,6 +12266,88 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)closeBatchRenamer:(id)sender { [self.batchRenameWindow orderOut:nil]; }
 
+- (void)showDetachedPage:(NSView *)page title:(NSString *)title {
+  if (!page) return;
+  if (!self.detachedPanels) self.detachedPanels = [NSMapTable strongToStrongObjectsMapTable];
+  if (!self.detachedScrolls) self.detachedScrolls = [NSMapTable strongToStrongObjectsMapTable];
+  NSString *key = [NSString stringWithFormat:@"%@-%p", title, page];
+  NSWindow *existing = [self.detachedPanels objectForKey:key];
+  if (existing) {
+    page.hidden = NO;
+    [NSApp activateIgnoringOtherApps:YES];
+    [existing makeKeyAndOrderFront:nil];
+    [existing orderFrontRegardless];
+    return;
+  }
+  [page removeFromSuperview];
+  page.hidden = NO;
+  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,596) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable|NSWindowStyleMaskMiniaturizable) backing:NSBackingStoreBuffered defer:NO];
+  w.title = title;
+  w.releasedWhenClosed = NO;
+  w.level = NSFloatingWindowLevel;
+  NSView *cv = w.contentView;
+  NSTextField *tl = [[NSTextField alloc] initWithFrame:NSMakeRect(12, 560, 220, 20)];
+  tl.editable = NO; tl.bordered = NO; tl.drawsBackground = NO;
+  tl.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
+  tl.stringValue = title;
+  [cv addSubview:tl];
+  ColorHoverButton *pin = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(348, 554, 70, 26)];
+  pin.title = @"钉住"; pin.hoverColor = [NSColor systemOrangeColor];
+  pin.target = self; pin.action = @selector(toggleDetachedPin:);
+  [pin applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [cv addSubview:pin];
+  ColorHoverButton *zoomOut = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, 554, 34, 26)];
+  zoomOut.title = @"−"; zoomOut.hoverColor = [NSColor systemBlueColor];
+  zoomOut.target = self; zoomOut.action = @selector(zoomDetachedOut:);
+  [zoomOut applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [cv addSubview:zoomOut];
+  ColorHoverButton *zoomIn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(228, 554, 34, 26)];
+  zoomIn.title = @"+"; zoomIn.hoverColor = [NSColor systemBlueColor];
+  zoomIn.target = self; zoomIn.action = @selector(zoomDetachedIn:);
+  [zoomIn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [cv addSubview:zoomIn];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(8, 8, 464, 540)];
+  sv.hasHorizontalScroller = YES; sv.hasVerticalScroller = YES;
+  sv.autohidesScrollers = YES;
+  sv.allowsMagnification = YES;
+  sv.minMagnification = 0.5;
+  sv.maxMagnification = 2.0;
+  sv.magnification = 1.0;
+  sv.drawsBackground = YES;
+  sv.backgroundColor = [NSColor controlBackgroundColor];
+  [sv setDocumentView:page];
+  [cv addSubview:sv];
+  [self.detachedPanels setObject:w forKey:key];
+  [self.detachedScrolls setObject:sv forKey:w];
+  [w center];
+  [NSApp activateIgnoringOtherApps:YES];
+  [w makeKeyAndOrderFront:nil];
+  [w orderFrontRegardless];
+}
+
+- (NSScrollView *)scrollForDetachedWindow:(NSWindow *)w {
+  return w ? [self.detachedScrolls objectForKey:w] : nil;
+}
+
+- (void)toggleDetachedPin:(ColorHoverButton *)sender {
+  NSWindow *w = sender.window;
+  if (!w) return;
+  BOOL pinned = (w.level != NSFloatingWindowLevel);
+  w.level = pinned ? NSFloatingWindowLevel : NSNormalWindowLevel;
+  sender.title = pinned ? @"钉住" : @"浮动";
+  sender.hoverColor = pinned ? [NSColor systemOrangeColor] : [NSColor systemGrayColor];
+}
+
+- (void)zoomDetachedOut:(id)sender {
+  NSScrollView *sv = [self scrollForDetachedWindow:[(NSButton *)sender window]];
+  if (sv) sv.magnification = MAX(sv.minMagnification, sv.magnification - 0.15);
+}
+
+- (void)zoomDetachedIn:(id)sender {
+  NSScrollView *sv = [self scrollForDetachedWindow:[(NSButton *)sender window]];
+  if (sv) sv.magnification = MIN(sv.maxMagnification, sv.magnification + 0.15);
+}
+
 - (void)showWindowLayouts:(id)sender {
   [self loadWindowLayouts];
   if (!self.layoutWindow) {
@@ -13135,25 +13222,25 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.radialMenu.items = @[
       @{@"title": @"场景", @"symbol": @"rectangle.3.group.fill"},
       @{@"title": @"AI", @"symbol": @"sparkles"},
+      @{@"title": @"工具", @"symbol": @"wrench.and.screwdriver.fill"},
       @{@"title": @"进程", @"symbol": @"cpu"},
       @{@"title": @"剪贴板", @"symbol": @"doc.on.clipboard.fill"},
-      @{@"title": @"搜索", @"symbol": @"magnifyingglass"},
-      @{@"title": @"控制台", @"symbol": @"macwindow"}
+      @{@"title": @"搜索", @"symbol": @"magnifyingglass"}
     ];
     __weak typeof(self) weakSelf = self;
     self.radialMenu.onSegment = ^(NSInteger index) {
       [weakSelf.popover performClose:nil];
-      if (index == 0) [weakSelf showSceneSettings:nil];
-      else if (index == 1) { [weakSelf showWindow:nil]; [weakSelf showSection:2]; }
-      else if (index == 2) [weakSelf showProcessManager:nil];
-      else if (index == 3) [weakSelf showClipboardWindow:nil];
-      else if (index == 4) [weakSelf showAppSearch:nil];
-      else { [weakSelf showWindow:nil]; [weakSelf showSection:0]; }
+      if (index == 0) { [weakSelf rebuildQuickSceneTab]; [weakSelf showDetachedPage:weakSelf.quickScenePage title:@"场景模式"]; }
+      else if (index == 1) { [weakSelf rebuildQuickAITab]; [weakSelf showDetachedPage:weakSelf.quickAIPage title:@"AI 管理"]; }
+      else if (index == 2) [weakSelf showDetachedPage:weakSelf.quickToolsPage title:@"工具"];
+      else if (index == 3) { [weakSelf refreshQuickProcess:nil]; [weakSelf showDetachedPage:weakSelf.quickProcessPage title:@"进程 Top 6"]; }
+      else if (index == 4) [weakSelf showClipboardWindow:nil];
+      else if (index == 5) [weakSelf showAppSearch:nil];
     };
     self.radialMenu.onCenter = ^(BOOL doubleClick) {
       [weakSelf.popover performClose:nil];
-      [weakSelf showWindow:nil];
-      [weakSelf showSection:0];
+      if (doubleClick) { [weakSelf showWindow:nil]; [weakSelf showSection:0]; }
+      else [weakSelf showDetachedPage:weakSelf.quickOverview title:@"概览"];
     };
     [root addSubview:self.radialMenu positioned:NSWindowAbove relativeTo:nil];
     pop.contentSize = NSMakeSize(420, 440);
