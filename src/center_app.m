@@ -769,6 +769,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *fileSearchWindow;
 @property (strong) NSWindow *groupPanelWindow;
 @property (strong) NSWindow *captureWindow;
+@property (strong) NSWindow *captureHistoryWindow;
+@property (strong) NSTableView *captureHistoryTable;
+@property (strong) NSArray *captureHistoryItems;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
 @property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup;
@@ -8612,6 +8615,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.dupTable) return self.dupItems.count;
+  if (tableView == self.captureHistoryTable) return self.captureHistoryItems.count;
   if (tableView == self.groupPanelTable) return self.groupPanelItems.count;
   if (tableView == self.fileSearchTable) return self.fileSearchItems.count;
   if (tableView == self.imageToolTable) return self.imageToolItems.count;
@@ -8664,6 +8668,20 @@ static BOOL ValidGroupName(NSString *raw) {
       link.font = [NSFont systemFontOfSize:9.5]; link.contentTintColor = [NSColor controlAccentColor];
       link.frame = NSMakeRect(4, 5, col.width - 8, 22); [v addSubview:link];
     }
+    return v;
+  }
+  if (tableView == self.captureHistoryTable) {
+    if (row < 0 || row >= (NSInteger)self.captureHistoryItems.count) return nil;
+    NSDictionary *it = self.captureHistoryItems[row];
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
+    NSString *text = nil;
+    if ([col.identifier isEqualToString:@"chtype"]) text = it[@"type"];
+    else if ([col.identifier isEqualToString:@"chname"]) text = it[@"name"];
+    else if ([col.identifier isEqualToString:@"chtime"]) { NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"MM-dd HH:mm"; text = [df stringFromDate:it[@"date"]]; }
+    else text = [it[@"dir"] lastPathComponent];
+    NSTextField *l = [self label:text ?: @"" size:10.5 bold:[col.identifier isEqualToString:@"chtype"] color:[col.identifier isEqualToString:@"chtype"] ? [NSColor systemPurpleColor] : nil];
+    l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    l.frame = NSMakeRect(4, 8, col.width - 8, 18); [v addSubview:l];
     return v;
   }
   if (tableView == self.groupPanelTable) {
@@ -16069,6 +16087,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @[@"屏幕取色器", @"工具 · 拾取屏幕颜色并复制色值", @"color", @"eyedropper", @6],
     @[@"文件搜索", @"工具 · 按文件名搜索本机文件", @"filesearch", @"doc.text.magnifyingglass", @6],
     @[@"截图 / 录屏", @"工具 · 全屏、区域、窗口截图和屏幕录制", @"capture", @"camera.viewfinder", @6],
+    @[@"截图历史", @"工具 · 查看最近截图和录屏", @"capturehistory", @"photo.stack", @6],
     @[@"打开控制台", @"控制台 · 显示主窗口", @"console", @"macwindow", @3]
   ];
   for (NSArray *t in entries) {
@@ -16112,6 +16131,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"color"]) [self showColorSampler:nil];
     else if ([tool isEqualToString:@"filesearch"]) [self showFileSearch:nil];
     else if ([tool isEqualToString:@"capture"]) [self showCaptureTool:nil];
+    else if ([tool isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
 }
@@ -16149,6 +16169,98 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self showToast:@"开始录制，30 秒后自动结束"];
   @try { [t launch]; } @catch (NSException *e) { [self showToast:@"无法启动录屏"]; }
 }
+
+- (void)showCaptureHistory:(id)sender {
+  if (!self.captureHistoryWindow) {
+    self.captureHistoryWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,700,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.captureHistoryWindow.title = @"截图历史";
+    self.captureHistoryWindow.releasedWhenClosed = NO;
+    self.captureHistoryWindow.level = NSNormalWindowLevel;
+    NSView *cv = self.captureHistoryWindow.contentView;
+    NSTextField *title = [self label:@"最近截图 / 录屏" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"双击打开文件；右键在 Finder 中显示" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 448, 600, 18); [cv addSubview:sub];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 668, 356)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.captureHistoryTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"chtype", @"类型", @70.0], @[@"chname", @"文件", @300.0], @[@"chtime", @"时间", @160.0], @[@"chpath", @"位置", @130.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.captureHistoryTable addTableColumn:col];
+    }
+    self.captureHistoryTable.rowHeight = 34;
+    self.captureHistoryTable.dataSource = self; self.captureHistoryTable.delegate = self;
+    self.captureHistoryTable.target = self;
+    self.captureHistoryTable.doubleAction = @selector(openCaptureHistoryRow:);
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"文件"];
+    [menu addItemWithTitle:@"打开" action:@selector(openCaptureHistoryRow:) keyEquivalent:@""].target = self;
+    [menu addItemWithTitle:@"在 Finder 中显示" action:@selector(revealCaptureHistoryRow:) keyEquivalent:@""].target = self;
+    self.captureHistoryTable.menu = menu;
+    sv.documentView = self.captureHistoryTable; [cv addSubview:sv];
+    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 24, 90, 32)];
+    refresh.title = @"刷新"; refresh.hoverColor = [NSColor systemGreenColor];
+    refresh.target = self; refresh.action = @selector(refreshCaptureHistory:);
+    [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *imgFolder = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(114, 24, 140, 32)];
+    imgFolder.title = @"截图文件夹"; imgFolder.hoverColor = [NSColor systemBlueColor];
+    imgFolder.target = self; imgFolder.action = @selector(openCaptureFolder:);
+    [imgFolder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:imgFolder];
+    ColorHoverButton *vidFolder = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(262, 24, 140, 32)];
+    vidFolder.title = @"录屏文件夹"; vidFolder.hoverColor = [NSColor systemPurpleColor];
+    vidFolder.target = self; vidFolder.action = @selector(openCaptureVideoFolder:);
+    [vidFolder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:vidFolder];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(584, 24, 100, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeCaptureHistory:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.captureHistoryWindow center];
+  }
+  [self refreshCaptureHistory:nil];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.captureHistoryWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)refreshCaptureHistory:(id)sender {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSMutableArray *items = [NSMutableArray array];
+  NSArray *dirs = @[[self captureImageDirectory], [self captureVideoDirectory]];
+  NSMutableSet *seen = [NSMutableSet set];
+  for (NSString *dir in dirs) {
+    for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[]) {
+      if ([f hasPrefix:@"."]) continue;
+      NSString *path = [dir stringByAppendingPathComponent:f];
+      if ([seen containsObject:path]) continue;
+      [seen addObject:path];
+      NSDictionary *attrs = [fm attributesOfItemAtPath:path error:NULL] ?: @{};
+      NSDate *date = attrs[NSFileModificationDate] ?: [NSDate date];
+      BOOL isVideo = [@[@"mov", @"mp4"] containsObject:path.pathExtension.lowercaseString];
+      [items addObject:@{@"path": path, @"name": f, @"date": date, @"type": isVideo ? @"录屏" : @"截图", @"dir": dir}];
+    }
+  }
+  [items sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"date"] compare:a[@"date"]]; }];
+  if (items.count > 100) items = [[items subarrayWithRange:NSMakeRange(0, 100)] mutableCopy];
+  self.captureHistoryItems = items;
+  [self.captureHistoryTable reloadData];
+}
+
+- (void)openCaptureHistoryRow:(id)sender {
+  NSInteger row = self.captureHistoryTable.selectedRow;
+  if (row < 0) row = self.captureHistoryTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.captureHistoryItems.count) return;
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.captureHistoryItems[row][@"path"]]];
+}
+
+- (void)revealCaptureHistoryRow:(id)sender {
+  NSInteger row = self.captureHistoryTable.selectedRow;
+  if (row < 0) row = self.captureHistoryTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.captureHistoryItems.count) return;
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.captureHistoryItems[row][@"path"]]]];
+}
+
+- (void)openCaptureVideoFolder:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self captureVideoDirectory]]]; }
+- (void)closeCaptureHistory:(id)sender { [self.captureHistoryWindow orderOut:nil]; }
 
 - (NSString *)captureImageDirectory {
   NSString *dir = self.captureImagePathField.stringValue;
@@ -16255,6 +16367,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureVideoPathField.action = @selector(captureVideoPathChanged:);
     self.captureVideoPathField.toolTip = @"录屏保存文件夹，支持 ~";
     [cv addSubview:self.captureVideoPathField];
+    ColorHoverButton *historyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(310, 20, 120, 32)];
+    historyBtn.title = @"最近截图"; historyBtn.hoverColor = [NSColor systemPurpleColor];
+    historyBtn.target = self; historyBtn.action = @selector(showCaptureHistory:);
+    [historyBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:historyBtn];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(440, 20, 100, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeCaptureTool:);
