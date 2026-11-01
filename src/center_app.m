@@ -834,6 +834,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (copy) NSString *dockLastSignature;
 @property (strong) NSWindow *dupWindow;
 @property (strong) NSTableView *dupTable;
+@property (strong) NSArray *dupAllItems;
+@property (strong) NSSearchField *dupSearch;
 @property (strong) NSArray *dupItems;
 @property BOOL dupScanning;
 @property (strong) NSPopUpButton *dupScopePopup;
@@ -11779,6 +11781,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.dupWindow.contentView;
     NSTextField *title = [self label:@"重复文件清理" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 490, 300, 28); [cv addSubview:title];
+    self.dupSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(500, 492, 226, 28)];
+    self.dupSearch.placeholderString = @"搜索重复文件";
+    self.dupSearch.target = self; self.dupSearch.action = @selector(dupFilterChanged:);
+    [self.dupSearch setContinuous:YES];
+    [cv addSubview:self.dupSearch];
     NSTextField *sub = [self label:@"按大小和内容哈希查找重复文件；删除前会验证应用密码" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 468, 600, 18); [cv addSubview:sub];
     self.dupScopePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(20, 428, 170, 26) pullsDown:NO];
@@ -11894,13 +11901,30 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     unsigned long long wasted = 0;
     for (NSDictionary *g in groups) wasted += [g[@"size"] unsignedLongLongValue] * ([g[@"paths"] count] - 1);
     dispatch_async(dispatch_get_main_queue(), ^{
-      weakSelf.dupItems = rows;
+      weakSelf.dupAllItems = rows;
       weakSelf.dupScanning = NO;
       weakSelf.dupScanButton.enabled = YES;
       weakSelf.dupStatus.stringValue = [NSString stringWithFormat:@"%ld 组重复，共 %ld 个文件，可释放约 %@", (long)groups.count, (long)rows.count, [weakSelf gbString:wasted]];
-      [weakSelf.dupTable reloadData];
+      [weakSelf applyDupFilter];
     });
   });
+}
+
+- (void)dupFilterChanged:(id)sender { [self applyDupFilter]; }
+
+- (void)applyDupFilter {
+  NSString *q = [self.dupSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  if (!q.length) {
+    self.dupItems = self.dupAllItems ?: @[];
+  } else {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *it in self.dupAllItems ?: @[]) {
+      NSString *hay = [NSString stringWithFormat:@"%@ %@", it[@"name"] ?: @"", it[@"path"] ?: @""].lowercaseString;
+      if ([hay containsString:q]) [out addObject:it];
+    }
+    self.dupItems = out;
+  }
+  [self.dupTable reloadData];
 }
 
 - (void)selectDuplicateExtras:(id)sender {
