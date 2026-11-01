@@ -2972,8 +2972,8 @@ static void HideDockHoverTip(void) {
   }
   if (show) {
     self.radialMediaBar.hidden = YES;
-    self.radialRootView.frame = NSMakeRect(0,0,340,520);
-    self.popover.contentSize = NSMakeSize(340, 520);
+    self.radialRootView.frame = NSMakeRect(0,0,340,560);
+    self.popover.contentSize = NSMakeSize(340, 560);
     [self updateRadialPlayerPage];
   } else {
     BOOL bar = self.mediaPlaying && [self mediaCurrentTitle].length;
@@ -15656,46 +15656,51 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSClickGestureRecognizer *barClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openRadialPlayerPage:)];
     [mediaBar addGestureRecognizer:barClick];
 
-    NSView *playerPage = [[NSView alloc] initWithFrame:NSMakeRect(8,8,324,504)];
+    NSView *playerPage = [[NSView alloc] initWithFrame:NSMakeRect(8,8,324,544)];
     playerPage.wantsLayer = YES;
     playerPage.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
     playerPage.layer.cornerRadius = 20;
     playerPage.layer.masksToBounds = YES;
     playerPage.hidden = YES;
-    NSButton *back = [NSButton buttonWithTitle:@"" target:self action:@selector(closeRadialPlayerPage:)];
-    back.frame = NSMakeRect(12, 464, 30, 28); back.bezelStyle = NSBezelStyleInline;
-    back.image = [NSImage imageWithSystemSymbolName:@"chevron.left" accessibilityDescription:nil];
-    back.imageScaling = NSImageScaleProportionallyDown; back.contentTintColor = [NSColor labelColor];
-    [playerPage addSubview:back];
-    NSTextField *playingLabel = [self label:@"正在播放" size:10 bold:YES color:[NSColor secondaryLabelColor]];
-    playingLabel.frame = NSMakeRect(120, 470, 84, 16); playingLabel.alignment = NSTextAlignmentCenter;
-    [playerPage addSubview:playingLabel];
-    NSButton *pplist = [self mediaIconButton:@"list.bullet" action:@selector(showMediaPlaylistMenuFromButton:) frame:NSMakeRect(274, 466, 28, 24)];
-    [playerPage addSubview:pplist];
-    NSButton *pplayers = [self mediaIconButton:@"airplayaudio" action:@selector(showMediaPlayersMenuFromButton:) frame:NSMakeRect(242, 466, 28, 24)];
-    [playerPage addSubview:pplayers];
 
-    NSImageView *part = [[NSImageView alloc] initWithFrame:NSMakeRect(42, 190, 240, 240)];
+    NSImageView *part = [[NSImageView alloc] initWithFrame:NSMakeRect(42, 236, 240, 240)];
     part.imageScaling = NSImageScaleProportionallyUpOrDown; part.wantsLayer = YES; part.layer.cornerRadius = 16; part.layer.masksToBounds = YES;
     part.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.15 alpha:1].CGColor;
     [playerPage addSubview:part];
     NSButton *ptitle = [NSButton buttonWithTitle:@"" target:self action:@selector(openCurrentMediaPlayer:)];
-    ptitle.frame = NSMakeRect(22, 150, 280, 30); ptitle.bezelStyle = NSBezelStyleInline; ptitle.bordered = NO; ptitle.alignment = NSTextAlignmentCenter; ptitle.font = [NSFont systemFontOfSize:18 weight:NSFontWeightBold];
+    ptitle.frame = NSMakeRect(22, 196, 280, 30); ptitle.bezelStyle = NSBezelStyleInline; ptitle.bordered = NO; ptitle.alignment = NSTextAlignmentCenter; ptitle.font = [NSFont systemFontOfSize:18 weight:NSFontWeightBold];
     ptitle.lineBreakMode = NSLineBreakByTruncatingTail;
     [playerPage addSubview:ptitle];
     NSTextField *partist = [self label:@"" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-    partist.frame = NSMakeRect(22, 130, 280, 18); partist.alignment = NSTextAlignmentCenter; [playerPage addSubview:partist];
-    NSSlider *pprog = [[NSSlider alloc] initWithFrame:NSMakeRect(24, 100, 276, 18)];
+    partist.frame = NSMakeRect(22, 176, 280, 18); partist.alignment = NSTextAlignmentCenter; [playerPage addSubview:partist];
+    NSSlider *pprog = [[NSSlider alloc] initWithFrame:NSMakeRect(24, 146, 276, 18)];
     pprog.enabled = NO; pprog.minValue = 0; pprog.maxValue = 1; [playerPage addSubview:pprog];
     NSTextField *ptime = [self label:@"0:00 / 0:00" size:9 bold:NO color:[NSColor secondaryLabelColor]];
-    ptime.frame = NSMakeRect(24, 82, 276, 14); ptime.alignment = NSTextAlignmentCenter; [playerPage addSubview:ptime];
-    NSButton *pprev = [self mediaIconButton:@"backward.fill" action:@selector(mediaPreviousTrack:) frame:NSMakeRect(80, 34, 36, 32)];
-    NSButton *pplay = [self mediaIconButton:@"play.fill" action:@selector(mediaTogglePlayPause:) frame:NSMakeRect(138, 26, 48, 48)];
+    ptime.frame = NSMakeRect(24, 128, 276, 14); ptime.alignment = NSTextAlignmentCenter; [playerPage addSubview:ptime];
+    NSButton *pprev = [self mediaIconButton:@"backward.fill" action:@selector(mediaPreviousTrack:) frame:NSMakeRect(74, 78, 36, 32)];
+    NSButton *pplay = [self mediaIconButton:@"play.fill" action:@selector(mediaTogglePlayPause:) frame:NSMakeRect(138, 70, 48, 48)];
     pplay.bezelStyle = NSBezelStyleCircular; pplay.contentTintColor = [NSColor systemBlueColor];
-    NSButton *pnext = [self mediaIconButton:@"forward.fill" action:@selector(mediaNextTrack:) frame:NSMakeRect(206, 34, 36, 32)];
-    NSButton *pfav = [self mediaIconButton:@"heart" action:@selector(toggleMediaFavorite:) frame:NSMakeRect(268, 34, 32, 32)];
-    [playerPage addSubview:pprev]; [playerPage addSubview:pplay]; [playerPage addSubview:pnext]; [playerPage addSubview:pfav];
+    NSButton *pnext = [self mediaIconButton:@"forward.fill" action:@selector(mediaNextTrack:) frame:NSMakeRect(214, 78, 36, 32)];
+    [playerPage addSubview:pprev]; [playerPage addSubview:pplay]; [playerPage addSubview:pnext];
+
+    NSButton *back = [NSButton buttonWithTitle:@"‹ 返回扇形" target:self action:@selector(closeRadialPlayerPage:)];
+    back.frame = NSMakeRect(16, 20, 92, 28); back.bezelStyle = NSBezelStyleRounded; back.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
+    [playerPage addSubview:back];
+    NSButton *pplist = [NSButton buttonWithTitle:@"列表" target:self action:@selector(showMediaPlaylistMenuFromButton:)];
+    pplist.frame = NSMakeRect(198, 20, 52, 28); pplist.bezelStyle = NSBezelStyleRounded; pplist.font = [NSFont systemFontOfSize:11];
+    [playerPage addSubview:pplist];
+    NSButton *pplayers = [self mediaIconButton:@"airplayaudio" action:@selector(showMediaPlayersMenuFromButton:) frame:NSMakeRect(258, 22, 28, 24)];
+    NSButton *pfav = [self mediaIconButton:@"heart" action:@selector(toggleMediaFavorite:) frame:NSMakeRect(282, 22, 24, 24)];
+    [playerPage addSubview:pplayers]; [playerPage addSubview:pfav];
     [root addSubview:playerPage];
+    self.radialPlayerPage = playerPage;
+    self.radialPlayerArt = part;
+    self.radialPlayerTitleButton = ptitle;
+    self.radialPlayerArtist = partist;
+    self.radialPlayerProgress = pprog;
+    self.radialPlayerTime = ptime;
+    self.radialPlayerPlayButton = pplay;
+    self.radialPlayerFavoriteButton = pfav;
     self.radialPlayerPage = playerPage;
     self.radialPlayerArt = part;
     self.radialPlayerTitleButton = ptitle;
