@@ -1149,7 +1149,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSArray *captureHistoryItems;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
-@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup;
+@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup, *captureRecordCountdownPopup;
 @property (strong) NSButton *captureCursorCheck, *captureClickCheck;
 @property (strong) NSButton *captureSystemAudioCheck, *captureMicCheck;
 @property (strong) DLScreenRecorder *captureRecorder;
@@ -17000,66 +17000,62 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)showCaptureTool:(id)sender {
   if (!self.captureWindow) {
-    self.captureWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,430) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.captureWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,940,600) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.captureWindow.title = @"截图 / 录屏";
     self.captureWindow.releasedWhenClosed = NO;
     self.captureWindow.level = NSNormalWindowLevel;
     NSView *cv = self.captureWindow.contentView;
     NSTextField *title = [self label:@"截图 / 录屏" size:20 bold:YES color:nil];
-    title.frame = NSMakeRect(20, 386, 300, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"区域和窗口截图可交互选择；录屏自动保存到图片文件夹" size:10 bold:NO color:[NSColor secondaryLabelColor]];
-    sub.frame = NSMakeRect(20, 364, 500, 18); [cv addSubview:sub];
-    NSTextField *camLabel = [self label:@"摄像头" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    camLabel.frame = NSMakeRect(330, 390, 50, 18); [cv addSubview:camLabel];
-    self.captureCameraPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(384, 382, 156, 26) pullsDown:NO];
-    [self.captureCameraPopup addItemWithTitle:@"关闭"];
-    self.captureCameraPopup.lastItem.representedObject = @"";
-    AVCaptureDeviceDiscoverySession *ds = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInWideAngleCamera, AVCaptureDeviceTypeExternal] mediaType:AVMediaTypeVideo position:AVCaptureDevicePositionUnspecified];
-    for (AVCaptureDevice *dev in ds.devices) {
-      NSString *name = dev.localizedName ?: @"摄像头";
-      if (dev.position == AVCaptureDevicePositionFront) name = [NSString stringWithFormat:@"前置 · %@", name];
-      [self.captureCameraPopup addItemWithTitle:name];
-      self.captureCameraPopup.lastItem.representedObject = dev.uniqueID ?: @"";
-    }
-    NSString *savedCam = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureCameraID"];
-    for (NSMenuItem *mi in self.captureCameraPopup.itemArray) if ([mi.representedObject isEqualToString:savedCam ?: @""]) [self.captureCameraPopup selectItem:mi];
-    self.captureCameraPopup.target = self; self.captureCameraPopup.action = @selector(captureCameraChanged:);
-    [cv addSubview:self.captureCameraPopup];
-    NSTextField *pipLabel = [self label:@"画中画" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    pipLabel.frame = NSMakeRect(548, 390, 50, 18); [cv addSubview:pipLabel];
-    self.capturePiPPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(600, 382, 100, 26) pullsDown:NO];
-    NSArray *pipTitles = @[@"右下 · 中", @"右下 · 小", @"右下 · 大", @"左下 · 中", @"右上 · 中", @"左上 · 中"];
-    NSArray *pipVals = @[@"br-medium", @"br-small", @"br-large", @"bl-medium", @"tr-medium", @"tl-medium"];
-    for (NSInteger i = 0; i < pipTitles.count; i++) { [self.capturePiPPopup addItemWithTitle:pipTitles[i]]; self.capturePiPPopup.lastItem.representedObject = pipVals[i]; }
-    NSString *savedPiP = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCapturePiPPreset"];
-    for (NSMenuItem *mi in self.capturePiPPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedPiP ?: @"br-medium"]) [self.capturePiPPopup selectItem:mi];
-    self.capturePiPPopup.target = self; self.capturePiPPopup.action = @selector(capturePiPChanged:);
-    [cv addSubview:self.capturePiPPopup];
+    title.frame = NSMakeRect(24, 556, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"截图与录屏分开设置，修改后自动记住" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(24, 536, 600, 18); [cv addSubview:sub];
+    NSBox *vline = [[NSBox alloc] initWithFrame:NSMakeRect(470, 88, 1, 444)];
+    vline.boxType = NSBoxSeparator; [cv addSubview:vline];
+
+    NSTextField *shotHeader = [self label:@"截图" size:15 bold:YES color:nil];
+    shotHeader.frame = NSMakeRect(24, 500, 200, 22); [cv addSubview:shotHeader];
+    NSTextField *recHeader = [self label:@"录屏" size:15 bold:YES color:nil];
+    recHeader.frame = NSMakeRect(496, 500, 200, 22); [cv addSubview:recHeader];
+
+    // Screenshot actions, aligned with recording actions.
     NSArray *modes = @[@"全屏截图", @"区域截图", @"窗口截图"];
     NSArray *sels = @[@"captureFullScreen:", @"captureRegion:", @"captureWindowShot:"];
     for (NSInteger i = 0; i < 3; i++) {
-      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20 + i * 132, 306, 120, 38)];
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24 + i * 136, 450, 128, 36)];
       b.title = modes[i]; b.hoverColor = [NSColor systemBlueColor];
       b.target = self; b.action = NSSelectorFromString(sels[i]);
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
     }
-    NSTextField *sceneLabel = [self label:@"场景" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    sceneLabel.frame = NSMakeRect(418, 312, 32, 18); [cv addSubview:sceneLabel];
-    self.captureScenePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(452, 306, 100, 26) pullsDown:NO];
-    [self.captureScenePopup addItemsWithTitles:@[@"全屏", @"窗口", @"应用程序", @"区域"]];
-    [cv addSubview:self.captureScenePopup];
-    NSTextField *dl = [self label:@"延迟/倒计时" size:10.0 bold:NO color:[NSColor secondaryLabelColor]];
-    dl.frame = NSMakeRect(20, 270, 78, 18); [cv addSubview:dl];
-    self.captureDelayPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(100, 264, 82, 26) pullsDown:NO];
+    self.captureRecordButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(496, 450, 120, 36)];
+    self.captureRecordButton.title = @"开始录屏"; self.captureRecordButton.hoverColor = [NSColor systemRedColor];
+    self.captureRecordButton.target = self; self.captureRecordButton.action = @selector(captureVideo:);
+    [self.captureRecordButton applyColor:[NSColor systemRedColor] textColor:[NSColor whiteColor]]; [cv addSubview:self.captureRecordButton];
+    self.capturePauseButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(624, 450, 90, 36)];
+    self.capturePauseButton.title = @"暂停"; self.capturePauseButton.hoverColor = [NSColor systemOrangeColor];
+    self.capturePauseButton.target = self; self.capturePauseButton.action = @selector(pauseCapture:);
+    [self.capturePauseButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    self.capturePauseButton.hidden = YES;
+    [cv addSubview:self.capturePauseButton];
+
+    // Row 2: screenshot delay/copy; recording scene/quality.
+    NSTextField *dl = [self label:@"延迟" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    dl.frame = NSMakeRect(24, 406, 32, 18); [cv addSubview:dl];
+    self.captureDelayPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(60, 400, 90, 26) pullsDown:NO];
     [self.captureDelayPopup addItemsWithTitles:@[@"不延迟", @"3 秒", @"5 秒", @"10 秒"]];
     [cv addSubview:self.captureDelayPopup];
-    self.captureCopyCheck = [NSButton checkboxWithTitle:@"截图后复制到剪贴板" target:nil action:nil];
+    self.captureCopyCheck = [NSButton checkboxWithTitle:@"截图后复制" target:nil action:nil];
     self.captureCopyCheck.state = NSControlStateValueOn;
-    self.captureCopyCheck.frame = NSMakeRect(184, 266, 178, 22); [cv addSubview:self.captureCopyCheck];
-    NSTextField *ql = [self label:@"画质" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    ql.frame = NSMakeRect(372, 270, 32, 18); [cv addSubview:ql];
-    self.captureQualityPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(406, 264, 124, 26) pullsDown:NO];
+    self.captureCopyCheck.frame = NSMakeRect(164, 402, 150, 22); [cv addSubview:self.captureCopyCheck];
+
+    NSTextField *sceneLabel = [self label:@"场景" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sceneLabel.frame = NSMakeRect(496, 406, 32, 18); [cv addSubview:sceneLabel];
+    self.captureScenePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(532, 400, 90, 26) pullsDown:NO];
+    [self.captureScenePopup addItemsWithTitles:@[@"全屏", @"窗口", @"应用程序", @"区域"]];
+    [cv addSubview:self.captureScenePopup];
+    NSTextField *ql = [self label:@"画质" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    ql.frame = NSMakeRect(636, 406, 32, 18); [cv addSubview:ql];
+    self.captureQualityPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(672, 400, 130, 26) pullsDown:NO];
     NSArray *qTitles = @[@"1080p 30", @"2K 30", @"4K 30", @"2K 60"];
     NSArray *qHeights = @[@1080, @1440, @2160, @1440];
     NSArray *qFPS = @[@30, @30, @30, @60];
@@ -17074,19 +17070,37 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.captureQualityPopup selectItemAtIndex:qidx];
     self.captureQualityPopup.target = self; self.captureQualityPopup.action = @selector(captureQualityChanged:);
     [cv addSubview:self.captureQualityPopup];
-    self.captureRecordButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 204, 100, 38)];
-    self.captureRecordButton.title = @"开始录屏"; self.captureRecordButton.hoverColor = [NSColor systemRedColor];
-    self.captureRecordButton.target = self; self.captureRecordButton.action = @selector(captureVideo:);
-    [self.captureRecordButton applyColor:[NSColor systemRedColor] textColor:[NSColor whiteColor]]; [cv addSubview:self.captureRecordButton];
-    self.capturePauseButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(126, 204, 84, 38)];
-    self.capturePauseButton.title = @"暂停"; self.capturePauseButton.hoverColor = [NSColor systemOrangeColor];
-    self.capturePauseButton.target = self; self.capturePauseButton.action = @selector(pauseCapture:);
-    [self.capturePauseButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-    self.capturePauseButton.hidden = YES;
-    [cv addSubview:self.capturePauseButton];
-    NSTextField *vl = [self label:@"录制时长" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    vl.frame = NSMakeRect(218, 216, 60, 18); [cv addSubview:vl];
-    self.captureDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(282, 208, 96, 26) pullsDown:NO];
+
+    // Row 3: recording camera and picture-in-picture.
+    NSTextField *camLabel = [self label:@"摄像头" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    camLabel.frame = NSMakeRect(496, 362, 50, 18); [cv addSubview:camLabel];
+    self.captureCameraPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(550, 356, 150, 26) pullsDown:NO];
+    [self.captureCameraPopup addItemWithTitle:@"关闭"];
+    self.captureCameraPopup.lastItem.representedObject = @"";
+    AVCaptureDeviceDiscoverySession *ds = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInWideAngleCamera, AVCaptureDeviceTypeExternal] mediaType:AVMediaTypeVideo position:AVCaptureDevicePositionUnspecified];
+    for (AVCaptureDevice *dev in ds.devices) {
+      NSString *name = dev.localizedName ?: @"摄像头";
+      if (dev.position == AVCaptureDevicePositionFront) name = [NSString stringWithFormat:@"前置 · %@", name];
+      [self.captureCameraPopup addItemWithTitle:name];
+      self.captureCameraPopup.lastItem.representedObject = dev.uniqueID ?: @"";
+    }
+    self.captureCameraPopup.target = self; self.captureCameraPopup.action = @selector(captureCameraChanged:);
+    [cv addSubview:self.captureCameraPopup];
+    NSTextField *pipLabel = [self label:@"画中画" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    pipLabel.frame = NSMakeRect(714, 362, 50, 18); [cv addSubview:pipLabel];
+    self.capturePiPPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(764, 356, 150, 26) pullsDown:NO];
+    NSArray *pipTitles = @[@"右下 · 中", @"右下 · 小", @"右下 · 大", @"左下 · 中", @"右上 · 中", @"左上 · 中"];
+    NSArray *pipVals = @[@"br-medium", @"br-small", @"br-large", @"bl-medium", @"tr-medium", @"tl-medium"];
+    for (NSInteger i = 0; i < pipTitles.count; i++) { [self.capturePiPPopup addItemWithTitle:pipTitles[i]]; self.capturePiPPopup.lastItem.representedObject = pipVals[i]; }
+    self.capturePiPPopup.target = self; self.capturePiPPopup.action = @selector(capturePiPChanged:);
+    [cv addSubview:self.capturePiPPopup];
+
+    // Row 4: screenshot hint; recording duration/audio.
+    NSTextField *shotHint = [self label:@"截图后可在「最近截图」中标注" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    shotHint.frame = NSMakeRect(24, 318, 350, 18); [cv addSubview:shotHint];
+    NSTextField *vl = [self label:@"时长" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    vl.frame = NSMakeRect(496, 318, 32, 18); [cv addSubview:vl];
+    self.captureDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(532, 312, 90, 26) pullsDown:NO];
     NSArray *durations = @[@10, @30, @60, @120, @0];
     for (NSNumber *d in durations) {
       NSString *t = [d integerValue] > 0 ? [NSString stringWithFormat:@"%@ 秒", d] : @"手动停止";
@@ -17096,57 +17110,70 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.captureDurationPopup selectItemAtIndex:1];
     [cv addSubview:self.captureDurationPopup];
     self.captureSystemAudioCheck = [NSButton checkboxWithTitle:@"系统声音" target:self action:@selector(captureAudioChanged:)];
-    self.captureSystemAudioCheck.frame = NSMakeRect(392, 212, 94, 22);
+    self.captureSystemAudioCheck.frame = NSMakeRect(640, 314, 94, 22);
     id sysObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureSystemAudio"];
     self.captureSystemAudioCheck.state = (!sysObj || [sysObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
     [cv addSubview:self.captureSystemAudioCheck];
     self.captureMicCheck = [NSButton checkboxWithTitle:@"麦克风" target:self action:@selector(captureAudioChanged:)];
-    self.captureMicCheck.frame = NSMakeRect(492, 212, 90, 22);
+    self.captureMicCheck.frame = NSMakeRect(744, 314, 90, 22);
     self.captureMicCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"] ? NSControlStateValueOn : NSControlStateValueOff;
     [cv addSubview:self.captureMicCheck];
+
+    // Row 5: screenshot action; recording countdown/pointer.
+    ColorHoverButton *historyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 264, 120, 32)];
+    historyBtn.title = @"最近截图"; historyBtn.hoverColor = [NSColor systemPurpleColor];
+    historyBtn.target = self; historyBtn.action = @selector(showCaptureHistory:);
+    [historyBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:historyBtn];
+    NSTextField *cl = [self label:@"倒计时" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    cl.frame = NSMakeRect(496, 270, 50, 18); [cv addSubview:cl];
+    self.captureRecordCountdownPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(550, 264, 90, 26) pullsDown:NO];
+    [self.captureRecordCountdownPopup addItemsWithTitles:@[@"不延迟", @"3 秒", @"5 秒", @"10 秒"]];
+    [cv addSubview:self.captureRecordCountdownPopup];
     self.captureCursorCheck = [NSButton checkboxWithTitle:@"显示光标" target:self action:@selector(capturePointerChanged:)];
-    self.captureCursorCheck.frame = NSMakeRect(20, 158, 96, 22);
-    id curObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowCursor"];
-    self.captureCursorCheck.state = (!curObj || [curObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
+    self.captureCursorCheck.frame = NSMakeRect(650, 266, 96, 22);
     [cv addSubview:self.captureCursorCheck];
     self.captureClickCheck = [NSButton checkboxWithTitle:@"点击高亮" target:self action:@selector(capturePointerChanged:)];
-    self.captureClickCheck.frame = NSMakeRect(126, 158, 110, 22);
-    id clickObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowClicks"];
-    self.captureClickCheck.state = (!clickObj || [clickObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
+    self.captureClickCheck.frame = NSMakeRect(754, 266, 110, 22);
     [cv addSubview:self.captureClickCheck];
-    self.captureStatusLabel = [self label:@"截图会保存到 ~/Pictures/DockLaunchers Captures" size:10 bold:NO color:[NSColor secondaryLabelColor]];
-    self.captureStatusLabel.frame = NSMakeRect(20, 130, 670, 20);
-    self.captureStatusLabel.maximumNumberOfLines = 1;
-    [cv addSubview:self.captureStatusLabel];
-    NSTextField *imgLabel = [self label:@"截图保存" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    imgLabel.frame = NSMakeRect(20, 104, 70, 18); [cv addSubview:imgLabel];
-    self.captureImagePathField = [[NSTextField alloc] initWithFrame:NSMakeRect(94, 98, 350, 26)];
-    NSString *savedImgDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureImageDirectory"];
-    if (!savedImgDir.length) savedImgDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureDirectory"];
-    self.captureImagePathField.stringValue = savedImgDir.length ? savedImgDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+
+    // Row 6: save paths, aligned.
+    NSTextField *imgLabel = [self label:@"截图保存" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    imgLabel.frame = NSMakeRect(24, 222, 70, 18); [cv addSubview:imgLabel];
+    self.captureImagePathField = [[NSTextField alloc] initWithFrame:NSMakeRect(100, 216, 344, 26)];
     self.captureImagePathField.target = self;
     self.captureImagePathField.action = @selector(captureImagePathChanged:);
     self.captureImagePathField.toolTip = @"截图保存文件夹，支持 ~";
     [cv addSubview:self.captureImagePathField];
-    NSTextField *vidLabel = [self label:@"录屏保存" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    vidLabel.frame = NSMakeRect(20, 68, 70, 18); [cv addSubview:vidLabel];
-    self.captureVideoPathField = [[NSTextField alloc] initWithFrame:NSMakeRect(94, 62, 350, 26)];
-    NSString *savedVidDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureVideoDirectory"];
-    self.captureVideoPathField.stringValue = savedVidDir.length ? savedVidDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+    NSTextField *vidLabel = [self label:@"录屏保存" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    vidLabel.frame = NSMakeRect(496, 222, 70, 18); [cv addSubview:vidLabel];
+    self.captureVideoPathField = [[NSTextField alloc] initWithFrame:NSMakeRect(570, 216, 344, 26)];
     self.captureVideoPathField.target = self;
     self.captureVideoPathField.action = @selector(captureVideoPathChanged:);
     self.captureVideoPathField.toolTip = @"录屏保存文件夹，支持 ~";
     [cv addSubview:self.captureVideoPathField];
-    ColorHoverButton *historyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(310, 20, 120, 32)];
-    historyBtn.title = @"最近截图"; historyBtn.hoverColor = [NSColor systemPurpleColor];
-    historyBtn.target = self; historyBtn.action = @selector(showCaptureHistory:);
-    [historyBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:historyBtn];
-    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(440, 20, 100, 32)];
+
+    self.captureStatusLabel = [self label:@"截图和录屏会自动保存到各自目录" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    self.captureStatusLabel.frame = NSMakeRect(24, 184, 890, 22);
+    [cv addSubview:self.captureStatusLabel];
+
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(816, 20, 100, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeCaptureTool:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    // Compact the window: pull the content up and add two folder shortcuts.
+    [self.captureWindow setContentSize:NSMakeSize(940, 520)];
+    for (NSView *v in cv.subviews) if (v.frame.origin.y > 30) v.frame = NSOffsetRect(v.frame, 0, -80);
+    ColorHoverButton *imgFolderBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 58, 140, 32)];
+    imgFolderBtn.title = @"打开截图文件夹"; imgFolderBtn.hoverColor = [NSColor systemBlueColor];
+    imgFolderBtn.target = self; imgFolderBtn.action = @selector(openCaptureFolder:);
+    [imgFolderBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:imgFolderBtn];
+    ColorHoverButton *vidFolderBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(496, 58, 140, 32)];
+    vidFolderBtn.title = @"打开录屏文件夹"; vidFolderBtn.hoverColor = [NSColor systemPurpleColor];
+    vidFolderBtn.target = self; vidFolderBtn.action = @selector(openCaptureVideoFolder:);
+    [vidFolderBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:vidFolderBtn];
     [self.captureWindow center];
   }
+
   NSString *savedImgDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureImageDirectory"];
   if (!savedImgDir.length) savedImgDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureDirectory"];
   self.captureImagePathField.stringValue = savedImgDir.length ? savedImgDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
@@ -17161,6 +17188,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureClickCheck.state = (!clickObj || [clickObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
   NSString *savedCam = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureCameraID"];
   for (NSMenuItem *mi in self.captureCameraPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedCam ?: @""]) [self.captureCameraPopup selectItem:mi];
+  NSString *savedPiP = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCapturePiPPreset"];
+  for (NSMenuItem *mi in self.capturePiPPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedPiP ?: @"br-medium"]) [self.capturePiPPopup selectItem:mi];
   [NSApp activateIgnoringOtherApps:YES];
   [self.captureWindow makeKeyAndOrderFront:nil];
 }
@@ -17222,6 +17251,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (NSInteger)captureDelaySeconds {
   NSArray *vals = @[@0, @3, @5, @10];
   NSInteger i = self.captureDelayPopup.indexOfSelectedItem;
+  return (i >= 0 && i < (NSInteger)vals.count) ? [vals[i] integerValue] : 0;
+}
+
+- (NSInteger)captureRecordCountdownSeconds {
+  NSArray *vals = @[@0, @3, @5, @10];
+  NSInteger i = self.captureRecordCountdownPopup.indexOfSelectedItem;
   return (i >= 0 && i < (NSInteger)vals.count) ? [vals[i] integerValue] : 0;
 }
 
@@ -17359,7 +17394,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     return;
   }
   NSInteger scene = self.captureScenePopup.indexOfSelectedItem;
-  NSInteger delay = [self captureDelaySeconds];
+  NSInteger delay = [self captureRecordCountdownSeconds];
   __weak typeof(self) weakSelf = self;
   if (scene == 3) {
     [self beginCaptureRegion:^(NSRect region) {
