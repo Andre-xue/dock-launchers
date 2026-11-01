@@ -3148,12 +3148,15 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
   }
   if (show) {
     self.radialMediaBar.hidden = YES;
+    self.radialRootView.wantsLayer = YES;
+    self.radialRootView.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
     self.radialRootView.frame = NSMakeRect(0,0,340,560);
     self.popover.contentSize = NSMakeSize(340, 560);
     [self updateRadialPlayerPage];
   } else {
     BOOL bar = self.mediaPlaying && [self mediaCurrentTitle].length;
     self.radialMediaBar.hidden = !bar;
+    self.radialRootView.layer.backgroundColor = [NSColor clearColor].CGColor;
     self.radialRootView.frame = NSMakeRect(0,0,340,bar ? 412 : 360);
     self.popover.contentSize = NSMakeSize(340, bar ? 412 : 360);
   }
