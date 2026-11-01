@@ -3254,7 +3254,8 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
     self.popover.contentSize = NSMakeSize(340, 560);
     [self updateRadialPlayerPage];
   } else {
-    self.radialRootView.layer.backgroundColor = [NSColor clearColor].CGColor;
+    self.radialRootView.wantsLayer = YES;
+    self.radialRootView.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
     self.radialRootView.frame = NSMakeRect(0,0,340,412);
     self.popover.contentSize = NSMakeSize(340, 412);
   }
@@ -15592,6 +15593,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSViewController *vc = [[NSViewController alloc] init];
   NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0,0,420,620)];
   root.appearance = NSApp.effectiveAppearance;
+  root.wantsLayer = YES;
+  root.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
   vc.view = root;
 
   self.quickTabs = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(12, 574, 300, 28)];
