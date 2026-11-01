@@ -5051,10 +5051,12 @@ static BOOL ValidGroupName(NSString *raw) {
   return dir;
 }
 
-- (void)recordAIHistorySnapshot {
+- (void)recordAIHistorySnapshot { [self recordAIHistorySnapshotForce:NO]; }
+
+- (void)recordAIHistorySnapshotForce:(BOOL)force {
   static NSTimeInterval lastSnapshot = 0;
   NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-  if (lastSnapshot > 0 && now - lastSnapshot < 300) return;
+  if (!force && lastSnapshot > 0 && now - lastSnapshot < 300) return;
   if (!self.aiEntries.count) return;
   lastSnapshot = now;
   NSMutableArray *sanitized = [NSMutableArray array];
@@ -5101,6 +5103,11 @@ static BOOL ValidGroupName(NSString *raw) {
   }
 }
 
+- (void)saveAIHistoryNow:(id)sender {
+  [self recordAIHistorySnapshotForce:YES];
+  [self showToast:@"已保存当前 AI 数据版本"];
+}
+
 - (void)showAIHistory:(id)sender {
   [self pruneAIHistory];
   NSFileManager *fm = [NSFileManager defaultManager];
@@ -5108,7 +5115,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSArray *files = [[fm contentsOfDirectoryAtPath:dir error:NULL] sortedArrayUsingSelector:@selector(compare:)] ?: @[];
   if (!files.count) { [self showToast:@"暂无历史版本，修改 AI 数据后会自动生成"]; return; }
 
-  NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0,0,340,82)];
+  NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0,0,390,82)];
   NSTextField *versionLabel = [self label:@"历史版本" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
   versionLabel.frame = NSMakeRect(0, 62, 80, 18); [accessory addSubview:versionLabel];
   NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 34, 340, 28) pullsDown:NO];
@@ -5134,6 +5141,11 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger curDays = [self aiHistoryRetentionDays];
   for (NSMenuItem *mi in retPopup.itemArray) if ([mi.representedObject integerValue] == curDays) { [retPopup selectItem:mi]; break; }
   [accessory addSubview:retPopup];
+  ColorHoverButton *saveNow = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(268, 0, 120, 26)];
+  saveNow.title = @"立即保存版本"; saveNow.hoverColor = [NSColor systemGreenColor];
+  saveNow.target = self; saveNow.action = @selector(saveAIHistoryNow:);
+  [saveNow applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [accessory addSubview:saveNow];
 
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"AI 数据历史版本";
