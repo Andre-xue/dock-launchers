@@ -764,6 +764,11 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSSearchField *clipboardSearch;
 @property (strong) NSRunningApplication *clipboardPreviousApp;
 @property (strong) NSWindow *clipboardSaveWindow;
+@property (strong) NSColorSampler *colorSampler;
+@property (strong) NSWindow *colorWindow;
+@property (strong) NSView *colorSwatch;
+@property (strong) NSTextField *colorHexLabel;
+@property (strong) NSColor *pickedColor;
 @property (strong) NSTextField *clipboardSaveNameField, *clipboardSaveDirField;
 @property (strong) NSDictionary *clipboardSaveItem;
 @property BOOL clipboardFavoritesOnly;
@@ -15894,6 +15899,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @[@"提示词库", @"工具 · 管理和导出 AI 提示词", @"prompts", @"text.book.closed", @6],
     @[@"磁盘分析", @"工具 · 浏览磁盘文件", @"disk", @"internaldrive", @6],
     @[@"应用搜索", @"工具 · 搜索并打开应用", @"appsearch", @"magnifyingglass", @6],
+    @[@"屏幕取色器", @"工具 · 拾取屏幕颜色并复制色值", @"color", @"eyedropper", @6],
     @[@"打开控制台", @"控制台 · 显示主窗口", @"console", @"macwindow", @3]
   ];
   for (NSArray *t in entries) {
@@ -15933,10 +15939,83 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"globalshortcuts"]) [self openShortcutSettings:nil];
     else if ([tool isEqualToString:@"disk"]) [self openDiskAnalysisFromMenu];
     else if ([tool isEqualToString:@"appsearch"]) [self showAppSearch:nil];
-    else if ([tool isEqualToString:@"aimgmt"]) { [self showWindow:nil]; [self showSection:2]; }
+    else if ([tool isEqualToString:@"aimgmt"]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; }
+    else if ([tool isEqualToString:@"color"]) [self showColorSampler:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
 }
+
+- (void)showColorSampler:(id)sender {
+  if (!self.colorSampler) self.colorSampler = [[NSColorSampler alloc] init];
+  __weak typeof(self) weakSelf = self;
+  [self.colorSampler showSamplerWithSelectionHandler:^(NSColor *selectedColor) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (selectedColor) [weakSelf showColorResult:selectedColor];
+    });
+  }];
+}
+
+- (void)showColorResult:(NSColor *)color {
+  NSColor *c = [color colorUsingColorSpace:[NSColorSpace sRGBColorSpace]] ?: color;
+  self.pickedColor = c;
+  if (!self.colorWindow) {
+    self.colorWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,360,280) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.colorWindow.title = @"屏幕取色器";
+    self.colorWindow.releasedWhenClosed = NO;
+    self.colorWindow.level = NSNormalWindowLevel;
+    NSView *cv = self.colorWindow.contentView;
+    self.colorSwatch = [[NSView alloc] initWithFrame:NSMakeRect(20, 120, 140, 120)];
+    self.colorSwatch.wantsLayer = YES;
+    self.colorSwatch.layer.cornerRadius = 12;
+    self.colorSwatch.layer.borderWidth = 1;
+    self.colorSwatch.layer.borderColor = [[NSColor separatorColor] colorWithAlphaComponent:0.6].CGColor;
+    [cv addSubview:self.colorSwatch];
+    NSTextField *title = [self label:@"屏幕取色器" size:18 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 250, 300, 24); [cv addSubview:title];
+    self.colorHexLabel = [self label:@"#000000" size:20 bold:YES color:[NSColor labelColor]];
+    self.colorHexLabel.frame = NSMakeRect(176, 196, 160, 28); [cv addSubview:self.colorHexLabel];
+    NSTextField *hint = [self label:@"取色完成后自动复制色值" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    hint.frame = NSMakeRect(176, 170, 170, 18); [cv addSubview:hint];
+    ColorHoverButton *again = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(176, 84, 110, 32)];
+    again.title = @"再次取色"; again.hoverColor = [NSColor systemTealColor];
+    again.target = self; again.action = @selector(showColorSampler:);
+    [again applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:again];
+    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(292, 84, 48, 32)];
+    copy.title = @"复制"; copy.hoverColor = [NSColor systemGreenColor];
+    copy.target = self; copy.action = @selector(copyPickedColor:);
+    [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(176, 44, 164, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeColorSampler:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.colorWindow center];
+  }
+  NSInteger r = (NSInteger)llround(c.redComponent * 255.0);
+  NSInteger g = (NSInteger)llround(c.greenComponent * 255.0);
+  NSInteger b = (NSInteger)llround(c.blueComponent * 255.0);
+  NSString *hex = [NSString stringWithFormat:@"#%02lX%02lX%02lX", (long)r, (long)g, (long)b];
+  self.colorSwatch.layer.backgroundColor = c.CGColor;
+  self.colorHexLabel.stringValue = hex;
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:hex forType:NSPasteboardTypeString];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.colorWindow makeKeyAndOrderFront:nil];
+  [self showToast:[NSString stringWithFormat:@"已复制 %@", hex]];
+}
+
+- (void)copyPickedColor:(id)sender {
+  if (!self.pickedColor) return;
+  NSColor *c = self.pickedColor;
+  NSInteger r = (NSInteger)llround(c.redComponent * 255.0);
+  NSInteger g = (NSInteger)llround(c.greenComponent * 255.0);
+  NSInteger b = (NSInteger)llround(c.blueComponent * 255.0);
+  NSString *hex = [NSString stringWithFormat:@"#%02lX%02lX%02lX", (long)r, (long)g, (long)b];
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:hex forType:NSPasteboardTypeString];
+  [self showToast:@"色值已复制"];
+}
+
+- (void)closeColorSampler:(id)sender { [self.colorWindow orderOut:nil]; }
 
 - (void)showQuickPanel {
   if (!self.quickPanel) {
