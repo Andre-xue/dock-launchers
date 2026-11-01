@@ -1032,6 +1032,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSImage *mediaArtworkImage;
 @property (strong) NSData *mediaArtworkData;
 @property (strong) NSString *genericMediaTime;
+@property NSInteger genericMediaLastElapsed;
+@property NSInteger genericMediaSameCount;
 @property (strong) NSString *mediaBundleID;
 @property NSInteger mediaPID;
 @property BOOL mediaPlaying;
@@ -2893,6 +2895,20 @@ static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
   return fn;
 }
 
+- (BOOL)isGenericMediaBundle:(NSString *)bundle {
+  return [bundle containsString:@"com.soda.music"] || [bundle containsString:@"com.netease.163music"] ||
+         [bundle containsString:@"com.tencent.QQMusic"] || [bundle containsString:@"com.tencent.qqmusic"];
+}
+
+- (void)clearGenericMediaIfNeeded {
+  if (self.mediaUsingFallback && [self isGenericMediaBundle:self.mediaBundleID]) {
+    self.mediaPlaying = NO;
+    self.mediaNowPlaying = nil;
+    self.genericMediaTime = nil;
+    [self updateMediaStatusItem];
+  }
+}
+
 - (NSArray<NSRunningApplication *> *)genericMediaApplications {
   NSMutableArray *out = [NSMutableArray array];
   for (NSRunningApplication *a in [[NSWorkspace sharedWorkspace] runningApplications]) {
@@ -2912,6 +2928,7 @@ static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
   NSArray<NSRunningApplication *> *apps = [self genericMediaApplications];
   if (!apps.count) {
     self.genericMediaTime = nil;
+    [self clearGenericMediaIfNeeded];
     return;
   }
   NSMutableSet *pids = [NSMutableSet set];
@@ -2934,7 +2951,7 @@ static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
       break;
     }
     if (wins) CFRelease(wins);
-    if (!winID) return;
+    if (!winID) { dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf clearGenericMediaIfNeeded]; }); return; }
     DLCGWindowListCreateImageFn shotFn = DLCGWindowImage();
     CGImageRef shot = shotFn ? shotFn(CGRectNull, kCGWindowListOptionIncludingWindow, winID, kCGWindowImageBoundsIgnoreFraming) : NULL;
     if (!shot) {
@@ -3029,7 +3046,10 @@ static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
         weakSelf.genericMediaTime = [NSString stringWithFormat:@"%ld|%@", (long)elapsed, title];
       }
       weakSelf.mediaUsingFallback = YES;
-      weakSelf.mediaPlaying = YES;
+      BOOL changed = (weakSelf.genericMediaLastElapsed != elapsed);
+      weakSelf.genericMediaSameCount = changed ? 0 : weakSelf.genericMediaSameCount + 1;
+      weakSelf.genericMediaLastElapsed = elapsed;
+      weakSelf.mediaPlaying = changed || weakSelf.genericMediaSameCount < 2;
       weakSelf.mediaBundleID = mainApp.bundleIdentifier ?: @"";
       weakSelf.mediaPID = mainApp.processIdentifier;
       if (cropData.length) { weakSelf.mediaArtworkData = cropData; weakSelf.mediaArtworkImage = [[NSImage alloc] initWithData:cropData]; }
@@ -3185,6 +3205,7 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
   self.radialPlayerTitleButton.title = title;
   self.radialPlayerArtist.stringValue = artist;
   self.radialPlayerPlayButton.image = [NSImage imageWithSystemSymbolName:(self.mediaPlaying ? @"pause.fill" : @"play.fill") accessibilityDescription:nil];
+  self.radialPlayerPlayButton.contentTintColor = [NSColor whiteColor];
   self.radialPlayerFavoriteButton.image = [NSImage imageWithSystemSymbolName:(self.mediaFavoriteState ? @"heart.fill" : @"heart") accessibilityDescription:nil];
   self.radialPlayerFavoriteButton.contentTintColor = self.mediaFavoriteState ? [NSColor systemPinkColor] : [NSColor secondaryLabelColor];
   NSData *artData = self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoArtworkData"];
@@ -15874,8 +15895,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *ptime = [self label:@"0:00 / 0:00" size:9 bold:NO color:[NSColor secondaryLabelColor]];
     ptime.frame = NSMakeRect(24, 128, 276, 14); ptime.alignment = NSTextAlignmentCenter; [playerPage addSubview:ptime];
     NSButton *pprev = [self mediaIconButton:@"backward.fill" action:@selector(mediaPreviousTrack:) frame:NSMakeRect(74, 78, 36, 32)];
-    NSButton *pplay = [self mediaIconButton:@"play.fill" action:@selector(mediaTogglePlayPause:) frame:NSMakeRect(138, 70, 48, 48)];
-    pplay.bezelStyle = NSBezelStyleCircular; pplay.contentTintColor = [NSColor systemBlueColor];
+    NSButton *pplay = [[NSButton alloc] initWithFrame:NSMakeRect(138, 70, 48, 48)];
+    pplay.target = self; pplay.action = @selector(mediaTogglePlayPause:);
+    pplay.bordered = NO; pplay.bezelStyle = NSBezelStyleRegularSquare;
+    pplay.image = [NSImage imageWithSystemSymbolName:@"play.fill" accessibilityDescription:nil];
+    pplay.imageScaling = NSImageScaleProportionallyDown;
+    pplay.contentTintColor = [NSColor whiteColor];
+    pplay.wantsLayer = YES;
+    pplay.layer.backgroundColor = [NSColor systemBlueColor].CGColor;
+    pplay.layer.cornerRadius = 24;
+    pplay.layer.masksToBounds = YES;
     NSButton *pnext = [self mediaIconButton:@"forward.fill" action:@selector(mediaNextTrack:) frame:NSMakeRect(214, 78, 36, 32)];
     [playerPage addSubview:pprev]; [playerPage addSubview:pplay]; [playerPage addSubview:pnext];
 
