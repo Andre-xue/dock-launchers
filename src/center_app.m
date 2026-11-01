@@ -2175,6 +2175,7 @@ static void HideDockHoverTip(void) {
     [ud0 setBool:YES forKey:@"centerMenuTextInit"];
     [ud0 synchronize];
   }
+  [NSWindow setAllowsAutomaticWindowTabbing:NO];
   [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlWindowBecameKey:) name:NSWindowDidBecomeKeyNotification object:nil];
   [self applyWindowChrome:self.window];
   self.sampleSeconds = 2;
@@ -2593,6 +2594,7 @@ static void HideDockHoverTip(void) {
 
 - (void)applyWindowChrome:(NSWindow *)w {
   if (!w) return;
+  if ([w isKindOfClass:[NSWindow class]]) w.tabbingMode = NSWindowTabbingModeDisallowed;
   if ([w isKindOfClass:[NSPanel class]]) return;
   if (w.sheetParent) return;
   if (!(w.styleMask & NSWindowStyleMaskTitled) || !(w.styleMask & NSWindowStyleMaskClosable)) return;
