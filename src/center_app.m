@@ -11745,7 +11745,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [self.imageResolutionPopup addItemWithTitle:resTitles[i]];
       self.imageResolutionPopup.lastItem.representedObject = resSides[i];
     }
-    [self.imageResolutionPopup selectItemAtIndex:2];
+    [self.imageResolutionPopup selectItemAtIndex:3];
     [cv addSubview:self.imageResolutionPopup];
 
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 70, 648, 296)];
