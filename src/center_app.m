@@ -841,6 +841,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *startupWindow;
 @property (strong) NSTableView *startupTable;
 @property (strong) NSArray *startupItems;
+@property (strong) NSArray *startupAllItems;
+@property (strong) NSSearchField *startupSearch;
 @property NSInteger startupMode;
 @property (strong) NSSegmentedControl *startupTabs;
 @property (strong) NSTableView *quickLoginTable;
@@ -10490,6 +10492,11 @@ static BOOL ValidGroupName(NSString *raw) {
     self.startupTabs.selectedSegment = self.startupMode;
     self.startupTabs.target = self; self.startupTabs.action = @selector(startupTabChanged:);
     [cv addSubview:self.startupTabs];
+    self.startupSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(340, 462, 148, 28)];
+    self.startupSearch.placeholderString = @"搜索启动项";
+    self.startupSearch.target = self; self.startupSearch.action = @selector(startupFilterChanged:);
+    [self.startupSearch setContinuous:YES];
+    [cv addSubview:self.startupSearch];
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 688, 360)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.startupTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
@@ -10527,8 +10534,8 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)refreshStartupItems:(id)sender {
   if (self.startupMode == 1) {
-    self.startupItems = ReadLoginItems();
-    [self.startupTable reloadData];
+    self.startupAllItems = ReadLoginItems();
+    [self applyStartupFilter];
     return;
   }
   NSFileManager *fm = [NSFileManager defaultManager];
@@ -10550,7 +10557,24 @@ static BOOL ValidGroupName(NSString *raw) {
       [rows addObject:@{@"name": label, @"path": path, @"type": type, @"user": @(user), @"loaded": @(loaded), @"domain": domain}];
     }
   }
-  self.startupItems = rows;
+  self.startupAllItems = rows;
+  [self applyStartupFilter];
+}
+
+- (void)startupFilterChanged:(id)sender { [self applyStartupFilter]; }
+
+- (void)applyStartupFilter {
+  NSString *q = [self.startupSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  if (!q.length) {
+    self.startupItems = self.startupAllItems ?: @[];
+  } else {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *it in self.startupAllItems ?: @[]) {
+      NSString *hay = [[NSString stringWithFormat:@"%@ %@ %@ %@", it[@"name"] ?: @"", it[@"path"] ?: @"", it[@"status"] ?: @"", it[@"type"] ?: @""] lowercaseString];
+      if ([hay containsString:q]) [out addObject:it];
+    }
+    self.startupItems = out;
+  }
   [self.startupTable reloadData];
 }
 
