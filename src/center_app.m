@@ -2839,13 +2839,13 @@ static void HideDockHoverTip(void) {
   NSMutableString *script = [NSMutableString stringWithString:@"set out to \"\"\n"];
   NSWorkspace *ws = [NSWorkspace sharedWorkspace];
   if ([ws URLForApplicationWithBundleIdentifier:@"com.apple.Music"]) {
-    [script appendString:@"tell application \"Music\"\nif it is running then\nif player state is playing then\nset out to out & \"com.apple.Music\" & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (player position) & linefeed & (duration of current track) & linefeed & \"===\" & linefeed\nend if\nend if\nend tell\n"];
+    [script appendString:@"tell application \"Music\"\nif it is running then\nif player state is playing or player state is paused then\nset out to out & \"com.apple.Music\" & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (player position) & linefeed & (duration of current track) & linefeed & (player state as text) & linefeed & \"===\" & linefeed\nend if\nend if\nend tell\n"];
   }
   if ([ws URLForApplicationWithBundleIdentifier:@"com.spotify.client"]) {
-    [script appendString:@"tell application \"Spotify\"\nif it is running then\nif player state is playing then\nset out to out & \"com.spotify.client\" & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (player position) & linefeed & ((duration of current track) / 1000) & linefeed & \"===\" & linefeed\nend if\nend if\nend tell\n"];
+    [script appendString:@"tell application \"Spotify\"\nif it is running then\nif player state is playing or player state is paused then\nset out to out & \"com.spotify.client\" & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (player position) & linefeed & ((duration of current track) / 1000) & linefeed & (player state as text) & linefeed & \"===\" & linefeed\nend if\nend if\nend tell\n"];
   }
   if ([ws URLForApplicationWithBundleIdentifier:@"com.apple.QuickTimePlayerX"]) {
-    [script appendString:@"tell application \"QuickTime Player\"\nif it is running then\nrepeat with d in documents\nif playing of d then\nset out to out & \"com.apple.QuickTimePlayerX\" & linefeed & (name of d) & linefeed & \"\" & linefeed & (current time of d) & linefeed & (duration of d) & linefeed & \"===\" & linefeed\nend if\nend repeat\nend if\nend tell\n"];
+    [script appendString:@"tell application \"QuickTime Player\"\nif it is running then\nrepeat with d in documents\nif playing of d or (current time of d) > 0 then\nset out to out & \"com.apple.QuickTimePlayerX\" & linefeed & (name of d) & linefeed & \"\" & linefeed & (current time of d) & linefeed & (duration of d) & linefeed & (if playing of d then \"playing\" else \"paused\") & linefeed & \"===\" & linefeed\nend if\nend repeat\nend if\nend tell\n"];
   }
   [script appendString:@"return out"];
   __weak typeof(self) weakSelf = self;
@@ -2863,21 +2863,28 @@ static void HideDockHoverTip(void) {
   NSMutableArray *lines = [NSMutableArray array];
   for (NSString *line in [out componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
     if ([line isEqualToString:@"==="]) {
-      if (lines.count >= 5) [blocks addObject:[lines copy]];
+      if (lines.count >= 6) [blocks addObject:[lines copy]];
       [lines removeAllObjects];
     } else if (line.length) [lines addObject:line];
   }
-  if (lines.count >= 5) [blocks addObject:[lines copy]];
+  if (lines.count >= 6) [blocks addObject:[lines copy]];
   if (!blocks.count) {
-    [self pollGenericMediaApps];
+    if (![self genericMediaApplications].count) {
+      self.mediaNowPlaying = nil;
+      self.mediaPlaying = NO;
+      [self updateMediaStatusItem];
+    } else {
+      [self pollGenericMediaApps];
+    }
     return;
   }
   NSArray *chosen = blocks.firstObject;
   for (NSArray *b in blocks) if (self.mediaLastActiveBundle.length && [b[0] isEqualToString:self.mediaLastActiveBundle]) { chosen = b; break; }
   NSString *title = chosen[1]; NSString *artist = chosen[2];
   double elapsed = [chosen[3] doubleValue]; double duration = [chosen[4] doubleValue];
+  NSString *state = chosen.count > 5 ? chosen[5] : @"playing";
   self.mediaUsingFallback = YES;
-  self.mediaPlaying = YES;
+  self.mediaPlaying = ![state.lowercaseString containsString:@"paused"] && ![state.lowercaseString containsString:@"stopped"];
   self.mediaBundleID = chosen[0];
   NSMutableDictionary *np = [@{@"kMRMediaRemoteNowPlayingInfoTitle": title ?: @"", @"kMRMediaRemoteNowPlayingInfoArtist": artist ?: @"", @"kMRMediaRemoteNowPlayingInfoElapsedTime": @(elapsed), @"kMRMediaRemoteNowPlayingInfoDuration": @(duration)} mutableCopy];
   if (self.mediaArtworkData) np[@"kMRMediaRemoteNowPlayingInfoArtworkData"] = self.mediaArtworkData;
@@ -3135,7 +3142,7 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
 
 - (void)updateRadialMediaBar {
   if (self.radialPlayerPage && !self.radialPlayerPage.hidden) {
-    if (!self.mediaPlaying || ![[self mediaCurrentTitle] length]) {
+    if (![[self mediaCurrentTitle] length]) {
       [self showRadialPlayerPage:NO];
       [self.popover performClose:nil];
     } else {
@@ -3145,7 +3152,7 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
   }
   if (!self.radialMediaBar) return;
   NSString *title = [self mediaCurrentTitle];
-  BOOL show = self.mediaPlaying && title.length > 0;
+  BOOL show = title.length > 0;
   if (!show) {
     self.radialMediaBar.hidden = YES;
     if (self.radialRootView.frame.size.height != 360) {
