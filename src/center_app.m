@@ -12385,11 +12385,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)openDiskAnalysisFromMenu {
-  [self showWindow:nil];
-  [self showSection:3];
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    if (self.diskVolumePopup.numberOfItems > 0) [self refreshDiskAnalysis];
-  });
+  if (!self.diskView) [self buildDiskView];
+  [self showDetachedPage:self.diskView title:@"磁盘分析"];
 }
 
 - (void)performRadialAction:(NSString *)action {
@@ -12433,27 +12430,29 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   [page removeFromSuperview];
   page.hidden = NO;
-  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,596) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable|NSWindowStyleMaskMiniaturizable) backing:NSBackingStoreBuffered defer:NO];
+  CGFloat pw = MAX(360, page.frame.size.width);
+  CGFloat ph = MAX(260, page.frame.size.height);
+  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,pw+16,ph+56) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable|NSWindowStyleMaskMiniaturizable) backing:NSBackingStoreBuffered defer:NO];
   w.title = title;
   w.releasedWhenClosed = NO;
   w.level = NSFloatingWindowLevel;
   NSView *cv = w.contentView;
-  NSTextField *tl = [[NSTextField alloc] initWithFrame:NSMakeRect(12, 560, 220, 20)];
+  NSTextField *tl = [[NSTextField alloc] initWithFrame:NSMakeRect(12, ph+22, 220, 20)];
   tl.editable = NO; tl.bordered = NO; tl.drawsBackground = NO;
   tl.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
   tl.stringValue = title;
   [cv addSubview:tl];
-  ColorHoverButton *zoomOut = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, 554, 34, 26)];
+  ColorHoverButton *zoomOut = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, ph+16, 34, 26)];
   zoomOut.title = @"−"; zoomOut.hoverColor = [NSColor systemBlueColor];
   zoomOut.target = self; zoomOut.action = @selector(zoomDetachedOut:);
   [zoomOut applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [cv addSubview:zoomOut];
-  ColorHoverButton *zoomIn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(228, 554, 34, 26)];
+  ColorHoverButton *zoomIn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(228, ph+16, 34, 26)];
   zoomIn.title = @"+"; zoomIn.hoverColor = [NSColor systemBlueColor];
   zoomIn.target = self; zoomIn.action = @selector(zoomDetachedIn:);
   [zoomIn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [cv addSubview:zoomIn];
-  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(8, 8, 464, 540)];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(8, 8, pw, ph)];
   sv.hasHorizontalScroller = YES; sv.hasVerticalScroller = YES;
   sv.autohidesScrollers = YES;
   sv.allowsMagnification = YES;
@@ -12466,6 +12465,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [cv addSubview:sv];
   [self.detachedPanels setObject:w forKey:key];
   [self.detachedScrolls setObject:sv forKey:w];
+  [self applyWindowChrome:w];
   [w center];
   [NSApp activateIgnoringOtherApps:YES];
   [w makeKeyAndOrderFront:nil];
