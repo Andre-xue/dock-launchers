@@ -13186,21 +13186,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)showWindowLayouts:(id)sender {
   [self loadWindowLayouts];
   if (!self.layoutWindow) {
-    self.layoutWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,600,440) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.layoutWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,600,480) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.layoutWindow.title = @"窗口布局记忆";
     self.layoutWindow.releasedWhenClosed = NO;
     self.layoutWindow.level = NSNormalWindowLevel;
     NSView *cv = self.layoutWindow.contentView;
     NSTextField *title = [self label:@"窗口布局记忆" size:20 bold:YES color:nil];
-    title.frame = NSMakeRect(20, 390, 300, 28); [cv addSubview:title];
+    title.frame = NSMakeRect(20, 430, 300, 28); [cv addSubview:title];
     NSTextField *sub = [self label:@"单击选中布局，双击恢复；保存不需要权限，恢复需要窗口控制权限" size:10 bold:NO color:[NSColor secondaryLabelColor]];
-    sub.frame = NSMakeRect(20, 368, 520, 18); [cv addSubview:sub];
-    self.layoutSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(400, 386, 180, 26)];
+    sub.frame = NSMakeRect(20, 408, 520, 18); [cv addSubview:sub];
+    self.layoutSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(400, 426, 180, 26)];
     self.layoutSearch.placeholderString = @"搜索布局";
     self.layoutSearch.target = self; self.layoutSearch.action = @selector(layoutFilterChanged:);
     [self.layoutSearch setContinuous:YES];
     [cv addSubview:self.layoutSearch];
-    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 568, 276)];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 116, 568, 276)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.layoutTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
     NSArray *cols = @[@[@"lname", @"布局名称", @220.0], @[@"lcount", @"窗口数", @80.0], @[@"ldate", @"保存时间", @180.0]];
@@ -13214,13 +13214,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     sv.documentView = self.layoutTable; [cv addSubview:sv];
     self.layoutSpaceCheck = [NSButton checkboxWithTitle:@"实验性：按桌面恢复" target:self action:@selector(layoutSpaceToggled:)];
     self.layoutSpaceCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerLayoutExperimentalSpace"] ? NSControlStateValueOn : NSControlStateValueOff;
-    self.layoutSpaceCheck.frame = NSMakeRect(16, 52, 190, 20);
+    self.layoutSpaceCheck.frame = NSMakeRect(16, 84, 190, 20);
     self.layoutSpaceCheck.toolTip = @"使用 macOS 私有 API 记录和切换桌面；失败时自动回退";
     [cv addSubview:self.layoutSpaceCheck];
     self.layoutAutoLaunchCheck = [NSButton checkboxWithTitle:@"自动启动缺失应用" target:self action:nil];
     self.layoutAutoLaunchCheck.state = NSControlStateValueOn;
-    self.layoutAutoLaunchCheck.frame = NSMakeRect(212, 52, 160, 20); [cv addSubview:self.layoutAutoLaunchCheck];
-    self.layoutAXButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(392, 52, 170, 20)];
+    self.layoutAutoLaunchCheck.frame = NSMakeRect(212, 84, 160, 20); [cv addSubview:self.layoutAutoLaunchCheck];
+    self.layoutAXButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(392, 84, 170, 20)];
     self.layoutAXButton.title = @"窗口控制权限"; self.layoutAXButton.hoverColor = [NSColor systemOrangeColor];
     self.layoutAXButton.target = self; self.layoutAXButton.action = @selector(requestLayoutAccessibility:);
     [self.layoutAXButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
@@ -13230,7 +13230,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
                          @[@"删除", @"deleteSelectedWindowLayout:", @292.0, @72.0, [NSColor systemRedColor]],
                          @[@"关闭", @"closeWindowLayouts:", @488.0, @80.0, [NSColor systemGrayColor]]];
     for (NSArray *d in actions) {
-      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([d[2] doubleValue], 24, [d[3] doubleValue], 32)];
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([d[2] doubleValue], 40, [d[3] doubleValue], 32)];
       b.title = d[0]; b.hoverColor = d[4]; b.target = self; b.action = NSSelectorFromString(d[1]);
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
