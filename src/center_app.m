@@ -17585,7 +17585,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   if (![engine enableManualRenderingMode:AVAudioEngineManualRenderingModeOffline format:format maximumFrameCount:4096 error:&err]) { if (completion) completion(NO); return; }
   [[NSFileManager defaultManager] removeItemAtURL:outURL error:NULL];
-  AVAudioFile *outFile = [[AVAudioFile alloc] initForWriting:outURL settings:format.settings error:&err];
+  NSMutableDictionary *writeSettings = [format.settings mutableCopy];
+  writeSettings[AVLinearPCMIsNonInterleaved] = @NO;
+  AVAudioFile *outFile = [[AVAudioFile alloc] initForWriting:outURL settings:writeSettings error:&err];
   if (!outFile) { if (completion) completion(NO); return; }
   if (![engine startAndReturnError:&err]) { if (completion) completion(NO); return; }
   [player scheduleFile:inFile atTime:nil completionHandler:nil];
