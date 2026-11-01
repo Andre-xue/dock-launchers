@@ -17494,14 +17494,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   AVAssetTrack *video = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
   NSArray *audios = [asset tracksWithMediaType:AVMediaTypeAudio];
   if (!video || !audios.count || (audios.count == 1 && gainDB == 0)) { if (completion) completion(YES); return; }
-  AVMutableComposition *comp = [AVMutableComposition composition];
-  AVMutableCompositionTrack *v = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
-  [v insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:video atTime:kCMTimeZero error:NULL];
+
+  // Step 1: mix audio tracks (and apply mic gain) into a temporary audio-only file.
+  AVMutableComposition *audioComp = [AVMutableComposition composition];
   NSMutableArray<AVMutableCompositionTrack *> *audioTracks = [NSMutableArray array];
   for (NSInteger i = 0; i < (NSInteger)audios.count && i < 2; i++) {
-    AVMutableCompositionTrack *a = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
-    [a insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:audios[i] atTime:kCMTimeZero error:NULL];
-    [audioTracks addObject:a];
+    AVMutableCompositionTrack *at = [audioComp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+    [at insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:audios[i] atTime:kCMTimeZero error:NULL];
+    [audioTracks addObject:at];
   }
   AVMutableAudioMix *mix = [AVMutableAudioMix audioMix];
   NSMutableArray *params = [NSMutableArray array];
@@ -17512,24 +17512,47 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [params addObject:ap];
   }
   mix.inputParameters = params;
-  NSString *tmp = [[path stringByDeletingPathExtension] stringByAppendingString:@"-mix.mp4"];
-  [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
-  AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetHEVCHighestQuality];
-  ex.audioMix = mix;
-  ex.outputURL = [NSURL fileURLWithPath:tmp];
-  ex.outputFileType = AVFileTypeMPEG4;
-  ex.shouldOptimizeForNetworkUse = YES;
-  [ex exportAsynchronouslyWithCompletionHandler:^{
+  NSString *mixedAudio = [[path stringByDeletingPathExtension] stringByAppendingString:@"-audio.m4a"];
+  [[NSFileManager defaultManager] removeItemAtPath:mixedAudio error:NULL];
+  AVAssetExportSession *audioEx = [[AVAssetExportSession alloc] initWithAsset:audioComp presetName:AVAssetExportPresetAppleM4A];
+  audioEx.audioMix = mix;
+  audioEx.outputURL = [NSURL fileURLWithPath:mixedAudio];
+  audioEx.outputFileType = AVFileTypeAppleM4A;
+  __weak typeof(self) weakSelf = self;
+  [audioEx exportAsynchronouslyWithCompletionHandler:^{
     dispatch_async(dispatch_get_main_queue(), ^{
-      NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:tmp error:NULL];
-      BOOL ok = (ex.status == AVAssetExportSessionStatusCompleted) || (attrs && [attrs[NSFileSize] longLongValue] > 0);
-      if (ok) {
-        [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
-        [[NSFileManager defaultManager] moveItemAtPath:tmp toPath:path error:NULL];
-      } else {
-        [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
-      }
-      if (completion) completion(ok);
+      NSDictionary *aAttrs = [[NSFileManager defaultManager] attributesOfItemAtPath:mixedAudio error:NULL];
+      BOOL audioOK = (audioEx.status == AVAssetExportSessionStatusCompleted) || (aAttrs && [aAttrs[NSFileSize] longLongValue] > 0);
+      if (!audioOK) { [[NSFileManager defaultManager] removeItemAtPath:mixedAudio error:NULL]; if (completion) completion(NO); return; }
+      // Step 2: remux the original video (passthrough) with the mixed audio, avoiding video re-encode.
+      AVURLAsset *mixedAsset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:mixedAudio] options:nil];
+      AVAssetTrack *mixedAudioTrack = [mixedAsset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+      if (!mixedAudioTrack) { [[NSFileManager defaultManager] removeItemAtPath:mixedAudio error:NULL]; if (completion) completion(NO); return; }
+      AVMutableComposition *comp = [AVMutableComposition composition];
+      AVMutableCompositionTrack *v = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+      [v insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:video atTime:kCMTimeZero error:NULL];
+      AVMutableCompositionTrack *a = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+      [a insertTimeRange:CMTimeRangeMake(kCMTimeZero, CMTimeMinimum(mixedAsset.duration, asset.duration)) ofTrack:mixedAudioTrack atTime:kCMTimeZero error:NULL];
+      NSString *tmp = [[path stringByDeletingPathExtension] stringByAppendingString:@"-remux.mp4"];
+      [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+      AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetPassthrough];
+      ex.outputURL = [NSURL fileURLWithPath:tmp];
+      ex.outputFileType = AVFileTypeMPEG4;
+      ex.shouldOptimizeForNetworkUse = YES;
+      [ex exportAsynchronouslyWithCompletionHandler:^{
+        dispatch_async(dispatch_get_main_queue(), ^{
+          NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:tmp error:NULL];
+          BOOL ok = (ex.status == AVAssetExportSessionStatusCompleted) || (attrs && [attrs[NSFileSize] longLongValue] > 0);
+          if (ok) {
+            [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
+            [[NSFileManager defaultManager] moveItemAtPath:tmp toPath:path error:NULL];
+          } else {
+            [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+          }
+          [[NSFileManager defaultManager] removeItemAtPath:mixedAudio error:NULL];
+          if (completion) completion(ok);
+        });
+      }];
     });
   }];
 }
