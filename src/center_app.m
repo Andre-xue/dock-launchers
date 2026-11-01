@@ -12314,7 +12314,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"password"]) [self showPasswordSettings:nil];
   else if ([action isEqualToString:@"appshortcuts"]) [self showAppShortcutSettings:nil];
   else if ([action isEqualToString:@"globalshortcuts"]) [self openShortcutSettings:nil];
-  else if ([action isEqualToString:@"about"]) [self showAbout:nil];
+  else if ([action isEqualToString:@"disk"]) { [self showWindow:nil]; [self showSection:3]; }
 }
 
 - (void)showDetachedPage:(NSView *)page title:(NSString *)title {
@@ -13296,7 +13296,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"应用密码", @"symbol": @"lock.fill", @"action": @"password"},
         @{@"title": @"应用快捷键", @"symbol": @"keyboard", @"action": @"appshortcuts"},
         @{@"title": @"全局快捷键", @"symbol": @"globe", @"action": @"globalshortcuts"},
-        @{@"title": @"关于", @"symbol": @"info.circle.fill", @"action": @"about"}
+        @{@"title": @"磁盘分析", @"symbol": @"internaldrive.fill", @"action": @"disk"}
       ]
     ];
     self.radialPage = 0;
