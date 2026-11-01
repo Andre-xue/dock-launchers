@@ -1031,6 +1031,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSDictionary *mediaStableNowPlaying;
 @property (strong) NSString *mediaStableBundle;
 @property (strong) NSDate *mediaSourceRunningDate;
+@property BOOL mediaAutoPlayerShown;
+@property BOOL mediaAutoPlayerEnabled;
 @property (strong) NSString *mediaArtworkKey;
 @property (strong) NSImage *mediaArtworkImage;
 @property (strong) NSData *mediaArtworkData;
@@ -2748,6 +2750,8 @@ static void HideDockHoverTip(void) {
 - (void)startMediaWidget {
   void *handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_LAZY);
   if (!handle) return;
+  id autoObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerMediaAutoOpen"];
+  self.mediaAutoPlayerEnabled = autoObj ? [autoObj boolValue] : YES;
   self.mediaRemoteHandle = handle;
   self.mediaGetInfoFn = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo");
   self.mediaGetPlayingFn = dlsym(handle, "MRMediaRemoteGetNowPlayingApplicationIsPlaying");
@@ -3187,6 +3191,26 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
   if (act) [self runOsascript:[NSString stringWithFormat:@"tell application \"%@\" to %@", appName, act]];
 }
 
+- (void)maybeAutoShowMediaPlayer {
+  NSString *title = [self mediaCurrentTitle];
+  if (!title.length || !self.isMediaSourceAppRecentlyRunning) {
+    self.mediaAutoPlayerShown = NO;
+    return;
+  }
+  if (!self.mediaAutoPlayerEnabled || self.mediaAutoPlayerShown) return;
+  if (!self.mediaPlaying) return;
+  self.mediaAutoPlayerShown = YES;
+  __weak typeof(self) weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (!weakSelf.mediaPlaying || ![[weakSelf mediaCurrentTitle] length]) return;
+    [NSApp activateIgnoringOtherApps:YES];
+    if (!weakSelf.popover.isShown && weakSelf.statusItem.button) {
+      [weakSelf.popover showRelativeToRect:weakSelf.statusItem.button.bounds ofView:weakSelf.statusItem.button preferredEdge:NSRectEdgeMinY];
+    }
+    [weakSelf showRadialPlayerPage:YES];
+  });
+}
+
 - (void)updateMediaStatusItem {
   NSString *title = [self mediaCurrentTitle];
   if (title.length) {
@@ -3202,6 +3226,7 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
     self.mediaPlaying = NO;
   }
   [self updateRadialMediaBar];
+  [self maybeAutoShowMediaPlayer];
 }
 
 - (void)updateRadialMediaBar {
@@ -3290,12 +3315,22 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
 
 - (void)openRadialPlayerPage:(id)sender { [self showRadialPlayerPage:YES]; }
 
+- (void)toggleMediaAutoOpen:(id)sender {
+  self.mediaAutoPlayerEnabled = !self.mediaAutoPlayerEnabled;
+  [[NSUserDefaults standardUserDefaults] setBool:self.mediaAutoPlayerEnabled forKey:@"centerMediaAutoOpen"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self showToast:self.mediaAutoPlayerEnabled ? @"音乐播放时自动打开播放页" : @"已关闭自动打开播放页"];
+}
+
 - (void)showRadialMediaMenu:(id)sender {
   NSMenu *menu = [[NSMenu alloc] initWithTitle:@"媒体"];
   NSMenuItem *header = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"%@ — %@", [self mediaCurrentTitle], [self mediaCurrentArtist]] action:nil keyEquivalent:@""];
   header.enabled = NO; [menu addItem:header];
   [menu addItem:[NSMenuItem separatorItem]];
   [menu addItemWithTitle:@"打开播放页" action:@selector(openRadialPlayerPage:) keyEquivalent:@""].target = self;
+  NSMenuItem *autoItem = [[NSMenuItem alloc] initWithTitle:@"播放时自动打开播放页" action:@selector(toggleMediaAutoOpen:) keyEquivalent:@""];
+  autoItem.target = self; autoItem.state = self.mediaAutoPlayerEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+  [menu addItem:autoItem];
   [menu addItemWithTitle:self.mediaPlaying ? @"暂停" : @"播放" action:@selector(mediaTogglePlayPause:) keyEquivalent:@""].target = self;
   [menu addItemWithTitle:@"上一首" action:@selector(mediaPreviousTrack:) keyEquivalent:@""].target = self;
   [menu addItemWithTitle:@"下一首" action:@selector(mediaNextTrack:) keyEquivalent:@""].target = self;
@@ -3679,6 +3714,9 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
   [menu addItem:header];
   [menu addItem:[NSMenuItem separatorItem]];
   [menu addItemWithTitle:@"打开播放页" action:@selector(openRadialPlayerPage:) keyEquivalent:@""].target = self;
+  NSMenuItem *autoItem = [[NSMenuItem alloc] initWithTitle:@"播放时自动打开播放页" action:@selector(toggleMediaAutoOpen:) keyEquivalent:@""];
+  autoItem.target = self; autoItem.state = self.mediaAutoPlayerEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+  [menu addItem:autoItem];
   [menu addItemWithTitle:self.mediaPlaying ? @"暂停" : @"播放" action:@selector(mediaTogglePlayPause:) keyEquivalent:@""].target = self;
   [menu addItemWithTitle:@"上一首" action:@selector(mediaPreviousTrack:) keyEquivalent:@""].target = self;
   [menu addItemWithTitle:@"下一首" action:@selector(mediaNextTrack:) keyEquivalent:@""].target = self;
