@@ -3197,8 +3197,8 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
     self.mediaAutoPlayerShown = NO;
     return;
   }
+  if (!self.mediaPlaying) { self.mediaAutoPlayerShown = NO; return; }
   if (!self.mediaAutoPlayerEnabled || self.mediaAutoPlayerShown) return;
-  if (!self.mediaPlaying) return;
   self.mediaAutoPlayerShown = YES;
   __weak typeof(self) weakSelf = self;
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
