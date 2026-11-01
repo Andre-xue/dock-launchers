@@ -9135,6 +9135,9 @@ static BOOL ValidGroupName(NSString *raw) {
   for (NSInteger i = 0; i < pages.count; i++) {
     [a addObject:@{@"action": [NSString stringWithFormat:@"page%ld", (long)i], @"title": [NSString stringWithFormat:@"切换到 %@", pages[i]]}];
   }
+  for (NSString *group in [self installedGroupNames]) {
+    [a addObject:@{@"action": [NSString stringWithFormat:@"group:%@", group], @"title": [NSString stringWithFormat:@"打开 Dock 分组：%@", group]}];
+  }
   return a;
 }
 
@@ -9170,6 +9173,12 @@ static BOOL ValidGroupName(NSString *raw) {
   if ([action isEqualToString:@"compress"]) { [self showCompressWindow:nil]; return; }
   if ([action isEqualToString:@"clipboard"]) { [self showClipboardWindow:nil]; return; }
   if ([action isEqualToString:@"quick"]) { [self showQuickPanel]; return; }
+  if ([action hasPrefix:@"group:"]) {
+    NSString *name = [action substringFromIndex:6];
+    NSString *path = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+    return;
+  }
   if ([action hasPrefix:@"page"]) {
     NSInteger idx = [[action substringFromIndex:4] integerValue];
     [self.window makeKeyAndOrderFront:nil];
