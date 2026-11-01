@@ -796,6 +796,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSPopUpButton *imageResolutionPopup, *imageRotatePopup;
 @property (strong) NSWindow *pdfWindow;
 @property (strong) NSTextField *pdfStartField, *pdfEndField;
+@property (strong) id pdfFinderMonitor;
 @property (strong) NSTableView *pdfTable;
 @property (strong) NSArray *pdfItems;
 @property (strong) NSWindow *batchRenameWindow;
@@ -12303,6 +12304,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     self.pdfItems = @[];
     [self.pdfWindow center];
+  }
+  if (!self.pdfFinderMonitor) {
+    __weak typeof(self) weakPDFWindow = self;
+    self.pdfFinderMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent *(NSEvent *e) {
+      if (weakPDFWindow.pdfWindow.isVisible && e.window == weakPDFWindow.pdfWindow && e.clickCount >= 2 && (e.modifierFlags & NSEventModifierFlagCommand)) {
+        [weakPDFWindow pdfImportFinderSelection:nil];
+        return nil;
+      }
+      return e;
+    }];
   }
   [NSApp activateIgnoringOtherApps:YES];
   [self.pdfWindow makeKeyAndOrderFront:nil];
