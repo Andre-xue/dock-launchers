@@ -3376,7 +3376,9 @@ static void HideDockHoverTip(void) {
   [self applyWindowChrome:self.window];
   self.sampleSeconds = 2;
   self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
-  self.statusItem.button.image = [self characterImage:18];
+  NSImage *menuIcon = [NSImage imageWithSystemSymbolName:@"square.grid.2x2.fill" accessibilityDescription:@"DockLaunchers"];
+  menuIcon.template = YES;
+  self.statusItem.button.image = menuIcon;
   self.statusItem.button.imagePosition = NSImageLeft;
   self.statusItem.button.imageScaling = NSImageScaleProportionallyDown;
   self.statusItem.button.title = @"";
@@ -19658,7 +19660,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)updateStatusMetricIcon {
   if (!self.statusItem.button) return;
   // 始终保留 DockLaunchers 原图标；指标选择只影响状态图标提示
-  self.statusItem.button.image = [self characterImage:18];
+  NSImage *menuIcon = [NSImage imageWithSystemSymbolName:@"square.grid.2x2.fill" accessibilityDescription:@"DockLaunchers"];
+  menuIcon.template = YES;
+  self.statusItem.button.image = menuIcon;
   self.statusItem.button.imagePosition = NSImageLeft;
   self.statusItem.button.title = @"";
   NSString *key = [self statusMetricKey];
