@@ -3218,11 +3218,12 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
   NSString *title = [self mediaCurrentTitle];
   BOOL show = title.length > 0 && self.isMediaSourceAppRecentlyRunning;
   self.radialMediaBar.hidden = !show;
-  if (!show) return;
-  if (self.radialRootView.frame.size.height != 412) {
-    self.radialRootView.frame = NSMakeRect(0,0,340,412);
-    self.popover.contentSize = NSMakeSize(340, 412);
+  CGFloat target = show ? 412 : 360;
+  if (self.radialRootView.frame.size.height != target) {
+    self.radialRootView.frame = NSMakeRect(0,0,340,target);
+    self.popover.contentSize = NSMakeSize(340, target);
   }
+  if (!show) return;
   self.radialMediaTitleLabel.stringValue = title;
   NSString *artist = [self mediaCurrentArtist];
   self.radialMediaArtistLabel.stringValue = artist.length ? artist : @"正在播放";
@@ -3256,8 +3257,9 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
   } else {
     self.radialRootView.wantsLayer = YES;
     self.radialRootView.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
-    self.radialRootView.frame = NSMakeRect(0,0,340,412);
-    self.popover.contentSize = NSMakeSize(340, 412);
+    BOOL bar = self.mediaStableNowPlaying && self.mediaStableBundle.length;
+    self.radialRootView.frame = NSMakeRect(0,0,340,bar ? 412 : 360);
+    self.popover.contentSize = NSMakeSize(340, bar ? 412 : 360);
   }
 }
 
@@ -16008,7 +16010,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.radialPlayerPlayButton = pplay;
 
     [self radialApplyPage];
-    pop.contentSize = NSMakeSize(340, 412);
+    pop.contentSize = NSMakeSize(340, 360);
   } else {
     pop.contentSize = NSMakeSize(420, 620);
   }
