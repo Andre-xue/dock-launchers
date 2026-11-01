@@ -12487,12 +12487,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)zoomDetachedOut:(id)sender {
   NSScrollView *sv = [self scrollForDetachedWindow:[(NSButton *)sender window]];
-  if (sv) sv.magnification = MAX(sv.minMagnification, sv.magnification - 0.15);
+  if (!sv) return;
+  NSView *doc = sv.documentView;
+  NSPoint anchor = NSMakePoint(NSMidX(doc.bounds), NSMaxY(doc.bounds));
+  [sv setMagnification:MAX(sv.minMagnification, sv.magnification - 0.15) centeredAtPoint:anchor];
 }
 
 - (void)zoomDetachedIn:(id)sender {
   NSScrollView *sv = [self scrollForDetachedWindow:[(NSButton *)sender window]];
-  if (sv) sv.magnification = MIN(sv.maxMagnification, sv.magnification + 0.15);
+  if (!sv) return;
+  NSView *doc = sv.documentView;
+  NSPoint anchor = NSMakePoint(NSMidX(doc.bounds), NSMaxY(doc.bounds));
+  [sv setMagnification:MIN(sv.maxMagnification, sv.magnification + 0.15) centeredAtPoint:anchor];
 }
 
 - (void)showWindowLayouts:(id)sender {
