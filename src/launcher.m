@@ -511,7 +511,9 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)resetListMode:(id)sender;
 - (void)resetSingleLayout:(id)sender;
 - (void)backupGroupsNow:(id)sender;
+- (void)fullBackupGroupsNow:(id)sender;
 - (BOOL)writeLocalBackup;
+- (BOOL)writeFullLocalBackup;
 - (void)uninstallAll:(id)sender;
 - (void)skinWhite:(id)sender;
 - (void)skinBlack:(id)sender;
@@ -2681,6 +2683,9 @@ static NSString *ResolveAppPath(NSString *target) {
         @{@"title":@"恢复分组默认图标", @"sel":@"resetCustomIcon:"}]},
       @{@"title":@"一键恢复 Dock 栏", @"sel":@"repairDockMenuTapped:"}]},
     @{@"title":@"设置", @"children":@[
+      @{@"title":@"本机备份", @"children":@[
+        @{@"title":@"备份分组（列表和偏好）", @"sel":@"backupGroupsNow:"},
+        @{@"title":@"完整备份（含分组 App）…", @"sel":@"fullBackupGroupsNow:"}]},
       @{@"title":@"快捷键映射", @"sel":@"showShortcutSettings:"},
       @{@"title":@"效率", @"children":@[
         @{@"title":@"自动退出程序时间（空闲 3 分钟）", @"sel":@"toggleIdleExit:"},
@@ -3435,19 +3440,17 @@ static NSString *ResolveAppPath(NSString *target) {
   NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
   NSString *base = [@"~/Library/Application Support/DockLaunchers/backup/DockLaunchers" stringByExpandingTildeInPath];
   NSFileManager *fm = [NSFileManager defaultManager];
-  NSInteger appCount = 0;
-  for (NSString *f in [fm contentsOfDirectoryAtPath:parent error:NULL]) if ([f hasSuffix:@".app"]) appCount++;
-  if (appCount == 0) return NO;   // 没有 App 时不覆盖已有备份
-  [fm removeItemAtPath:base error:NULL];
   [fm createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:NULL];
-  for (NSString *f in [fm contentsOfDirectoryAtPath:parent error:NULL]) {
-    if ([f hasSuffix:@".app"]) [fm copyItemAtPath:[parent stringByAppendingPathComponent:f] toPath:[base stringByAppendingPathComponent:f] error:NULL];
-  }
-  NSString *lists = [parent stringByAppendingPathComponent:@"lists"];
-  if ([fm fileExistsAtPath:lists]) [fm copyItemAtPath:lists toPath:[base stringByAppendingPathComponent:@"lists"] error:NULL];
 
-  // 同时备份各分组偏好（自定义图标/名字/主题等）
+  NSString *lists = [parent stringByAppendingPathComponent:@"lists"];
+  NSString *dstLists = [base stringByAppendingPathComponent:@"lists"];
+  if ([fm fileExistsAtPath:lists]) {
+    [fm removeItemAtPath:dstLists error:NULL];
+    [fm copyItemAtPath:lists toPath:dstLists error:NULL];
+  }
+
   NSString *prefsDir = [base stringByAppendingPathComponent:@"prefs"];
+  [fm removeItemAtPath:prefsDir error:NULL];
   [fm createDirectoryAtPath:prefsDir withIntermediateDirectories:YES attributes:nil error:NULL];
   NSArray *domains = @[@"com.docklaunchers.gongzuo", @"com.docklaunchers.liaotian", @"com.docklaunchers.waiwang",
                        @"com.docklaunchers.yingyin", @"com.docklaunchers.ai", @"com.docklaunchers.docker",
@@ -3458,6 +3461,20 @@ static NSString *ResolveAppPath(NSString *target) {
     t.launchPath = @"/usr/bin/defaults";
     t.arguments = @[@"export", dom, out];
     @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+  }
+  return [fm fileExistsAtPath:dstLists] || [fm fileExistsAtPath:prefsDir];
+}
+
+- (BOOL)writeFullLocalBackup {
+  if (![self writeLocalBackup]) return NO;
+  NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
+  NSString *base = [@"~/Library/Application Support/DockLaunchers/backup/DockLaunchers" stringByExpandingTildeInPath];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  for (NSString *f in [fm contentsOfDirectoryAtPath:parent error:NULL]) {
+    if (![f hasSuffix:@".app"]) continue;
+    NSString *dst = [base stringByAppendingPathComponent:f];
+    [fm removeItemAtPath:dst error:NULL];
+    [fm copyItemAtPath:[parent stringByAppendingPathComponent:f] toPath:dst error:NULL];
   }
   return YES;
 }
@@ -3473,8 +3490,29 @@ static NSString *ResolveAppPath(NSString *target) {
   NSString *base = [@"~/Library/Application Support/DockLaunchers/backup/DockLaunchers" stringByExpandingTildeInPath];
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"已备份到本机";
-  a.informativeText = [NSString stringWithFormat:@"备份位置：%@\n\n桌面「恢复Dock分组.command」与「恢复Dock分组.app」可离线恢复全部内容。", base];
+  a.informativeText = [NSString stringWithFormat:@"备份位置：%@\n\n已备份分组列表和偏好设置。分组 App 本体不复制，避免触发 macOS App 管理权限；恢复 App 可重新运行安装包。", base];
   [a runModal];
+}
+
+- (void)fullBackupGroupsNow:(id)sender {
+  NSAlert *info = [[NSAlert alloc] init];
+  info.messageText = @"完整备份（含分组 App）";
+  info.informativeText = @"会复制 7 个分组 App 到本机备份。macOS 可能弹出「App 管理」权限请求，需要允许「工作.app」等分组 App 修改应用。\n\n如果只需要恢复分组列表和偏好，用普通备份即可。";
+  [info addButtonWithTitle:@"继续完整备份"];
+  [info addButtonWithTitle:@"取消"];
+  if ([info runModal] != NSAlertFirstButtonReturn) return;
+  if (![self writeFullLocalBackup]) {
+    NSAlert *e = [[NSAlert alloc] init];
+    e.messageText = @"完整备份失败";
+    e.informativeText = @"可能是 macOS App 管理权限未允许。请到 系统设置 → 隐私与安全性 → App 管理 中允许分组 App。";
+    [e addButtonWithTitle:@"好"];
+    [e runModal];
+    return;
+  }
+  NSAlert *ok = [[NSAlert alloc] init];
+  ok.messageText = @"完整备份已完成";
+  [ok addButtonWithTitle:@"好"];
+  [ok runModal];
 }
 
 - (void)uninstallAll:(id)sender {
