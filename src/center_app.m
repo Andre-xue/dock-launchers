@@ -2267,6 +2267,9 @@ static void HideDockHoverTip(void) {
       [self togglePopover:nil];
     });
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DETACH_AI")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; });
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DETACH")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self showDetachedPage:self.quickOverview title:@"概览"]; });
   }
@@ -12444,11 +12447,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [cv addSubview:tl];
   ColorHoverButton *zoomOut = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, ph+16, 34, 26)];
   zoomOut.title = @"−"; zoomOut.hoverColor = [NSColor systemBlueColor];
+  zoomOut.toolTip = @"缩小页面内容";
   zoomOut.target = self; zoomOut.action = @selector(zoomDetachedOut:);
   [zoomOut applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [cv addSubview:zoomOut];
   ColorHoverButton *zoomIn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(228, ph+16, 34, 26)];
   zoomIn.title = @"+"; zoomIn.hoverColor = [NSColor systemBlueColor];
+  zoomIn.toolTip = @"放大页面内容";
   zoomIn.target = self; zoomIn.action = @selector(zoomDetachedIn:);
   [zoomIn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [cv addSubview:zoomIn];
@@ -12489,7 +12494,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSScrollView *sv = [self scrollForDetachedWindow:[(NSButton *)sender window]];
   if (!sv) return;
   NSView *doc = sv.documentView;
-  NSPoint anchor = NSMakePoint(NSMidX(doc.bounds), NSMaxY(doc.bounds));
+  NSPoint anchor = NSMakePoint(NSMinX(doc.bounds), NSMaxY(doc.bounds));
   [sv setMagnification:MAX(sv.minMagnification, sv.magnification - 0.15) centeredAtPoint:anchor];
 }
 
@@ -12497,7 +12502,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSScrollView *sv = [self scrollForDetachedWindow:[(NSButton *)sender window]];
   if (!sv) return;
   NSView *doc = sv.documentView;
-  NSPoint anchor = NSMakePoint(NSMidX(doc.bounds), NSMaxY(doc.bounds));
+  NSPoint anchor = NSMakePoint(NSMinX(doc.bounds), NSMaxY(doc.bounds));
   [sv setMagnification:MIN(sv.maxMagnification, sv.magnification + 0.15) centeredAtPoint:anchor];
 }
 
