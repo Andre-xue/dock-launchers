@@ -3348,6 +3348,13 @@ static void HideDockHoverTip(void) {
   [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, self.mediaStatusItem.button.bounds.size.height) inView:self.mediaStatusItem.button];
 }
 
+- (NSMenu *)applicationDockMenu:(NSApplication *)sender {
+  NSMenu *menu = [[NSMenu alloc] initWithTitle:@"DockLaunchers"];
+  [menu addItemWithTitle:@"打开环形菜单" action:@selector(togglePopover:) keyEquivalent:@""].target = self;
+  [menu addItemWithTitle:@"打开控制台" action:@selector(showWindow:) keyEquivalent:@""].target = self;
+  return menu;
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
   // 单实例：避免重复 Dock 图标/菜单栏图标
   NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
@@ -3381,7 +3388,7 @@ static void HideDockHoverTip(void) {
   self.statusItem.button.image = menuIcon;
   self.statusItem.button.imagePosition = NSImageLeft;
   self.statusItem.button.imageScaling = NSImageScaleProportionallyDown;
-  self.statusItem.button.title = @"";
+  self.statusItem.button.title = @" DL";
   self.statusItem.button.target = self;
   self.statusItem.button.action = @selector(togglePopover:);
   [self startMediaWidget];
