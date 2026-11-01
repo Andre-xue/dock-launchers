@@ -15485,15 +15485,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.radialPageLabel.frame = NSMakeRect(150,8,48,16);
     [root addSubview:self.radialPageLabel];
     self.radialRootView = root;
-    NSVisualEffectView *mediaBar = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(8, 360, 324, 48)];
-    mediaBar.material = NSVisualEffectMaterialHUDWindow;
-    mediaBar.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-    mediaBar.state = NSVisualEffectStateActive;
+    NSView *mediaBar = [[NSView alloc] initWithFrame:NSMakeRect(8, 360, 324, 48)];
     mediaBar.wantsLayer = YES;
+    mediaBar.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.14 alpha:0.94].CGColor;
     mediaBar.layer.cornerRadius = 12;
     mediaBar.layer.masksToBounds = YES;
     mediaBar.hidden = YES;
-    NSButton *artBtn = [NSButton buttonWithImage:nil target:self action:@selector(radialMediaArtClicked:)];
+    NSButton *artBtn = [[NSButton alloc] init];
+    artBtn.target = self; artBtn.action = @selector(radialMediaArtClicked:);
     artBtn.frame = NSMakeRect(8, 7, 34, 34);
     artBtn.bezelStyle = NSBezelStyleInline; artBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
     artBtn.wantsLayer = YES; artBtn.layer.cornerRadius = 7; artBtn.layer.masksToBounds = YES;
@@ -16003,6 +16002,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self rebuildQuickGroups];
   if (self.quickTabs.selectedSegment == 1) [self rebuildQuickSceneTab];
   else if (self.quickTabs.selectedSegment == 4) [self refreshQuickProcess:nil];
+  [NSApp activateIgnoringOtherApps:YES];
   [self.popover showRelativeToRect:self.statusItem.button.bounds ofView:self.statusItem.button preferredEdge:NSRectEdgeMinY];
 }
 
