@@ -11,6 +11,7 @@
 #import <Quartz/Quartz.h>
 #import <objc/runtime.h>
 #import <CoreServices/CoreServices.h>
+#import <dlfcn.h>
 #import <IOKit/IOKitLib.h>
 #import <ImageIO/ImageIO.h>
 #import <QuickLookThumbnailing/QuickLookThumbnailing.h>
@@ -24,6 +25,28 @@
 #import <ApplicationServices/ApplicationServices.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
+
+typedef int DL_CGSConnectionID;
+typedef uint64_t DL_CGSSpaceID;
+typedef DL_CGSConnectionID (*DL_CGSMainFn)(void);
+typedef CFArrayRef (*DL_CGSCopyDisplaySpacesFn)(DL_CGSConnectionID);
+typedef void (*DL_CGSSetCurrentSpaceFn)(DL_CGSConnectionID, CFStringRef, DL_CGSSpaceID);
+typedef CFArrayRef (*DL_CGSCopySpacesForWindowsFn)(DL_CGSConnectionID, int, CFArrayRef);
+
+static void *DLSkyLightHandle(void) {
+  static void *handle = NULL;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    handle = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW);
+  });
+  return handle;
+}
+
+static BOOL DLPrivateSpaceAPIAvailable(void) {
+  void *h = DLSkyLightHandle();
+  if (!h) return NO;
+  return dlsym(h, "CGSMainConnectionID") && dlsym(h, "CGSCopyManagedDisplaySpaces") && dlsym(h, "CGSManagedDisplaySetCurrentSpace") && dlsym(h, "CGSCopySpacesForWindows");
+}
 
 static NSString *AppPasswordFilePath(void) {
   return [[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"] stringByAppendingPathComponent:@"app_password.json"];
@@ -624,6 +647,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableDictionary *savedLayouts;
 @property (strong) NSButton *layoutAutoLaunchCheck;
 @property (strong) ColorHoverButton *layoutAXButton;
+@property (strong) NSButton *layoutSpaceCheck;
 @property (strong) NSWindow *dockAppearanceWindow;
 @property (strong) NSSlider *dockSizeSlider, *dockMagnifySlider;
 @property (strong) NSTextField *dockSizeValue, *dockMagnifyValue;
@@ -11222,9 +11246,70 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if (rect.size.width < 120 || rect.size.height < 80) continue;
     NSString *title = info[(__bridge NSString *)kCGWindowName] ?: @"";
     BOOL onscreen = [info[(__bridge NSString *)kCGWindowIsOnscreen] boolValue];
-    [windows addObject:@{@"bundle": bundle, @"app": app.localizedName ?: bundle, @"title": title, @"onscreen": @(onscreen), @"x": @(rect.origin.x), @"y": @(rect.origin.y), @"w": @(rect.size.width), @"h": @(rect.size.height)}];
+    NSNumber *winID = info[(__bridge NSString *)kCGWindowNumber] ?: @0;
+    [windows addObject:@{@"bundle": bundle, @"app": app.localizedName ?: bundle, @"title": title, @"onscreen": @(onscreen), @"winid": winID, @"x": @(rect.origin.x), @"y": @(rect.origin.y), @"w": @(rect.size.width), @"h": @(rect.size.height)}];
+  }
+  if (self.layoutSpaceCheck.state == NSControlStateValueOn && DLPrivateSpaceAPIAvailable()) {
+    for (NSMutableDictionary *w in windows) {
+      NSNumber *wid = w[@"winid"];
+      if (!wid) continue;
+      NSArray *spaces = [self privateSpacesForWindowID:wid.unsignedIntValue];
+      if (spaces.count) w[@"space"] = spaces.firstObject;
+    }
   }
   return windows;
+}
+
+- (NSArray<NSNumber *> *)privateSpacesForWindowID:(uint32_t)windowID {
+  void *h = DLSkyLightHandle();
+  if (!h) return @[];
+  DL_CGSMainFn mainf = (DL_CGSMainFn)dlsym(h, "CGSMainConnectionID");
+  DL_CGSCopySpacesForWindowsFn copyf = (DL_CGSCopySpacesForWindowsFn)dlsym(h, "CGSCopySpacesForWindows");
+  if (!mainf || !copyf) return @[];
+  CFNumberRef widNum = CFNumberCreate(NULL, kCFNumberSInt32Type, &windowID);
+  CFArrayRef ids = CFArrayCreate(NULL, (const void **)&widNum, 1, &kCFTypeArrayCallBacks);
+  CFArrayRef spaces = copyf(mainf(), 0x7, ids);
+  CFRelease(ids);
+  CFRelease(widNum);
+  if (!spaces) return @[];
+  NSArray *arr = CFBridgingRelease(spaces);
+  NSMutableArray *out = [NSMutableArray array];
+  for (id obj in arr) {
+    if ([obj isKindOfClass:[NSNumber class]]) [out addObject:obj];
+  }
+  return out;
+}
+
+- (BOOL)privateSwitchToSpaceID:(uint64_t)spaceID {
+  void *h = DLSkyLightHandle();
+  if (!h) return NO;
+  DL_CGSMainFn mainf = (DL_CGSMainFn)dlsym(h, "CGSMainConnectionID");
+  DL_CGSCopyDisplaySpacesFn copyf = (DL_CGSCopyDisplaySpacesFn)dlsym(h, "CGSCopyManagedDisplaySpaces");
+  DL_CGSSetCurrentSpaceFn setf = (DL_CGSSetCurrentSpaceFn)dlsym(h, "CGSManagedDisplaySetCurrentSpace");
+  if (!mainf || !copyf || !setf) return NO;
+  CFArrayRef displays = copyf(mainf());
+  if (!displays) return NO;
+  NSArray *displayArr = CFBridgingRelease(displays);
+  for (NSDictionary *display in displayArr) {
+    NSString *displayID = display[@"Display Identifier"];
+    if (!displayID.length) continue;
+    for (NSDictionary *space in display[@"Spaces"] ?: @[]) {
+      NSNumber *sid = space[@"id64"] ?: space[@"ManagedSpaceID"];
+      if (sid.unsignedLongLongValue == spaceID) {
+        setf(mainf(), (__bridge CFStringRef)displayID, spaceID);
+        return YES;
+      }
+    }
+  }
+  return NO;
+}
+
+- (uint64_t)spaceIDForLayout:(NSDictionary *)layout {
+  for (NSDictionary *w in layout[@"windows"] ?: @[]) {
+    NSNumber *space = w[@"space"];
+    if (space.unsignedLongLongValue > 0) return space.unsignedLongLongValue;
+  }
+  return 0;
 }
 
 - (NSString *)runAppleScriptSource:(NSString *)source {
@@ -11328,10 +11413,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.layoutTable.rowHeight = 36;
     self.layoutTable.dataSource = self; self.layoutTable.delegate = self;
     sv.documentView = self.layoutTable; [cv addSubview:sv];
-    self.layoutAutoLaunchCheck = [NSButton checkboxWithTitle:@"恢复布局时自动启动缺失的应用" target:self action:nil];
+    self.layoutSpaceCheck = [NSButton checkboxWithTitle:@"实验性：按桌面恢复" target:self action:@selector(layoutSpaceToggled:)];
+    self.layoutSpaceCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerLayoutExperimentalSpace"] ? NSControlStateValueOn : NSControlStateValueOff;
+    self.layoutSpaceCheck.frame = NSMakeRect(16, 52, 190, 20);
+    self.layoutSpaceCheck.toolTip = @"使用 macOS 私有 API 记录和切换桌面；失败时自动回退";
+    [cv addSubview:self.layoutSpaceCheck];
+    self.layoutAutoLaunchCheck = [NSButton checkboxWithTitle:@"自动启动缺失应用" target:self action:nil];
     self.layoutAutoLaunchCheck.state = NSControlStateValueOn;
-    self.layoutAutoLaunchCheck.frame = NSMakeRect(16, 52, 300, 20); [cv addSubview:self.layoutAutoLaunchCheck];
-    self.layoutAXButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(322, 52, 150, 20)];
+    self.layoutAutoLaunchCheck.frame = NSMakeRect(212, 52, 160, 20); [cv addSubview:self.layoutAutoLaunchCheck];
+    self.layoutAXButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(392, 52, 170, 20)];
     self.layoutAXButton.title = @"窗口控制权限"; self.layoutAXButton.hoverColor = [NSColor systemOrangeColor];
     self.layoutAXButton.target = self; self.layoutAXButton.action = @selector(requestLayoutAccessibility:);
     [self.layoutAXButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
@@ -11362,6 +11452,23 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [NSApp activateIgnoringOtherApps:YES];
   [self.layoutWindow makeKeyAndOrderFront:nil];
   [self.layoutWindow orderFrontRegardless];
+}
+
+- (void)layoutSpaceToggled:(NSButton *)sender {
+  if (sender.state == NSControlStateValueOn && !DLPrivateSpaceAPIAvailable()) {
+    sender.state = NSControlStateValueOff;
+    [self showToast:@"当前 macOS 不支持私有桌面接口，已关闭"];
+    return;
+  }
+  if (sender.state == NSControlStateValueOn) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"启用实验性桌面恢复？";
+    a.informativeText = @"该功能使用 macOS 私有接口记录和切换桌面，可能在系统更新后失效，偶发导致桌面/Dock 异常。失败时会自动回退，不会修改文件。";
+    [a addButtonWithTitle:@"启用"];
+    [a addButtonWithTitle:@"取消"];
+    if ([a runModal] != NSAlertFirstButtonReturn) { sender.state = NSControlStateValueOff; return; }
+  }
+  [[NSUserDefaults standardUserDefaults] setBool:(sender.state == NSControlStateValueOn) forKey:@"centerLayoutExperimentalSpace"];
 }
 
 - (void)requestLayoutAccessibility:(id)sender {
@@ -11437,6 +11544,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSDictionary *layout = self.savedLayouts[name];
   NSArray *windows = layout[@"windows"] ?: @[];
   NSArray *appList = layout[@"apps"] ?: @[];
+  if (self.layoutSpaceCheck.state == NSControlStateValueOn && DLPrivateSpaceAPIAvailable()) {
+    uint64_t space = [self spaceIDForLayout:layout];
+    if (space > 0 && [self privateSwitchToSpaceID:space]) {
+      [self showToast:@"正在切换到保存的桌面…"];
+      [NSThread sleepForTimeInterval:0.4];
+    }
+  }
   if (!windows.count && !appList.count) { [self showToast:@"该布局没有记录"]; return; }
   NSDictionary *pages = layout[@"pages"] ?: @{};
   if (autoLaunch && pages.count) {
