@@ -659,6 +659,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSMutableArray *compressPaths;
 @property (strong) NSTextField *compressStatus, *compressListLabel;
 @property (strong) NSWindow *translationWindow;
+@property (strong) NSWindow *translationGlossaryWindow;
+@property (strong) NSTextView *translationGlossaryTextView;
 @property (strong) NSTextView *translationSourceView, *translationResultView;
 @property (strong) NSPopUpButton *translationProviderPopup, *translationTargetPopup;
 @property (strong) NSComboBox *translationModelField;
@@ -14782,12 +14784,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.translationSourceView.delegate = self;
     self.translationResultView = [self translationTextViewAtFrame:NSMakeRect(424, 140, 372, 276)];
 
-    NSArray *symbols = @[@"doc.badge.plus", @"doc.on.doc", @"square.and.arrow.down", @"keyboard"];
-    NSArray *tips = @[@"选择文档", @"复制译文", @"保存译文", @"快捷键设置"];
-    NSArray *details = @[@"支持 txt / md / pdf / docx / 图片", @"复制右侧译文到剪贴板", @"保存译文为 txt 文件", @"设置截图、划词、翻译的快捷键"];
-    NSArray *tSels = @[@"translationChooseDocument:", @"translationCopy:", @"translationSave:", @"openShortcutSettings:"];
-    CGFloat txs[4] = {560, 604, 648, 692};
-    for (NSInteger i = 0; i < 4; i++) {
+    NSArray *symbols = @[@"doc.badge.plus", @"doc.on.doc", @"square.and.arrow.down", @"keyboard", @"text.book.closed"];
+    NSArray *tips = @[@"选择文档", @"复制译文", @"保存译文", @"快捷键设置", @"术语表"];
+    NSArray *details = @[@"支持 txt / md / pdf / docx / 图片", @"复制右侧译文到剪贴板", @"保存译文为 txt 文件", @"设置截图、划词、翻译的快捷键", @"添加专有名词和固定译法，每行「原文=译文」"];
+    NSArray *tSels = @[@"translationChooseDocument:", @"translationCopy:", @"translationSave:", @"openShortcutSettings:", @"showTranslationGlossary:"];
+    CGFloat txs[5] = {560, 604, 648, 692, 734};
+    for (NSInteger i = 0; i < 5; i++) {
       ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(txs[i], 512, 38, 34)];
       b.title = @"";
       b.image = [NSImage imageWithSystemSymbolName:symbols[i] accessibilityDescription:tips[i]];
@@ -15333,8 +15335,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     return;
   }
   self.translationStatus.stringValue = [NSString stringWithFormat:@"正在翻译 %ld/%ld…", (long)(idx+1), (long)chunks.count];
+  NSMutableString *systemPrompt = [NSMutableString stringWithFormat:@"You are a professional translator. Translate the user's text into %@. Preserve Markdown, line breaks and formatting. Output only the translation.", target];
+  NSString *glossary = [self translationGlossaryContent];
+  if (glossary.length) [systemPrompt appendFormat:@"\nUse these terminology mappings exactly:\n%@", glossary];
   NSDictionary *body = @{@"model": model, @"temperature": @0.2, @"messages": @[
-    @{@"role": @"system", @"content": [NSString stringWithFormat:@"You are a professional translator. Translate the user's text into %@. Preserve Markdown, line breaks and formatting. Output only the translation.", target]},
+    @{@"role": @"system", @"content": systemPrompt},
     @{@"role": @"user", @"content": chunks[idx]}]};
   NSData *json = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
   NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[base stringByAppendingString:@"/chat/completions"]]];
@@ -15397,6 +15402,58 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.translationResultView.string = @"";
   [self translateChunks:chunks index:0 output:[NSMutableString string] base:cfg[@"base"] model:model key:key target:target];
 }
+
+- (NSString *)translationGlossaryPath {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:@"translation_glossary.txt"];
+}
+
+- (NSString *)translationGlossaryContent {
+  return [NSString stringWithContentsOfFile:[self translationGlossaryPath] encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+}
+
+- (void)showTranslationGlossary:(id)sender {
+  if (!self.translationGlossaryWindow) {
+    self.translationGlossaryWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,600,460) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.translationGlossaryWindow.title = @"翻译术语表";
+    self.translationGlossaryWindow.releasedWhenClosed = NO;
+    self.translationGlossaryWindow.level = NSNormalWindowLevel;
+    NSView *cv = self.translationGlossaryWindow.contentView;
+    NSTextField *title = [self label:@"翻译术语表" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 414, 300, 28); [cv addSubview:title];
+    NSTextField *hint = [self label:@"每行一条，格式：原文=译文；例如：Dock Launcher=程序坞启动器" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    hint.frame = NSMakeRect(20, 390, 560, 18); [cv addSubview:hint];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 72, 568, 304)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.translationGlossaryTextView = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+    self.translationGlossaryTextView.font = [NSFont systemFontOfSize:13];
+    self.translationGlossaryTextView.string = [self translationGlossaryContent];
+    sv.documentView = self.translationGlossaryTextView;
+    [cv addSubview:sv];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(424, 24, 100, 32)];
+    save.title = @"保存"; save.hoverColor = [NSColor systemGreenColor];
+    save.target = self; save.action = @selector(saveTranslationGlossary:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(484, 24, 100, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeTranslationGlossary:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.translationGlossaryWindow center];
+  }
+  self.translationGlossaryTextView.string = [self translationGlossaryContent];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.translationGlossaryWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)saveTranslationGlossary:(id)sender {
+  NSString *text = self.translationGlossaryTextView.string ?: @"";
+  [text writeToFile:[self translationGlossaryPath] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  self.translationStatus.stringValue = @"术语表已保存";
+  [self.translationGlossaryWindow orderOut:nil];
+}
+
+- (void)closeTranslationGlossary:(id)sender { [self.translationGlossaryWindow orderOut:nil]; }
 
 - (void)translationCopy:(id)sender {
   NSString *text = self.translationResultView.string;
