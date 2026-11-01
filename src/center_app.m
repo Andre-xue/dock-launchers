@@ -1027,6 +1027,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSStatusItem *mediaStatusItem;
 @property (strong) NSTimer *mediaPollTimer;
 @property (strong) NSDictionary *mediaNowPlaying;
+@property (strong) NSString *mediaArtworkKey;
+@property (strong) NSImage *mediaArtworkImage;
 @property (strong) NSString *mediaBundleID;
 @property NSInteger mediaPID;
 @property BOOL mediaPlaying;
@@ -1496,7 +1498,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *radialMediaTitleLabel, *radialMediaArtistLabel;
 @property (strong) NSView *radialPlayerPage;
 @property (strong) NSImageView *radialPlayerArt;
-@property (strong) NSButton *radialPlayerTitleButton, *radialPlayerPlayButton;
+@property (strong) NSButton *radialPlayerTitleButton, *radialPlayerPlayButton, *radialPlayerFavoriteButton;
 @property (strong) NSTextField *radialPlayerArtist, *radialPlayerTime;
 @property (strong) NSSlider *radialPlayerProgress;
 @property (strong) NSMutableSet *pinnedWindows;
@@ -2867,10 +2869,40 @@ static void HideDockHoverTip(void) {
   self.mediaUsingFallback = YES;
   self.mediaPlaying = YES;
   self.mediaBundleID = chosen[0];
-  self.mediaNowPlaying = @{@"kMRMediaRemoteNowPlayingInfoTitle": title ?: @"", @"kMRMediaRemoteNowPlayingInfoArtist": artist ?: @"", @"kMRMediaRemoteNowPlayingInfoElapsedTime": @(elapsed), @"kMRMediaRemoteNowPlayingInfoDuration": @(duration)};
+  NSMutableDictionary *np = [@{@"kMRMediaRemoteNowPlayingInfoTitle": title ?: @"", @"kMRMediaRemoteNowPlayingInfoArtist": artist ?: @"", @"kMRMediaRemoteNowPlayingInfoElapsedTime": @(elapsed), @"kMRMediaRemoteNowPlayingInfoDuration": @(duration)} mutableCopy];
+  if (self.mediaArtworkImage) np[@"kMRMediaRemoteNowPlayingInfoArtworkData"] = self.mediaArtworkImage;
+  self.mediaNowPlaying = np;
+  [self fetchFallbackArtworkIfNeeded:chosen[0] title:title artist:artist];
   NSRunningApplication *app = [[NSRunningApplication runningApplicationsWithBundleIdentifier:self.mediaBundleID] firstObject];
   self.mediaPID = app.processIdentifier;
   [self updateMediaStatusItem];
+}
+
+- (void)fetchFallbackArtworkIfNeeded:(NSString *)bundle title:(NSString *)title artist:(NSString *)artist {
+  if (![bundle isEqualToString:@"com.apple.Music"] || !title.length) return;
+  NSString *key = [NSString stringWithFormat:@"%@|%@|%@", bundle, title, artist ?: @""];
+  if ([key isEqualToString:self.mediaArtworkKey]) return;
+  self.mediaArtworkKey = key;
+  self.mediaArtworkImage = nil;
+  NSString *tmp = @"/tmp/docklaunchers-music-artwork.dat";
+  [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+  NSString *src = @"tell application \"Music\"\nif player state is playing then\ntry\nset artData to data of artwork 1 of current track\nset f to open for access POSIX file \"/tmp/docklaunchers-music-artwork.dat\" with write permission\nset eof f to 0\nwrite artData to f\nclose access f\nend try\nend if\nend tell";
+  __weak typeof(self) weakSelf = self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    [weakSelf runOsascript:src];
+    NSData *data = [NSData dataWithContentsOfFile:tmp];
+    NSImage *img = data.length > 128 ? [[NSImage alloc] initWithData:data] : nil;
+    if (!img) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (![weakSelf.mediaArtworkKey isEqualToString:key]) return;
+      weakSelf.mediaArtworkImage = img;
+      NSMutableDictionary *np = [weakSelf.mediaNowPlaying mutableCopy] ?: [NSMutableDictionary dictionary];
+      np[@"kMRMediaRemoteNowPlayingInfoArtworkData"] = data;
+      weakSelf.mediaNowPlaying = np;
+      [weakSelf updateMediaStatusItem];
+      if (weakSelf.radialPlayerPage && !weakSelf.radialPlayerPage.hidden) [weakSelf updateRadialPlayerPage];
+    });
+  });
 }
 
 - (void)sendFallbackCommand:(unsigned int)command {
@@ -2955,6 +2987,8 @@ static void HideDockHoverTip(void) {
   self.radialPlayerTitleButton.title = title;
   self.radialPlayerArtist.stringValue = artist;
   self.radialPlayerPlayButton.image = [NSImage imageWithSystemSymbolName:(self.mediaPlaying ? @"pause.fill" : @"play.fill") accessibilityDescription:nil];
+  self.radialPlayerFavoriteButton.image = [NSImage imageWithSystemSymbolName:(self.mediaFavoriteState ? @"heart.fill" : @"heart") accessibilityDescription:nil];
+  self.radialPlayerFavoriteButton.contentTintColor = self.mediaFavoriteState ? [NSColor systemPinkColor] : [NSColor secondaryLabelColor];
   NSData *artData = self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoArtworkData"];
   NSImage *img = [artData isKindOfClass:[NSData class]] ? [[NSImage alloc] initWithData:artData] : nil;
   self.radialPlayerArt.image = img ?: [self mediaPlaceholderArtwork:NO];
@@ -15619,37 +15653,54 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSClickGestureRecognizer *barClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openRadialPlayerPage:)];
     [mediaBar addGestureRecognizer:barClick];
 
-    NSView *playerPage = [[NSView alloc] initWithFrame:NSMakeRect(0,0,340,520)];
+    NSView *playerPage = [[NSView alloc] initWithFrame:NSMakeRect(8,8,324,504)];
     playerPage.wantsLayer = YES;
-    playerPage.layer.backgroundColor = [[NSColor windowBackgroundColor] colorWithAlphaComponent:0.97].CGColor;
-    playerPage.layer.cornerRadius = 14;
+    playerPage.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
+    playerPage.layer.cornerRadius = 20;
+    playerPage.layer.masksToBounds = YES;
     playerPage.hidden = YES;
-    NSButton *back = [NSButton buttonWithTitle:@"‹" target:self action:@selector(closeRadialPlayerPage:)];
-    back.frame = NSMakeRect(10, 480, 32, 30); back.bezelStyle = NSBezelStyleInline; back.font = [NSFont systemFontOfSize:24 weight:NSFontWeightLight];
+    NSButton *back = [NSButton buttonWithTitle:@"" target:self action:@selector(closeRadialPlayerPage:)];
+    back.frame = NSMakeRect(12, 464, 30, 28); back.bezelStyle = NSBezelStyleInline;
+    back.image = [NSImage imageWithSystemSymbolName:@"chevron.left" accessibilityDescription:nil];
+    back.imageScaling = NSImageScaleProportionallyDown; back.contentTintColor = [NSColor labelColor];
     [playerPage addSubview:back];
-    NSButton *pplist = [NSButton buttonWithTitle:@"播放列表" target:self action:@selector(showMediaPlaylistMenuFromButton:)];
-    pplist.frame = NSMakeRect(190, 484, 76, 24); pplist.bezelStyle = NSBezelStyleRounded; pplist.font = [NSFont systemFontOfSize:10];
+    NSTextField *playingLabel = [self label:@"正在播放" size:10 bold:YES color:[NSColor secondaryLabelColor]];
+    playingLabel.frame = NSMakeRect(120, 470, 84, 16); playingLabel.alignment = NSTextAlignmentCenter;
+    [playerPage addSubview:playingLabel];
+    NSButton *pplist = [self mediaIconButton:@"list.bullet" action:@selector(showMediaPlaylistMenuFromButton:) frame:NSMakeRect(274, 466, 28, 24)];
     [playerPage addSubview:pplist];
-    NSButton *pplayers = [self mediaIconButton:@"gearshape.fill" action:@selector(showMediaPlayersMenuFromButton:) frame:NSMakeRect(276, 484, 28, 24)];
+    NSButton *pplayers = [self mediaIconButton:@"airplayaudio" action:@selector(showMediaPlayersMenuFromButton:) frame:NSMakeRect(242, 466, 28, 24)];
     [playerPage addSubview:pplayers];
 
-    NSImageView *part = [[NSImageView alloc] initWithFrame:NSMakeRect(28, 180, 284, 284)];
-    part.imageScaling = NSImageScaleProportionallyUpOrDown; part.wantsLayer = YES; part.layer.cornerRadius = 14; part.layer.masksToBounds = YES;
+    NSImageView *part = [[NSImageView alloc] initWithFrame:NSMakeRect(42, 190, 240, 240)];
+    part.imageScaling = NSImageScaleProportionallyUpOrDown; part.wantsLayer = YES; part.layer.cornerRadius = 16; part.layer.masksToBounds = YES;
+    part.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.15 alpha:1].CGColor;
     [playerPage addSubview:part];
     NSButton *ptitle = [NSButton buttonWithTitle:@"" target:self action:@selector(openCurrentMediaPlayer:)];
-    ptitle.frame = NSMakeRect(24, 140, 292, 30); ptitle.bezelStyle = NSBezelStyleInline; ptitle.bordered = NO; ptitle.alignment = NSTextAlignmentLeft; ptitle.font = [NSFont systemFontOfSize:19 weight:NSFontWeightBold];
+    ptitle.frame = NSMakeRect(22, 150, 280, 30); ptitle.bezelStyle = NSBezelStyleInline; ptitle.bordered = NO; ptitle.alignment = NSTextAlignmentCenter; ptitle.font = [NSFont systemFontOfSize:18 weight:NSFontWeightBold];
+    ptitle.lineBreakMode = NSLineBreakByTruncatingTail;
     [playerPage addSubview:ptitle];
     NSTextField *partist = [self label:@"" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-    partist.frame = NSMakeRect(24, 120, 292, 18); [playerPage addSubview:partist];
-    NSSlider *pprog = [[NSSlider alloc] initWithFrame:NSMakeRect(24, 94, 292, 18)];
+    partist.frame = NSMakeRect(22, 130, 280, 18); partist.alignment = NSTextAlignmentCenter; [playerPage addSubview:partist];
+    NSSlider *pprog = [[NSSlider alloc] initWithFrame:NSMakeRect(24, 100, 276, 18)];
     pprog.enabled = NO; pprog.minValue = 0; pprog.maxValue = 1; [playerPage addSubview:pprog];
     NSTextField *ptime = [self label:@"0:00 / 0:00" size:9 bold:NO color:[NSColor secondaryLabelColor]];
-    ptime.frame = NSMakeRect(24, 76, 292, 14); [playerPage addSubview:ptime];
-    NSButton *pprev = [self mediaIconButton:@"backward.fill" action:@selector(mediaPreviousTrack:) frame:NSMakeRect(88, 22, 38, 34)];
-    NSButton *pplay = [self mediaIconButton:@"play.fill" action:@selector(mediaTogglePlayPause:) frame:NSMakeRect(148, 18, 42, 42)];
-    NSButton *pnext = [self mediaIconButton:@"forward.fill" action:@selector(mediaNextTrack:) frame:NSMakeRect(212, 22, 38, 34)];
-    [playerPage addSubview:pprev]; [playerPage addSubview:pplay]; [playerPage addSubview:pnext];
+    ptime.frame = NSMakeRect(24, 82, 276, 14); ptime.alignment = NSTextAlignmentCenter; [playerPage addSubview:ptime];
+    NSButton *pprev = [self mediaIconButton:@"backward.fill" action:@selector(mediaPreviousTrack:) frame:NSMakeRect(80, 34, 36, 32)];
+    NSButton *pplay = [self mediaIconButton:@"play.fill" action:@selector(mediaTogglePlayPause:) frame:NSMakeRect(138, 26, 48, 48)];
+    pplay.bezelStyle = NSBezelStyleCircular; pplay.contentTintColor = [NSColor systemBlueColor];
+    NSButton *pnext = [self mediaIconButton:@"forward.fill" action:@selector(mediaNextTrack:) frame:NSMakeRect(206, 34, 36, 32)];
+    NSButton *pfav = [self mediaIconButton:@"heart" action:@selector(toggleMediaFavorite:) frame:NSMakeRect(268, 34, 32, 32)];
+    [playerPage addSubview:pprev]; [playerPage addSubview:pplay]; [playerPage addSubview:pnext]; [playerPage addSubview:pfav];
     [root addSubview:playerPage];
+    self.radialPlayerPage = playerPage;
+    self.radialPlayerArt = part;
+    self.radialPlayerTitleButton = ptitle;
+    self.radialPlayerArtist = partist;
+    self.radialPlayerProgress = pprog;
+    self.radialPlayerTime = ptime;
+    self.radialPlayerPlayButton = pplay;
+    self.radialPlayerFavoriteButton = pfav;
     self.radialPlayerPage = playerPage;
     self.radialPlayerArt = part;
     self.radialPlayerTitleButton = ptitle;
