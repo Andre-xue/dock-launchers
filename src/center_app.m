@@ -5297,6 +5297,31 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showToast:@"已恢复 AI 数据历史版本，恢复前状态已自动保存"];
 }
 
+- (void)showAIKeyFilePicker:(id)sender {
+  [self loadAIEntries];
+  if (!self.aiEntries.count) { [self showToast:@"暂无 AI 服务"]; return; }
+  NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,0,320,28) pullsDown:NO];
+  for (NSDictionary *e in self.aiEntries) [popup addItemWithTitle:e[@"name"] ?: @"未命名"];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"定位 API Key 文件";
+  a.informativeText = @"选择 AI 服务，验证应用密码后在 Finder 中显示本地 ai_keys.json。";
+  a.accessoryView = popup;
+  [a addButtonWithTitle:@"继续"];
+  [a addButtonWithTitle:@"取消"];
+  a.window.level = NSStatusWindowLevel + 2;
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSInteger idx = popup.indexOfSelectedItem;
+  if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
+  NSDictionary *entry = self.aiEntries[idx];
+  NSString *kid = entry[@"kid"] ?: @"";
+  if (!kid.length || !AIKeychainGet(kid).length) { [self showToast:@"该服务没有保存 API Key"]; return; }
+  if (![self requestAdminAuthentication]) return;
+  NSString *path = AIKeysFilePath();
+  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) { [self showToast:@"密钥文件不存在"]; return; }
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];
+  [self showToast:@"已在 Finder 中定位密钥文件"];
+}
+
 - (void)buildAIView {
   AIDropView *v = [[AIDropView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   v.dropTarget = self;
@@ -5305,6 +5330,12 @@ static BOOL ValidGroupName(NSString *raw) {
   h.frame = NSMakeRect(24, 606, 300, 30); [v addSubview:h];
   NSTextField *sub = [self label:@"集中管理 AI 服务、API 地址与密钥；敏感操作使用应用密码" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(24, 584, 500, 18); [v addSubview:sub];
+  ColorHoverButton *keyFileBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(600, 598, 126, 28)];
+  keyFileBtn.title = @"历史 Key…"; keyFileBtn.hoverColor = [NSColor systemTealColor];
+  keyFileBtn.target = self; keyFileBtn.action = @selector(showAIKeyFilePicker:);
+  keyFileBtn.toolTip = @"选择 AI 服务，验证应用密码后定位本地密钥文件";
+  [keyFileBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:keyFileBtn];
 
   [self loadAIEntries];
   ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 540, 120, 30)];
