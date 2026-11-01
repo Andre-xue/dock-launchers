@@ -13,6 +13,7 @@
 #import <CoreServices/CoreServices.h>
 #import <dlfcn.h>
 #import <IOKit/IOKitLib.h>
+#import <IOKit/hidsystem/ev_keymap.h>
 #import <ImageIO/ImageIO.h>
 #import <QuickLookThumbnailing/QuickLookThumbnailing.h>
 #import <Photos/Photos.h>
@@ -2814,7 +2815,7 @@ static void HideDockHoverTip(void) {
 - (void)mediaWorkspaceActivated:(NSNotification *)note {
   NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
   NSString *bundle = app.bundleIdentifier ?: @"";
-  NSArray *known = @[@"com.apple.Music", @"com.spotify.client", @"com.apple.QuickTimePlayerX", @"com.colliderli.iina", @"org.videolan.vlc", @"com.apple.TV"];
+  NSArray *known = @[@"com.apple.Music", @"com.spotify.client", @"com.apple.QuickTimePlayerX", @"com.colliderli.iina", @"org.videolan.vlc", @"com.apple.TV", @"com.netease.163music", @"com.tencent.QQMusic", @"com.tencent.qqmusic", @"com.soda.music"];
   if ([known containsObject:bundle]) {
     self.mediaLastActiveBundle = bundle;
     if (self.mediaUsingFallback) [self pollFallbackMedia];
@@ -2908,7 +2909,26 @@ static void HideDockHoverTip(void) {
   });
 }
 
+static void DLPostMediaKeyEvent(int key, BOOL down) {
+  NSEvent *e = [NSEvent otherEventWithType:NSEventTypeSystemDefined location:NSZeroPoint modifierFlags:(NSEventModifierFlags)0xa00 timestamp:0 windowNumber:0 context:nil subtype:8 data1:((key << 16) | ((down ? 0xa : 0xb) << 8)) data2:-1];
+  if (e.CGEvent) CGEventPost(kCGHIDEventTap, e.CGEvent);
+}
+
 - (void)sendFallbackCommand:(unsigned int)command {
+  if (![self.mediaBundleID isEqualToString:@"com.apple.Music"] &&
+      ![self.mediaBundleID isEqualToString:@"com.spotify.client"] &&
+      ![self.mediaBundleID isEqualToString:@"com.apple.QuickTimePlayerX"]) {
+    int key = 0;
+    if (command == 0 || command == 1 || command == 2) key = NX_KEYTYPE_PLAY;
+    else if (command == 4) key = NX_KEYTYPE_NEXT;
+    else if (command == 5) key = NX_KEYTYPE_PREVIOUS;
+    if (key) {
+      DLPostMediaKeyEvent(key, YES);
+      usleep(30000);
+      DLPostMediaKeyEvent(key, NO);
+    }
+    return;
+  }
   NSString *bundle = self.mediaBundleID;
   if ([bundle isEqualToString:@"com.apple.QuickTimePlayerX"]) {
     NSString *act = command == 1 ? @"pause document 1" : @"play document 1";
@@ -3271,7 +3291,7 @@ static void HideDockHoverTip(void) {
 
 - (NSMenu *)mediaPlayersMenu {
   NSMenu *playersMenu = [[NSMenu alloc] initWithTitle:@"切换播放器"];
-  NSArray *known = @[@"com.apple.Music", @"com.spotify.client", @"com.apple.QuickTimePlayerX", @"com.colliderli.iina", @"org.videolan.vlc", @"com.apple.TV"];
+  NSArray *known = @[@"com.apple.Music", @"com.spotify.client", @"com.apple.QuickTimePlayerX", @"com.colliderli.iina", @"org.videolan.vlc", @"com.apple.TV", @"com.netease.163music", @"com.tencent.QQMusic", @"com.tencent.qqmusic", @"com.soda.music"];
   NSMutableSet *seen = [NSMutableSet set];
   for (NSString *bundle in known) {
     NSRunningApplication *app = [[NSRunningApplication runningApplicationsWithBundleIdentifier:bundle] firstObject];
@@ -3426,7 +3446,7 @@ static void HideDockHoverTip(void) {
   [menu addItem:playlistItem];
   NSMenuItem *playersItem = [[NSMenuItem alloc] initWithTitle:@"切换播放器" action:nil keyEquivalent:@""];
   NSMenu *playersMenu = [[NSMenu alloc] initWithTitle:@"切换播放器"];
-  NSArray *known = @[@"com.apple.Music", @"com.spotify.client", @"com.apple.QuickTimePlayerX", @"com.colliderli.iina", @"org.videolan.vlc", @"com.apple.TV"];
+  NSArray *known = @[@"com.apple.Music", @"com.spotify.client", @"com.apple.QuickTimePlayerX", @"com.colliderli.iina", @"org.videolan.vlc", @"com.apple.TV", @"com.netease.163music", @"com.tencent.QQMusic", @"com.tencent.qqmusic", @"com.soda.music"];
   NSMutableSet *seen = [NSMutableSet set];
   for (NSString *bundle in known) {
     NSArray *running = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundle];
