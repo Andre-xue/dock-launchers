@@ -15809,12 +15809,25 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (NSString *)resolveApplicationPathForName:(NSString *)name {
   if (!name.length) return nil;
-  NSString *base = name;
+  NSString *trimmed = [name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!trimmed.length) return nil;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  if ([trimmed isAbsolutePath] && [fm fileExistsAtPath:trimmed]) return trimmed;
+  NSString *base = trimmed;
   if (![base hasSuffix:@".app"]) base = [base stringByAppendingPathExtension:@"app"];
-  NSArray *dirs = @[@"/Applications", @"/System/Applications", [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"]];
+  NSArray *dirs = @[@"/Applications",
+                    @"/Applications/Utilities",
+                    @"/System/Applications",
+                    @"/System/Applications/Utilities",
+                    [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"],
+                    [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/Utilities"]];
   for (NSString *d in dirs) {
     NSString *p = [d stringByAppendingPathComponent:base];
-    if ([[NSFileManager defaultManager] fileExistsAtPath:p]) return p;
+    if ([fm fileExistsAtPath:p]) return p;
+  }
+  if ([trimmed containsString:@"."]) {
+    NSURL *u = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:trimmed];
+    if (u.path.length && [fm fileExistsAtPath:u.path]) return u.path;
   }
   return nil;
 }
@@ -15845,8 +15858,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     for (NSString *line in [body componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
       if (!line.length) continue;
       NSArray *parts = [line componentsSeparatedByString:@"|"];
-      NSString *name = parts.firstObject;
-      NSString *path = [self resolveApplicationPathForName:name];
+      NSString *name = [parts.firstObject stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+      NSString *target = parts.count > 1 ? [parts[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : name;
+      NSString *path = [self resolveApplicationPathForName:target];
+      if (!path) path = [self resolveApplicationPathForName:name];
       if (!path || [seenGroupApps containsObject:path]) continue;
       [seenGroupApps addObject:path];
       NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
