@@ -2920,7 +2920,7 @@ static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
   __weak typeof(self) weakSelf = self;
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
     CGWindowID winID = 0; NSRect winRect = NSZeroRect;
-    CFArrayRef wins = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+    CFArrayRef wins = CGWindowListCopyWindowInfo(kCGWindowListOptionAll | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
     for (NSDictionary *w in (__bridge NSArray *)wins) {
       NSNumber *owner = w[(__bridge NSString *)kCGWindowOwnerPID];
       if (!owner || ![pids containsObject:owner]) continue;
@@ -2937,6 +2937,20 @@ static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
     if (!winID) return;
     DLCGWindowListCreateImageFn shotFn = DLCGWindowImage();
     CGImageRef shot = shotFn ? shotFn(CGRectNull, kCGWindowListOptionIncludingWindow, winID, kCGWindowImageBoundsIgnoreFraming) : NULL;
+    if (!shot) {
+      NSString *tmpShot = [NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-ocr-window.png"];
+      [[NSFileManager defaultManager] removeItemAtPath:tmpShot error:NULL];
+      NSTask *sc = [[NSTask alloc] init];
+      sc.launchPath = @"/usr/sbin/screencapture";
+      sc.arguments = @[@"-x", @"-l", [NSString stringWithFormat:@"%u", winID], tmpShot];
+      @try { [sc launch]; [sc waitUntilExit]; } @catch (NSException *e) {}
+      NSImage *si = [[NSImage alloc] initWithContentsOfFile:tmpShot];
+      if (si) {
+        NSRect ir = NSMakeRect(0,0,si.size.width,si.size.height);
+        CGImageRef siCG = [si CGImageForProposedRect:&ir context:nil hints:nil];
+        if (siCG) shot = CGImageRetain(siCG);
+      }
+    }
     if (!shot) return;
     VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
     req.recognitionLanguages = @[@"zh-Hans", @"en-US"];
