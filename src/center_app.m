@@ -721,6 +721,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) id clipboardHoverMonitor;
 @property NSInteger clipboardPreviewRow;
 @property (strong) NSSearchField *clipboardSearch;
+@property (strong) NSRunningApplication *clipboardPreviousApp;
 @property BOOL clipboardFavoritesOnly;
 @property (strong) NSPopUpButton *clipboardDaysPopup;
 @property (strong) ColorHoverButton *processMetricButton;
@@ -4863,6 +4864,54 @@ static BOOL ValidGroupName(NSString *raw) {
   [self updateClipboardSelectAllState];
 }
 
+- (NSDictionary *)clipboardSelectedItem {
+  NSInteger row = self.clipboardTable.clickedRow;
+  if (row < 0) row = self.clipboardTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return nil;
+  return self.clipboardVisibleItems[row];
+}
+
+- (void)copyClipboardRow:(id)sender {
+  NSDictionary *it = [self clipboardSelectedItem];
+  if (!it) return;
+  NSPasteboard *pb = [NSPasteboard generalPasteboard];
+  [pb clearContents];
+  if ([it[@"kind"] isEqualToString:@"image"]) {
+    NSString *path = [[self clipboardImagesDir] stringByAppendingPathComponent:it[@"file"] ?: @""];
+    NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+    if (img) [pb writeObjects:@[img]];
+  } else {
+    [pb setString:it[@"text"] ?: @"" forType:NSPasteboardTypeString];
+  }
+  [self showToast:@"已复制到剪贴板"];
+}
+
+- (void)pasteClipboardToPreviousApp:(id)sender {
+  NSDictionary *it = [self clipboardSelectedItem];
+  if (!it) return;
+  [self copyClipboardRow:nil];
+  NSRunningApplication *target = self.clipboardPreviousApp;
+  [self.clipboardWindow orderOut:nil];
+  if (!target || target.terminated) {
+    [self showToast:@"已复制，请到目标应用按 ⌘V"];
+    return;
+  }
+  [target activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (!AXIsProcessTrusted()) { [self showToast:@"已复制；粘贴需要开启设备控制权限"]; return; }
+    CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    CGEventRef down = CGEventCreateKeyboardEvent(src, (CGKeyCode)9, true);
+    CGEventRef up = CGEventCreateKeyboardEvent(src, (CGKeyCode)9, false);
+    CGEventSetFlags(down, kCGEventFlagMaskCommand);
+    CGEventSetFlags(up, kCGEventFlagMaskCommand);
+    CGEventPost(kCGHIDEventTap, down);
+    CGEventPost(kCGHIDEventTap, up);
+    if (down) CFRelease(down);
+    if (up) CFRelease(up);
+    if (src) CFRelease(src);
+  });
+}
+
 - (void)clipboardSearchChanged:(id)sender { [self reloadClipboardVisibleItems]; }
 
 - (NSInteger)clipboardRetentionDays {
@@ -4996,6 +5045,13 @@ static BOOL ValidGroupName(NSString *raw) {
     self.clipboardTable.target = self;
     self.clipboardTable.action = @selector(copyClipboardRow:);
     self.clipboardTable.doubleAction = @selector(copyClipboardRow:);
+    NSMenu *clipMenu = [[NSMenu alloc] initWithTitle:@"剪贴板"];
+    [clipMenu addItemWithTitle:@"复制" action:@selector(copyClipboardRow:) keyEquivalent:@""].target = self;
+    [clipMenu addItemWithTitle:@"粘贴到上一个应用" action:@selector(pasteClipboardToPreviousApp:) keyEquivalent:@""].target = self;
+    [clipMenu addItem:[NSMenuItem separatorItem]];
+    [clipMenu addItemWithTitle:@"收藏 / 取消收藏" action:@selector(toggleClipboardFavorite:) keyEquivalent:@""].target = self;
+    [clipMenu addItemWithTitle:@"删除选中" action:@selector(deleteClipboardSelected:) keyEquivalent:@""].target = self;
+    self.clipboardTable.menu = clipMenu;
     sv.documentView = self.clipboardTable;
     [cv addSubview:sv];
     self.clipboardPauseBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(14, 22, 92, 30)];
