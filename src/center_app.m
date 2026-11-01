@@ -766,6 +766,12 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *clipboardSaveWindow;
 @property (strong) NSColorSampler *colorSampler;
 @property (strong) NSWindow *colorWindow;
+@property (strong) NSWindow *fileSearchWindow;
+@property (strong) NSSearchField *fileSearchField;
+@property (strong) NSTableView *fileSearchTable;
+@property (strong) NSArray *fileSearchItems;
+@property (strong) NSTask *fileSearchTask;
+@property NSInteger fileSearchGeneration;
 @property (strong) NSView *colorSwatch;
 @property (strong) NSTextField *colorHexLabel;
 @property (strong) NSColor *pickedColor;
@@ -8571,6 +8577,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.dupTable) return self.dupItems.count;
+  if (tableView == self.fileSearchTable) return self.fileSearchItems.count;
   if (tableView == self.imageToolTable) return self.imageToolItems.count;
   if (tableView == self.pdfTable) return self.pdfItems.count;
   if (tableView == self.batchRenameTable) return self.batchRenamePreview.count;
@@ -8620,6 +8627,21 @@ static BOOL ValidGroupName(NSString *raw) {
       link.bordered = NO; link.tag = row; link.alignment = NSTextAlignmentLeft;
       link.font = [NSFont systemFontOfSize:9.5]; link.contentTintColor = [NSColor controlAccentColor];
       link.frame = NSMakeRect(4, 5, col.width - 8, 22); [v addSubview:link];
+    }
+    return v;
+  }
+  if (tableView == self.fileSearchTable) {
+    if (row < 0 || row >= (NSInteger)self.fileSearchItems.count) return nil;
+    NSString *path = self.fileSearchItems[row];
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,30)];
+    if ([col.identifier isEqualToString:@"fname"]) {
+      NSTextField *l = [self label:path.lastPathComponent size:11 bold:YES color:nil];
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.frame = NSMakeRect(4, 6, col.width - 8, 18); [v addSubview:l];
+    } else {
+      NSTextField *l = [self label:path.stringByDeletingLastPathComponent size:10 bold:NO color:[NSColor secondaryLabelColor]];
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.frame = NSMakeRect(4, 6, col.width - 8, 18); [v addSubview:l];
     }
     return v;
   }
@@ -15986,6 +16008,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @[@"磁盘分析", @"工具 · 浏览磁盘文件", @"disk", @"internaldrive", @6],
     @[@"应用搜索", @"工具 · 搜索并打开应用", @"appsearch", @"magnifyingglass", @6],
     @[@"屏幕取色器", @"工具 · 拾取屏幕颜色并复制色值", @"color", @"eyedropper", @6],
+    @[@"文件搜索", @"工具 · 按文件名搜索本机文件", @"filesearch", @"doc.text.magnifyingglass", @6],
     @[@"打开控制台", @"控制台 · 显示主窗口", @"console", @"macwindow", @3]
   ];
   for (NSArray *t in entries) {
@@ -16027,9 +16050,103 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"appsearch"]) [self showAppSearch:nil];
     else if ([tool isEqualToString:@"aimgmt"]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; }
     else if ([tool isEqualToString:@"color"]) [self showColorSampler:nil];
+    else if ([tool isEqualToString:@"filesearch"]) [self showFileSearch:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
 }
+
+- (void)showFileSearch:(id)sender {
+  if (!self.fileSearchWindow) {
+    self.fileSearchWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.fileSearchWindow.title = @"文件搜索";
+    self.fileSearchWindow.releasedWhenClosed = NO;
+    self.fileSearchWindow.level = NSNormalWindowLevel;
+    NSView *cv = self.fileSearchWindow.contentView;
+    NSTextField *title = [self label:@"文件搜索" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"输入文件名，搜索本机 Spotlight 索引；双击打开，右键定位" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 448, 600, 18); [cv addSubview:sub];
+    self.fileSearchField = [[NSSearchField alloc] initWithFrame:NSMakeRect(20, 406, 680, 32)];
+    self.fileSearchField.placeholderString = @"搜索文件名";
+    self.fileSearchField.target = self; self.fileSearchField.action = @selector(fileSearchChanged:);
+    [self.fileSearchField setContinuous:YES];
+    [cv addSubview:self.fileSearchField];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 56, 688, 336)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.fileSearchTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"fname", @"文件", @260.0], @[@"fpath", @"路径", @400.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.fileSearchTable addTableColumn:col];
+    }
+    self.fileSearchTable.rowHeight = 30;
+    self.fileSearchTable.dataSource = self; self.fileSearchTable.delegate = self;
+    self.fileSearchTable.target = self;
+    self.fileSearchTable.doubleAction = @selector(openFileSearchRow:);
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"文件"];
+    [menu addItemWithTitle:@"打开" action:@selector(openFileSearchRow:) keyEquivalent:@""].target = self;
+    [menu addItemWithTitle:@"在 Finder 中显示" action:@selector(revealFileSearchRow:) keyEquivalent:@""].target = self;
+    self.fileSearchTable.menu = menu;
+    sv.documentView = self.fileSearchTable; [cv addSubview:sv];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(600, 16, 100, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeFileSearch:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.fileSearchWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.fileSearchWindow makeKeyAndOrderFront:nil];
+  [self.fileSearchWindow makeFirstResponder:self.fileSearchField];
+}
+
+- (void)fileSearchChanged:(id)sender {
+  NSString *query = [self.fileSearchField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  self.fileSearchGeneration++;
+  NSInteger gen = self.fileSearchGeneration;
+  if (self.fileSearchTask && self.fileSearchTask.isRunning) [self.fileSearchTask terminate];
+  if (!query.length) { self.fileSearchItems = @[]; [self.fileSearchTable reloadData]; return; }
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (gen != self.fileSearchGeneration) return;
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/bin/mdfind";
+    t.arguments = @[@"-onlyin", NSHomeDirectory(), @"-name", query];
+    NSPipe *pipe = [NSPipe pipe]; t.standardOutput = pipe; t.standardError = [NSPipe pipe];
+    self.fileSearchTask = t;
+    @try { [t launch]; } @catch (NSException *e) { return; }
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
+      [t waitUntilExit];
+      NSString *out = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+      NSMutableArray *paths = [NSMutableArray array];
+      for (NSString *line in [out componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+        if (line.length) [paths addObject:line];
+        if (paths.count >= 300) break;
+      }
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (gen != self.fileSearchGeneration) return;
+        self.fileSearchItems = paths;
+        [self.fileSearchTable reloadData];
+      });
+    });
+  });
+}
+
+- (void)openFileSearchRow:(id)sender {
+  NSInteger row = self.fileSearchTable.selectedRow;
+  if (row < 0) row = self.fileSearchTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.fileSearchItems.count) return;
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.fileSearchItems[row]]];
+}
+
+- (void)revealFileSearchRow:(id)sender {
+  NSInteger row = self.fileSearchTable.selectedRow;
+  if (row < 0) row = self.fileSearchTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.fileSearchItems.count) return;
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.fileSearchItems[row]]]];
+}
+
+- (void)closeFileSearch:(id)sender { [self.fileSearchWindow orderOut:nil]; }
 
 - (void)showColorSampler:(id)sender {
   [self showToast:@"点击屏幕任意位置取色"];
