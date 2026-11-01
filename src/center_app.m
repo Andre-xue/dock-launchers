@@ -775,6 +775,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
 @property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup;
+@property (strong) ColorHoverButton *captureRecordButton;
+@property BOOL captureRecording;
 @property (strong) NSButton *captureCopyCheck;
 @property (strong) NSTableView *groupPanelTable;
 @property (strong) NSArray *groupPanelItems;
@@ -16329,15 +16331,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureCopyCheck = [NSButton checkboxWithTitle:@"截图后复制到剪贴板" target:nil action:nil];
     self.captureCopyCheck.state = NSControlStateValueOn;
     self.captureCopyCheck.frame = NSMakeRect(184, 266, 190, 22); [cv addSubview:self.captureCopyCheck];
-    ColorHoverButton *record = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 204, 120, 38)];
-    record.title = @"开始录屏"; record.hoverColor = [NSColor systemRedColor];
-    record.target = self; record.action = @selector(captureVideo:);
-    [record applyColor:[NSColor systemRedColor] textColor:[NSColor whiteColor]]; [cv addSubview:record];
+    self.captureRecordButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 204, 120, 38)];
+    self.captureRecordButton.title = @"开始录屏"; self.captureRecordButton.hoverColor = [NSColor systemRedColor];
+    self.captureRecordButton.target = self; self.captureRecordButton.action = @selector(captureVideo:);
+    [self.captureRecordButton applyColor:[NSColor systemRedColor] textColor:[NSColor whiteColor]]; [cv addSubview:self.captureRecordButton];
     NSTextField *vl = [self label:@"录制时长" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     vl.frame = NSMakeRect(156, 216, 60, 18); [cv addSubview:vl];
     self.captureDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(220, 208, 100, 26) pullsDown:NO];
-    NSArray *durations = @[@10, @30, @60, @120];
-    for (NSNumber *d in durations) { [self.captureDurationPopup addItemWithTitle:[NSString stringWithFormat:@"%@ 秒", d]]; self.captureDurationPopup.lastItem.representedObject = d; }
+    NSArray *durations = @[@10, @30, @60, @120, @0];
+    for (NSNumber *d in durations) {
+      NSString *t = [d integerValue] > 0 ? [NSString stringWithFormat:@"%@ 秒", d] : @"手动停止";
+      [self.captureDurationPopup addItemWithTitle:t];
+      self.captureDurationPopup.lastItem.representedObject = d;
+    }
     [self.captureDurationPopup selectItemAtIndex:1];
     [cv addSubview:self.captureDurationPopup];
     ColorHoverButton *folder = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(340, 204, 140, 38)];
@@ -16441,17 +16447,31 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)captureVideo:(id)sender {
+  if (self.captureRecording) {
+    [self.captureTask interrupt];
+    self.captureStatusLabel.stringValue = @"正在停止录屏…";
+    return;
+  }
   if (self.captureTask && self.captureTask.isRunning) { [self showToast:@"正在录制中"]; return; }
   NSInteger seconds = [self.captureDurationPopup.selectedItem.representedObject integerValue];
   NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mov", [self captureTimestamp]]];
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = @"/usr/sbin/screencapture";
-  t.arguments = @[@"-v", @"-V", [NSString stringWithFormat:@"%ld", (long)seconds], path];
+  NSMutableArray *args = [NSMutableArray arrayWithObject:@"-v"];
+  if (seconds > 0) [args addObjectsFromArray:@[@"-V", [NSString stringWithFormat:@"%ld", (long)seconds]]];
+  [args addObject:path];
+  t.arguments = args;
   self.captureTask = t;
-  self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"正在录制，%ld 秒后自动停止…", (long)seconds];
+  self.captureRecording = YES;
+  self.captureRecordButton.title = @"停止录屏";
+  self.captureRecordButton.hoverColor = [NSColor systemOrangeColor];
+  self.captureStatusLabel.stringValue = seconds > 0 ? [NSString stringWithFormat:@"正在录制，%ld 秒后自动停止…", (long)seconds] : @"正在录制，点「停止录屏」结束";
   t.terminationHandler = ^(NSTask *task) {
     dispatch_async(dispatch_get_main_queue(), ^{
-      if (task.terminationStatus == 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+      self.captureRecording = NO;
+      self.captureRecordButton.title = @"开始录屏";
+      self.captureRecordButton.hoverColor = [NSColor systemRedColor];
+      if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
         self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
         [self showToast:@"录屏已保存"];
       } else {
@@ -16459,7 +16479,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       }
     });
   };
-  @try { [t launch]; } @catch (NSException *e) { self.captureStatusLabel.stringValue = @"无法启动录屏"; }
+  @try { [t launch]; } @catch (NSException *e) { self.captureRecording = NO; self.captureRecordButton.title = @"开始录屏"; self.captureStatusLabel.stringValue = @"无法启动录屏"; }
 }
 
 - (void)showGroupPanel:(id)sender {
