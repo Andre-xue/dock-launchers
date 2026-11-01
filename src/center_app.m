@@ -10121,6 +10121,11 @@ static BOOL ValidGroupName(NSString *raw) {
     [cv addSubview:sv];
     NSTextField *hint = [self label:@"" size:10.5 bold:NO color:[NSColor tertiaryLabelColor]];
     hint.frame = NSMakeRect(18, 48, 610, 18); hint.identifier = @"usageHint"; [cv addSubview:hint];
+    ColorHoverButton *exportCSV = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(402, 14, 108, 30)];
+    exportCSV.title = @"导出 CSV"; exportCSV.hoverColor = [NSColor systemGreenColor];
+    exportCSV.target = self; exportCSV.action = @selector(exportUsageCSV:);
+    [exportCSV applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:exportCSV];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(520, 14, 100, 30)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeUsageStats:);
@@ -10137,6 +10142,30 @@ static BOOL ValidGroupName(NSString *raw) {
   [NSApp activateIgnoringOtherApps:YES];
   [self.usageWindow makeKeyAndOrderFront:nil];
   [self.usageWindow orderFrontRegardless];
+}
+
+- (void)exportUsageCSV:(id)sender {
+  if (!self.usageRows.count) { [self showToast:@"暂无使用统计数据"]; return; }
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  sp.nameFieldStringValue = @"DockLaunchers-使用统计.csv";
+  sp.allowedFileTypes = @[@"csv"];
+  if ([sp runModal] != NSModalResponseOK) return;
+  NSDateFormatter *df = [[NSDateFormatter alloc] init];
+  df.dateFormat = @"yyyy-MM-dd HH:mm:ss";
+  NSMutableString *csv = [NSMutableString stringWithString:@"应用,启动次数,最近使用,所在分组\n"];
+  for (NSDictionary *r in self.usageRows) {
+    NSNumber *last = r[@"last"];
+    NSString *lastText = @"";
+    if ([last doubleValue] > 0) lastText = [df stringFromDate:[NSDate dateWithTimeIntervalSince1970:last.doubleValue]];
+    NSString *name = [r[@"label"] stringByReplacingOccurrencesOfString:@"," withString:@"，"];
+    NSString *group = [(r[@"group"] ?: @"") stringByReplacingOccurrencesOfString:@"," withString:@"，"];
+    [csv appendFormat:@"%@,%@,%@,%@\n", name, r[@"count"] ?: @0, lastText, group];
+  }
+  NSMutableData *data = [NSMutableData dataWithData:[@"\\xEF\\xBB\\xBF" dataUsingEncoding:NSUTF8StringEncoding]];
+  [data appendData:[csv dataUsingEncoding:NSUTF8StringEncoding]];
+  if (![data writeToURL:sp.URL atomically:YES]) { [self showToast:@"导出失败"]; return; }
+  [self showToast:@"使用统计已导出"];
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[sp.URL]];
 }
 
 - (void)closeUsageStats:(id)sender { [self.usageWindow orderOut:nil]; }
