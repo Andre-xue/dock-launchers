@@ -497,6 +497,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 - (void)installClipboardHoverMonitor;
 - (void)scheduleDockLiveApply;
 - (void)restoreWindowLayoutNamed:(NSString *)name autoLaunch:(BOOL)autoLaunch;
+- (void)installGroupHotkeys;
+- (void)openGroupByHotkeyID:(UInt32)hotID;
 - (void)applyConsoleMetricSelection;
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
@@ -536,6 +538,12 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSString *shotShortcutDisplay, *selectionShortcutDisplay, *translateShortcutDisplay, *appSearchShortcutDisplay;
 @property (strong) NSMutableArray *shortcutButtons;
 @property (strong) NSWindow *shortcutSettingsWindow;
+@property (strong) NSWindow *groupShortcutWindow;
+@property (strong) NSMutableArray *groupShortcutButtons;
+@property (strong) id groupShortcutMonitor;
+@property (copy) NSString *groupShortcutRecordingName;
+@property (strong) NSMutableDictionary *groupHotKeyRefs;
+@property (strong) NSMutableDictionary *groupHotKeyNames;
 @property (strong) id shortcutRecordingMonitor;
 @property NSInteger shortcutRecordingAction;
 @property (strong) NSTextField *shortcutStatusLabel;
@@ -2015,6 +2023,7 @@ static void HideDockHoverTip(void) {
   [self applyThemeFromDefaults];
   [self setupMainMenu];
   [self installTranslationHotKey];
+  [self installGroupHotkeys];
   [self startClipboardMonitor];
   [self loadAppShortcuts];
   [self buildWindow];
@@ -2430,6 +2439,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   else if (hk.id == 3) [c translateCurrentText];
   else if (hk.id == 4) [c showQuickPanel];
   else if (hk.id == 5) [c showAppSearch:nil];
+  else if (hk.id >= 100) [c openGroupByHotkeyID:hk.id];
   return noErr;
 }
 
@@ -13433,7 +13443,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [self.shortcutButtons addObject:b];
     }
     self.shortcutStatusLabel = [self label:@"点击右侧快捷键开始录制；Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    self.shortcutStatusLabel.frame = NSMakeRect(24, 18, 430, 18); [cv addSubview:self.shortcutStatusLabel];
+    self.shortcutStatusLabel.frame = NSMakeRect(24, 18, 260, 18); [cv addSubview:self.shortcutStatusLabel];
+    ColorHoverButton *groupShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(300, 16, 150, 32)];
+    groupShortcutBtn.title = @"分组快捷键…";
+    groupShortcutBtn.hoverColor = [NSColor systemPurpleColor];
+    groupShortcutBtn.target = self;
+    groupShortcutBtn.action = @selector(openGroupShortcutSettings:);
+    [groupShortcutBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:groupShortcutBtn];
     [self.shortcutSettingsWindow center];
   }
   [self stopShortcutRecording];
@@ -13441,6 +13458,182 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [NSApp activateIgnoringOtherApps:YES];
   [self.shortcutSettingsWindow makeKeyAndOrderFront:nil];
   [self.shortcutSettingsWindow orderFrontRegardless];
+}
+
+- (void)installGroupHotkeys {
+  if (!self.groupHotKeyRefs) self.groupHotKeyRefs = [NSMutableDictionary dictionary];
+  for (NSValue *v in self.groupHotKeyRefs.allValues) { EventHotKeyRef ref = (EventHotKeyRef)v.pointerValue; if (ref) UnregisterEventHotKey(ref); }
+  [self.groupHotKeyRefs removeAllObjects];
+  if (!self.groupHotKeyNames) self.groupHotKeyNames = [NSMutableDictionary dictionary];
+  [self.groupHotKeyNames removeAllObjects];
+  NSDictionary *store = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"centerGroupHotkeys"] ?: @{};
+  NSArray *groups = [self installedGroupNames];
+  for (NSInteger i = 0; i < (NSInteger)groups.count; i++) {
+    NSString *name = groups[i];
+    NSDictionary *info = store[name];
+    if (![info isKindOfClass:[NSDictionary class]]) continue;
+    UInt32 code = [info[@"code"] unsignedIntValue];
+    UInt32 mods = [info[@"mods"] unsignedIntValue];
+    if (!code) continue;
+    EventHotKeyID hid = {'DLGR', (UInt32)(100 + i)};
+    EventHotKeyRef ref = NULL;
+    if (RegisterEventHotKey(code, mods, hid, GetApplicationEventTarget(), 0, &ref) == noErr && ref) {
+      self.groupHotKeyRefs[name] = [NSValue valueWithPointer:ref];
+      self.groupHotKeyNames[@(100 + i)] = name;
+    }
+  }
+}
+
+- (NSString *)groupHotkeyDisplayForName:(NSString *)name {
+  NSDictionary *store = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"centerGroupHotkeys"] ?: @{};
+  return store[name][@"display"] ?: @"未设置";
+}
+
+- (BOOL)registerGroupHotkeyForName:(NSString *)name code:(UInt32)code modifiers:(UInt32)mods display:(NSString *)display {
+  NSArray *groups = [self installedGroupNames];
+  NSInteger idx = [groups indexOfObject:name];
+  if (idx == NSNotFound) return NO;
+  NSValue *oldVal = self.groupHotKeyRefs[name];
+  if (oldVal) UnregisterEventHotKey((EventHotKeyRef)oldVal.pointerValue);
+  [self.groupHotKeyRefs removeObjectForKey:name];
+  EventHotKeyID hid = {'DLGR', (UInt32)(100 + idx)};
+  EventHotKeyRef ref = NULL;
+  if (RegisterEventHotKey(code, mods, hid, GetApplicationEventTarget(), 0, &ref) != noErr || !ref) return NO;
+  self.groupHotKeyRefs[name] = [NSValue valueWithPointer:ref];
+  if (!self.groupHotKeyNames) self.groupHotKeyNames = [NSMutableDictionary dictionary];
+  self.groupHotKeyNames[@(100 + idx)] = name;
+  NSMutableDictionary *store = [([[NSUserDefaults standardUserDefaults] dictionaryForKey:@"centerGroupHotkeys"] ?: @{}) mutableCopy];
+  store[name] = @{@"code": @(code), @"mods": @(mods), @"display": display ?: @""};
+  [[NSUserDefaults standardUserDefaults] setObject:store forKey:@"centerGroupHotkeys"];
+  return YES;
+}
+
+- (void)clearGroupHotkey:(NSButton *)sender {
+  NSArray *groups = [self installedGroupNames];
+  NSInteger idx = sender.tag;
+  if (idx < 0 || idx >= (NSInteger)groups.count) return;
+  NSString *name = groups[idx];
+  NSValue *oldVal = self.groupHotKeyRefs[name];
+  if (oldVal) UnregisterEventHotKey((EventHotKeyRef)oldVal.pointerValue);
+  [self.groupHotKeyRefs removeObjectForKey:name];
+  NSMutableDictionary *store = [([[NSUserDefaults standardUserDefaults] dictionaryForKey:@"centerGroupHotkeys"] ?: @{}) mutableCopy];
+  [store removeObjectForKey:name];
+  [[NSUserDefaults standardUserDefaults] setObject:store forKey:@"centerGroupHotkeys"];
+  [self refreshGroupShortcutButtons];
+}
+
+- (void)refreshGroupShortcutButtons {
+  NSArray *groups = [self installedGroupNames];
+  for (ColorHoverButton *b in self.groupShortcutButtons) {
+    NSInteger idx = b.tag;
+    if (idx >= 0 && idx < (NSInteger)groups.count) b.title = [self groupHotkeyDisplayForName:groups[idx]];
+  }
+}
+
+- (void)stopGroupShortcutRecording {
+  if (self.groupShortcutMonitor) { [NSEvent removeMonitor:self.groupShortcutMonitor]; self.groupShortcutMonitor = nil; }
+  self.groupShortcutRecordingName = nil;
+  [self refreshGroupShortcutButtons];
+}
+
+- (void)recordGroupHotkey:(ColorHoverButton *)sender {
+  [self stopGroupShortcutRecording];
+  NSArray *groups = [self installedGroupNames];
+  NSInteger idx = sender.tag;
+  if (idx < 0 || idx >= (NSInteger)groups.count) return;
+  self.groupShortcutRecordingName = groups[idx];
+  sender.title = @"请按组合键…";
+  __weak typeof(self) weakSelf = self;
+  self.groupShortcutMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    if (!weakSelf.groupShortcutRecordingName.length) return e;
+    if (e.keyCode == 53) { [weakSelf stopGroupShortcutRecording]; return nil; }
+    NSEventModifierFlags f = e.modifierFlags & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift);
+    if (!(f & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption))) return nil;
+    UInt32 mods = 0;
+    if (f & NSEventModifierFlagControl) mods |= controlKey;
+    if (f & NSEventModifierFlagOption) mods |= optionKey;
+    if (f & NSEventModifierFlagShift) mods |= shiftKey;
+    if (f & NSEventModifierFlagCommand) mods |= cmdKey;
+    NSString *key = e.charactersIgnoringModifiers.uppercaseString;
+    if (!key.length) key = [NSString stringWithFormat:@"Key%u", (unsigned)e.keyCode];
+    if (e.keyCode == kVK_Return) key = @"↩";
+    else if (e.keyCode == kVK_Space) key = @"Space";
+    else if (e.keyCode == kVK_Tab) key = @"⇥";
+    NSMutableString *disp = [NSMutableString string];
+    if (mods & controlKey) [disp appendString:@"⌃"];
+    if (mods & optionKey) [disp appendString:@"⌥"];
+    if (mods & shiftKey) [disp appendString:@"⇧"];
+    if (mods & cmdKey) [disp appendString:@"⌘"];
+    [disp appendString:key];
+    if (![weakSelf registerGroupHotkeyForName:weakSelf.groupShortcutRecordingName code:(UInt32)e.keyCode modifiers:mods display:disp]) {
+      [weakSelf showToast:@"该快捷键被占用，请换一个"];
+      return nil;
+    }
+    [weakSelf stopGroupShortcutRecording];
+    [weakSelf showToast:@"分组快捷键已保存"];
+    return nil;
+  }];
+}
+
+- (void)openGroupShortcutSettings:(id)sender {
+  [self installGroupHotkeys];
+  NSArray *groups = [self installedGroupNames];
+  if (!self.groupShortcutWindow) {
+    self.groupShortcutWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,520,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.groupShortcutWindow.title = @"分组快捷键";
+    self.groupShortcutWindow.releasedWhenClosed = NO;
+    self.groupShortcutWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.groupShortcutWindow.contentView;
+    NSTextField *t = [self label:@"分组快捷键" size:18 bold:YES color:nil];
+    t.frame = NSMakeRect(24, 494, 300, 24); [cv addSubview:t];
+    NSTextField *h = [self label:@"为每个 Dock 分组设置全局快捷键，按 Esc 取消录制" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24, 472, 460, 18); [cv addSubview:h];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 64, 488, 394)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    NSView *doc = [[NSView alloc] initWithFrame:NSMakeRect(0,0,470,MAX(394,groups.count*44))];
+    self.groupShortcutButtons = [NSMutableArray array];
+    for (NSInteger i = 0; i < (NSInteger)groups.count; i++) {
+      CGFloat y = doc.frame.size.height - (i+1)*44;
+      NSTextField *l = [self label:groups[i] size:12 bold:YES color:nil];
+      l.frame = NSMakeRect(12, y+12, 160, 20); [doc addSubview:l];
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(176, y+7, 190, 30)];
+      b.title = @"未设置"; b.tag = i; b.hoverColor = [NSColor systemTealColor];
+      b.target = self; b.action = @selector(recordGroupHotkey:);
+      [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      [doc addSubview:b];
+      [self.groupShortcutButtons addObject:b];
+      ColorHoverButton *clr = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(376, y+7, 76, 30)];
+      clr.title = @"清除"; clr.tag = i; clr.hoverColor = [NSColor systemRedColor];
+      clr.target = self; clr.action = @selector(clearGroupHotkey:);
+      [clr applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      [doc addSubview:clr];
+    }
+    sv.documentView = doc; [cv addSubview:sv];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(404, 16, 90, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeGroupShortcutSettings:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.groupShortcutWindow center];
+  }
+  [self refreshGroupShortcutButtons];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.groupShortcutWindow makeKeyAndOrderFront:nil];
+  [self.groupShortcutWindow orderFrontRegardless];
+}
+
+- (void)closeGroupShortcutSettings:(id)sender {
+  [self stopGroupShortcutRecording];
+  [self.groupShortcutWindow orderOut:nil];
+}
+
+- (void)openGroupByHotkeyID:(UInt32)hotID {
+  NSString *name = self.groupHotKeyNames[@(hotID)];
+  if (!name.length) return;
+  NSString *path = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
+  if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+    [self.popover performClose:nil];
+  }
 }
 
 - (void)stopShortcutRecording {
