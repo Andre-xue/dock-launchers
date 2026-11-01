@@ -23,6 +23,7 @@
 #import <NaturalLanguage/NaturalLanguage.h>
 #import <Carbon/Carbon.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <AudioToolbox/AudioToolbox.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
@@ -1158,7 +1159,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup, *captureRecordCountdownPopup, *captureMicGainPopup;
 @property (strong) id clickGlobalMonitor, clickLocalMonitor;
 @property (strong) NSMutableArray *clickRingWindows;
-@property (strong) NSButton *captureCursorCheck, *captureClickCheck, *captureNoiseCheck;
+@property (strong) NSButton *captureCursorCheck, *captureClickCheck;
+@property (strong) NSPopUpButton *captureNoisePopup;
 @property (strong) NSButton *captureSystemAudioCheck, *captureMicCheck;
 @property (strong) DLScreenRecorder *captureRecorder;
 @property (strong) NSWindow *captureRegionWindow;
@@ -16928,7 +16930,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)composeCameraSegments:(NSArray<NSURL *> *)cameraPaths overScreen:(NSString *)screenPath {
-  BOOL noiseReduction = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureNoiseReduction"];
+  BOOL noiseReduction = [self noiseReductionLevel] > 0;
   if (noiseReduction && [self fileNeedsAudioMix:screenPath]) {
     NSInteger gainDB = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
     self.captureStatusLabel.stringValue = @"正在处理麦克风降噪…";
@@ -17089,7 +17091,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)captureNoiseChanged:(id)sender {
-  [[NSUserDefaults standardUserDefaults] setBool:(self.captureNoiseCheck.state == NSControlStateValueOn) forKey:@"centerCaptureNoiseReduction"];
+  NSInteger level = [self.captureNoisePopup.selectedItem.representedObject integerValue];
+  [[NSUserDefaults standardUserDefaults] setInteger:level forKey:@"centerCaptureNoiseLevel"];
+  [[NSUserDefaults standardUserDefaults] setBool:(level > 0) forKey:@"centerCaptureNoiseReduction"];
+}
+
+- (NSInteger)noiseReductionLevel {
+  NSInteger level = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureNoiseLevel"];
+  if (level == 0 && [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureNoiseReduction"]) level = 2;
+  return MAX(0, MIN(3, level));
 }
 
 - (void)capturePointerChanged:(id)sender {
@@ -17317,7 +17327,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureCursorCheck.state = (!curObj || [curObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
   id clickObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowClicks"];
   self.captureClickCheck.state = (!clickObj || [clickObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
-  self.captureNoiseCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureNoiseReduction"] ? NSControlStateValueOn : NSControlStateValueOff;
+  NSInteger noiseLevel = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureNoiseLevel"];
+  if (noiseLevel == 0 && [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureNoiseReduction"]) noiseLevel = 2;
+  for (NSMenuItem *mi in self.captureNoisePopup.itemArray) if ([mi.representedObject integerValue] == noiseLevel) [self.captureNoisePopup selectItem:mi];
   NSString *savedCam = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureCameraID"];
   for (NSMenuItem *mi in self.captureCameraPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedCam ?: @""]) [self.captureCameraPopup selectItem:mi];
   NSString *savedPiP = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCapturePiPPreset"];
@@ -17542,15 +17554,35 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   AVAudioFormat *format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:48000 channels:2];
   AVAudioEngine *engine = [[AVAudioEngine alloc] init];
   AVAudioPlayerNode *player = [[AVAudioPlayerNode alloc] init];
+  NSInteger noiseLevel = [self noiseReductionLevel];
+  float cutoff = noiseLevel >= 3 ? 130.0f : (noiseLevel == 1 ? 60.0f : 90.0f);
   AVAudioUnitEQ *eq = [[AVAudioUnitEQ alloc] initWithNumberOfBands:1];
   AVAudioUnitEQFilterParameters *hp = eq.bands.firstObject;
   hp.filterType = AVAudioUnitEQFilterTypeHighPass;
-  hp.frequency = 90.0f;
+  hp.frequency = cutoff;
   hp.bypass = NO;
+  AudioComponentDescription gateDesc = {kAudioUnitType_Effect, kAudioUnitSubType_DynamicsProcessor, kAudioUnitManufacturer_Apple, 0, 0};
+  AVAudioUnitEffect *gate = [[AVAudioUnitEffect alloc] initWithAudioComponentDescription:gateDesc];
+  if (gate) {
+    AudioUnit au = gate.audioUnit;
+    AudioUnitSetParameter(au, kDynamicsProcessorParam_Threshold, kAudioUnitScope_Global, 0, -20.0f, 0);
+    AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom, kAudioUnitScope_Global, 0, 5.0f, 0);
+    AudioUnitSetParameter(au, kDynamicsProcessorParam_ExpansionThreshold, kAudioUnitScope_Global, 0, noiseLevel >= 3 ? -30.0f : -46.0f, 0);
+    AudioUnitSetParameter(au, kDynamicsProcessorParam_ExpansionRatio, kAudioUnitScope_Global, 0, noiseLevel >= 3 ? 4.0f : 2.0f, 0);
+    AudioUnitSetParameter(au, kDynamicsProcessorParam_AttackTime, kAudioUnitScope_Global, 0, 0.001f, 0);
+    AudioUnitSetParameter(au, kDynamicsProcessorParam_ReleaseTime, kAudioUnitScope_Global, 0, 0.08f, 0);
+    AudioUnitSetParameter(au, kDynamicsProcessorParam_OverallGain, kAudioUnitScope_Global, 0, 0.0f, 0);
+  }
   [engine attachNode:player];
   [engine attachNode:eq];
   [engine connect:player to:eq format:inFile.processingFormat];
-  [engine connect:eq to:engine.mainMixerNode format:inFile.processingFormat];
+  if (gate) {
+    [engine attachNode:gate];
+    [engine connect:eq to:gate format:inFile.processingFormat];
+    [engine connect:gate to:engine.mainMixerNode format:inFile.processingFormat];
+  } else {
+    [engine connect:eq to:engine.mainMixerNode format:inFile.processingFormat];
+  }
   if (![engine enableManualRenderingMode:AVAudioEngineManualRenderingModeOffline format:format maximumFrameCount:4096 error:&err]) { if (completion) completion(NO); return; }
   [[NSFileManager defaultManager] removeItemAtURL:outURL error:NULL];
   AVAudioFile *outFile = [[AVAudioFile alloc] initForWriting:outURL settings:format.settings error:&err];
@@ -17651,7 +17683,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   AVAssetTrack *video = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
   NSArray *audios = [asset tracksWithMediaType:AVMediaTypeAudio];
   if (!video || !audios.count || (audios.count == 1 && gainDB == 0)) { if (completion) completion(YES); return; }
-  if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureNoiseReduction"] && audios.count >= 2) {
+  if ([self noiseReductionLevel] > 0 && audios.count >= 2) {
     [self applyNoiseReductionToFile:path gainDB:gainDB completion:completion];
     return;
   }
