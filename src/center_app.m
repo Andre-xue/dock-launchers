@@ -12010,7 +12010,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.imageToolWindow.contentView;
     NSTextField *title = [self label:@"图片工具" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 490, 300, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"批量转换格式、压缩质量和限制最大尺寸；不会修改原图" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *sub = [self label:@"批量转换格式、压缩质量和限制最大尺寸；可直接拖图片进列表，不会修改原图" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 468, 600, 18); [cv addSubview:sub];
     ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 428, 100, 30)];
     add.title = @"添加图片"; add.hoverColor = [NSColor systemBlueColor];
@@ -12067,6 +12067,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
     self.imageToolTable.rowHeight = 32;
     self.imageToolTable.dataSource = self; self.imageToolTable.delegate = self;
+    [self.imageToolTable registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
     self.imageToolTable.target = self;
     self.imageToolTable.doubleAction = @selector(imagePreviewSelected:);
     sv.documentView = self.imageToolTable; [cv addSubview:sv];
@@ -12174,7 +12175,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.pdfWindow.contentView;
     NSTextField *title = [self label:@"PDF 工具" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 450, 300, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"合并多个 PDF，或按页拆分；拖动列表或上移/下移调整合并顺序" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *sub = [self label:@"合并多个 PDF，或按页拆分；可直接把 PDF 拖进列表，拖动行调整顺序" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 428, 500, 18); [cv addSubview:sub];
     ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 388, 96, 30)];
     add.title = @"添加 PDF"; add.hoverColor = [NSColor systemBlueColor];
@@ -12211,7 +12212,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.pdfTable.dataSource = self; self.pdfTable.delegate = self;
     self.pdfTable.target = self;
     self.pdfTable.doubleAction = @selector(pdfPreviewSelected:);
-    [self.pdfTable registerForDraggedTypes:@[@"DockLaunchersPDFRow"]];
+    [self.pdfTable registerForDraggedTypes:@[@"DockLaunchersPDFRow", NSPasteboardTypeFileURL]];
     sv.documentView = self.pdfTable; [cv addSubview:sv];
     NSTextField *pl = [self label:@"页码" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     pl.frame = NSMakeRect(20, 34, 40, 18); [cv addSubview:pl];
@@ -12323,12 +12324,31 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (NSDragOperation)tableView:(NSTableView *)tableView validateDrop:(id<NSDraggingInfo>)info proposedRow:(NSInteger)row proposedDropOperation:(NSTableViewDropOperation)dropOperation {
+  if (tableView != self.pdfTable && tableView != self.imageToolTable) return NSDragOperationNone;
+  if ([[info draggingPasteboard] availableTypeFromArray:@[NSPasteboardTypeFileURL]]) return NSDragOperationCopy;
   if (tableView != self.pdfTable) return NSDragOperationNone;
   [tableView setDropRow:row dropOperation:NSTableViewDropAbove];
   return NSDragOperationMove;
 }
 
 - (BOOL)tableView:(NSTableView *)tableView acceptDrop:(id<NSDraggingInfo>)info row:(NSInteger)row dropOperation:(NSTableViewDropOperation)dropOperation {
+  if (tableView != self.pdfTable && tableView != self.imageToolTable) return NO;
+  NSArray *urls = [[info draggingPasteboard] readObjectsForClasses:@[[NSURL class]] options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+  if (urls.count) {
+    if (tableView == self.pdfTable) {
+      NSMutableArray *paths = [self.pdfItems mutableCopy] ?: [NSMutableArray array];
+      for (NSURL *u in urls) if ([u.pathExtension.lowercaseString isEqualToString:@"pdf"] && ![paths containsObject:u.path]) [paths addObject:u.path];
+      self.pdfItems = paths;
+      [self.pdfTable reloadData];
+    } else {
+      NSMutableArray *paths = [self.imageToolItems mutableCopy] ?: [NSMutableArray array];
+      NSSet *exts = [NSSet setWithArray:@[@"jpg", @"jpeg", @"png", @"heic", @"tiff", @"gif"]];
+      for (NSURL *u in urls) if ([exts containsObject:u.pathExtension.lowercaseString] && ![paths containsObject:u.path]) [paths addObject:u.path];
+      self.imageToolItems = paths;
+      [self.imageToolTable reloadData];
+    }
+    return YES;
+  }
   if (tableView != self.pdfTable) return NO;
   NSString *value = [[info draggingPasteboard] stringForType:@"DockLaunchersPDFRow"];
   NSInteger from = value.integerValue;
