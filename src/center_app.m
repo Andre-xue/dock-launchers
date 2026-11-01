@@ -15431,7 +15431,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.translationGlossaryTextView.string = [self translationGlossaryContent];
     sv.documentView = self.translationGlossaryTextView;
     [cv addSubview:sv];
-    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(424, 24, 100, 32)];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(372, 24, 100, 32)];
     save.title = @"保存"; save.hoverColor = [NSColor systemGreenColor];
     save.target = self; save.action = @selector(saveTranslationGlossary:);
     [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
