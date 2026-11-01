@@ -2754,6 +2754,7 @@ static void HideDockHoverTip(void) {
   __weak typeof(self) weakSelf = self;
   [[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self selector:@selector(mediaWorkspaceActivated:) name:NSWorkspaceDidActivateApplicationNotification object:nil];
   self.mediaPollTimer = [NSTimer scheduledTimerWithTimeInterval:1.2 repeats:YES block:^(NSTimer *timer) {
+    [weakSelf clearIfMediaSourceQuit];
     [weakSelf pollMediaNowPlaying];
   }];
   [self pollMediaNowPlaying];
@@ -2858,6 +2859,31 @@ static void HideDockHoverTip(void) {
   });
 }
 
+- (BOOL)isMediaSourceAppRunning {
+  NSString *bundle = self.mediaBundleID ?: @"";
+  if (!bundle.length) return NO;
+  NSArray *apps = [[NSWorkspace sharedWorkspace] runningApplications];
+  for (NSRunningApplication *a in apps) {
+    NSString *bid = a.bundleIdentifier ?: @"";
+    NSString *path = a.bundleURL.path ?: @"";
+    if ([bid isEqualToString:bundle]) return YES;
+    if ([bundle containsString:@"com.soda.music"] && ([bid containsString:@"com.soda.music"] || [path containsString:@"汽水音乐.app"])) return YES;
+    if ([bundle containsString:@"netease"] && ([bid containsString:@"netease"] || [path containsString:@"网易云音乐.app"])) return YES;
+    if ([bundle containsString:@"QQMusic"] || [bundle containsString:@"qqmusic"]) {
+      if ([bid containsString:@"QQMusic"] || [bid containsString:@"qqmusic"] || [path containsString:@"QQ音乐.app"] || [path containsString:@"QQMusic.app"]) return YES;
+    }
+  }
+  return NO;
+}
+
+- (void)clearIfMediaSourceQuit {
+  if (self.mediaNowPlaying && !self.isMediaSourceAppRunning) {
+    self.mediaNowPlaying = nil;
+    self.mediaPlaying = NO;
+    [self updateMediaStatusItem];
+  }
+}
+
 - (void)applyFallbackOutput:(NSString *)out {
   NSMutableArray *blocks = [NSMutableArray array];
   NSMutableArray *lines = [NSMutableArray array];
@@ -2869,13 +2895,15 @@ static void HideDockHoverTip(void) {
   }
   if (lines.count >= 6) [blocks addObject:[lines copy]];
   if (!blocks.count) {
-    if (![self genericMediaApplications].count) {
-      self.mediaNowPlaying = nil;
+    if ([self isMediaSourceAppRunning]) {
       self.mediaPlaying = NO;
       [self updateMediaStatusItem];
     } else {
-      [self pollGenericMediaApps];
+      self.mediaNowPlaying = nil;
+      self.mediaPlaying = NO;
+      [self updateMediaStatusItem];
     }
+    if ([self genericMediaApplications].count) [self pollGenericMediaApps];
     return;
   }
   NSArray *chosen = blocks.firstObject;
@@ -2908,7 +2936,7 @@ static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
 }
 
 - (void)clearGenericMediaIfNeeded {
-  if (self.mediaUsingFallback && [self isGenericMediaBundle:self.mediaBundleID]) {
+  if ([self isGenericMediaBundle:self.mediaBundleID] && !self.isMediaSourceAppRunning) {
     self.mediaPlaying = NO;
     self.mediaNowPlaying = nil;
     self.genericMediaTime = nil;
@@ -3142,7 +3170,7 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
 
 - (void)updateRadialMediaBar {
   if (self.radialPlayerPage && !self.radialPlayerPage.hidden) {
-    if (![[self mediaCurrentTitle] length]) {
+    if (![[self mediaCurrentTitle] length] || !self.isMediaSourceAppRunning) {
       [self showRadialPlayerPage:NO];
       [self.popover performClose:nil];
     } else {
@@ -3152,7 +3180,7 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
   }
   if (!self.radialMediaBar) return;
   NSString *title = [self mediaCurrentTitle];
-  BOOL show = title.length > 0;
+  BOOL show = title.length > 0 && self.isMediaSourceAppRunning;
   if (!show) {
     self.radialMediaBar.hidden = YES;
     if (self.radialRootView.frame.size.height != 360) {
