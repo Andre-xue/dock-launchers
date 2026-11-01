@@ -769,7 +769,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *fileSearchWindow;
 @property (strong) NSWindow *groupPanelWindow;
 @property (strong) NSWindow *captureWindow;
-@property (strong) NSTextField *captureStatusLabel;
+@property (strong) NSTextField *captureStatusLabel, *capturePathField;
 @property (strong) NSTask *captureTask;
 @property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup;
 @property (strong) NSButton *captureCopyCheck;
@@ -16141,9 +16141,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (NSString *)captureDirectory {
-  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+  NSString *dir = self.capturePathField.stringValue;
+  if (!dir.length) dir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureDirectory"];
+  if (!dir.length) dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+  dir = [dir stringByExpandingTildeInPath];
+  if (!dir.length) dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
   return dir;
+}
+
+- (void)capturePathChanged:(id)sender {
+  NSString *dir = [self.capturePathField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!dir.length) return;
+  dir = [dir stringByExpandingTildeInPath];
+  [[NSUserDefaults standardUserDefaults] setObject:dir forKey:@"centerCaptureDirectory"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"保存到：%@", dir];
 }
 
 - (void)showCaptureTool:(id)sender {
@@ -16193,12 +16206,23 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureStatusLabel.frame = NSMakeRect(20, 158, 520, 40);
     self.captureStatusLabel.maximumNumberOfLines = 2;
     [cv addSubview:self.captureStatusLabel];
-    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(440, 110, 100, 32)];
+    NSTextField *pathLabel = [self label:@"保存位置" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    pathLabel.frame = NSMakeRect(20, 66, 60, 18); [cv addSubview:pathLabel];
+    self.capturePathField = [[NSTextField alloc] initWithFrame:NSMakeRect(84, 60, 360, 26)];
+    NSString *savedDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureDirectory"];
+    self.capturePathField.stringValue = savedDir.length ? savedDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+    self.capturePathField.target = self;
+    self.capturePathField.action = @selector(capturePathChanged:);
+    self.capturePathField.toolTip = @"可填写任意文件夹，支持 ~";
+    [cv addSubview:self.capturePathField];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(440, 20, 100, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeCaptureTool:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.captureWindow center];
   }
+  NSString *savedDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureDirectory"];
+  self.capturePathField.stringValue = savedDir.length ? savedDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
   [NSApp activateIgnoringOtherApps:YES];
   [self.captureWindow makeKeyAndOrderFront:nil];
 }
