@@ -1030,6 +1030,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSDictionary *mediaNowPlaying;
 @property (strong) NSDictionary *mediaStableNowPlaying;
 @property (strong) NSString *mediaStableBundle;
+@property (strong) NSDate *mediaSourceRunningDate;
 @property (strong) NSString *mediaArtworkKey;
 @property (strong) NSImage *mediaArtworkImage;
 @property (strong) NSData *mediaArtworkData;
@@ -2866,14 +2867,19 @@ static void HideDockHoverTip(void) {
   for (NSRunningApplication *a in [[NSWorkspace sharedWorkspace] runningApplications]) {
     NSString *bid = a.bundleIdentifier ?: @"";
     NSString *path = a.bundleURL.path ?: @"";
-    if ([bid isEqualToString:bundle]) return YES;
-    if ([bundle containsString:@"com.soda.music"] && ([bid containsString:@"com.soda.music"] || [path containsString:@"汽水音乐.app"])) return YES;
+    if ([bid isEqualToString:bundle]) { self.mediaSourceRunningDate = [NSDate date]; return YES; }
+    if ([bundle containsString:@"com.soda.music"] && ([bid containsString:@"com.soda.music"] || [path containsString:@"汽水音乐.app"])) { self.mediaSourceRunningDate = [NSDate date]; return YES; }
     if ([bundle containsString:@"netease"] && ([bid containsString:@"netease"] || [path containsString:@"网易云音乐.app"])) return YES;
     if ([bundle containsString:@"QQMusic"] || [bundle containsString:@"qqmusic"]) {
       if ([bid containsString:@"QQMusic"] || [bid containsString:@"qqmusic"] || [path containsString:@"QQ音乐.app"] || [path containsString:@"QQMusic.app"]) return YES;
     }
   }
   return NO;
+}
+
+- (BOOL)isMediaSourceAppRecentlyRunning {
+  if ([self isMediaSourceAppRunning]) return YES;
+  return self.mediaSourceRunningDate && [[NSDate date] timeIntervalSinceDate:self.mediaSourceRunningDate] < 2.0;
 }
 
 - (BOOL)isMediaSourceAppRunning {
@@ -2883,8 +2889,8 @@ static void HideDockHoverTip(void) {
   for (NSRunningApplication *a in apps) {
     NSString *bid = a.bundleIdentifier ?: @"";
     NSString *path = a.bundleURL.path ?: @"";
-    if ([bid isEqualToString:bundle]) return YES;
-    if ([bundle containsString:@"com.soda.music"] && ([bid containsString:@"com.soda.music"] || [path containsString:@"汽水音乐.app"])) return YES;
+    if ([bid isEqualToString:bundle]) { self.mediaSourceRunningDate = [NSDate date]; return YES; }
+    if ([bundle containsString:@"com.soda.music"] && ([bid containsString:@"com.soda.music"] || [path containsString:@"汽水音乐.app"])) { self.mediaSourceRunningDate = [NSDate date]; return YES; }
     if ([bundle containsString:@"netease"] && ([bid containsString:@"netease"] || [path containsString:@"网易云音乐.app"])) return YES;
     if ([bundle containsString:@"QQMusic"] || [bundle containsString:@"qqmusic"]) {
       if ([bid containsString:@"QQMusic"] || [bid containsString:@"qqmusic"] || [path containsString:@"QQ音乐.app"] || [path containsString:@"QQMusic.app"]) return YES;
@@ -3200,7 +3206,7 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
 
 - (void)updateRadialMediaBar {
   if (self.radialPlayerPage && !self.radialPlayerPage.hidden) {
-    if (![[self mediaCurrentTitle] length] || !self.isMediaSourceAppRunning) {
+    if (![[self mediaCurrentTitle] length] || !self.isMediaSourceAppRecentlyRunning) {
       [self showRadialPlayerPage:NO];
       [self.popover performClose:nil];
     } else {
@@ -3210,16 +3216,9 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
   }
   if (!self.radialMediaBar) return;
   NSString *title = [self mediaCurrentTitle];
-  BOOL show = title.length > 0 && self.isMediaSourceAppRunning;
-  if (!show) {
-    self.radialMediaBar.hidden = YES;
-    if (self.radialRootView.frame.size.height != 360) {
-      self.radialRootView.frame = NSMakeRect(0,0,340,360);
-      self.popover.contentSize = NSMakeSize(340, 360);
-    }
-    return;
-  }
-  self.radialMediaBar.hidden = NO;
+  BOOL show = title.length > 0 && self.isMediaSourceAppRecentlyRunning;
+  self.radialMediaBar.hidden = !show;
+  if (!show) return;
   if (self.radialRootView.frame.size.height != 412) {
     self.radialRootView.frame = NSMakeRect(0,0,340,412);
     self.popover.contentSize = NSMakeSize(340, 412);
@@ -3255,11 +3254,9 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
     self.popover.contentSize = NSMakeSize(340, 560);
     [self updateRadialPlayerPage];
   } else {
-    BOOL bar = self.mediaPlaying && [self mediaCurrentTitle].length;
-    self.radialMediaBar.hidden = !bar;
     self.radialRootView.layer.backgroundColor = [NSColor clearColor].CGColor;
-    self.radialRootView.frame = NSMakeRect(0,0,340,bar ? 412 : 360);
-    self.popover.contentSize = NSMakeSize(340, bar ? 412 : 360);
+    self.radialRootView.frame = NSMakeRect(0,0,340,412);
+    self.popover.contentSize = NSMakeSize(340, 412);
   }
 }
 
@@ -16008,7 +16005,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.radialPlayerPlayButton = pplay;
 
     [self radialApplyPage];
-    pop.contentSize = NSMakeSize(340, 360);
+    pop.contentSize = NSMakeSize(340, 412);
   } else {
     pop.contentSize = NSMakeSize(420, 620);
   }
