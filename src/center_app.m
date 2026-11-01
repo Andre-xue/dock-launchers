@@ -516,9 +516,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
   NSTrackingArea *ta = [[NSTrackingArea alloc] initWithRect:self.bounds options:(NSTrackingMouseMoved|NSTrackingMouseEnteredAndExited|NSTrackingActiveInKeyWindow|NSTrackingInVisibleRect) owner:self userInfo:nil];
   [self addTrackingArea:ta];
 }
-- (CGFloat)outerRadius { return MIN(self.bounds.size.width, self.bounds.size.height)/2.0 - 18; }
-- (CGFloat)innerRadius { return [self outerRadius] * 0.56; }
-- (CGFloat)centerRadius { return 68; }
+- (CGFloat)outerRadius { return MIN(self.bounds.size.width, self.bounds.size.height)/2.0 - 14; }
+- (CGFloat)innerRadius { return [self outerRadius] * 0.58; }
+- (CGFloat)centerRadius { return 56; }
 - (NSPoint)center { return NSMakePoint(NSMidX(self.bounds), NSMidY(self.bounds)); }
 - (NSInteger)segmentAtPoint:(NSPoint)p {
   CGFloat dx = p.x - self.center.x, dy = p.y - self.center.y;
@@ -573,19 +573,19 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
     CGFloat r = (inner + outer) / 2.0 + 2;
     NSPoint ip = NSMakePoint(c.x + cos(mid * M_PI / 180.0) * r, c.y + sin(mid * M_PI / 180.0) * r);
     NSImage *icon = [NSImage imageWithSystemSymbolName:item[@"symbol"] ?: @"circle" accessibilityDescription:nil];
-    icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:22 weight:NSFontWeightSemibold]];
-    NSRect ir = NSMakeRect(ip.x - 12, ip.y - 20, 24, 24);
+    icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:18 weight:NSFontWeightSemibold]];
+    NSRect ir = NSMakeRect(ip.x - 9, ip.y - 16, 18, 18);
     [icon drawInRect:ir];
     NSString *title = item[@"title"] ?: @"";
     NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init]; ps.alignment = NSTextAlignmentCenter;
-    NSDictionary *attrs = @{NSFontAttributeName:[NSFont systemFontOfSize:10.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:(self.hovered == i ? [NSColor whiteColor] : [NSColor labelColor]), NSParagraphStyleAttributeName:ps};
-    [title drawInRect:NSMakeRect(ip.x - 36, ip.y - 34, 72, 16) withAttributes:attrs];
+    NSDictionary *attrs = @{NSFontAttributeName:[NSFont systemFontOfSize:9.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:(self.hovered == i ? [NSColor whiteColor] : [NSColor labelColor]), NSParagraphStyleAttributeName:ps};
+    [title drawInRect:NSMakeRect(ip.x - 30, ip.y - 30, 60, 14) withAttributes:attrs];
   }
   CGFloat cr = [self centerRadius];
   NSBezierPath *centerPath = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(c.x-cr, c.y-cr, cr*2, cr*2)];
   [[NSColor controlAccentColor] setFill]; [centerPath fill];
   NSImage *appIcon = [NSApp applicationIconImage];
-  if (appIcon) [appIcon drawInRect:NSMakeRect(c.x-34, c.y-34, 68, 68) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
+  if (appIcon) [appIcon drawInRect:NSMakeRect(c.x-26, c.y-26, 52, 52) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
 }
 @end
 
@@ -13300,7 +13300,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       ]
     ];
     self.radialPage = 0;
-    self.radialMenu = [[DLCircularMenuView alloc] initWithFrame:NSMakeRect(0,0,420,440)];
+    self.radialMenu = [[DLCircularMenuView alloc] initWithFrame:NSMakeRect(0,0,340,360)];
     __weak typeof(self) weakSelf = self;
     self.radialMenu.onSegment = ^(NSInteger index) {
       if (index < 0 || index >= (NSInteger)weakSelf.radialMenu.items.count) return;
@@ -13314,22 +13314,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       else [weakSelf showDetachedPage:weakSelf.quickOverview title:@"概览"];
     };
     [root addSubview:self.radialMenu positioned:NSWindowAbove relativeTo:nil];
-    ColorHoverButton *prev = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(126,8,34,24)];
+    ColorHoverButton *prev = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(96,4,32,24)];
     prev.title = @"‹"; prev.hoverColor = [NSColor systemBlueColor];
     prev.target = self; prev.action = @selector(radialPrevPage:);
     [prev applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [root addSubview:prev];
-    ColorHoverButton *next = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(260,8,34,24)];
+    ColorHoverButton *next = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(212,4,32,24)];
     next.title = @"›"; next.hoverColor = [NSColor systemBlueColor];
     next.target = self; next.action = @selector(radialNextPage:);
     [next applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [root addSubview:next];
     self.radialPageLabel = [self label:@"1 / 3" size:9.5 bold:YES color:[NSColor secondaryLabelColor]];
     self.radialPageLabel.alignment = NSTextAlignmentCenter;
-    self.radialPageLabel.frame = NSMakeRect(186,12,48,16);
+    self.radialPageLabel.frame = NSMakeRect(150,8,48,16);
     [root addSubview:self.radialPageLabel];
     [self radialApplyPage];
-    pop.contentSize = NSMakeSize(420, 440);
+    pop.contentSize = NSMakeSize(340, 360);
   } else {
     pop.contentSize = NSMakeSize(420, 620);
   }
