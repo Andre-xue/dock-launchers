@@ -934,7 +934,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
   __weak typeof(self) weakSelf = self;
   [ex exportAsynchronouslyWithCompletionHandler:^{
     dispatch_async(dispatch_get_main_queue(), ^{
-      if (ex.status == AVAssetExportSessionStatusCompleted) {
+      NSDictionary *outAttrs = [[NSFileManager defaultManager] attributesOfItemAtPath:self.finalOutputURL.path error:NULL];
+      BOOL exported = (ex.status == AVAssetExportSessionStatusCompleted) || (outAttrs && [outAttrs[NSFileSize] longLongValue] > 0);
+      if (exported) {
         for (NSURL *u in valid) [[NSFileManager defaultManager] removeItemAtURL:u error:NULL];
         [weakSelf finishWithError:nil];
       } else {
@@ -978,7 +980,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 - (void)contentSharingPickerStartDidFailWithError:(NSError *)error { [self finishWithError:error]; }
 @end
 
-@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate>
+@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate, AVCaptureFileOutputRecordingDelegate>
 - (void)hideClipboardPreview;
 - (void)installClipboardHoverMonitor;
 - (void)scheduleDockLiveApply;
@@ -1137,6 +1139,11 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *captureRegionWindow;
 @property (strong) NSPopUpButton *captureCameraPopup;
 @property (strong) AVCaptureSession *captureCameraSession;
+@property (strong) AVCaptureMovieFileOutput *captureCameraMovieOutput;
+@property (strong) NSString *captureCameraMoviePath;
+@property (strong) NSString *capturePendingScreenPath;
+@property BOOL captureCameraWaiting;
+@property BOOL captureCameraComposing;
 @property (strong) NSWindow *captureCameraWindow, *captureCountdownWindow;
 @property (strong) NSTextField *captureCountdownLabel;
 @property (strong) NSTimer *captureCountdownTimer;
@@ -16791,6 +16798,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       w.opaque = YES;
       w.backgroundColor = [NSColor blackColor];
       w.level = NSFloatingWindowLevel;
+      w.sharingType = NSWindowSharingNone;
       w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
       w.movableByWindowBackground = YES;
       w.hasShadow = YES;
@@ -16809,7 +16817,124 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       weakSelf.captureCameraWindow = w;
       weakSelf.captureCameraLayer = layer;
       [w orderFront:nil];
-      dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ [session startRunning]; });
+      dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        [session startRunning];
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf startCameraMovieIfNeeded]; });
+      });
+    });
+  }];
+}
+
+- (void)startCameraMovieIfNeeded {
+  if (!self.captureRecording || !self.captureCameraSession.isRunning) return;
+  if (self.captureCameraMovieOutput.isRecording) return;
+  if (!self.captureCameraMovieOutput) {
+    self.captureCameraMovieOutput = [[AVCaptureMovieFileOutput alloc] init];
+    if ([self.captureCameraSession canAddOutput:self.captureCameraMovieOutput]) {
+      [self.captureCameraSession beginConfiguration];
+      [self.captureCameraSession addOutput:self.captureCameraMovieOutput];
+      [self.captureCameraSession commitConfiguration];
+    } else {
+      self.captureCameraMovieOutput = nil;
+      return;
+    }
+  }
+  AVCaptureConnection *conn = [self.captureCameraMovieOutput connectionWithMediaType:AVMediaTypeVideo];
+  if ([conn isVideoRotationAngleSupported:90]) conn.videoRotationAngle = 90;
+  NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"camera-%@.mov", [self captureTimestamp]]];
+  [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
+  self.captureCameraMoviePath = path;
+}
+
+- (void)captureOutput:(AVCaptureFileOutput *)output didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL fromConnections:(NSArray<AVCaptureConnection *> *)connections error:(NSError *)error {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (self.captureCameraWaiting && self.capturePendingScreenPath.length) {
+      NSString *screenPath = self.capturePendingScreenPath;
+      NSString *cameraPath = outputFileURL.path;
+      self.captureCameraWaiting = NO;
+      self.capturePendingScreenPath = nil;
+      [self composeCameraMovie:cameraPath overScreen:screenPath];
+    } else {
+      self.captureCameraWaiting = NO;
+    }
+  });
+}
+
+- (void)composeCameraMovie:(NSString *)cameraPath overScreen:(NSString *)screenPath {
+  if (![[NSFileManager defaultManager] fileExistsAtPath:cameraPath] || ![[NSFileManager defaultManager] fileExistsAtPath:screenPath]) {
+    [self showToast:@"摄像头合成失败，已保留原录屏"];
+    return;
+  }
+  self.captureCameraComposing = YES;
+  self.captureStatusLabel.stringValue = @"正在合成摄像头画中画…";
+  AVURLAsset *screenAsset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:screenPath] options:nil];
+  AVURLAsset *cameraAsset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:cameraPath] options:nil];
+  AVAssetTrack *screenVideo = [screenAsset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+  AVAssetTrack *screenAudio = [screenAsset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+  AVAssetTrack *cameraVideo = [cameraAsset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+  if (!screenVideo || !cameraVideo) {
+    self.captureCameraComposing = NO;
+    [self showToast:@"摄像头合成失败，已保留原录屏"];
+    return;
+  }
+  AVMutableComposition *comp = [AVMutableComposition composition];
+  AVMutableCompositionTrack *sv = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+  NSError *insErr = nil;
+  [sv insertTimeRange:CMTimeRangeMake(kCMTimeZero, screenAsset.duration) ofTrack:screenVideo atTime:kCMTimeZero error:&insErr];
+  AVMutableCompositionTrack *sa = nil;
+  if (screenAudio) {
+    sa = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+    [sa insertTimeRange:CMTimeRangeMake(kCMTimeZero, screenAsset.duration) ofTrack:screenAudio atTime:kCMTimeZero error:NULL];
+  }
+  AVMutableCompositionTrack *cv = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+  CMTime camDuration = CMTimeMinimum(cameraAsset.duration, screenAsset.duration);
+  [cv insertTimeRange:CMTimeRangeMake(kCMTimeZero, camDuration) ofTrack:cameraVideo atTime:kCMTimeZero error:NULL];
+  CGSize renderSize = screenVideo.naturalSize;
+  AVMutableVideoComposition *vc = [AVMutableVideoComposition videoComposition];
+  vc.renderSize = renderSize;
+  vc.frameDuration = CMTimeMake(1, 30);
+  AVMutableVideoCompositionInstruction *inst = [[AVMutableVideoCompositionInstruction alloc] init];
+  inst.timeRange = CMTimeRangeMake(kCMTimeZero, screenAsset.duration);
+  AVMutableVideoCompositionLayerInstruction *screenLayer = [AVMutableVideoCompositionLayerInstruction videoCompositionLayerInstructionWithAssetTrack:sv];
+  AVMutableVideoCompositionLayerInstruction *camLayer = [AVMutableVideoCompositionLayerInstruction videoCompositionLayerInstructionWithAssetTrack:cv];
+  CGFloat targetW = renderSize.width * 0.24;
+  CGFloat scale = targetW / MAX(1, cameraVideo.naturalSize.width);
+  CGFloat targetH = MAX(1, cameraVideo.naturalSize.height * scale);
+  CGFloat margin = renderSize.width * 0.02;
+  CGAffineTransform t = CGAffineTransformMakeScale(scale, scale);
+  t = CGAffineTransformTranslate(t, (renderSize.width - targetW - margin) / scale, (renderSize.height - targetH - margin) / scale);
+  [camLayer setTransform:t atTime:kCMTimeZero];
+  inst.layerInstructions = @[camLayer, screenLayer];
+  vc.instructions = @[inst];
+  NSString *outPath = [[screenPath stringByDeletingPathExtension] stringByAppendingString:@"-composed.mp4"];
+  [[NSFileManager defaultManager] removeItemAtPath:outPath error:NULL];
+  AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPreset1920x1080];
+  ex.videoComposition = vc;
+  ex.outputURL = [NSURL fileURLWithPath:outPath];
+  ex.outputFileType = AVFileTypeMPEG4;
+  ex.shouldOptimizeForNetworkUse = YES;
+  __weak typeof(self) weakSelf = self;
+  [ex exportAsynchronouslyWithCompletionHandler:^{
+    dispatch_async(dispatch_get_main_queue(), ^{
+      weakSelf.captureCameraComposing = NO;
+      weakSelf.captureCameraMovieOutput = nil;
+      weakSelf.captureCameraMoviePath = nil;
+      [weakSelf finishCaptureUI];
+      // macOS 27 may report AVAssetExportSessionStatusFailed with nil error while still writing a valid file.
+      NSDictionary *outAttrs = [[NSFileManager defaultManager] attributesOfItemAtPath:outPath error:NULL];
+      BOOL exported = (ex.status == AVAssetExportSessionStatusCompleted) || (outAttrs && [outAttrs[NSFileSize] longLongValue] > 0);
+      if (exported) {
+        [[NSFileManager defaultManager] removeItemAtPath:screenPath error:NULL];
+        [[NSFileManager defaultManager] moveItemAtPath:outPath toPath:screenPath error:NULL];
+        [[NSFileManager defaultManager] removeItemAtPath:cameraPath error:NULL];
+        weakSelf.captureStatusLabel.stringValue = @"录屏已保存（含摄像头画中画）";
+        [weakSelf showToast:@"摄像头画中画合成完成"];
+      } else {
+        [[NSFileManager defaultManager] removeItemAtPath:outPath error:NULL];
+        weakSelf.captureStatusLabel.stringValue = @"摄像头合成失败，已保留原录屏";
+        [weakSelf showToast:@"摄像头合成失败，已保留原录屏"];
+      }
+      [[NSFileManager defaultManager] removeItemAtPath:cameraPath error:NULL];
     });
   }];
 }
@@ -17092,6 +17217,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [w makeFirstResponder:view];
 }
 
+- (void)finishCaptureUI {
+  self.captureRecording = NO;
+  self.capturePaused = NO;
+  self.capturePauseButton.hidden = YES;
+  self.captureRecordButton.title = @"开始录屏";
+  self.captureRecordButton.hoverColor = [NSColor systemRedColor];
+  [self stopCameraPreview];
+  self.captureRecorder = nil;
+}
+
 - (void)startCaptureRecorderWithScene:(NSInteger)scene region:(NSRect)region {
   if (!self.captureRecorder) self.captureRecorder = [[DLScreenRecorder alloc] init];
   NSInteger seconds = [self.captureDurationPopup.selectedItem.representedObject integerValue];
@@ -17113,12 +17248,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   };
   rec.onFinished = ^(NSURL *url, NSError *error) {
     dispatch_async(dispatch_get_main_queue(), ^{
-      weakSelf.captureRecording = NO;
-      weakSelf.capturePaused = NO;
-      [weakSelf stopCameraPreview];
-      weakSelf.capturePauseButton.hidden = YES;
-      weakSelf.captureRecordButton.title = @"开始录屏";
-      weakSelf.captureRecordButton.hoverColor = [NSColor systemRedColor];
+      if (weakSelf.captureCameraMovieOutput.isRecording && weakSelf.captureCameraMoviePath.length) {
+        weakSelf.capturePendingScreenPath = path;
+        weakSelf.captureCameraWaiting = YES;
+        weakSelf.captureStatusLabel.stringValue = @"正在停止摄像头并合成画中画…";
+        [weakSelf.captureCameraMovieOutput stopRecording];
+        return;
+      }
+      [weakSelf finishCaptureUI];
       if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
         weakSelf.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
         [weakSelf showToast:@"录屏已保存"];
@@ -17128,7 +17265,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       } else {
         weakSelf.captureStatusLabel.stringValue = @"录屏已取消";
       }
-      weakSelf.captureRecorder = nil;
     });
   };
   [rec startWithScene:scene seconds:seconds region:region url:[NSURL fileURLWithPath:path]];
@@ -17136,6 +17272,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)pauseCapture:(id)sender {
   if (!self.captureRecording || !self.captureRecorder) return;
+  if (self.captureCameraMovieOutput.isRecording) { [self showToast:@"摄像头画中画模式下暂不支持暂停"]; return; }
   if (self.capturePaused) {
     [self.captureRecorder resume];
     self.capturePaused = NO;
