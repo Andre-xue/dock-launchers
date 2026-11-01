@@ -1029,6 +1029,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSDictionary *mediaNowPlaying;
 @property (strong) NSString *mediaArtworkKey;
 @property (strong) NSImage *mediaArtworkImage;
+@property (strong) NSData *mediaArtworkData;
 @property (strong) NSString *mediaBundleID;
 @property NSInteger mediaPID;
 @property BOOL mediaPlaying;
@@ -2870,7 +2871,7 @@ static void HideDockHoverTip(void) {
   self.mediaPlaying = YES;
   self.mediaBundleID = chosen[0];
   NSMutableDictionary *np = [@{@"kMRMediaRemoteNowPlayingInfoTitle": title ?: @"", @"kMRMediaRemoteNowPlayingInfoArtist": artist ?: @"", @"kMRMediaRemoteNowPlayingInfoElapsedTime": @(elapsed), @"kMRMediaRemoteNowPlayingInfoDuration": @(duration)} mutableCopy];
-  if (self.mediaArtworkImage) np[@"kMRMediaRemoteNowPlayingInfoArtworkData"] = self.mediaArtworkImage;
+  if (self.mediaArtworkData) np[@"kMRMediaRemoteNowPlayingInfoArtworkData"] = self.mediaArtworkData;
   self.mediaNowPlaying = np;
   [self fetchFallbackArtworkIfNeeded:chosen[0] title:title artist:artist];
   NSRunningApplication *app = [[NSRunningApplication runningApplicationsWithBundleIdentifier:self.mediaBundleID] firstObject];
@@ -2884,6 +2885,7 @@ static void HideDockHoverTip(void) {
   if ([key isEqualToString:self.mediaArtworkKey]) return;
   self.mediaArtworkKey = key;
   self.mediaArtworkImage = nil;
+  self.mediaArtworkData = nil;
   NSString *tmp = @"/tmp/docklaunchers-music-artwork.dat";
   [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
   NSString *src = @"tell application \"Music\"\nif player state is playing then\ntry\nset artData to data of artwork 1 of current track\nset f to open for access POSIX file \"/tmp/docklaunchers-music-artwork.dat\" with write permission\nset eof f to 0\nwrite artData to f\nclose access f\nend try\nend if\nend tell";
@@ -2896,6 +2898,7 @@ static void HideDockHoverTip(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
       if (![weakSelf.mediaArtworkKey isEqualToString:key]) return;
       weakSelf.mediaArtworkImage = img;
+      weakSelf.mediaArtworkData = data;
       NSMutableDictionary *np = [weakSelf.mediaNowPlaying mutableCopy] ?: [NSMutableDictionary dictionary];
       np[@"kMRMediaRemoteNowPlayingInfoArtworkData"] = data;
       weakSelf.mediaNowPlaying = np;
@@ -2990,7 +2993,7 @@ static void HideDockHoverTip(void) {
   self.radialPlayerFavoriteButton.image = [NSImage imageWithSystemSymbolName:(self.mediaFavoriteState ? @"heart.fill" : @"heart") accessibilityDescription:nil];
   self.radialPlayerFavoriteButton.contentTintColor = self.mediaFavoriteState ? [NSColor systemPinkColor] : [NSColor secondaryLabelColor];
   NSData *artData = self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoArtworkData"];
-  NSImage *img = [artData isKindOfClass:[NSData class]] ? [[NSImage alloc] initWithData:artData] : nil;
+  NSImage *img = [artData isKindOfClass:[NSData class]] ? [[NSImage alloc] initWithData:artData] : self.mediaArtworkImage;
   self.radialPlayerArt.image = img ?: [self mediaPlaceholderArtwork:NO];
   double dur = [self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoDuration"] doubleValue];
   double el = [self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoElapsedTime"] doubleValue];
@@ -3511,10 +3514,10 @@ static void HideDockHoverTip(void) {
   if (!getenv("DOCKLAUNCHERS_CENTER_SKIP_DOCK")) {
     NSString *selfPath = [[NSBundle mainBundle] bundlePath];
     [self removeDockEntry:selfPath];
-    [self addDockEntry:selfPath label:@"DockLaunchers控制台"];
     [self ensureGroupDockEntries];
     [self repairGroupDockIconsIfNeeded];
     [self killDock];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")) {
     NSString *arg = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")];

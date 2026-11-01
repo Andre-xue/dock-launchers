@@ -154,7 +154,7 @@ if [ -d "$ROOT/build/DockLaunchers控制台.app" ]; then
 <key>Label</key><string>com.docklaunchers.center</string>
 <key>ProgramArguments</key><array><string>$HOME/Applications/DockLaunchers控制台.app/Contents/MacOS/DockLaunchers</string></array>
 <key>RunAtLoad</key><true/>
-<key>KeepAlive</key><true/>
+<key>KeepAlive</key><false/>
 </dict></plist>
 PLIST
   launchctl unload "$AGENT" 2>/dev/null || true
