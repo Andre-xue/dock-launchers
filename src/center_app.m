@@ -2548,15 +2548,26 @@ static void HideDockHoverTip(void) {
   if (!w.delegate) w.delegate = self;
   NSView *titlebar = close.superview ?: w.contentView.superview;
   if (!titlebar) return;
-  NSButton *pin = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"pin" accessibilityDescription:@"钉住"] target:self action:@selector(toggleWindowPin:)];
+  NSButton *pin = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"钉住"] target:self action:@selector(toggleWindowPin:)];
   pin.bordered = NO;
   pin.imageScaling = NSImageScaleProportionallyDown;
-  pin.contentTintColor = [NSColor secondaryLabelColor];
+  pin.imagePosition = NSImageOnly;
+  pin.contentTintColor = [NSColor systemOrangeColor];
   pin.toolTip = @"钉住窗口";
-  CGFloat px = close ? NSMaxX(close.frame) + 4 : 34;
-  CGFloat py = close ? close.frame.origin.y : MAX(4, titlebar.bounds.size.height - 24);
-  pin.frame = NSMakeRect(px, py, 24, 24);
-  pin.autoresizingMask = NSViewMinYMargin;
+  pin.wantsLayer = YES;
+  pin.layer.cornerRadius = 8;
+  pin.layer.backgroundColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.16].CGColor;
+  pin.layer.borderWidth = 1;
+  pin.layer.borderColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.65].CGColor;
+  pin.layer.shadowColor = [NSColor systemOrangeColor].CGColor;
+  pin.layer.shadowOpacity = 0.28;
+  pin.layer.shadowRadius = 4;
+  pin.layer.shadowOffset = CGSizeMake(0, -1);
+  CGFloat pinSize = 30;
+  CGFloat px = titlebar.bounds.size.width - pinSize - 12;
+  CGFloat py = close ? close.frame.origin.y - (pinSize - close.frame.size.height)/2.0 : MAX(4, titlebar.bounds.size.height - pinSize - 2);
+  pin.frame = NSMakeRect(px, py, pinSize, pinSize);
+  pin.autoresizingMask = NSViewMinXMargin | NSViewMinYMargin;
   [titlebar addSubview:pin];
 }
 
@@ -2569,14 +2580,20 @@ static void HideDockHoverTip(void) {
   if (pinned) {
     [self.pinnedWindows removeObject:key];
     w.level = NSNormalWindowLevel;
-    sender.image = [NSImage imageWithSystemSymbolName:@"pin" accessibilityDescription:@"钉住"];
-    sender.contentTintColor = [NSColor secondaryLabelColor];
+    sender.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"钉住"];
+    sender.contentTintColor = [NSColor systemOrangeColor];
+    sender.layer.backgroundColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.16].CGColor;
+    sender.layer.borderColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.65].CGColor;
+    sender.layer.shadowOpacity = 0.28;
     sender.toolTip = @"钉住窗口";
   } else {
     [self.pinnedWindows addObject:key];
     w.level = NSFloatingWindowLevel;
     sender.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"已钉住"];
-    sender.contentTintColor = [NSColor systemOrangeColor];
+    sender.contentTintColor = [NSColor whiteColor];
+    sender.layer.backgroundColor = [NSColor systemOrangeColor].CGColor;
+    sender.layer.borderColor = [NSColor systemOrangeColor].CGColor;
+    sender.layer.shadowOpacity = 0.5;
     sender.toolTip = @"已钉住，点击取消钉住";
   }
   NSButton *close = [w standardWindowButton:NSWindowCloseButton];
