@@ -2362,6 +2362,9 @@ static void HideDockHoverTip(void) {
       [self groupsSearchChanged:nil];
     });
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_COLOR")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self showColorSampler:nil]; });
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DISK")) {
     [self showSection:3];
     [self showWindow:nil];
@@ -2478,6 +2481,9 @@ static void HideDockHoverTip(void) {
       [self showTranslationWindow:nil];
       [self openShortcutSettings:nil];
     });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_COLOR")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self showColorSampler:nil]; });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DISK")) {
     [self openDiskAnalysisFromMenu];
@@ -15946,13 +15952,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)showColorSampler:(id)sender {
-  if (!self.colorSampler) self.colorSampler = [[NSColorSampler alloc] init];
-  __weak typeof(self) weakSelf = self;
-  [self.colorSampler showSamplerWithSelectionHandler:^(NSColor *selectedColor) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-      if (selectedColor) [weakSelf showColorResult:selectedColor];
-    });
-  }];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (!NSClassFromString(@"NSColorSampler")) { [self showToast:@"当前系统不支持屏幕取色"]; return; }
+    if (!self.colorSampler) self.colorSampler = [[NSColorSampler alloc] init];
+    __weak typeof(self) weakSelf = self;
+    [NSApp activateIgnoringOtherApps:YES];
+    [self.colorSampler showSamplerWithSelectionHandler:^(NSColor *selectedColor) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (selectedColor) [weakSelf showColorResult:selectedColor];
+      });
+    }];
+  });
 }
 
 - (void)showColorResult:(NSColor *)color {
