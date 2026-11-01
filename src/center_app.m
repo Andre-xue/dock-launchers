@@ -949,7 +949,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *captureRegionWindow;
 @property (strong) NSPopUpButton *captureCameraPopup;
 @property (strong) AVCaptureSession *captureCameraSession;
-@property (strong) NSWindow *captureCameraWindow;
+@property (strong) NSWindow *captureCameraWindow, *captureCountdownWindow;
+@property (strong) NSTextField *captureCountdownLabel;
+@property (strong) NSTimer *captureCountdownTimer;
+@property NSInteger captureCountdownRemaining;
 @property (strong) AVCaptureVideoPreviewLayer *captureCameraLayer;
 @property (strong) ColorHoverButton *captureRecordButton;
 @property BOOL captureRecording;
@@ -16555,9 +16558,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureScenePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(452, 306, 100, 26) pullsDown:NO];
     [self.captureScenePopup addItemsWithTitles:@[@"全屏", @"窗口", @"应用程序", @"区域"]];
     [cv addSubview:self.captureScenePopup];
-    NSTextField *dl = [self label:@"延迟" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    dl.frame = NSMakeRect(20, 270, 40, 18); [cv addSubview:dl];
-    self.captureDelayPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(64, 264, 100, 26) pullsDown:NO];
+    NSTextField *dl = [self label:@"延迟/倒计时" size:10.0 bold:NO color:[NSColor secondaryLabelColor]];
+    dl.frame = NSMakeRect(20, 270, 78, 18); [cv addSubview:dl];
+    self.captureDelayPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(100, 264, 82, 26) pullsDown:NO];
     [self.captureDelayPopup addItemsWithTitles:@[@"不延迟", @"3 秒", @"5 秒", @"10 秒"]];
     [cv addSubview:self.captureDelayPopup];
     self.captureCopyCheck = [NSButton checkboxWithTitle:@"截图后复制到剪贴板" target:nil action:nil];
@@ -16679,7 +16682,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)captureFullScreen:(id)sender {
   NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
-  NSInteger delay = self.captureDelayPopup.indexOfSelectedItem * 3;
+  NSInteger delay = [self captureDelaySeconds];
   NSMutableArray *args = [NSMutableArray arrayWithObjects:@"-x", nil];
   if (delay > 0) [args addObjectsFromArray:@[@"-T", [NSString stringWithFormat:@"%ld", (long)delay]]];
   [args addObject:path];
@@ -16700,6 +16703,43 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSDateFormatter *df = [[NSDateFormatter alloc] init];
   df.dateFormat = @"yyyyMMdd-HHmmss";
   return [df stringFromDate:[NSDate date]];
+}
+
+- (NSInteger)captureDelaySeconds {
+  NSArray *vals = @[@0, @3, @5, @10];
+  NSInteger i = self.captureDelayPopup.indexOfSelectedItem;
+  return (i >= 0 && i < (NSInteger)vals.count) ? [vals[i] integerValue] : 0;
+}
+
+- (void)showCaptureCountdown:(NSInteger)seconds completion:(void (^)(void))completion {
+  [self.captureCountdownTimer invalidate];
+  self.captureCountdownRemaining = seconds;
+  if (!self.captureCountdownWindow) {
+    self.captureCountdownWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,220,140) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    self.captureCountdownWindow.opaque = NO;
+    self.captureCountdownWindow.backgroundColor = [NSColor colorWithCalibratedWhite:0.05 alpha:0.82];
+    self.captureCountdownWindow.level = NSScreenSaverWindowLevel;
+    self.captureCountdownWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+    self.captureCountdownLabel = [self label:@"3" size:84 bold:YES color:[NSColor whiteColor]];
+    self.captureCountdownLabel.alignment = NSTextAlignmentCenter;
+    self.captureCountdownLabel.frame = NSMakeRect(0, 18, 220, 104);
+    [self.captureCountdownWindow.contentView addSubview:self.captureCountdownLabel];
+    [self.captureCountdownWindow center];
+  }
+  self.captureCountdownLabel.stringValue = [NSString stringWithFormat:@"%ld", (long)seconds];
+  [self.captureCountdownWindow orderFront:nil];
+  __weak typeof(self) weakSelf = self;
+  self.captureCountdownTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
+    weakSelf.captureCountdownRemaining--;
+    if (weakSelf.captureCountdownRemaining <= 0) {
+      [timer invalidate];
+      weakSelf.captureCountdownTimer = nil;
+      [weakSelf.captureCountdownWindow orderOut:nil];
+      if (completion) completion();
+    } else {
+      weakSelf.captureCountdownLabel.stringValue = [NSString stringWithFormat:@"%ld", (long)weakSelf.captureCountdownRemaining];
+    }
+  }];
 }
 
 - (void)beginCaptureRegion:(void (^)(NSRect region))completion {
@@ -16773,15 +16813,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     return;
   }
   NSInteger scene = self.captureScenePopup.indexOfSelectedItem;
+  NSInteger delay = [self captureDelaySeconds];
+  __weak typeof(self) weakSelf = self;
   if (scene == 3) {
-    __weak typeof(self) weakSelf = self;
     [self beginCaptureRegion:^(NSRect region) {
       if (region.size.width < 12 || region.size.height < 12) return;
-      [weakSelf startCaptureRecorderWithScene:3 region:region];
+      if (delay > 0) [weakSelf showCaptureCountdown:delay completion:^{ [weakSelf startCaptureRecorderWithScene:3 region:region]; }];
+      else [weakSelf startCaptureRecorderWithScene:3 region:region];
     }];
     return;
   }
-  [self startCaptureRecorderWithScene:scene region:NSZeroRect];
+  if (delay > 0) [self showCaptureCountdown:delay completion:^{ [weakSelf startCaptureRecorderWithScene:scene region:NSZeroRect]; }];
+  else [self startCaptureRecorderWithScene:scene region:NSZeroRect];
 }
 
 - (void)quickScreenshot:(id)sender {
