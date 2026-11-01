@@ -813,6 +813,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSButton *batchNumberCheck;
 @property (strong) NSWindow *layoutWindow;
 @property (strong) NSTableView *layoutTable;
+@property (strong) NSArray *layoutVisibleNames;
+@property (strong) NSSearchField *layoutSearch;
 @property (strong) NSMutableDictionary *savedLayouts;
 @property (strong) NSButton *layoutAutoLaunchCheck;
 @property (strong) ColorHoverButton *layoutAXButton;
@@ -8441,7 +8443,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (tableView == self.imageToolTable) return self.imageToolItems.count;
   if (tableView == self.pdfTable) return self.pdfItems.count;
   if (tableView == self.batchRenameTable) return self.batchRenamePreview.count;
-  if (tableView == self.layoutTable) return self.savedLayouts.count;
+  if (tableView == self.layoutTable) return self.layoutVisibleNames.count;
   if (tableView == self.appSearchTable) return self.appSearchFiltered.count;
   if (tableView == self.promptTable) return self.promptPageItems.count;
   if (tableView == self.largeFileTable) return self.largeFileItems.count;
@@ -8547,7 +8549,7 @@ static BOOL ValidGroupName(NSString *raw) {
     return v;
   }
   if (tableView == self.layoutTable) {
-    NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
+    NSArray *names = self.layoutVisibleNames ?: @[];
     if (row < 0 || row >= (NSInteger)names.count) return nil;
     NSString *name = names[row];
     NSDictionary *info = self.savedLayouts[name] ?: @{};
@@ -13164,6 +13166,23 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [sv setMagnification:MIN(sv.maxMagnification, sv.magnification + 0.15) centeredAtPoint:anchor];
 }
 
+- (void)layoutFilterChanged:(id)sender { [self reloadLayoutVisibleNames]; }
+
+- (void)reloadLayoutVisibleNames {
+  NSArray *all = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
+  NSString *q = [self.layoutSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  if (q.length) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *n in all) if ([n.lowercaseString containsString:q]) [out addObject:n];
+    self.layoutVisibleNames = out;
+  } else {
+    self.layoutVisibleNames = all;
+  }
+  [self.layoutTable reloadData];
+  [self.layoutTable deselectAll:nil];
+  if (self.layoutTable.numberOfRows > 0) [self.layoutTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+}
+
 - (void)showWindowLayouts:(id)sender {
   [self loadWindowLayouts];
   if (!self.layoutWindow) {
@@ -13176,6 +13195,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     title.frame = NSMakeRect(20, 390, 300, 28); [cv addSubview:title];
     NSTextField *sub = [self label:@"单击选中布局，双击恢复；保存不需要权限，恢复需要窗口控制权限" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 368, 520, 18); [cv addSubview:sub];
+    self.layoutSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(400, 386, 180, 26)];
+    self.layoutSearch.placeholderString = @"搜索布局";
+    self.layoutSearch.target = self; self.layoutSearch.action = @selector(layoutFilterChanged:);
+    [self.layoutSearch setContinuous:YES];
+    [cv addSubview:self.layoutSearch];
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 568, 276)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.layoutTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
@@ -13213,7 +13237,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
     [self.layoutWindow center];
   }
-  [self.layoutTable reloadData];
+  [self reloadLayoutVisibleNames];
   if (self.layoutTable.numberOfRows > 0 && self.layoutTable.selectedRow < 0) {
     [self.layoutTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
   }
@@ -13285,9 +13309,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!windows.count && !apps.count) { [self showToast:@"没有可保存的窗口或应用"]; return; }
   self.savedLayouts[name] = @{@"date": @([[NSDate date] timeIntervalSince1970]), @"windows": windows, @"apps": apps, @"pages": pages};
   [self saveWindowLayouts];
-  [self.layoutTable reloadData];
-  NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
-  NSInteger idx = [names indexOfObject:name];
+  [self reloadLayoutVisibleNames];
+  NSInteger idx = [self.layoutVisibleNames indexOfObject:name];
   if (idx != NSNotFound) [self.layoutTable selectRowIndexes:[NSIndexSet indexSetWithIndex:idx] byExtendingSelection:NO];
   [self showToast:[NSString stringWithFormat:@"已保存「%@」：%ld 个窗口、%ld 个应用", name, (long)windows.count, (long)apps.count]];
 }
@@ -13295,7 +13318,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)restoreSelectedWindowLayout:(id)sender {
   if (![self ensureAccessibilityPermission]) return;
   NSInteger row = self.layoutTable.selectedRow;
-  NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
+  NSArray *names = self.layoutVisibleNames ?: @[];
   if (row < 0 || row >= (NSInteger)names.count) { [self showToast:@"请先选择一个布局"]; return; }
   BOOL autoLaunch = !self.layoutAutoLaunchCheck || self.layoutAutoLaunchCheck.state == NSControlStateValueOn;
   [self restoreWindowLayoutNamed:names[row] autoLaunch:autoLaunch];
@@ -13441,11 +13464,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)deleteSelectedWindowLayout:(id)sender {
   NSInteger row = self.layoutTable.selectedRow;
-  NSArray *names = [[self.savedLayouts allKeys] sortedArrayUsingSelector:@selector(localizedCompare:)];
+  NSArray *names = self.layoutVisibleNames ?: @[];
   if (row < 0 || row >= (NSInteger)names.count) return;
   [self.savedLayouts removeObjectForKey:names[row]];
   [self saveWindowLayouts];
-  [self.layoutTable reloadData];
+  [self reloadLayoutVisibleNames];
 }
 
 - (void)closeWindowLayouts:(id)sender { [self.layoutWindow orderOut:nil]; }
