@@ -9201,7 +9201,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *cv = self.appShortcutWindow.contentView;
     NSTextField *title = [self label:@"应用内快捷键" size:17 bold:YES color:nil];
     title.frame = NSMakeRect(24, 386, 300, 24); [cv addSubview:title];
-    NSTextField *hint = [self label:@"只在控制台应用内生效，不影响系统和其他应用" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *hint = [self label:@"以下快捷键只在控制台窗口内生效；全局快捷键请点下方按钮" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     hint.frame = NSMakeRect(24, 366, 500, 16); [cv addSubview:hint];
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 66, 568, 290)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder; sv.drawsBackground = YES; sv.backgroundColor = [NSColor whiteColor];
@@ -9219,6 +9219,11 @@ static BOOL ValidGroupName(NSString *raw) {
     add.target = self; add.action = @selector(addAppShortcut:);
     [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [cv addSubview:add];
+    ColorHoverButton *globalBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(154, 22, 140, 32)];
+    globalBtn.title = @"全局快捷键…"; globalBtn.hoverColor = [NSColor systemTealColor];
+    globalBtn.target = self; globalBtn.action = @selector(openShortcutSettings:);
+    [globalBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:globalBtn];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(484, 22, 100, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeAppShortcutSettings:);
@@ -12037,12 +12042,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [alertsBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [tAlert addSubview:alertsBtn];
 
-  NSView *tShortcut = tileAt(0, 204); tileLabel(tShortcut, @"应用内快捷键");
-  ColorHoverButton *appShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
-  appShortcutBtn.title = @"快捷键设置…"; appShortcutBtn.hoverColor = [NSColor systemPurpleColor];
+  NSView *tShortcut = tileAt(0, 204); tileLabel(tShortcut, @"快捷键");
+  ColorHoverButton *appShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, 92, 26)];
+  appShortcutBtn.title = @"应用内快捷键"; appShortcutBtn.hoverColor = [NSColor systemPurpleColor];
   appShortcutBtn.target = self; appShortcutBtn.action = @selector(showAppShortcutSettings:);
   [appShortcutBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [tShortcut addSubview:appShortcutBtn];
+  ColorHoverButton *globalShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(110, 8, 92, 26)];
+  globalShortcutBtn.title = @"全局快捷键"; globalShortcutBtn.hoverColor = [NSColor systemTealColor];
+  globalShortcutBtn.target = self; globalShortcutBtn.action = @selector(openShortcutSettings:);
+  [globalShortcutBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [tShortcut addSubview:globalShortcutBtn];
 
   // 第二列：同步与文件
   NSView *tSync = tileAt(1, 500);
