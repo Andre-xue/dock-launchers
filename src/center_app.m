@@ -769,7 +769,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *fileSearchWindow;
 @property (strong) NSWindow *groupPanelWindow;
 @property (strong) NSWindow *captureWindow;
-@property (strong) NSTextField *captureStatusLabel, *capturePathField;
+@property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
 @property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup;
 @property (strong) NSButton *captureCopyCheck;
@@ -16126,7 +16126,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)quickRecord:(id)sender {
-  NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mov", [self captureTimestamp]]];
+  NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mov", [self captureTimestamp]]];
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = @"/usr/sbin/screencapture";
   t.arguments = @[@"-v", @"-V", @"30", path];
@@ -16140,23 +16140,43 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   @try { [t launch]; } @catch (NSException *e) { [self showToast:@"无法启动录屏"]; }
 }
 
-- (NSString *)captureDirectory {
-  NSString *dir = self.capturePathField.stringValue;
+- (NSString *)captureImageDirectory {
+  NSString *dir = self.captureImagePathField.stringValue;
+  if (!dir.length) dir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureImageDirectory"];
   if (!dir.length) dir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureDirectory"];
   if (!dir.length) dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
   dir = [dir stringByExpandingTildeInPath];
-  if (!dir.length) dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
   return dir;
 }
 
-- (void)capturePathChanged:(id)sender {
-  NSString *dir = [self.capturePathField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+- (NSString *)captureVideoDirectory {
+  NSString *dir = self.captureVideoPathField.stringValue;
+  if (!dir.length) dir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureVideoDirectory"];
+  if (!dir.length) dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+  dir = [dir stringByExpandingTildeInPath];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return dir;
+}
+
+- (NSString *)captureDirectory { return [self captureImageDirectory]; }
+
+- (void)captureImagePathChanged:(id)sender {
+  NSString *dir = [self.captureImagePathField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
   if (!dir.length) return;
   dir = [dir stringByExpandingTildeInPath];
-  [[NSUserDefaults standardUserDefaults] setObject:dir forKey:@"centerCaptureDirectory"];
+  [[NSUserDefaults standardUserDefaults] setObject:dir forKey:@"centerCaptureImageDirectory"];
   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
-  self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"保存到：%@", dir];
+  self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"截图保存到：%@", dir];
+}
+
+- (void)captureVideoPathChanged:(id)sender {
+  NSString *dir = [self.captureVideoPathField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!dir.length) return;
+  dir = [dir stringByExpandingTildeInPath];
+  [[NSUserDefaults standardUserDefaults] setObject:dir forKey:@"centerCaptureVideoDirectory"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏保存到：%@", dir];
 }
 
 - (void)showCaptureTool:(id)sender {
@@ -16206,23 +16226,36 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureStatusLabel.frame = NSMakeRect(20, 158, 520, 40);
     self.captureStatusLabel.maximumNumberOfLines = 2;
     [cv addSubview:self.captureStatusLabel];
-    NSTextField *pathLabel = [self label:@"保存位置" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    pathLabel.frame = NSMakeRect(20, 66, 60, 18); [cv addSubview:pathLabel];
-    self.capturePathField = [[NSTextField alloc] initWithFrame:NSMakeRect(84, 60, 360, 26)];
-    NSString *savedDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureDirectory"];
-    self.capturePathField.stringValue = savedDir.length ? savedDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
-    self.capturePathField.target = self;
-    self.capturePathField.action = @selector(capturePathChanged:);
-    self.capturePathField.toolTip = @"可填写任意文件夹，支持 ~";
-    [cv addSubview:self.capturePathField];
+    NSTextField *imgLabel = [self label:@"截图保存" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    imgLabel.frame = NSMakeRect(20, 104, 70, 18); [cv addSubview:imgLabel];
+    self.captureImagePathField = [[NSTextField alloc] initWithFrame:NSMakeRect(94, 98, 350, 26)];
+    NSString *savedImgDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureImageDirectory"];
+    if (!savedImgDir.length) savedImgDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureDirectory"];
+    self.captureImagePathField.stringValue = savedImgDir.length ? savedImgDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+    self.captureImagePathField.target = self;
+    self.captureImagePathField.action = @selector(captureImagePathChanged:);
+    self.captureImagePathField.toolTip = @"截图保存文件夹，支持 ~";
+    [cv addSubview:self.captureImagePathField];
+    NSTextField *vidLabel = [self label:@"录屏保存" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    vidLabel.frame = NSMakeRect(20, 68, 70, 18); [cv addSubview:vidLabel];
+    self.captureVideoPathField = [[NSTextField alloc] initWithFrame:NSMakeRect(94, 62, 350, 26)];
+    NSString *savedVidDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureVideoDirectory"];
+    self.captureVideoPathField.stringValue = savedVidDir.length ? savedVidDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+    self.captureVideoPathField.target = self;
+    self.captureVideoPathField.action = @selector(captureVideoPathChanged:);
+    self.captureVideoPathField.toolTip = @"录屏保存文件夹，支持 ~";
+    [cv addSubview:self.captureVideoPathField];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(440, 20, 100, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeCaptureTool:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.captureWindow center];
   }
-  NSString *savedDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureDirectory"];
-  self.capturePathField.stringValue = savedDir.length ? savedDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+  NSString *savedImgDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureImageDirectory"];
+  if (!savedImgDir.length) savedImgDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureDirectory"];
+  self.captureImagePathField.stringValue = savedImgDir.length ? savedImgDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+  NSString *savedVidDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureVideoDirectory"];
+  self.captureVideoPathField.stringValue = savedVidDir.length ? savedVidDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
   [NSApp activateIgnoringOtherApps:YES];
   [self.captureWindow makeKeyAndOrderFront:nil];
 }
@@ -16284,7 +16317,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)captureVideo:(id)sender {
   if (self.captureTask && self.captureTask.isRunning) { [self showToast:@"正在录制中"]; return; }
   NSInteger seconds = [self.captureDurationPopup.selectedItem.representedObject integerValue];
-  NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mov", [self captureTimestamp]]];
+  NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mov", [self captureTimestamp]]];
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = @"/usr/sbin/screencapture";
   t.arguments = @[@"-v", @"-V", [NSString stringWithFormat:@"%ld", (long)seconds], path];
