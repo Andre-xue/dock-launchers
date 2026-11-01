@@ -578,7 +578,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
     [icon drawInRect:ir];
     NSString *title = item[@"title"] ?: @"";
     NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init]; ps.alignment = NSTextAlignmentCenter;
-    NSDictionary *attrs = @{NSFontAttributeName:[NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:(self.hovered == i ? [NSColor whiteColor] : [NSColor labelColor]), NSParagraphStyleAttributeName:ps};
+    NSDictionary *attrs = @{NSFontAttributeName:[NSFont systemFontOfSize:10.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:(self.hovered == i ? [NSColor whiteColor] : [NSColor labelColor]), NSParagraphStyleAttributeName:ps};
     [title drawInRect:NSMakeRect(ip.x - 36, ip.y - 34, 72, 16) withAttributes:attrs];
   }
   CGFloat cr = [self centerRadius];
@@ -1129,7 +1129,7 @@ static NSDate *InstallDateForPath(NSString *path) {
     self.layer.borderColor = (dark ? [NSColor colorWithCalibratedWhite:1.0 alpha:0.14] : [NSColor colorWithCalibratedWhite:0.93 alpha:1.0]).CGColor;
     CGFloat w = frame.size.width;
     _titleLabel = [NSTextField labelWithString:title];
-    _titleLabel.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold];
+    _titleLabel.font = [NSFont systemFontOfSize:10.5 weight:NSFontWeightSemibold];
     _titleLabel.textColor = [NSColor secondaryLabelColor];
     _titleLabel.frame = NSMakeRect(12, frame.size.height - 30, w - 24, 18);
     [self addSubview:_titleLabel];
@@ -2971,7 +2971,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   NSString *name = self.externalVolumes[idx][@"name"] ?: @"外接存储";
   NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
   ps.alignment = NSTextAlignmentLeft;
-  NSAttributedString *attr = [[NSAttributedString alloc] initWithString:name attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: [NSColor systemIndigoColor], NSParagraphStyleAttributeName: ps}];
+  NSAttributedString *attr = [[NSAttributedString alloc] initWithString:name attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:10.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: [NSColor systemIndigoColor], NSParagraphStyleAttributeName: ps}];
   self.externalPopup.attributedTitle = attr;
   self.externalPopup.wantsLayer = YES;
   self.externalPopup.layer.cornerRadius = 6;
@@ -13028,7 +13028,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if (i == 1) { self.quickGPU = val; self.quickGPUSub = sub; self.quickGPUBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(10, 70, cw - 20, 8)]; self.quickGPUBar.barColor = ccolors[i]; [card addSubview:self.quickGPUBar]; }
     else if (i == 2) { self.quickMem = val; self.quickMemSub = sub; self.quickMemBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(10, 70, cw - 20, 8)]; self.quickMemBar.barColor = ccolors[i]; [card addSubview:self.quickMemBar]; }
     else if (i == 3) { self.quickDisk = val; self.quickDiskSub = sub; self.quickDiskBar = [[QuickBarView alloc] initWithFrame:NSMakeRect(10, 70, cw - 20, 8)]; self.quickDiskBar.barColor = ccolors[i]; [card addSubview:self.quickDiskBar]; }
-    else if (i == 4) { self.quickNet = val; val.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold]; val.maximumNumberOfLines = 2; val.lineBreakMode = NSLineBreakByWordWrapping; self.quickNetSub = sub; self.quickNetSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(10, 50, cw - 20, 110)]; self.quickNetSpark.lineColor = ccolors[i]; [card addSubview:self.quickNetSpark]; }
+    else if (i == 4) { self.quickNet = val; val.font = [NSFont systemFontOfSize:10.5 weight:NSFontWeightSemibold]; val.maximumNumberOfLines = 2; val.lineBreakMode = NSLineBreakByWordWrapping; self.quickNetSub = sub; self.quickNetSpark = [[Sparkline alloc] initWithFrame:NSMakeRect(10, 50, cw - 20, 110)]; self.quickNetSpark.lineColor = ccolors[i]; [card addSubview:self.quickNetSpark]; }
     else { self.quickBat = val; self.quickPowerSub = sub; }
   }
 
@@ -13220,22 +13220,26 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!skipRadial) {
     self.radialMenu = [[DLCircularMenuView alloc] initWithFrame:NSMakeRect(0,0,420,440)];
     self.radialMenu.items = @[
-      @{@"title": @"场景", @"symbol": @"rectangle.3.group.fill"},
-      @{@"title": @"AI", @"symbol": @"sparkles"},
-      @{@"title": @"工具", @"symbol": @"wrench.and.screwdriver.fill"},
-      @{@"title": @"进程", @"symbol": @"cpu"},
+      @{@"title": @"翻译", @"symbol": @"character.bubble.fill"},
+      @{@"title": @"压缩", @"symbol": @"archivebox.fill"},
+      @{@"title": @"PDF", @"symbol": @"doc.richtext"},
+      @{@"title": @"图片", @"symbol": @"photo.on.rectangle.angled"},
+      @{@"title": @"重命名", @"symbol": @"square.and.pencil"},
       @{@"title": @"剪贴板", @"symbol": @"doc.on.clipboard.fill"},
-      @{@"title": @"搜索", @"symbol": @"magnifyingglass"}
+      @{@"title": @"场景", @"symbol": @"rectangle.3.group.fill"},
+      @{@"title": @"AI", @"symbol": @"sparkles"}
     ];
     __weak typeof(self) weakSelf = self;
     self.radialMenu.onSegment = ^(NSInteger index) {
       [weakSelf.popover performClose:nil];
-      if (index == 0) { [weakSelf rebuildQuickSceneTab]; [weakSelf showDetachedPage:weakSelf.quickScenePage title:@"场景模式"]; }
-      else if (index == 1) { [weakSelf rebuildQuickAITab]; [weakSelf showDetachedPage:weakSelf.quickAIPage title:@"AI 管理"]; }
-      else if (index == 2) [weakSelf showDetachedPage:weakSelf.quickToolsPage title:@"工具"];
-      else if (index == 3) { [weakSelf refreshQuickProcess:nil]; [weakSelf showDetachedPage:weakSelf.quickProcessPage title:@"进程 Top 6"]; }
-      else if (index == 4) [weakSelf showClipboardWindow:nil];
-      else if (index == 5) [weakSelf showAppSearch:nil];
+      if (index == 0) [weakSelf showTranslationWindow:nil];
+      else if (index == 1) [weakSelf showCompressWindow:nil];
+      else if (index == 2) [weakSelf showPDFTools:nil];
+      else if (index == 3) [weakSelf showImageTools:nil];
+      else if (index == 4) [weakSelf showBatchRenamer:nil];
+      else if (index == 5) [weakSelf showClipboardWindow:nil];
+      else if (index == 6) { [weakSelf rebuildQuickSceneTab]; [weakSelf showDetachedPage:weakSelf.quickScenePage title:@"场景模式"]; }
+      else if (index == 7) { [weakSelf rebuildQuickAITab]; [weakSelf showDetachedPage:weakSelf.quickAIPage title:@"AI 管理"]; }
     };
     self.radialMenu.onCenter = ^(BOOL doubleClick) {
       [weakSelf.popover performClose:nil];
