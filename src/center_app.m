@@ -643,6 +643,12 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSArray *appSearchFiltered;
 @property (strong) NSTextField *appSearchStatus;
 @property (strong) NSPopUpButton *promptCategoryPopup;
+@property (strong) NSWindow *batchRenameWindow;
+@property (strong) NSTableView *batchRenameTable;
+@property (strong) NSArray *batchRenamePaths;
+@property (strong) NSArray *batchRenamePreview;
+@property (strong) NSTextField *batchFindField, *batchReplaceField, *batchPrefixField, *batchSuffixField;
+@property (strong) NSButton *batchNumberCheck;
 @property (strong) NSWindow *layoutWindow;
 @property (strong) NSTableView *layoutTable;
 @property (strong) NSMutableDictionary *savedLayouts;
@@ -6289,6 +6295,10 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)controlTextDidChange:(NSNotification *)note {
+  if (note.object == self.batchFindField || note.object == self.batchReplaceField || note.object == self.batchPrefixField || note.object == self.batchSuffixField) {
+    [self reloadBatchRenamePreview];
+    return;
+  }
   if (note.object != self.dialogAIName) return;
   [self applyAIPresetAutofill];
 }
@@ -7831,6 +7841,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.dupTable) return self.dupItems.count;
+  if (tableView == self.batchRenameTable) return self.batchRenamePreview.count;
   if (tableView == self.layoutTable) return self.savedLayouts.count;
   if (tableView == self.appSearchTable) return self.appSearchFiltered.count;
   if (tableView == self.promptTable) return self.promptPageItems.count;
@@ -7878,6 +7889,18 @@ static BOOL ValidGroupName(NSString *raw) {
       link.font = [NSFont systemFontOfSize:9.5]; link.contentTintColor = [NSColor controlAccentColor];
       link.frame = NSMakeRect(4, 5, col.width - 8, 22); [v addSubview:link];
     }
+    return v;
+  }
+  if (tableView == self.batchRenameTable) {
+    if (row < 0 || row >= (NSInteger)self.batchRenamePreview.count) return nil;
+    NSDictionary *it = self.batchRenamePreview[row];
+    NSString *key = col.identifier;
+    NSString *text = [key isEqualToString:@"borig"] ? it[@"old"] : it[@"new"];
+    NSTextField *l = [self label:text size:11 bold:[key isEqualToString:@"bnew"] color:[key isEqualToString:@"bnew"] ? [NSColor systemGreenColor] : nil];
+    l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    l.frame = NSMakeRect(4, 6, col.width - 8, 18);
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,30)];
+    [v addSubview:l];
     return v;
   }
   if (tableView == self.layoutTable) {
@@ -11417,6 +11440,170 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return apps;
 }
 
+- (void)showBatchRenamer:(id)sender {
+  if (!self.batchRenameWindow) {
+    self.batchRenameWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.batchRenameWindow.title = @"批量重命名";
+    self.batchRenameWindow.releasedWhenClosed = NO;
+    self.batchRenameWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.batchRenameWindow.contentView;
+    NSTextField *title = [self label:@"批量重命名" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"查找替换、前后缀、自动序号；执行前先预览" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 448, 500, 18); [cv addSubview:sub];
+    ColorHoverButton *addFiles = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 410, 100, 28)];
+    addFiles.title = @"添加文件"; addFiles.hoverColor = [NSColor systemBlueColor];
+    addFiles.target = self; addFiles.action = @selector(batchAddFiles:);
+    [addFiles applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:addFiles];
+    ColorHoverButton *addFolder = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(128, 410, 100, 28)];
+    addFolder.title = @"添加文件夹"; addFolder.hoverColor = [NSColor systemBlueColor];
+    addFolder.target = self; addFolder.action = @selector(batchAddFolder:);
+    [addFolder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:addFolder];
+    ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(236, 410, 70, 28)];
+    clear.title = @"清空"; clear.hoverColor = [NSColor systemRedColor];
+    clear.target = self; clear.action = @selector(batchClear:);
+    [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+
+    NSTextField *fl = [self label:@"查找" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    fl.frame = NSMakeRect(20, 374, 40, 16); [cv addSubview:fl];
+    self.batchFindField = [[NSTextField alloc] initWithFrame:NSMakeRect(62, 368, 150, 26)];
+    self.batchFindField.placeholderString = @"原文字";
+    self.batchFindField.delegate = self; [cv addSubview:self.batchFindField];
+    NSTextField *rl = [self label:@"替换为" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    rl.frame = NSMakeRect(222, 374, 50, 16); [cv addSubview:rl];
+    self.batchReplaceField = [[NSTextField alloc] initWithFrame:NSMakeRect(274, 368, 150, 26)];
+    self.batchReplaceField.placeholderString = @"新文字";
+    self.batchReplaceField.delegate = self; [cv addSubview:self.batchReplaceField];
+    self.batchNumberCheck = [NSButton checkboxWithTitle:@"追加序号" target:self action:@selector(batchRuleChanged:)];
+    self.batchNumberCheck.frame = NSMakeRect(440, 370, 110, 22); [cv addSubview:self.batchNumberCheck];
+
+    NSTextField *pl = [self label:@"前缀" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    pl.frame = NSMakeRect(20, 334, 40, 16); [cv addSubview:pl];
+    self.batchPrefixField = [[NSTextField alloc] initWithFrame:NSMakeRect(62, 328, 150, 26)];
+    self.batchPrefixField.delegate = self; [cv addSubview:self.batchPrefixField];
+    NSTextField *sl = [self label:@"后缀" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    sl.frame = NSMakeRect(222, 334, 40, 16); [cv addSubview:sl];
+    self.batchSuffixField = [[NSTextField alloc] initWithFrame:NSMakeRect(264, 328, 150, 26)];
+    self.batchSuffixField.delegate = self; [cv addSubview:self.batchSuffixField];
+
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 70, 688, 246)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.batchRenameTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"borig", @"原文件名", @300.0], @[@"bnew", @"新文件名", @360.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.batchRenameTable addTableColumn:col];
+    }
+    self.batchRenameTable.rowHeight = 30;
+    self.batchRenameTable.dataSource = self; self.batchRenameTable.delegate = self;
+    sv.documentView = self.batchRenameTable; [cv addSubview:sv];
+    ColorHoverButton *apply = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(500, 24, 110, 34)];
+    apply.title = @"执行重命名"; apply.hoverColor = [NSColor systemGreenColor];
+    apply.target = self; apply.action = @selector(applyBatchRename:);
+    [apply applyColor:[NSColor systemGreenColor] textColor:[NSColor whiteColor]]; [cv addSubview:apply];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(620, 24, 84, 34)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeBatchRenamer:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    self.batchRenamePaths = @[];
+    [self.batchRenameWindow center];
+  }
+  [self reloadBatchRenamePreview];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.batchRenameWindow makeKeyAndOrderFront:nil];
+  [self.batchRenameWindow orderFrontRegardless];
+}
+
+- (void)batchAddFiles:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = YES;
+  if ([p runModal] != NSModalResponseOK) return;
+  NSMutableArray *paths = [self.batchRenamePaths mutableCopy] ?: [NSMutableArray array];
+  for (NSURL *u in p.URLs) if (![paths containsObject:u.path]) [paths addObject:u.path];
+  self.batchRenamePaths = paths;
+  [self reloadBatchRenamePreview];
+}
+
+- (void)batchAddFolder:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = NO; p.canChooseDirectories = YES; p.allowsMultipleSelection = NO;
+  if ([p runModal] != NSModalResponseOK) return;
+  NSMutableArray *paths = [self.batchRenamePaths mutableCopy] ?: [NSMutableArray array];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSDirectoryEnumerator *en = [fm enumeratorAtPath:p.URL.path];
+  for (NSString *rel in en) {
+    BOOL isDir = NO;
+    NSString *full = [p.URL.path stringByAppendingPathComponent:rel];
+    if ([fm fileExistsAtPath:full isDirectory:&isDir] && !isDir && ![paths containsObject:full]) [paths addObject:full];
+  }
+  self.batchRenamePaths = paths;
+  [self reloadBatchRenamePreview];
+}
+
+- (void)batchClear:(id)sender { self.batchRenamePaths = @[]; [self reloadBatchRenamePreview]; }
+- (void)batchRuleChanged:(id)sender { [self reloadBatchRenamePreview]; }
+
+- (void)reloadBatchRenamePreview {
+  if (!self.batchRenameTable) return;
+  NSMutableArray *preview = [NSMutableArray array];
+  NSString *find = self.batchFindField.stringValue ?: @"";
+  NSString *replace = self.batchReplaceField.stringValue ?: @"";
+  NSString *prefix = self.batchPrefixField.stringValue ?: @"";
+  NSString *suffix = self.batchSuffixField.stringValue ?: @"";
+  BOOL numbering = self.batchNumberCheck.state == NSControlStateValueOn;
+  NSInteger idx = 1;
+  for (NSString *path in self.batchRenamePaths) {
+    NSString *name = path.lastPathComponent;
+    NSString *ext = name.pathExtension;
+    NSString *base = ext.length ? name.stringByDeletingPathExtension : name;
+    if (find.length) base = [base stringByReplacingOccurrencesOfString:find withString:replace];
+    NSString *newBase = [NSString stringWithFormat:@"%@%@%@", prefix, base, suffix];
+    newBase = [newBase stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+    if (numbering) newBase = [newBase stringByAppendingFormat:@"_%03ld", (long)idx];
+    idx++;
+    NSString *newName = ext.length ? [newBase stringByAppendingPathExtension:ext] : newBase;
+    if (!newName.length) newName = name;
+    [preview addObject:@{@"path": path, @"old": name, @"new": newName}];
+  }
+  self.batchRenamePreview = preview;
+  [self.batchRenameTable reloadData];
+}
+
+- (void)applyBatchRename:(id)sender {
+  if (!self.batchRenamePreview.count) { [self showToast:@"请先添加文件"]; return; }
+  NSMutableSet *targets = [NSMutableSet set];
+  for (NSDictionary *it in self.batchRenamePreview) {
+    NSString *newName = it[@"new"];
+    NSString *dir = [it[@"path"] stringByDeletingLastPathComponent];
+    NSString *target = [dir stringByAppendingPathComponent:newName];
+    if ([targets containsObject:target]) { [self showToast:@"有重复的新文件名，请调整规则"]; return; }
+    [targets addObject:target];
+    if (![target isEqualToString:it[@"path"]] && [[NSFileManager defaultManager] fileExistsAtPath:target]) {
+      [self showToast:[NSString stringWithFormat:@"目标已存在：%@", newName]]; return;
+    }
+  }
+  if (![self requestAdminAuthentication]) return;
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"重命名 %ld 个文件？", (long)self.batchRenamePreview.count];
+  [a addButtonWithTitle:@"执行"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSInteger ok = 0;
+  for (NSDictionary *it in self.batchRenamePreview) {
+    NSString *dir = [it[@"path"] stringByDeletingLastPathComponent];
+    NSString *target = [dir stringByAppendingPathComponent:it[@"new"]];
+    if ([it[@"new"] isEqualToString:it[@"old"]]) continue;
+    if ([fm moveItemAtPath:it[@"path"] toPath:target error:NULL]) ok++;
+  }
+  [self showToast:[NSString stringWithFormat:@"已重命名 %ld 个文件", (long)ok]];
+  self.batchRenamePaths = @[];
+  [self reloadBatchRenamePreview];
+}
+
+- (void)closeBatchRenamer:(id)sender { [self.batchRenameWindow orderOut:nil]; }
+
 - (void)showWindowLayouts:(id)sender {
   [self loadWindowLayouts];
   if (!self.layoutWindow) {
@@ -12107,7 +12294,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [toolsPage addSubview:layoutBtn];
   NSTextField *ts = [self label:@"选择工具，打开独立窗口；可钉住置顶" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   ts.frame = NSMakeRect(16, 456, 388, 18); [toolsPage addSubview:ts];
-  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(50, 296, 100, 140)];
+  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 296, 88, 140)];
   transBtn.title = @"AI 翻译";
   transBtn.image = ToolIconImage(@"character.bubble.fill", [NSColor systemTealColor]);
   transBtn.imagePosition = NSImageAbove;
@@ -12122,7 +12309,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   transBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:transBtn];
 
-  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(160, 296, 100, 140)];
+  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(122, 296, 88, 140)];
   zipBtn.title = @"压缩 / 解压";
   zipBtn.image = ToolIconImage(@"archivebox.fill", [NSColor systemOrangeColor]);
   zipBtn.imagePosition = NSImageAbove;
@@ -12136,7 +12323,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   zipBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:zipBtn];
 
-  ColorHoverButton *clipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(270, 296, 100, 140)];
+  ColorHoverButton *clipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(220, 296, 88, 140)];
   clipBtn.title = @"剪贴板";
   clipBtn.image = ToolIconImage(@"doc.on.clipboard.fill", [NSColor systemPurpleColor]);
   clipBtn.imagePosition = NSImageAbove;
@@ -12149,6 +12336,20 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   clipBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"剪贴板" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
   clipBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:clipBtn];
+
+  ColorHoverButton *renameBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(318, 296, 88, 140)];
+  renameBtn.title = @"批量重命名";
+  renameBtn.image = ToolIconImage(@"square.and.pencil", [NSColor systemGreenColor]);
+  renameBtn.imagePosition = NSImageAbove;
+  renameBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
+  renameBtn.hoverColor = [NSColor systemGreenColor];
+  renameBtn.target = self; renameBtn.action = @selector(showBatchRenamer:);
+  renameBtn.hoverTitle = @"批量重命名";
+  renameBtn.hoverDetail = @"查找替换、前后缀、序号，先预览再执行";
+  [renameBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  renameBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"批量重命名" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
+  renameBtn.layer.borderWidth = 0.6;
+  [toolsPage addSubview:renameBtn];
 
   NSTextField *tip = [self label:@"悬停查看用途，点击打开工具" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
   tip.alignment = NSTextAlignmentCenter;
