@@ -5121,6 +5121,22 @@ static BOOL ValidGroupName(NSString *raw) {
   [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];
 }
 
+- (void)clearAllClipboardHistory:(id)sender {
+  NSInteger count = self.clipboardItems.count;
+  if (!count) { [self showToast:@"暂无剪贴板历史"]; return; }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"清空全部 %ld 条剪贴板历史？", (long)count];
+  a.informativeText = @"图片缓存也会删除，此操作不可恢复；当前剪贴板内容不受影响。";
+  [a addButtonWithTitle:@"清空"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  for (NSDictionary *it in self.clipboardItems) if ([it[@"kind"] isEqualToString:@"image"]) [self deleteClipboardImageForItem:it];
+  self.clipboardItems = [NSMutableArray array];
+  [self saveClipboardHistory];
+  [self reloadClipboardVisibleItems];
+  [self showToast:@"剪贴板历史已清空"];
+}
+
 - (void)pasteClipboardToPreviousApp:(id)sender {
   NSDictionary *it = [self clipboardSelectedItem];
   if (!it) return;
@@ -5287,6 +5303,8 @@ static BOOL ValidGroupName(NSString *raw) {
     [clipMenu addItem:[NSMenuItem separatorItem]];
     [clipMenu addItemWithTitle:@"收藏 / 取消收藏" action:@selector(toggleClipboardFavorite:) keyEquivalent:@""].target = self;
     [clipMenu addItemWithTitle:@"删除选中" action:@selector(deleteClipboardSelected:) keyEquivalent:@""].target = self;
+    [clipMenu addItem:[NSMenuItem separatorItem]];
+    [clipMenu addItemWithTitle:@"清空全部历史…" action:@selector(clearAllClipboardHistory:) keyEquivalent:@""].target = self;
     self.clipboardTable.menu = clipMenu;
     sv.documentView = self.clipboardTable;
     [cv addSubview:sv];
