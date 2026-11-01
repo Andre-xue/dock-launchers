@@ -2943,7 +2943,6 @@ static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
       if (!top.string.length) continue;
       [lines addObject:@{@"text": top.string, @"x": @(obs.boundingBox.origin.x), @"y": @(obs.boundingBox.origin.y), @"w": @(obs.boundingBox.size.width), @"h": @(obs.boundingBox.size.height)}];
     }
-    CGImageRelease(shot);
     NSDictionary *timeLine = nil;
     NSRegularExpression *timeRE = [NSRegularExpression regularExpressionWithPattern:@"(\\d{1,2}):(\\d{2})\\s*/\\s*(\\d{1,2}):(\\d{2})" options:0 error:NULL];
     for (NSDictionary *l in lines) {
@@ -2955,7 +2954,9 @@ static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
       NSString *t = [l[@"text"] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
       if (t.length < 2 || t.length > 80 || [skip containsObject:t]) continue;
       double x = [l[@"x"] doubleValue], y = [l[@"y"] doubleValue];
-      if (x < 0.14 || x > 0.72 || y < 0.16 || y > 0.72) continue;
+      if (x < 0.16 || x > 0.52) continue;
+      double timeY = timeLine ? [timeLine[@"y"] doubleValue] : 0.20;
+      if (y < timeY + 0.08 || y > timeY + 0.32) continue;
       if ([t containsString:@"00:"] || [t containsString:@" tok/s"] || [t containsString:@"轮"]) continue;
       [candidates addObject:l];
     }
@@ -2972,6 +2973,27 @@ static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
     if (!title) return;
     title = [title stringByReplacingOccurrencesOfString:@" VIP" withString:@""];
     title = [title stringByReplacingOccurrencesOfString:@" WIP" withString:@""];
+    NSData *cropData = nil;
+    NSDictionary *titleLine = nil;
+    for (NSDictionary *l in candidates) if ([l[@"text"] isEqualToString:title] || [l[@"text"] containsString:title]) { titleLine = l; break; }
+    if (titleLine && shot) {
+      CGFloat sw = CGImageGetWidth(shot), sh = CGImageGetHeight(shot);
+      CGFloat tx = [titleLine[@"x"] doubleValue], ty = [titleLine[@"y"] doubleValue];
+      CGFloat cx = MAX(0, MIN(1, tx - 0.10)), cy = MAX(0, MIN(1, ty + 0.02));
+      CGFloat cw = 0.22, ch = 0.38;
+      if (cx + cw > 1) cw = 1 - cx;
+      if (cy + ch > 0.98) ch = 0.98 - cy;
+      if (cw > 0.08 && ch > 0.08) {
+        CGRect cropRect = CGRectMake(cx * sw, (1 - (cy + ch)) * sh, cw * sw, ch * sh);
+        CGImageRef crop = CGImageCreateWithImageInRect(shot, cropRect);
+        if (crop) {
+          NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithCGImage:crop];
+          cropData = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+          CGImageRelease(crop);
+        }
+      }
+    }
+    CGImageRelease(shot);
     NSInteger elapsed = 0, duration = 0;
     if (timeLine) {
       NSTextCheckingResult *m = [timeRE firstMatchInString:timeLine[@"text"] options:0 range:NSMakeRange(0, [timeLine[@"text"] length])];
@@ -2988,6 +3010,7 @@ static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
       weakSelf.mediaPlaying = YES;
       weakSelf.mediaBundleID = mainApp.bundleIdentifier ?: @"";
       weakSelf.mediaPID = mainApp.processIdentifier;
+      if (cropData.length) { weakSelf.mediaArtworkData = cropData; weakSelf.mediaArtworkImage = [[NSImage alloc] initWithData:cropData]; }
       NSMutableDictionary *np = [@{@"kMRMediaRemoteNowPlayingInfoTitle": title, @"kMRMediaRemoteNowPlayingInfoArtist": artist ?: @"", @"kMRMediaRemoteNowPlayingInfoElapsedTime": @(elapsed), @"kMRMediaRemoteNowPlayingInfoDuration": @(duration)} mutableCopy];
       if (weakSelf.mediaArtworkData) np[@"kMRMediaRemoteNowPlayingInfoArtworkData"] = weakSelf.mediaArtworkData;
       weakSelf.mediaNowPlaying = np;
