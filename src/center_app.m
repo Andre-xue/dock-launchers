@@ -492,6 +492,103 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 
 @class QuickPanelController;
 
+@interface DLCircularMenuView : NSView
+@property (strong) NSArray<NSDictionary *> *items;
+@property (copy) void (^onSegment)(NSInteger index);
+@property (copy) void (^onCenter)(BOOL doubleClick);
+@property NSInteger hovered;
+@end
+
+@implementation DLCircularMenuView
+- (instancetype)initWithFrame:(NSRect)frame {
+  self = [super initWithFrame:frame];
+  if (self) {
+    self.hovered = -1;
+    self.toolTip = @"单击概览，双击打开控制台";
+    NSTrackingArea *ta = [[NSTrackingArea alloc] initWithRect:self.bounds options:(NSTrackingMouseMoved|NSTrackingMouseEnteredAndExited|NSTrackingActiveInKeyWindow|NSTrackingInVisibleRect) owner:self userInfo:nil];
+    [self addTrackingArea:ta];
+  }
+  return self;
+}
+- (void)updateTrackingAreas {
+  [super updateTrackingAreas];
+  for (NSTrackingArea *a in self.trackingAreas) [self removeTrackingArea:a];
+  NSTrackingArea *ta = [[NSTrackingArea alloc] initWithRect:self.bounds options:(NSTrackingMouseMoved|NSTrackingMouseEnteredAndExited|NSTrackingActiveInKeyWindow|NSTrackingInVisibleRect) owner:self userInfo:nil];
+  [self addTrackingArea:ta];
+}
+- (CGFloat)outerRadius { return MIN(self.bounds.size.width, self.bounds.size.height)/2.0 - 18; }
+- (CGFloat)innerRadius { return [self outerRadius] * 0.56; }
+- (CGFloat)centerRadius { return 68; }
+- (NSPoint)center { return NSMakePoint(NSMidX(self.bounds), NSMidY(self.bounds)); }
+- (NSInteger)segmentAtPoint:(NSPoint)p {
+  CGFloat dx = p.x - self.center.x, dy = p.y - self.center.y;
+  CGFloat dist = sqrt(dx*dx + dy*dy);
+  if (dist < [self centerRadius] + 2) return -2;
+  if (dist > [self outerRadius] + 4) return -1;
+  CGFloat ang = atan2(dy, dx) * 180.0 / M_PI;
+  ang += 90.0; if (ang < 0) ang += 360.0;
+  NSInteger count = MAX(1, (NSInteger)self.items.count);
+  CGFloat span = 360.0 / count;
+  NSInteger idx = (NSInteger)floor(ang / span);
+  if (idx < 0) idx = 0;
+  if (idx >= count) idx = count - 1;
+  return idx;
+}
+- (void)mouseMoved:(NSEvent *)e {
+  NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+  NSInteger idx = [self segmentAtPoint:p];
+  if (idx != self.hovered) { self.hovered = idx; [self setNeedsDisplay:YES]; }
+}
+- (void)mouseExited:(NSEvent *)e { self.hovered = -1; [self setNeedsDisplay:YES]; }
+- (void)mouseDown:(NSEvent *)e {
+  NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+  NSInteger idx = [self segmentAtPoint:p];
+  if (idx == -2) { if (self.onCenter) self.onCenter(e.clickCount >= 2); }
+  else if (idx >= 0 && self.onSegment) self.onSegment(idx);
+}
+- (void)drawRect:(NSRect)dirtyRect {
+  [super drawRect:dirtyRect];
+  NSColor *bg = [NSColor windowBackgroundColor];
+  [bg setFill];
+  NSBezierPath *bgPath = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:26 yRadius:26];
+  [bgPath fill];
+  NSInteger count = MAX(1, (NSInteger)self.items.count);
+  CGFloat span = 360.0 / count;
+  CGPoint c = self.center;
+  CGFloat inner = [self innerRadius], outer = [self outerRadius];
+  NSArray *colors = @[[NSColor systemTealColor], [NSColor systemBlueColor], [NSColor systemPurpleColor], [NSColor systemOrangeColor], [NSColor systemIndigoColor], [NSColor systemGreenColor], [NSColor systemPinkColor], [NSColor systemYellowColor]];
+  for (NSInteger i = 0; i < count; i++) {
+    CGFloat start = -90.0 + i * span + 2.0;
+    CGFloat end = -90.0 + (i + 1) * span - 2.0;
+    NSBezierPath *path = [NSBezierPath bezierPath];
+    [path appendBezierPathWithArcWithCenter:c radius:outer startAngle:start endAngle:end clockwise:NO];
+    [path appendBezierPathWithArcWithCenter:c radius:inner startAngle:end endAngle:start clockwise:YES];
+    [path closePath];
+    NSColor *base = colors[i % colors.count];
+    [[base colorWithAlphaComponent:(self.hovered == i ? 0.85 : 0.24)] setFill];
+    [path fill];
+    if (self.hovered == i) { [[NSColor whiteColor] setStroke]; path.lineWidth = 2; [path stroke]; }
+    NSDictionary *item = self.items[i];
+    CGFloat mid = (start + end) / 2.0;
+    CGFloat r = (inner + outer) / 2.0 + 2;
+    NSPoint ip = NSMakePoint(c.x + cos(mid * M_PI / 180.0) * r, c.y + sin(mid * M_PI / 180.0) * r);
+    NSImage *icon = [NSImage imageWithSystemSymbolName:item[@"symbol"] ?: @"circle" accessibilityDescription:nil];
+    icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:22 weight:NSFontWeightSemibold]];
+    NSRect ir = NSMakeRect(ip.x - 12, ip.y - 20, 24, 24);
+    [icon drawInRect:ir];
+    NSString *title = item[@"title"] ?: @"";
+    NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init]; ps.alignment = NSTextAlignmentCenter;
+    NSDictionary *attrs = @{NSFontAttributeName:[NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:(self.hovered == i ? [NSColor whiteColor] : [NSColor labelColor]), NSParagraphStyleAttributeName:ps};
+    [title drawInRect:NSMakeRect(ip.x - 36, ip.y - 34, 72, 16) withAttributes:attrs];
+  }
+  CGFloat cr = [self centerRadius];
+  NSBezierPath *centerPath = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(c.x-cr, c.y-cr, cr*2, cr*2)];
+  [[NSColor controlAccentColor] setFill]; [centerPath fill];
+  NSImage *appIcon = [NSApp applicationIconImage];
+  if (appIcon) [appIcon drawInRect:NSMakeRect(c.x-34, c.y-34, 68, 68) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
+}
+@end
+
 @interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate>
 - (void)hideClipboardPreview;
 - (void)installClipboardHoverMonitor;
@@ -856,6 +953,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property NSInteger quickAISelectedRow;
 @property (strong) NSView *quickGroupContainer;
 @property (strong) NSSegmentedControl *quickTabs;
+@property (strong) DLCircularMenuView *radialMenu;
 @property (strong) NSTextField *quickDetailTitle, *quickDetailValue, *quickDetailSub, *quickDetailExtra;
 @property (strong) Sparkline *quickDetailChart;
 @property (strong) QuickBarView *quickDetailBar;
@@ -2160,6 +2258,9 @@ static void HideDockHoverTip(void) {
       [self quickTabChanged:nil];
       [self togglePopover:nil];
     });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_RADIAL")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self togglePopover:nil]; });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -13028,8 +13129,38 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
 
   [root addSubview:self.statusMetricButton positioned:NSWindowAbove relativeTo:nil];
+  BOOL skipRadial = getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER") || getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI") || getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI_HIDE_MAIN") || getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_PROCESS") || getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_SCENE") || getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_TOOLS");
+  if (!skipRadial) {
+    self.radialMenu = [[DLCircularMenuView alloc] initWithFrame:NSMakeRect(0,0,420,440)];
+    self.radialMenu.items = @[
+      @{@"title": @"场景", @"symbol": @"rectangle.3.group.fill"},
+      @{@"title": @"AI", @"symbol": @"sparkles"},
+      @{@"title": @"进程", @"symbol": @"cpu"},
+      @{@"title": @"剪贴板", @"symbol": @"doc.on.clipboard.fill"},
+      @{@"title": @"搜索", @"symbol": @"magnifyingglass"},
+      @{@"title": @"控制台", @"symbol": @"macwindow"}
+    ];
+    __weak typeof(self) weakSelf = self;
+    self.radialMenu.onSegment = ^(NSInteger index) {
+      [weakSelf.popover performClose:nil];
+      if (index == 0) [weakSelf showSceneSettings:nil];
+      else if (index == 1) { [weakSelf showWindow:nil]; [weakSelf showSection:2]; }
+      else if (index == 2) [weakSelf showProcessManager:nil];
+      else if (index == 3) [weakSelf showClipboardWindow:nil];
+      else if (index == 4) [weakSelf showAppSearch:nil];
+      else { [weakSelf showWindow:nil]; [weakSelf showSection:0]; }
+    };
+    self.radialMenu.onCenter = ^(BOOL doubleClick) {
+      [weakSelf.popover performClose:nil];
+      [weakSelf showWindow:nil];
+      [weakSelf showSection:0];
+    };
+    [root addSubview:self.radialMenu positioned:NSWindowAbove relativeTo:nil];
+    pop.contentSize = NSMakeSize(420, 440);
+  } else {
+    pop.contentSize = NSMakeSize(420, 620);
+  }
   pop.contentViewController = vc;
-  pop.contentSize = NSMakeSize(420, 620);
 }
 
 - (void)syncAIQuotaAtIndex:(NSInteger)idx completion:(void (^)(NSString *quota))completion {
