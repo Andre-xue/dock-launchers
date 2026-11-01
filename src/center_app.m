@@ -5029,12 +5029,13 @@ static BOOL ValidGroupName(NSString *raw) {
   NSDictionary *it = self.clipboardVisibleItems[row];
   if (![it[@"kind"] isEqualToString:@"image"]) { [self showToast:@"请选择图片记录"]; return; }
   NSString *path = [[self clipboardImagesDir] stringByAppendingPathComponent:it[@"file"] ?: @""];
-  NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
-  if (!img) { [self showToast:@"图片文件不存在"]; return; }
-  CGImageRef cg = [img CGImageForProposedRect:NULL context:nil hints:nil];
-  if (!cg) { [self showToast:@"图片读取失败"]; return; }
+  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) { [self showToast:@"图片文件不存在"]; return; }
   [self showToast:@"正在识别图片文字…"];
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+    if (!img) { dispatch_async(dispatch_get_main_queue(), ^{ [self showToast:@"图片读取失败"]; }); return; }
+    CGImageRef cg = [img CGImageForProposedRect:NULL context:nil hints:nil];
+    if (!cg) { dispatch_async(dispatch_get_main_queue(), ^{ [self showToast:@"图片读取失败"]; }); return; }
     NSMutableString *out = [NSMutableString string];
     VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
     req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
@@ -5047,6 +5048,7 @@ static BOOL ValidGroupName(NSString *raw) {
       VNRecognizedText *t = [[o topCandidates:1] firstObject];
       if (t.string.length) [out appendFormat:@"%@\n", t.string];
     }
+    img = nil;
     dispatch_async(dispatch_get_main_queue(), ^{
       if (!out.length) { [self showToast:@"没有识别到文字"]; return; }
       [self showClipboardOCRText:out];
