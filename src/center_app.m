@@ -668,9 +668,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 - (void)translateCurrentText;
 @property (strong) NSTimer *translationAutoTimer;
 @property BOOL translationBusy;
-@property EventHotKeyRef translationHotKey, selectionHotKey, translateHotKey, appSearchHotKey, quickPanelHotKey, clipboardHotKey;
-@property UInt32 shotKeyCode, shotModifiers, selectionKeyCode, selectionModifiers, translateKeyCode, translateModifiers, appSearchKeyCode, appSearchModifiers, quickPanelKeyCode, quickPanelModifiers, clipboardKeyCode, clipboardModifiers;
-@property (strong) NSString *shotShortcutDisplay, *selectionShortcutDisplay, *translateShortcutDisplay, *appSearchShortcutDisplay, *quickPanelShortcutDisplay, *clipboardShortcutDisplay;
+@property EventHotKeyRef translationHotKey, selectionHotKey, translateHotKey, appSearchHotKey, quickPanelHotKey, clipboardHotKey, consoleHotKey;
+@property UInt32 shotKeyCode, shotModifiers, selectionKeyCode, selectionModifiers, translateKeyCode, translateModifiers, appSearchKeyCode, appSearchModifiers, quickPanelKeyCode, quickPanelModifiers, clipboardKeyCode, clipboardModifiers, consoleKeyCode, consoleModifiers;
+@property (strong) NSString *shotShortcutDisplay, *selectionShortcutDisplay, *translateShortcutDisplay, *appSearchShortcutDisplay, *quickPanelShortcutDisplay, *clipboardShortcutDisplay, *consoleShortcutDisplay;
 @property (strong) NSMutableArray *shortcutButtons;
 @property (strong) NSWindow *shortcutSettingsWindow;
 @property (strong) NSWindow *groupShortcutWindow;
@@ -2702,14 +2702,15 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   else if (hk.id == 4) [c showQuickPanel];
   else if (hk.id == 5) [c showAppSearch:nil];
   else if (hk.id == 6) [c showClipboardWindow:nil];
+  else if (hk.id == 7) { [c showWindow:nil]; [c showSection:0]; }
   else if (hk.id >= 100) [c openGroupByHotkeyID:hk.id];
   return noErr;
 }
 
 - (BOOL)registerHotKeyForAction:(NSInteger)action code:(UInt32)code modifiers:(UInt32)mods display:(NSString *)display {
-  EventHotKeyRef old = action == 0 ? self.translationHotKey : (action == 1 ? self.selectionHotKey : (action == 2 ? self.translateHotKey : (action == 3 ? self.appSearchHotKey : (action == 4 ? self.quickPanelHotKey : self.clipboardHotKey))));
+  EventHotKeyRef old = action == 0 ? self.translationHotKey : (action == 1 ? self.selectionHotKey : (action == 2 ? self.translateHotKey : (action == 3 ? self.appSearchHotKey : (action == 4 ? self.quickPanelHotKey : (action == 5 ? self.clipboardHotKey : self.consoleHotKey)))));
   if (old) UnregisterEventHotKey(old);
-  EventHotKeyID hid = {'DLTR', (UInt32)(action == 3 ? 5 : (action == 4 ? 4 : (action == 5 ? 6 : action + 1)))};
+  EventHotKeyID hid = {'DLTR', (UInt32)(action == 3 ? 5 : (action == 4 ? 4 : (action == 5 ? 6 : (action == 6 ? 7 : action + 1))))};
   EventHotKeyRef ref = NULL;
   OSStatus st = RegisterEventHotKey(code, mods, hid, GetApplicationEventTarget(), 0, &ref);
   if (st != noErr) return NO;
@@ -2718,10 +2719,11 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   else if (action == 2) { self.translateHotKey = ref; self.translateKeyCode = code; self.translateModifiers = mods; self.translateShortcutDisplay = display; }
   else if (action == 3) { self.appSearchHotKey = ref; self.appSearchKeyCode = code; self.appSearchModifiers = mods; self.appSearchShortcutDisplay = display; }
   else if (action == 4) { self.quickPanelHotKey = ref; self.quickPanelKeyCode = code; self.quickPanelModifiers = mods; self.quickPanelShortcutDisplay = display; }
-  else { self.clipboardHotKey = ref; self.clipboardKeyCode = code; self.clipboardModifiers = mods; self.clipboardShortcutDisplay = display; }
-  NSArray *kc = @[@"centerShotKeyCode", @"centerSelectKeyCode", @"centerTranslateKeyCode", @"centerAppSearchKeyCode", @"centerQuickPanelKeyCode", @"centerClipboardKeyCode"];
-  NSArray *km = @[@"centerShotModifiers", @"centerSelectModifiers", @"centerTranslateModifiers", @"centerAppSearchModifiers", @"centerQuickPanelModifiers", @"centerClipboardModifiers"];
-  NSArray *kd = @[@"centerShotKeyDisplay", @"centerSelectKeyDisplay", @"centerTranslateKeyDisplay", @"centerAppSearchKeyDisplay", @"centerQuickPanelKeyDisplay", @"centerClipboardKeyDisplay"];
+  else if (action == 5) { self.clipboardHotKey = ref; self.clipboardKeyCode = code; self.clipboardModifiers = mods; self.clipboardShortcutDisplay = display; }
+  else { self.consoleHotKey = ref; self.consoleKeyCode = code; self.consoleModifiers = mods; self.consoleShortcutDisplay = display; }
+  NSArray *kc = @[@"centerShotKeyCode", @"centerSelectKeyCode", @"centerTranslateKeyCode", @"centerAppSearchKeyCode", @"centerQuickPanelKeyCode", @"centerClipboardKeyCode", @"centerConsoleKeyCode"];
+  NSArray *km = @[@"centerShotModifiers", @"centerSelectModifiers", @"centerTranslateModifiers", @"centerAppSearchModifiers", @"centerQuickPanelModifiers", @"centerClipboardModifiers", @"centerConsoleModifiers"];
+  NSArray *kd = @[@"centerShotKeyDisplay", @"centerSelectKeyDisplay", @"centerTranslateKeyDisplay", @"centerAppSearchKeyDisplay", @"centerQuickPanelKeyDisplay", @"centerClipboardKeyDisplay", @"centerConsoleKeyDisplay"];
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
   [ud setInteger:code forKey:kc[action]];
   [ud setInteger:mods forKey:km[action]];
@@ -2764,6 +2766,11 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   self.clipboardShortcutDisplay = [ud stringForKey:@"centerClipboardKeyDisplay"];
   if (!self.clipboardShortcutDisplay.length) { self.clipboardKeyCode = kVK_ANSI_V; self.clipboardModifiers = controlKey | optionKey; self.clipboardShortcutDisplay = @"⌃⌥V"; }
   [self registerHotKeyForAction:5 code:self.clipboardKeyCode modifiers:self.clipboardModifiers display:self.clipboardShortcutDisplay];
+  self.consoleKeyCode = (UInt32)[ud integerForKey:@"centerConsoleKeyCode"];
+  self.consoleModifiers = (UInt32)[ud integerForKey:@"centerConsoleModifiers"];
+  self.consoleShortcutDisplay = [ud stringForKey:@"centerConsoleKeyDisplay"];
+  if (!self.consoleShortcutDisplay.length) { self.consoleKeyCode = kVK_ANSI_C; self.consoleModifiers = controlKey | optionKey; self.consoleShortcutDisplay = @"⌃⌥C"; }
+  [self registerHotKeyForAction:6 code:self.consoleKeyCode modifiers:self.consoleModifiers display:self.consoleShortcutDisplay];
 }
 
 - (NSString *)shortcutDisplayForAction:(NSInteger)action {
@@ -2772,12 +2779,13 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   if (action == 2) return self.translateShortcutDisplay;
   if (action == 3) return self.appSearchShortcutDisplay;
   if (action == 4) return self.quickPanelShortcutDisplay;
-  return self.clipboardShortcutDisplay;
+  if (action == 5) return self.clipboardShortcutDisplay;
+  return self.consoleShortcutDisplay;
 }
 
 - (void)refreshShortcutButtons {
   for (ColorHoverButton *b in self.shortcutButtons) {
-    if (b.tag >= 0 && b.tag <= 5) b.title = [self shortcutDisplayForAction:b.tag];
+    if (b.tag >= 0 && b.tag <= 6) b.title = [self shortcutDisplayForAction:b.tag];
   }
 }
 
@@ -11761,7 +11769,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)showDockAppearance:(id)sender {
   if (!self.dockAppearanceWindow) {
-    self.dockAppearanceWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,470) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.dockAppearanceWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,522) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.dockAppearanceWindow.title = @"Dock 外观";
     self.dockAppearanceWindow.releasedWhenClosed = NO;
     self.dockAppearanceWindow.level = NSNormalWindowLevel;
@@ -14944,21 +14952,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)openShortcutSettings:(id)sender {
   if (!self.shortcutSettingsWindow) {
-    self.shortcutSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,470) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.shortcutSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,522) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.shortcutSettingsWindow.title = @"快捷键设置";
     self.shortcutSettingsWindow.releasedWhenClosed = NO;
     self.shortcutSettingsWindow.level = NSNormalWindowLevel;
     NSView *cv = self.shortcutSettingsWindow.contentView;
     NSTextField *t = [self label:@"快捷键设置" size:18 bold:YES color:nil];
-    t.frame = NSMakeRect(24, 424, 300, 24); [cv addSubview:t];
+    t.frame = NSMakeRect(24, 476, 300, 24); [cv addSubview:t];
     NSTextField *h = [self label:@"点击右侧快捷键，然后按下新的组合键；Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    h.frame = NSMakeRect(24, 402, 430, 18); [cv addSubview:h];
-    NSArray *names = @[@"截图翻译", @"划词翻译", @"翻译当前文本", @"应用搜索", @"打开快速面板", @"打开剪贴板"];
+    h.frame = NSMakeRect(24, 454, 430, 18); [cv addSubview:h];
+    NSArray *names = @[@"截图翻译", @"划词翻译", @"翻译当前文本", @"应用搜索", @"打开快速面板", @"打开剪贴板", @"打开控制台"];
     self.shortcutButtons = [NSMutableArray array];
-    for (NSInteger i = 0; i < 6; i++) {
+    for (NSInteger i = 0; i < 7; i++) {
       NSTextField *l = [self label:names[i] size:13 bold:YES color:nil];
-      l.frame = NSMakeRect(28, 345 - i * 52, 160, 22); [cv addSubview:l];
-      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, 340 - i * 52, 240, 32)];
+      l.frame = NSMakeRect(28, 397 - i * 52, 160, 22); [cv addSubview:l];
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, 392 - i * 52, 240, 32)];
       b.tag = i;
       b.title = [self shortcutDisplayForAction:i];
       b.hoverColor = [NSColor systemTealColor];
@@ -15202,8 +15210,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if (mods & shiftKey) [disp appendString:@"⇧"];
     if (mods & cmdKey) [disp appendString:@"⌘"];
     [disp appendString:key];
-    UInt32 oldCode = action == 0 ? weakSelf.shotKeyCode : (action == 1 ? weakSelf.selectionKeyCode : (action == 2 ? weakSelf.translateKeyCode : (action == 3 ? weakSelf.appSearchKeyCode : (action == 4 ? weakSelf.quickPanelKeyCode : weakSelf.clipboardKeyCode))));
-    UInt32 oldMods = action == 0 ? weakSelf.shotModifiers : (action == 1 ? weakSelf.selectionModifiers : (action == 2 ? weakSelf.translateModifiers : (action == 3 ? weakSelf.appSearchModifiers : (action == 4 ? weakSelf.quickPanelModifiers : weakSelf.clipboardModifiers))));
+    UInt32 oldCode = action == 0 ? weakSelf.shotKeyCode : (action == 1 ? weakSelf.selectionKeyCode : (action == 2 ? weakSelf.translateKeyCode : (action == 3 ? weakSelf.appSearchKeyCode : (action == 4 ? weakSelf.quickPanelKeyCode : (action == 5 ? weakSelf.clipboardKeyCode : weakSelf.consoleKeyCode)))));
+    UInt32 oldMods = action == 0 ? weakSelf.shotModifiers : (action == 1 ? weakSelf.selectionModifiers : (action == 2 ? weakSelf.translateModifiers : (action == 3 ? weakSelf.appSearchModifiers : (action == 4 ? weakSelf.quickPanelModifiers : (action == 5 ? weakSelf.clipboardModifiers : weakSelf.consoleModifiers)))));
     NSString *oldDisp = [weakSelf shortcutDisplayForAction:action];
     if (![weakSelf registerHotKeyForAction:action code:(UInt32)e.keyCode modifiers:mods display:disp]) {
       [weakSelf registerHotKeyForAction:action code:oldCode modifiers:oldMods display:oldDisp];
