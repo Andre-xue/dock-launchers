@@ -1031,6 +1031,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSString *mediaArtworkKey;
 @property (strong) NSImage *mediaArtworkImage;
 @property (strong) NSData *mediaArtworkData;
+@property (strong) NSString *genericMediaTime;
 @property (strong) NSString *mediaBundleID;
 @property NSInteger mediaPID;
 @property BOOL mediaPlaying;
@@ -2858,10 +2859,7 @@ static void HideDockHoverTip(void) {
   }
   if (lines.count >= 5) [blocks addObject:[lines copy]];
   if (!blocks.count) {
-    self.mediaUsingFallback = YES;
-    self.mediaNowPlaying = nil;
-    self.mediaPlaying = NO;
-    [self updateMediaStatusItem];
+    [self pollGenericMediaApps];
     return;
   }
   NSArray *chosen = blocks.firstObject;
@@ -2878,6 +2876,124 @@ static void HideDockHoverTip(void) {
   NSRunningApplication *app = [[NSRunningApplication runningApplicationsWithBundleIdentifier:self.mediaBundleID] firstObject];
   self.mediaPID = app.processIdentifier;
   [self updateMediaStatusItem];
+}
+
+typedef CGImageRef (*DLCGWindowListCreateImageFn)(CGRect, CGWindowListOption, CGWindowID, CGWindowImageOption);
+static DLCGWindowListCreateImageFn DLCGWindowImage(void) {
+  static DLCGWindowListCreateImageFn fn = NULL;
+  if (!fn) fn = (DLCGWindowListCreateImageFn)dlsym(RTLD_DEFAULT, "CGWindowListCreateImage");
+  return fn;
+}
+
+- (NSArray<NSRunningApplication *> *)genericMediaApplications {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSRunningApplication *a in [[NSWorkspace sharedWorkspace] runningApplications]) {
+    NSString *bid = a.bundleIdentifier ?: @"";
+    NSString *path = a.bundleURL.path ?: @"";
+    if ([bid containsString:@"com.soda.music"] || [bid isEqualToString:@"com.netease.163music"] ||
+        [bid isEqualToString:@"com.tencent.QQMusic"] || [bid isEqualToString:@"com.tencent.qqmusic"] ||
+        [path containsString:@"汽水音乐.app"] || [path containsString:@"网易云音乐.app"] ||
+        [path containsString:@"QQ音乐.app"] || [path containsString:@"QQMusic.app"]) {
+      [out addObject:a];
+    }
+  }
+  return out;
+}
+
+- (void)pollGenericMediaApps {
+  NSArray<NSRunningApplication *> *apps = [self genericMediaApplications];
+  if (!apps.count) {
+    self.genericMediaTime = nil;
+    return;
+  }
+  NSMutableSet *pids = [NSMutableSet set];
+  NSRunningApplication *mainApp = apps.firstObject;
+  for (NSRunningApplication *a in apps) [pids addObject:@(a.processIdentifier)];
+  __weak typeof(self) weakSelf = self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    CGWindowID winID = 0; NSRect winRect = NSZeroRect;
+    CFArrayRef wins = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+    for (NSDictionary *w in (__bridge NSArray *)wins) {
+      NSNumber *owner = w[(__bridge NSString *)kCGWindowOwnerPID];
+      if (!owner || ![pids containsObject:owner]) continue;
+      NSNumber *layer = w[(__bridge NSString *)kCGWindowLayer];
+      if (layer.integerValue != 0) continue;
+      NSDictionary *bounds = w[(__bridge NSString *)kCGWindowBounds];
+      CGFloat width = [bounds[@"Width"] doubleValue], height = [bounds[@"Height"] doubleValue];
+      if (width < 240 || height < 160) continue;
+      winID = (CGWindowID)[w[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
+      winRect = NSMakeRect([bounds[@"X"] doubleValue], [bounds[@"Y"] doubleValue], width, height);
+      break;
+    }
+    if (wins) CFRelease(wins);
+    if (!winID) return;
+    DLCGWindowListCreateImageFn shotFn = DLCGWindowImage();
+    CGImageRef shot = shotFn ? shotFn(CGRectNull, kCGWindowListOptionIncludingWindow, winID, kCGWindowImageBoundsIgnoreFraming) : NULL;
+    if (!shot) return;
+    VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
+    req.recognitionLanguages = @[@"zh-Hans", @"en-US"];
+    req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
+    VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:shot options:@{}];
+    NSError *ocrError = nil;
+    [handler performRequests:@[req] error:&ocrError];
+    if (!shot) return;
+    NSMutableArray *lines = [NSMutableArray array];
+    for (VNRecognizedTextObservation *obs in req.results ?: @[]) {
+      VNRecognizedText *top = [obs topCandidates:1].firstObject;
+      if (!top.string.length) continue;
+      [lines addObject:@{@"text": top.string, @"x": @(obs.boundingBox.origin.x), @"y": @(obs.boundingBox.origin.y), @"w": @(obs.boundingBox.size.width), @"h": @(obs.boundingBox.size.height)}];
+    }
+    CGImageRelease(shot);
+    NSDictionary *timeLine = nil;
+    NSRegularExpression *timeRE = [NSRegularExpression regularExpressionWithPattern:@"(\\d{1,2}):(\\d{2})\\s*/\\s*(\\d{1,2}):(\\d{2})" options:0 error:NULL];
+    for (NSDictionary *l in lines) {
+      if ([timeRE firstMatchInString:l[@"text"] options:0 range:NSMakeRange(0, [l[@"text"] length])]) { timeLine = l; break; }
+    }
+    NSMutableArray *candidates = [NSMutableArray array];
+    NSSet *skip = [NSSet setWithArray:@[@"推荐", @"听歌模式", @"我的音乐", @"我喜欢的音乐", @"抖音收藏的音乐", @"历史播放", @"创建的歌单", @"搜索", @"极高", @"音效", @"词", @"AI写歌", @"SVIP", @"VIP", @"歌单", @"评论", @"分享", @"下载"]];
+    for (NSDictionary *l in lines) {
+      NSString *t = [l[@"text"] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+      if (t.length < 2 || t.length > 80 || [skip containsObject:t]) continue;
+      double x = [l[@"x"] doubleValue], y = [l[@"y"] doubleValue];
+      if (x < 0.14 || x > 0.72 || y < 0.16 || y > 0.72) continue;
+      if ([t containsString:@"00:"] || [t containsString:@" tok/s"] || [t containsString:@"轮"]) continue;
+      [candidates addObject:l];
+    }
+    [candidates sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+      return [b[@"y"] compare:a[@"y"]];
+    }];
+    NSString *title = nil, *artist = nil;
+    for (NSDictionary *l in candidates) {
+      NSString *t = l[@"text"];
+      if (!title) { title = t; continue; }
+      if (!artist && [l[@"y"] doubleValue] < [candidates.firstObject[@"y"] doubleValue] + 0.001) { artist = t; break; }
+      if (!artist) { artist = t; break; }
+    }
+    if (!title) return;
+    title = [title stringByReplacingOccurrencesOfString:@" VIP" withString:@""];
+    title = [title stringByReplacingOccurrencesOfString:@" WIP" withString:@""];
+    NSInteger elapsed = 0, duration = 0;
+    if (timeLine) {
+      NSTextCheckingResult *m = [timeRE firstMatchInString:timeLine[@"text"] options:0 range:NSMakeRange(0, [timeLine[@"text"] length])];
+      if (m) {
+        elapsed = [[timeLine[@"text"] substringWithRange:[m rangeAtIndex:1]] integerValue] * 60 + [[timeLine[@"text"] substringWithRange:[m rangeAtIndex:2]] integerValue];
+        duration = [[timeLine[@"text"] substringWithRange:[m rangeAtIndex:3]] integerValue] * 60 + [[timeLine[@"text"] substringWithRange:[m rangeAtIndex:4]] integerValue];
+      }
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (![weakSelf.genericMediaTime isEqualToString:[NSString stringWithFormat:@"%ld|%@", (long)elapsed, title]]) {
+        weakSelf.genericMediaTime = [NSString stringWithFormat:@"%ld|%@", (long)elapsed, title];
+      }
+      weakSelf.mediaUsingFallback = YES;
+      weakSelf.mediaPlaying = YES;
+      weakSelf.mediaBundleID = mainApp.bundleIdentifier ?: @"";
+      weakSelf.mediaPID = mainApp.processIdentifier;
+      NSMutableDictionary *np = [@{@"kMRMediaRemoteNowPlayingInfoTitle": title, @"kMRMediaRemoteNowPlayingInfoArtist": artist ?: @"", @"kMRMediaRemoteNowPlayingInfoElapsedTime": @(elapsed), @"kMRMediaRemoteNowPlayingInfoDuration": @(duration)} mutableCopy];
+      if (weakSelf.mediaArtworkData) np[@"kMRMediaRemoteNowPlayingInfoArtworkData"] = weakSelf.mediaArtworkData;
+      weakSelf.mediaNowPlaying = np;
+      [weakSelf updateMediaStatusItem];
+    });
+  });
 }
 
 - (void)fetchFallbackArtworkIfNeeded:(NSString *)bundle title:(NSString *)title artist:(NSString *)artist {
