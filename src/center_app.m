@@ -13228,6 +13228,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSArray *actions = @[@[@"保存当前布局", @"saveCurrentWindowLayout:", @16.0, @130.0, [NSColor systemGreenColor]],
                          @[@"恢复选中布局", @"restoreSelectedWindowLayout:", @154.0, @130.0, [NSColor systemBlueColor]],
                          @[@"删除", @"deleteSelectedWindowLayout:", @292.0, @72.0, [NSColor systemRedColor]],
+                         @[@"重命名", @"renameSelectedWindowLayout:", @372.0, @90.0, [NSColor systemOrangeColor]],
                          @[@"关闭", @"closeWindowLayouts:", @488.0, @80.0, [NSColor systemGrayColor]]];
     for (NSArray *d in actions) {
       ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([d[2] doubleValue], 40, [d[3] doubleValue], 32)];
@@ -13460,6 +13461,34 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   if (restored == 0) [self showToast:[NSString stringWithFormat:@"没有找到可恢复的窗口（失败 %ld 个）；请确认应用已打开并已获得窗口控制权限", (long)failed]];
   else [self showToast:[NSString stringWithFormat:@"已恢复「%@」的 %ld 个窗口%@", name, (long)restored, failed ? [NSString stringWithFormat:@"，%ld 个失败", (long)failed] : @""]];
+}
+
+- (void)renameSelectedWindowLayout:(id)sender {
+  NSInteger row = self.layoutTable.selectedRow;
+  NSArray *names = self.layoutVisibleNames ?: @[];
+  if (row < 0 || row >= (NSInteger)names.count) { [self showToast:@"请先选择一个布局"]; return; }
+  NSString *oldName = names[row];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"重命名布局";
+  a.informativeText = [NSString stringWithFormat:@"当前名称：%@", oldName];
+  NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,300,26)];
+  tf.stringValue = oldName;
+  a.accessoryView = tf;
+  [a addButtonWithTitle:@"重命名"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSString *newName = [tf.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!newName.length) { [self showToast:@"布局名称不能为空"]; return; }
+  if ([newName isEqualToString:oldName]) return;
+  if (self.savedLayouts[newName]) { [self showToast:@"已存在同名布局"]; return; }
+  NSDictionary *info = self.savedLayouts[oldName];
+  [self.savedLayouts removeObjectForKey:oldName];
+  self.savedLayouts[newName] = info ?: @{};
+  [self saveWindowLayouts];
+  [self reloadLayoutVisibleNames];
+  NSInteger idx = [self.layoutVisibleNames indexOfObject:newName];
+  if (idx != NSNotFound) [self.layoutTable selectRowIndexes:[NSIndexSet indexSetWithIndex:idx] byExtendingSelection:NO];
+  [self showToast:[NSString stringWithFormat:@"已重命名为「%@」", newName]];
 }
 
 - (void)deleteSelectedWindowLayout:(id)sender {
