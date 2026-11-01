@@ -5065,7 +5065,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.clipboardWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,420,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.clipboardWindow.title = @"剪贴板";
     self.clipboardWindow.releasedWhenClosed = NO;
-    self.clipboardWindow.level = NSFloatingWindowLevel;
+    self.clipboardWindow.level = NSNormalWindowLevel;
     NSView *cv = self.clipboardWindow.contentView;
     NSTextField *title = [self label:@"剪贴板" size:17 bold:YES color:nil];
     title.frame = NSMakeRect(20, 516, 180, 24); [cv addSubview:title];
@@ -9648,7 +9648,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.alertSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,470,300) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.alertSettingsWindow.title = @"告警设置";
     self.alertSettingsWindow.releasedWhenClosed = NO;
-    self.alertSettingsWindow.level = NSFloatingWindowLevel;
+    self.alertSettingsWindow.level = NSNormalWindowLevel;
     NSView *cv = self.alertSettingsWindow.contentView;
     NSTextField *t = [self label:@"资源与余额提醒" size:17 bold:YES color:nil];
     t.frame = NSMakeRect(24, 252, 300, 24); [cv addSubview:t];
@@ -9755,7 +9755,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.appShortcutWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,600,430) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.appShortcutWindow.title = @"应用内快捷键";
     self.appShortcutWindow.releasedWhenClosed = NO;
-    self.appShortcutWindow.level = NSFloatingWindowLevel;
+    self.appShortcutWindow.level = NSNormalWindowLevel;
     NSView *cv = self.appShortcutWindow.contentView;
     NSTextField *title = [self label:@"应用内快捷键" size:17 bold:YES color:nil];
     title.frame = NSMakeRect(24, 386, 300, 24); [cv addSubview:title];
@@ -9926,7 +9926,7 @@ static BOOL ValidGroupName(NSString *raw) {
   self.sceneWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,500,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
   self.sceneWindow.title = @"场景模式";
   self.sceneWindow.releasedWhenClosed = NO;
-  self.sceneWindow.level = NSFloatingWindowLevel;
+  self.sceneWindow.level = NSNormalWindowLevel;
   NSView *cv = self.sceneWindow.contentView;
   NSTextField *title = [self label:@"场景模式" size:20 bold:YES color:nil];
   title.frame = NSMakeRect(20, 510, 300, 28); [cv addSubview:title];
@@ -10171,7 +10171,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.usageWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.usageWindow.title = @"使用统计与推荐";
     self.usageWindow.releasedWhenClosed = NO;
-    self.usageWindow.level = NSFloatingWindowLevel;
+    self.usageWindow.level = NSNormalWindowLevel;
     NSView *cv = self.usageWindow.contentView;
     NSTextField *title = [self label:@"使用统计与推荐" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
@@ -10253,7 +10253,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.processWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.processWindow.title = @"进程管理";
     self.processWindow.releasedWhenClosed = NO;
-    self.processWindow.level = NSFloatingWindowLevel;
+    self.processWindow.level = NSNormalWindowLevel;
     NSView *cv = self.processWindow.contentView;
     NSTextField *title = [self label:@"进程管理" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
@@ -10415,7 +10415,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.startupWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.startupWindow.title = @"启动项管理";
     self.startupWindow.releasedWhenClosed = NO;
-    self.startupWindow.level = NSFloatingWindowLevel;
+    self.startupWindow.level = NSNormalWindowLevel;
     NSView *cv = self.startupWindow.contentView;
     NSTextField *title = [self label:@"启动项管理" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
@@ -10523,7 +10523,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.largeFileWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.largeFileWindow.title = @"大文件清理";
     self.largeFileWindow.releasedWhenClosed = NO;
-    self.largeFileWindow.level = NSFloatingWindowLevel;
+    self.largeFileWindow.level = NSNormalWindowLevel;
     NSView *cv = self.largeFileWindow.contentView;
     NSTextField *title = [self label:@"大文件清理" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 490, 300, 28); [cv addSubview:title];
@@ -10704,7 +10704,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.promptWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,700,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.promptWindow.title = @"提示词库";
     self.promptWindow.releasedWhenClosed = NO;
-    self.promptWindow.level = NSFloatingWindowLevel;
+    self.promptWindow.level = NSNormalWindowLevel;
     NSView *cv = self.promptWindow.contentView;
     NSTextField *title = [self label:@"提示词库" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
@@ -10925,7 +10925,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.promptDetailWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.promptDetailWindow.title = @"提示词详情";
     self.promptDetailWindow.releasedWhenClosed = NO;
-    self.promptDetailWindow.level = NSFloatingWindowLevel;
+    self.promptDetailWindow.level = NSNormalWindowLevel;
     NSView *cv = self.promptDetailWindow.contentView;
     self.promptDetailTitle = [self label:@"" size:18 bold:YES color:nil];
     self.promptDetailTitle.frame = NSMakeRect(20, 446, 560, 26); [cv addSubview:self.promptDetailTitle];
@@ -11402,7 +11402,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.appSearchWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.appSearchWindow.title = @"应用搜索";
     self.appSearchWindow.releasedWhenClosed = NO;
-    self.appSearchWindow.level = NSFloatingWindowLevel;
+    self.appSearchWindow.level = NSNormalWindowLevel;
     NSView *cv = self.appSearchWindow.contentView;
     NSTextField *title = [self label:@"应用搜索" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 450, 300, 28); [cv addSubview:title];
@@ -11530,7 +11530,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.dupWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.dupWindow.title = @"重复文件清理";
     self.dupWindow.releasedWhenClosed = NO;
-    self.dupWindow.level = NSFloatingWindowLevel;
+    self.dupWindow.level = NSNormalWindowLevel;
     NSView *cv = self.dupWindow.contentView;
     NSTextField *title = [self label:@"重复文件清理" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 490, 300, 28); [cv addSubview:title];
@@ -11710,7 +11710,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.dockAppearanceWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,470) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.dockAppearanceWindow.title = @"Dock 外观";
     self.dockAppearanceWindow.releasedWhenClosed = NO;
-    self.dockAppearanceWindow.level = NSFloatingWindowLevel;
+    self.dockAppearanceWindow.level = NSNormalWindowLevel;
     NSView *cv = self.dockAppearanceWindow.contentView;
     NSTextField *title = [self label:@"Dock 外观" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(24, 420, 300, 28); [cv addSubview:title];
@@ -12102,7 +12102,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.imageToolWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,680,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.imageToolWindow.title = @"图片工具";
     self.imageToolWindow.releasedWhenClosed = NO;
-    self.imageToolWindow.level = NSFloatingWindowLevel;
+    self.imageToolWindow.level = NSNormalWindowLevel;
     NSView *cv = self.imageToolWindow.contentView;
     NSTextField *title = [self label:@"图片工具" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 490, 300, 28); [cv addSubview:title];
@@ -12297,7 +12297,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.pdfWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,660,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.pdfWindow.title = @"PDF 工具";
     self.pdfWindow.releasedWhenClosed = NO;
-    self.pdfWindow.level = NSFloatingWindowLevel;
+    self.pdfWindow.level = NSNormalWindowLevel;
     NSView *cv = self.pdfWindow.contentView;
     NSTextField *title = [self label:@"PDF 工具" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 450, 300, 28); [cv addSubview:title];
@@ -12713,7 +12713,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.batchRenameWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.batchRenameWindow.title = @"批量重命名";
     self.batchRenameWindow.releasedWhenClosed = NO;
-    self.batchRenameWindow.level = NSFloatingWindowLevel;
+    self.batchRenameWindow.level = NSNormalWindowLevel;
     NSView *cv = self.batchRenameWindow.contentView;
     NSTextField *title = [self label:@"批量重命名" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
@@ -12994,7 +12994,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,pw+16,ph+56) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable|NSWindowStyleMaskMiniaturizable) backing:NSBackingStoreBuffered defer:NO];
   w.title = title;
   w.releasedWhenClosed = NO;
-  w.level = NSFloatingWindowLevel;
+  w.level = NSNormalWindowLevel;
   NSView *cv = w.contentView;
   NSTextField *tl = [[NSTextField alloc] initWithFrame:NSMakeRect(12, ph+22, 220, 20)];
   tl.editable = NO; tl.bordered = NO; tl.drawsBackground = NO;
@@ -13056,7 +13056,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.layoutWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,600,440) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.layoutWindow.title = @"窗口布局记忆";
     self.layoutWindow.releasedWhenClosed = NO;
-    self.layoutWindow.level = NSFloatingWindowLevel;
+    self.layoutWindow.level = NSNormalWindowLevel;
     NSView *cv = self.layoutWindow.contentView;
     NSTextField *title = [self label:@"窗口布局记忆" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 390, 300, 28); [cv addSubview:title];
@@ -14893,7 +14893,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.shortcutSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,470) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.shortcutSettingsWindow.title = @"快捷键设置";
     self.shortcutSettingsWindow.releasedWhenClosed = NO;
-    self.shortcutSettingsWindow.level = NSFloatingWindowLevel;
+    self.shortcutSettingsWindow.level = NSNormalWindowLevel;
     NSView *cv = self.shortcutSettingsWindow.contentView;
     NSTextField *t = [self label:@"快捷键设置" size:18 bold:YES color:nil];
     t.frame = NSMakeRect(24, 424, 300, 24); [cv addSubview:t];
@@ -15053,7 +15053,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.groupShortcutWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,520,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.groupShortcutWindow.title = @"分组快捷键";
     self.groupShortcutWindow.releasedWhenClosed = NO;
-    self.groupShortcutWindow.level = NSFloatingWindowLevel;
+    self.groupShortcutWindow.level = NSNormalWindowLevel;
     NSView *cv = self.groupShortcutWindow.contentView;
     NSTextField *t = [self label:@"分组快捷键" size:18 bold:YES color:nil];
     t.frame = NSMakeRect(24, 494, 300, 24); [cv addSubview:t];
@@ -15840,7 +15840,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.photoPermissionWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,540,310) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.photoPermissionWindow.title = @"图库权限";
     self.photoPermissionWindow.releasedWhenClosed = NO;
-    self.photoPermissionWindow.level = NSFloatingWindowLevel;
+    self.photoPermissionWindow.level = NSNormalWindowLevel;
     NSView *cv = self.photoPermissionWindow.contentView;
     NSTextField *t = [self label:@"图库权限" size:17 bold:YES color:nil];
     t.frame = NSMakeRect(24, 262, 300, 24); [cv addSubview:t];
