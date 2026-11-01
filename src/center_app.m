@@ -11497,7 +11497,25 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
     self.batchRenameTable.rowHeight = 30;
     self.batchRenameTable.dataSource = self; self.batchRenameTable.delegate = self;
+    self.batchRenameTable.target = self;
+    self.batchRenameTable.doubleAction = @selector(copyBatchOriginalName:);
+    NSMenu *nameMenu = [[NSMenu alloc] initWithTitle:@"文件名"];
+    NSMenuItem *mi1 = [[NSMenuItem alloc] initWithTitle:@"复制原文件名" action:@selector(copyBatchOriginalName:) keyEquivalent:@""];
+    mi1.target = self; [nameMenu addItem:mi1];
+    NSMenuItem *mi2 = [[NSMenuItem alloc] initWithTitle:@"复制新文件名" action:@selector(copyBatchNewName:) keyEquivalent:@""];
+    mi2.target = self; [nameMenu addItem:mi2];
+    NSMenuItem *mi3 = [[NSMenuItem alloc] initWithTitle:@"复制完整路径" action:@selector(copyBatchFullPath:) keyEquivalent:@""];
+    mi3.target = self; [nameMenu addItem:mi3];
+    self.batchRenameTable.menu = nameMenu;
     sv.documentView = self.batchRenameTable; [cv addSubview:sv];
+    ColorHoverButton *copyOrig = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 24, 100, 34)];
+    copyOrig.title = @"复制原名"; copyOrig.hoverColor = [NSColor systemTealColor];
+    copyOrig.target = self; copyOrig.action = @selector(copyBatchOriginalName:);
+    [copyOrig applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copyOrig];
+    ColorHoverButton *copyNew = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(132, 24, 100, 34)];
+    copyNew.title = @"复制新名"; copyNew.hoverColor = [NSColor systemBlueColor];
+    copyNew.target = self; copyNew.action = @selector(copyBatchNewName:);
+    [copyNew applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copyNew];
     ColorHoverButton *apply = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(500, 24, 110, 34)];
     apply.title = @"执行重命名"; apply.hoverColor = [NSColor systemGreenColor];
     apply.target = self; apply.action = @selector(applyBatchRename:);
@@ -11568,6 +11586,37 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   self.batchRenamePreview = preview;
   [self.batchRenameTable reloadData];
+}
+
+- (NSDictionary *)batchSelectedPreviewItem {
+  NSInteger row = self.batchRenameTable.clickedRow;
+  if (row < 0) row = self.batchRenameTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.batchRenamePreview.count) return nil;
+  return self.batchRenamePreview[row];
+}
+
+- (void)copyBatchOriginalName:(id)sender {
+  NSDictionary *it = [self batchSelectedPreviewItem];
+  if (!it) { [self showToast:@"请先选择文件"]; return; }
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:it[@"old"] ?: @"" forType:NSPasteboardTypeString];
+  [self showToast:@"已复制原文件名"];
+}
+
+- (void)copyBatchNewName:(id)sender {
+  NSDictionary *it = [self batchSelectedPreviewItem];
+  if (!it) { [self showToast:@"请先选择文件"]; return; }
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:it[@"new"] ?: @"" forType:NSPasteboardTypeString];
+  [self showToast:@"已复制新文件名"];
+}
+
+- (void)copyBatchFullPath:(id)sender {
+  NSDictionary *it = [self batchSelectedPreviewItem];
+  if (!it) { [self showToast:@"请先选择文件"]; return; }
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:it[@"path"] ?: @"" forType:NSPasteboardTypeString];
+  [self showToast:@"已复制完整路径"];
 }
 
 - (void)applyBatchRename:(id)sender {
