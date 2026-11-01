@@ -730,7 +730,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 - (void)startStreamWithFilter:(SCContentFilter *)filter configuration:(SCStreamConfiguration *)config {
   SCRecordingOutputConfiguration *rc = [[SCRecordingOutputConfiguration alloc] init];
   rc.outputURL = self.outputURL;
-  rc.videoCodecType = AVVideoCodecTypeH264;
+  rc.videoCodecType = [rc.availableVideoCodecTypes containsObject:AVVideoCodecTypeHEVC] ? AVVideoCodecTypeHEVC : AVVideoCodecTypeH264;
   rc.outputFileType = AVFileTypeMPEG4;
   self.recordingOutput = [[SCRecordingOutput alloc] initWithConfiguration:rc delegate:self];
   NSError *err = nil;
@@ -773,8 +773,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
   config.minimumFrameInterval = CMTimeMake(1, 30);
   config.capturesAudio = NO;
   config.captureMicrophone = NO;
-  config.width = 1920;
-  config.height = 1080;
+  NSInteger targetH = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureQuality"];
+  if (targetH <= 0) targetH = 1440;
+  config.height = (size_t)targetH;
+  config.width = MIN(3840, MAX(640, (size_t)llround((CGFloat)targetH * 16.0 / 9.0)));
   [self startStreamWithFilter:filter configuration:config];
 }
 - (void)contentSharingPicker:(SCContentSharingPicker *)picker didCancelForStream:(SCStream *)stream {
@@ -930,7 +932,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSArray *captureHistoryItems;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
-@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup;
+@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup;
 @property (strong) DLScreenRecorder *captureRecorder;
 @property (strong) NSWindow *captureRegionWindow;
 @property (strong) ColorHoverButton *captureRecordButton;
@@ -16418,6 +16420,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"截图保存到：%@", dir];
 }
 
+- (void)captureQualityChanged:(id)sender {
+  NSInteger h = [self.captureQualityPopup.selectedItem.representedObject integerValue];
+  if (h <= 0) h = 1440;
+  [[NSUserDefaults standardUserDefaults] setInteger:h forKey:@"centerCaptureQuality"];
+}
+
 - (void)captureVideoPathChanged:(id)sender {
   NSString *dir = [self.captureVideoPathField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
   if (!dir.length) return;
@@ -16459,7 +16467,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [cv addSubview:self.captureDelayPopup];
     self.captureCopyCheck = [NSButton checkboxWithTitle:@"截图后复制到剪贴板" target:nil action:nil];
     self.captureCopyCheck.state = NSControlStateValueOn;
-    self.captureCopyCheck.frame = NSMakeRect(184, 266, 190, 22); [cv addSubview:self.captureCopyCheck];
+    self.captureCopyCheck.frame = NSMakeRect(184, 266, 178, 22); [cv addSubview:self.captureCopyCheck];
+    NSTextField *ql = [self label:@"画质" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    ql.frame = NSMakeRect(372, 270, 32, 18); [cv addSubview:ql];
+    self.captureQualityPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(406, 264, 124, 26) pullsDown:NO];
+    NSArray *qTitles = @[@"1080p", @"2K", @"4K"];
+    NSArray *qHeights = @[@1080, @1440, @2160];
+    for (NSInteger i = 0; i < qTitles.count; i++) {
+      [self.captureQualityPopup addItemWithTitle:qTitles[i]];
+      self.captureQualityPopup.lastItem.representedObject = qHeights[i];
+    }
+    NSInteger qh = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureQuality"];
+    NSInteger qidx = qh == 1080 ? 0 : (qh == 2160 ? 2 : 1);
+    [self.captureQualityPopup selectItemAtIndex:qidx];
+    self.captureQualityPopup.target = self; self.captureQualityPopup.action = @selector(captureQualityChanged:);
+    [cv addSubview:self.captureQualityPopup];
     self.captureRecordButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 204, 120, 38)];
     self.captureRecordButton.title = @"开始录屏"; self.captureRecordButton.hoverColor = [NSColor systemRedColor];
     self.captureRecordButton.target = self; self.captureRecordButton.action = @selector(captureVideo:);
