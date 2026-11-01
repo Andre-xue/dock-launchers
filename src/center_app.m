@@ -954,6 +954,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSView *quickGroupContainer;
 @property (strong) NSSegmentedControl *quickTabs;
 @property (strong) DLCircularMenuView *radialMenu;
+@property (strong) NSMutableSet *pinnedWindows;
 @property (strong) NSArray<NSArray<NSDictionary *> *> *radialPages;
 @property NSInteger radialPage;
 @property (strong) NSTextField *radialPageLabel;
@@ -2120,6 +2121,8 @@ static void HideDockHoverTip(void) {
     [ud0 setBool:YES forKey:@"centerMenuTextInit"];
     [ud0 synchronize];
   }
+  [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlWindowBecameKey:) name:NSWindowDidBecomeKeyNotification object:nil];
+  [self applyWindowChrome:self.window];
   self.sampleSeconds = 2;
   self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
   self.statusItem.button.image = [self characterImage:18];
@@ -2526,6 +2529,72 @@ static void HideDockHoverTip(void) {
   CGFloat maxY = MAX(0, docH - self.contentScroll.contentView.bounds.size.height);
   [self.contentScroll.contentView scrollToPoint:NSMakePoint(0, maxY)];
   [self.contentScroll reflectScrolledClipView:self.contentScroll.contentView];
+}
+
+- (void)applyWindowChrome:(NSWindow *)w {
+  if (!w) return;
+  if ([w isKindOfClass:[NSPanel class]]) return;
+  if (w.sheetParent || w.level >= NSStatusWindowLevel) return;
+  if (!(w.styleMask & NSWindowStyleMaskTitled) || !(w.styleMask & NSWindowStyleMaskClosable)) return;
+  if (objc_getAssociatedObject(w, "DLCenterChrome")) return;
+  objc_setAssociatedObject(w, "DLCenterChrome", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  if (!self.pinnedWindows) self.pinnedWindows = [NSMutableSet set];
+  NSButton *close = [w standardWindowButton:NSWindowCloseButton];
+  NSButton *mini = [w standardWindowButton:NSWindowMiniaturizeButton];
+  NSButton *zoom = [w standardWindowButton:NSWindowZoomButton];
+  if (mini) mini.hidden = YES;
+  if (zoom) zoom.hidden = YES;
+  if (close) close.enabled = YES;
+  if (!w.delegate) w.delegate = self;
+  NSView *titlebar = close.superview ?: w.contentView.superview;
+  if (!titlebar) return;
+  NSButton *pin = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"pin" accessibilityDescription:@"钉住"] target:self action:@selector(toggleWindowPin:)];
+  pin.bordered = NO;
+  pin.imageScaling = NSImageScaleProportionallyDown;
+  pin.contentTintColor = [NSColor secondaryLabelColor];
+  pin.toolTip = @"钉住窗口";
+  CGFloat px = close ? NSMaxX(close.frame) + 4 : 34;
+  CGFloat py = close ? close.frame.origin.y : MAX(4, titlebar.bounds.size.height - 24);
+  pin.frame = NSMakeRect(px, py, 24, 24);
+  pin.autoresizingMask = NSViewMinYMargin;
+  [titlebar addSubview:pin];
+}
+
+- (void)toggleWindowPin:(NSButton *)sender {
+  NSWindow *w = sender.window;
+  if (!w) return;
+  if (!self.pinnedWindows) self.pinnedWindows = [NSMutableSet set];
+  NSValue *key = [NSValue valueWithNonretainedObject:w];
+  BOOL pinned = [self.pinnedWindows containsObject:key];
+  if (pinned) {
+    [self.pinnedWindows removeObject:key];
+    w.level = NSNormalWindowLevel;
+    sender.image = [NSImage imageWithSystemSymbolName:@"pin" accessibilityDescription:@"钉住"];
+    sender.contentTintColor = [NSColor secondaryLabelColor];
+    sender.toolTip = @"钉住窗口";
+  } else {
+    [self.pinnedWindows addObject:key];
+    w.level = NSFloatingWindowLevel;
+    sender.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"已钉住"];
+    sender.contentTintColor = [NSColor systemOrangeColor];
+    sender.toolTip = @"已钉住，点击取消钉住";
+  }
+  NSButton *close = [w standardWindowButton:NSWindowCloseButton];
+  if (close) close.enabled = !pinned;
+  [self showToast:(pinned ? @"窗口已取消钉住，可以关闭" : @"窗口已钉住，关闭按钮暂不可用")];
+}
+
+- (BOOL)windowShouldClose:(NSWindow *)sender {
+  if (!self.pinnedWindows) return YES;
+  if ([self.pinnedWindows containsObject:[NSValue valueWithNonretainedObject:sender]]) {
+    [self showToast:@"窗口已钉住，先取消钉住才能关闭"];
+    return NO;
+  }
+  return YES;
+}
+
+- (void)dlWindowBecameKey:(NSNotification *)note {
+  if ([note.object isKindOfClass:[NSWindow class]]) [self applyWindowChrome:note.object];
 }
 
 - (void)windowDidMove:(NSNotification *)notification {
@@ -12342,11 +12411,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   tl.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
   tl.stringValue = title;
   [cv addSubview:tl];
-  ColorHoverButton *pin = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(348, 554, 70, 26)];
-  pin.title = @"钉住"; pin.hoverColor = [NSColor systemOrangeColor];
-  pin.target = self; pin.action = @selector(toggleDetachedPin:);
-  [pin applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [cv addSubview:pin];
   ColorHoverButton *zoomOut = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, 554, 34, 26)];
   zoomOut.title = @"−"; zoomOut.hoverColor = [NSColor systemBlueColor];
   zoomOut.target = self; zoomOut.action = @selector(zoomDetachedOut:);
