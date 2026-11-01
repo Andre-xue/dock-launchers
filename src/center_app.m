@@ -590,7 +590,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSTextField *photoPermissionStatus;
 @property (strong) NSWindow *appPasswordWindow;
 @property (strong) NSButton *pwLaunchLockCheck;
-@property (strong) NSSecureTextField *pwCurrentField, *pwNewField, *pwConfirmField;
+@property (strong) NSTextField *pwCurrentField, *pwNewField, *pwConfirmField;
 @property (strong) NSTextField *pwStatusLabel;
 @property (strong) NSMutableArray *appShortcuts;
 @property (strong) NSWindow *appShortcutWindow;
@@ -5533,16 +5533,16 @@ static BOOL ValidGroupName(NSString *raw) {
     if ([self hasAppPassword]) {
       cl = [self label:@"当前密码" size:11 bold:NO color:nil];
       cl.frame = NSMakeRect(24, 230, 110, 18); [cv addSubview:cl];
-      self.pwCurrentField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(140, 224, 290, 28)];
+      self.pwCurrentField = [[NSTextField alloc] initWithFrame:NSMakeRect(140, 224, 290, 28)];
       [cv addSubview:self.pwCurrentField];
     }
     NSTextField *nl = [self label:@"新密码" size:11 bold:NO color:nil];
     nl.frame = NSMakeRect(24, 184, 110, 18); [cv addSubview:nl];
-    self.pwNewField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(140, 178, 290, 28)];
+    self.pwNewField = [[NSTextField alloc] initWithFrame:NSMakeRect(140, 178, 290, 28)];
     [cv addSubview:self.pwNewField];
     NSTextField *rl = [self label:@"确认新密码" size:11 bold:NO color:nil];
     rl.frame = NSMakeRect(24, 138, 110, 18); [cv addSubview:rl];
-    self.pwConfirmField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(140, 132, 290, 28)];
+    self.pwConfirmField = [[NSTextField alloc] initWithFrame:NSMakeRect(140, 132, 290, 28)];
     [cv addSubview:self.pwConfirmField];
     self.pwStatusLabel = [self label:@"" size:10.5 bold:NO color:[NSColor systemRedColor]];
     self.pwStatusLabel.frame = NSMakeRect(24, 100, 420, 18); [cv addSubview:self.pwStatusLabel];
