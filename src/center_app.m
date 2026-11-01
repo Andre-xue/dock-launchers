@@ -4929,6 +4929,30 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showToast:@"已复制到剪贴板"];
 }
 
+- (void)saveClipboardSelectedAsFile:(id)sender {
+  NSDictionary *it = [self clipboardSelectedItem];
+  if (!it) return;
+  BOOL isImage = [it[@"kind"] isEqualToString:@"image"];
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  NSString *defaultName = isImage ? (it[@"file"] ?: @"剪贴板图片.png") : @"剪贴板文本.txt";
+  sp.nameFieldStringValue = defaultName;
+  sp.allowedFileTypes = isImage ? @[@"png"] : @[@"txt"];
+  if ([sp runModal] != NSModalResponseOK) return;
+  if (isImage) {
+    NSString *src = [[self clipboardImagesDir] stringByAppendingPathComponent:(it[@"file"] ?: @"")];
+    NSData *data = [NSData dataWithContentsOfFile:src];
+    if (!data) { [self showToast:@"图片文件不存在"]; return; }
+    NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:data];
+    NSData *png = rep ? [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] : data;
+    if (![png writeToURL:sp.URL atomically:YES]) { [self showToast:@"保存失败"]; return; }
+  } else {
+    NSString *text = it[@"text"] ?: @"";
+    if (![text writeToURL:sp.URL atomically:YES encoding:NSUTF8StringEncoding error:NULL]) { [self showToast:@"保存失败"]; return; }
+  }
+  [self showToast:@"已保存"];
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[sp.URL]];
+}
+
 - (void)pasteClipboardToPreviousApp:(id)sender {
   NSDictionary *it = [self clipboardSelectedItem];
   if (!it) return;
@@ -5091,6 +5115,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSMenu *clipMenu = [[NSMenu alloc] initWithTitle:@"剪贴板"];
     [clipMenu addItemWithTitle:@"复制" action:@selector(copyClipboardRow:) keyEquivalent:@""].target = self;
     [clipMenu addItemWithTitle:@"粘贴到上一个应用" action:@selector(pasteClipboardToPreviousApp:) keyEquivalent:@""].target = self;
+    [clipMenu addItemWithTitle:@"另存为…" action:@selector(saveClipboardSelectedAsFile:) keyEquivalent:@""].target = self;
     [clipMenu addItem:[NSMenuItem separatorItem]];
     [clipMenu addItemWithTitle:@"收藏 / 取消收藏" action:@selector(toggleClipboardFavorite:) keyEquivalent:@""].target = self;
     [clipMenu addItemWithTitle:@"删除选中" action:@selector(deleteClipboardSelected:) keyEquivalent:@""].target = self;
