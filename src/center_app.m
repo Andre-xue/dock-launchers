@@ -834,7 +834,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
     cursor = CMTimeAdd(cursor, asset.duration);
   }
   [[NSFileManager defaultManager] removeItemAtURL:self.finalOutputURL error:NULL];
-  AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetHighestQuality];
+  AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetHEVCHighestQuality];
   ex.outputURL = self.finalOutputURL;
   ex.outputFileType = AVFileTypeMPEG4;
   ex.shouldOptimizeForNetworkUse = YES;
