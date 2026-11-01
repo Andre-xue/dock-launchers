@@ -10150,18 +10150,25 @@ static BOOL ValidGroupName(NSString *raw) {
   sp.nameFieldStringValue = @"DockLaunchers-使用统计.csv";
   sp.allowedFileTypes = @[@"csv"];
   if ([sp runModal] != NSModalResponseOK) return;
-  NSDateFormatter *df = [[NSDateFormatter alloc] init];
-  df.dateFormat = @"yyyy-MM-dd HH:mm:ss";
-  NSMutableString *csv = [NSMutableString stringWithString:@"应用,启动次数,最近使用,所在分组\n"];
+  NSDateFormatter *dfDate = [[NSDateFormatter alloc] init];
+  dfDate.dateFormat = @"yyyy-MM-dd";
+  NSDateFormatter *dfTime = [[NSDateFormatter alloc] init];
+  dfTime.dateFormat = @"HH:mm";
+  NSMutableString *csv = [NSMutableString stringWithString:@"应用,启动次数,最近使用日期,最近使用时间,所在分组\n"];
   for (NSDictionary *r in self.usageRows) {
     NSNumber *last = r[@"last"];
-    NSString *lastText = @"";
-    if ([last doubleValue] > 0) lastText = [df stringFromDate:[NSDate dateWithTimeIntervalSince1970:last.doubleValue]];
+    NSString *dateText = @"";
+    NSString *timeText = @"";
+    if ([last doubleValue] > 0) {
+      NSDate *d = [NSDate dateWithTimeIntervalSince1970:last.doubleValue];
+      dateText = [dfDate stringFromDate:d];
+      timeText = [dfTime stringFromDate:d];
+    }
     NSString *name = [r[@"label"] stringByReplacingOccurrencesOfString:@"," withString:@"，"];
     NSString *group = [(r[@"group"] ?: @"") stringByReplacingOccurrencesOfString:@"," withString:@"，"];
-    [csv appendFormat:@"%@,%@,%@,%@\n", name, r[@"count"] ?: @0, lastText, group];
+    [csv appendFormat:@"%@,%@,%@,%@,%@\n", name, r[@"count"] ?: @0, dateText, timeText, group];
   }
-  NSMutableData *data = [NSMutableData dataWithData:[@"\\xEF\\xBB\\xBF" dataUsingEncoding:NSUTF8StringEncoding]];
+  NSMutableData *data = [NSMutableData dataWithData:[@"\uFEFF" dataUsingEncoding:NSUTF8StringEncoding]];
   [data appendData:[csv dataUsingEncoding:NSUTF8StringEncoding]];
   if (![data writeToURL:sp.URL atomically:YES]) { [self showToast:@"导出失败"]; return; }
   [self showToast:@"使用统计已导出"];
