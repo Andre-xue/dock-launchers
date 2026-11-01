@@ -652,6 +652,12 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSArray *appSearchFiltered;
 @property (strong) NSTextField *appSearchStatus;
 @property (strong) NSPopUpButton *promptCategoryPopup;
+@property (strong) NSWindow *imageToolWindow;
+@property (strong) NSTableView *imageToolTable;
+@property (strong) NSArray *imageToolItems;
+@property (strong) NSPopUpButton *imageFormatPopup;
+@property (strong) NSSlider *imageQualitySlider;
+@property (strong) NSTextField *imageQualityLabel, *imageMaxWidthField;
 @property (strong) NSWindow *pdfWindow;
 @property (strong) NSTableView *pdfTable;
 @property (strong) NSArray *pdfItems;
@@ -8030,6 +8036,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.dupTable) return self.dupItems.count;
+  if (tableView == self.imageToolTable) return self.imageToolItems.count;
   if (tableView == self.pdfTable) return self.pdfItems.count;
   if (tableView == self.batchRenameTable) return self.batchRenamePreview.count;
   if (tableView == self.layoutTable) return self.savedLayouts.count;
@@ -8078,6 +8085,29 @@ static BOOL ValidGroupName(NSString *raw) {
       link.bordered = NO; link.tag = row; link.alignment = NSTextAlignmentLeft;
       link.font = [NSFont systemFontOfSize:9.5]; link.contentTintColor = [NSColor controlAccentColor];
       link.frame = NSMakeRect(4, 5, col.width - 8, 22); [v addSubview:link];
+    }
+    return v;
+  }
+  if (tableView == self.imageToolTable) {
+    if (row < 0 || row >= (NSInteger)self.imageToolItems.count) return nil;
+    NSString *path = self.imageToolItems[row];
+    NSString *ident = col.identifier;
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,32)];
+    NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+    if ([ident isEqualToString:@"iname"]) {
+      NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(4, 4, 24, 24)];
+      iv.image = img; iv.imageScaling = NSImageScaleProportionallyUpOrDown; [v addSubview:iv];
+      NSTextField *l = [self label:path.lastPathComponent size:11 bold:YES color:nil];
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.frame = NSMakeRect(34, 7, col.width - 38, 18); [v addSubview:l];
+    } else if ([ident isEqualToString:@"idim"]) {
+      NSTextField *l = [self label:[NSString stringWithFormat:@"%ld × %ld", (long)img.size.width, (long)img.size.height] size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
+    } else {
+      NSNumber *size = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL][NSFileSize];
+      NSTextField *l = [self label:[self gbString:size.unsignedLongLongValue] size:10.5 bold:YES color:[NSColor systemOrangeColor]];
+      l.alignment = NSTextAlignmentRight;
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
     }
     return v;
   }
@@ -11674,6 +11704,141 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return apps;
 }
 
+- (void)showImageTools:(id)sender {
+  if (!self.imageToolWindow) {
+    self.imageToolWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,680,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.imageToolWindow.title = @"图片工具";
+    self.imageToolWindow.releasedWhenClosed = NO;
+    self.imageToolWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.imageToolWindow.contentView;
+    NSTextField *title = [self label:@"图片工具" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 490, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"批量转换格式、压缩质量和限制最大尺寸；不会修改原图" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 468, 600, 18); [cv addSubview:sub];
+    ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 428, 100, 30)];
+    add.title = @"添加图片"; add.hoverColor = [NSColor systemBlueColor];
+    add.target = self; add.action = @selector(imageAddFiles:);
+    [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
+    ColorHoverButton *folder = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(128, 428, 100, 30)];
+    folder.title = @"添加文件夹"; folder.hoverColor = [NSColor systemBlueColor];
+    folder.target = self; folder.action = @selector(imageAddFolder:);
+    [folder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:folder];
+    ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(236, 428, 70, 30)];
+    clear.title = @"清空"; clear.hoverColor = [NSColor systemRedColor];
+    clear.target = self; clear.action = @selector(imageClear:);
+    [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    ColorHoverButton *convert = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(556, 428, 108, 30)];
+    convert.title = @"开始转换"; convert.hoverColor = [NSColor systemGreenColor];
+    convert.target = self; convert.action = @selector(imageConvert:);
+    [convert applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:convert];
+
+    NSTextField *fl = [self label:@"格式" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    fl.frame = NSMakeRect(20, 390, 40, 18); [cv addSubview:fl];
+    self.imageFormatPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(64, 384, 120, 26) pullsDown:NO];
+    [self.imageFormatPopup addItemsWithTitles:@[@"JPEG", @"PNG", @"HEIC", @"TIFF"]];
+    [cv addSubview:self.imageFormatPopup];
+    NSTextField *ql = [self label:@"质量" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    ql.frame = NSMakeRect(204, 390, 40, 18); [cv addSubview:ql];
+    self.imageQualitySlider = [[NSSlider alloc] initWithFrame:NSMakeRect(248, 386, 160, 24)];
+    self.imageQualitySlider.minValue = 0.1; self.imageQualitySlider.maxValue = 1.0;
+    self.imageQualitySlider.doubleValue = 0.8;
+    self.imageQualitySlider.target = self; self.imageQualitySlider.action = @selector(imageQualityChanged:);
+    [cv addSubview:self.imageQualitySlider];
+    self.imageQualityLabel = [self label:@"80%" size:10.5 bold:YES color:[NSColor systemTealColor]];
+    self.imageQualityLabel.frame = NSMakeRect(414, 390, 50, 18); [cv addSubview:self.imageQualityLabel];
+    NSTextField *wl = [self label:@"最大边长" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    wl.frame = NSMakeRect(474, 390, 60, 18); [cv addSubview:wl];
+    self.imageMaxWidthField = [[NSTextField alloc] initWithFrame:NSMakeRect(538, 384, 126, 26)];
+    self.imageMaxWidthField.placeholderString = @"0 = 原始尺寸";
+    [cv addSubview:self.imageMaxWidthField];
+
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 70, 648, 296)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.imageToolTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"iname", @"图片", @440.0], @[@"idim", @"尺寸", @110.0], @[@"isize", @"大小", @90.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.imageToolTable addTableColumn:col];
+    }
+    self.imageToolTable.rowHeight = 32;
+    self.imageToolTable.dataSource = self; self.imageToolTable.delegate = self;
+    sv.documentView = self.imageToolTable; [cv addSubview:sv];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(564, 24, 100, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeImageTools:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    self.imageToolItems = @[];
+    [self.imageToolWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.imageToolWindow makeKeyAndOrderFront:nil];
+  [self.imageToolWindow orderFrontRegardless];
+}
+
+- (void)imageAddFiles:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = YES;
+  p.allowedFileTypes = @[@"jpg", @"jpeg", @"png", @"heic", @"tiff", @"gif"];
+  if ([p runModal] != NSModalResponseOK) return;
+  NSMutableArray *paths = [self.imageToolItems mutableCopy] ?: [NSMutableArray array];
+  for (NSURL *u in p.URLs) if (![paths containsObject:u.path]) [paths addObject:u.path];
+  self.imageToolItems = paths;
+  [self.imageToolTable reloadData];
+}
+
+- (void)imageAddFolder:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = NO; p.canChooseDirectories = YES; p.allowsMultipleSelection = NO;
+  if ([p runModal] != NSModalResponseOK) return;
+  NSMutableArray *paths = [self.imageToolItems mutableCopy] ?: [NSMutableArray array];
+  NSDirectoryEnumerator *en = [[NSFileManager defaultManager] enumeratorAtPath:p.URL.path];
+  NSSet *exts = [NSSet setWithArray:@[@"jpg", @"jpeg", @"png", @"heic", @"tiff", @"gif"]];
+  for (NSString *rel in en) {
+    if (![exts containsObject:rel.pathExtension.lowercaseString]) continue;
+    NSString *full = [p.URL.path stringByAppendingPathComponent:rel];
+    if (![paths containsObject:full]) [paths addObject:full];
+  }
+  self.imageToolItems = paths;
+  [self.imageToolTable reloadData];
+}
+
+- (void)imageClear:(id)sender { self.imageToolItems = @[]; [self.imageToolTable reloadData]; }
+- (void)imageQualityChanged:(NSSlider *)s { self.imageQualityLabel.stringValue = [NSString stringWithFormat:@"%ld%%", (long)llround(s.doubleValue * 100)]; }
+
+- (void)imageConvert:(id)sender {
+  if (!self.imageToolItems.count) { [self showToast:@"请先添加图片"]; return; }
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = NO; p.canChooseDirectories = YES; p.allowsMultipleSelection = NO;
+  p.message = @"选择转换后图片的保存文件夹";
+  if ([p runModal] != NSModalResponseOK) return;
+  NSArray *formats = @[@"jpeg", @"png", @"heic", @"tiff"];
+  NSArray *exts = @[@"jpg", @"png", @"heic", @"tiff"];
+  NSInteger fi = MAX(0, self.imageFormatPopup.indexOfSelectedItem);
+  NSString *format = formats[MIN(fi, 3)];
+  NSString *ext = exts[MIN(fi, 3)];
+  long quality = (long)llround(self.imageQualitySlider.doubleValue * 100);
+  NSInteger maxSide = self.imageMaxWidthField.integerValue;
+  NSInteger ok = 0, fail = 0;
+  for (NSString *path in self.imageToolItems) {
+    NSString *base = path.lastPathComponent.stringByDeletingPathExtension;
+    NSString *out = [[p.URL.path stringByAppendingPathComponent:base] stringByAppendingPathExtension:ext];
+    if ([[out stringByStandardizingPath] isEqualToString:[path stringByStandardizingPath]]) out = [[p.URL.path stringByAppendingPathComponent:[base stringByAppendingString:@"_converted"]] stringByAppendingPathExtension:ext];
+    NSMutableArray *args = [NSMutableArray arrayWithObjects:@"-s", @"format", format, nil];
+    if ([format isEqualToString:@"jpeg"]) [args addObjectsFromArray:@[@"-s", @"formatOptions", [NSString stringWithFormat:@"%ld", quality]]];
+    if (maxSide > 0) [args addObjectsFromArray:@[@"--resampleHeightWidthMax", [NSString stringWithFormat:@"%ld", (long)maxSide]]];
+    [args addObjectsFromArray:@[path, @"--out", out]];
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/bin/sips"; t.arguments = args;
+    t.standardOutput = [NSPipe pipe]; t.standardError = [NSPipe pipe];
+    @try { [t launch]; [t waitUntilExit]; if (t.terminationStatus == 0) ok++; else fail++; } @catch (NSException *e) { fail++; }
+  }
+  [self showToast:[NSString stringWithFormat:@"转换完成：%ld 个成功，%ld 个失败", (long)ok, (long)fail]];
+  [[NSWorkspace sharedWorkspace] openURL:p.URL];
+}
+
+- (void)closeImageTools:(id)sender { [self.imageToolWindow orderOut:nil]; }
+
 - (void)showPDFTools:(id)sender {
   if (!self.pdfWindow) {
     self.pdfWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,660,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -12700,7 +12865,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [toolsPage addSubview:layoutBtn];
   NSTextField *ts = [self label:@"选择工具，打开独立窗口；可钉住置顶" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   ts.frame = NSMakeRect(16, 456, 388, 18); [toolsPage addSubview:ts];
-  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 296, 72, 140)];
+  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 296, 64, 140)];
   transBtn.title = @"AI 翻译";
   transBtn.image = ToolIconImage(@"character.bubble.fill", [NSColor systemTealColor]);
   transBtn.imagePosition = NSImageAbove;
@@ -12715,7 +12880,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   transBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:transBtn];
 
-  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(104, 296, 72, 140)];
+  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(84, 296, 64, 140)];
   zipBtn.title = @"压缩 / 解压";
   zipBtn.image = ToolIconImage(@"archivebox.fill", [NSColor systemOrangeColor]);
   zipBtn.imagePosition = NSImageAbove;
@@ -12729,7 +12894,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   zipBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:zipBtn];
 
-  ColorHoverButton *clipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(184, 296, 72, 140)];
+  ColorHoverButton *clipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(152, 296, 64, 140)];
   clipBtn.title = @"剪贴板";
   clipBtn.image = ToolIconImage(@"doc.on.clipboard.fill", [NSColor systemPurpleColor]);
   clipBtn.imagePosition = NSImageAbove;
@@ -12743,7 +12908,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   clipBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:clipBtn];
 
-  ColorHoverButton *renameBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(264, 296, 72, 140)];
+  ColorHoverButton *renameBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(220, 296, 64, 140)];
   renameBtn.title = @"批量重命名";
   renameBtn.image = ToolIconImage(@"square.and.pencil", [NSColor systemGreenColor]);
   renameBtn.imagePosition = NSImageAbove;
@@ -12753,11 +12918,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   renameBtn.hoverTitle = @"批量重命名";
   renameBtn.hoverDetail = @"查找替换、前后缀、序号，先预览再执行";
   [renameBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  renameBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"批量重命名" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
+  renameBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"重命名" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
   renameBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:renameBtn];
 
-  ColorHoverButton *pdfBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(344, 296, 72, 140)];
+  ColorHoverButton *pdfBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(288, 296, 64, 140)];
   pdfBtn.title = @"PDF 工具";
   pdfBtn.image = ToolIconImage(@"doc.richtext", [NSColor systemRedColor]);
   pdfBtn.imagePosition = NSImageAbove;
@@ -12770,6 +12935,20 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   pdfBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"PDF 工具" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
   pdfBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:pdfBtn];
+
+  ColorHoverButton *imageBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(356, 296, 64, 140)];
+  imageBtn.title = @"图片工具";
+  imageBtn.image = ToolIconImage(@"photo.on.rectangle.angled", [NSColor systemPinkColor]);
+  imageBtn.imagePosition = NSImageAbove;
+  imageBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
+  imageBtn.hoverColor = [NSColor systemPinkColor];
+  imageBtn.target = self; imageBtn.action = @selector(showImageTools:);
+  imageBtn.hoverTitle = @"图片工具";
+  imageBtn.hoverDetail = @"批量压缩、调整尺寸、转换 JPEG/PNG/HEIC";
+  [imageBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  imageBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"图片工具" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
+  imageBtn.layer.borderWidth = 0.6;
+  [toolsPage addSubview:imageBtn];
 
   NSTextField *tip = [self label:@"悬停查看用途，点击打开工具" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
   tip.alignment = NSTextAlignmentCenter;
