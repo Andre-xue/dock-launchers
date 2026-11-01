@@ -1126,6 +1126,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSPopUpButton *annotateWidthPopup;
 @property (strong) NSTextField *annotateStatus;
 @property (strong) NSString *annotateSourcePath;
+@property (strong) SCRecordingEditor *recordingEditor;
 @property (strong) NSTableView *captureHistoryTable;
 @property (strong) NSArray *captureHistoryItems;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
@@ -16628,6 +16629,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"文件"];
     [menu addItemWithTitle:@"打开" action:@selector(openCaptureHistoryRow:) keyEquivalent:@""].target = self;
     [menu addItemWithTitle:@"标注截图" action:@selector(annotateCaptureHistoryRow:) keyEquivalent:@""].target = self;
+    [menu addItemWithTitle:@"剪辑录屏" action:@selector(editCaptureHistoryVideo:) keyEquivalent:@""].target = self;
     [menu addItemWithTitle:@"在 Finder 中显示" action:@selector(revealCaptureHistoryRow:) keyEquivalent:@""].target = self;
     self.captureHistoryTable.menu = menu;
     sv.documentView = self.captureHistoryTable; [cv addSubview:sv];
@@ -16643,10 +16645,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     vidFolder.title = @"录屏文件夹"; vidFolder.hoverColor = [NSColor systemPurpleColor];
     vidFolder.target = self; vidFolder.action = @selector(openCaptureVideoFolder:);
     [vidFolder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:vidFolder];
-    ColorHoverButton *annotate = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(410, 24, 120, 32)];
+    ColorHoverButton *annotate = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(410, 24, 100, 32)];
     annotate.title = @"标注截图"; annotate.hoverColor = [NSColor systemRedColor];
     annotate.target = self; annotate.action = @selector(annotateCaptureHistoryRow:);
     [annotate applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:annotate];
+    ColorHoverButton *trim = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(516, 24, 64, 32)];
+    trim.title = @"剪辑"; trim.hoverColor = [NSColor systemOrangeColor];
+    trim.target = self; trim.action = @selector(editCaptureHistoryVideo:);
+    [trim applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:trim];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(584, 24, 100, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeCaptureHistory:);
@@ -16693,6 +16699,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (row < 0) row = self.captureHistoryTable.clickedRow;
   if (row < 0 || row >= (NSInteger)self.captureHistoryItems.count) return;
   [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.captureHistoryItems[row][@"path"]]]];
+}
+
+- (void)editCaptureHistoryVideo:(id)sender {
+  NSInteger row = self.captureHistoryTable.selectedRow;
+  if (row < 0) row = self.captureHistoryTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.captureHistoryItems.count) { [self showToast:@"请先选择一个录屏文件"]; return; }
+  NSDictionary *it = self.captureHistoryItems[row];
+  if (![it[@"type"] isEqualToString:@"录屏"]) { [self showToast:@"只有录屏可以剪辑"]; return; }
+  NSError *err = nil;
+  self.recordingEditor = [[SCRecordingEditor alloc] initWithURL:[NSURL fileURLWithPath:it[@"path"]]];
+  [self.recordingEditor presentFromWindow:self.captureHistoryWindow completionHandler:^(NSError *error) {
+    if (error) [self showToast:error.localizedDescription ?: @"无法打开剪辑器"];
+  }];
 }
 
 - (void)annotateCaptureHistoryRow:(id)sender {
