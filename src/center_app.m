@@ -711,8 +711,13 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
     SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
     config.showsCursor = YES;
     config.minimumFrameInterval = CMTimeMake(1, 30);
-    config.capturesAudio = NO;
-    config.captureMicrophone = NO;
+    id sysAudioObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureSystemAudio"];
+    BOOL sysAudio = !sysAudioObj || [sysAudioObj boolValue];
+    BOOL micAudio = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"];
+    config.capturesAudio = sysAudio;
+    config.captureMicrophone = micAudio;
+    config.sampleRate = 48000;
+    config.channelCount = 2;
     if (scene == DLRecordSceneRegion && region.size.width > 1) {
       config.sourceRect = CGRectMake(region.origin.x - display.frame.origin.x, display.frame.size.height - (region.origin.y - display.frame.origin.y + region.size.height), region.size.width, region.size.height);
       CGFloat scale = MIN(1.0, MIN(1920.0 / MAX(1.0, region.size.width), 1080.0 / MAX(1.0, region.size.height)));
@@ -732,6 +737,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
   rc.outputURL = self.outputURL;
   rc.videoCodecType = [rc.availableVideoCodecTypes containsObject:AVVideoCodecTypeHEVC] ? AVVideoCodecTypeHEVC : AVVideoCodecTypeH264;
   rc.outputFileType = AVFileTypeMPEG4;
+  rc.mixesAudioWithMicrophone = YES;
   self.recordingOutput = [[SCRecordingOutput alloc] initWithConfiguration:rc delegate:self];
   NSError *err = nil;
   SCStream *stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:self];
@@ -771,8 +777,13 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
   SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
   config.showsCursor = YES;
   config.minimumFrameInterval = CMTimeMake(1, 30);
-  config.capturesAudio = NO;
-  config.captureMicrophone = NO;
+  id sysAudioObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureSystemAudio"];
+  BOOL sysAudio = !sysAudioObj || [sysAudioObj boolValue];
+  BOOL micAudio = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"];
+  config.capturesAudio = sysAudio;
+  config.captureMicrophone = micAudio;
+  config.sampleRate = 48000;
+  config.channelCount = 2;
   NSInteger targetH = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureQuality"];
   if (targetH <= 0) targetH = 1440;
   config.height = (size_t)targetH;
@@ -933,6 +944,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
 @property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup;
+@property (strong) NSButton *captureSystemAudioCheck, *captureMicCheck;
 @property (strong) DLScreenRecorder *captureRecorder;
 @property (strong) NSWindow *captureRegionWindow;
 @property (strong) ColorHoverButton *captureRecordButton;
@@ -16420,6 +16432,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"截图保存到：%@", dir];
 }
 
+- (void)captureAudioChanged:(id)sender {
+  [[NSUserDefaults standardUserDefaults] setBool:(self.captureSystemAudioCheck.state == NSControlStateValueOn) forKey:@"centerCaptureSystemAudio"];
+  [[NSUserDefaults standardUserDefaults] setBool:(self.captureMicCheck.state == NSControlStateValueOn) forKey:@"centerCaptureMicrophone"];
+}
+
 - (void)captureQualityChanged:(id)sender {
   NSInteger h = [self.captureQualityPopup.selectedItem.representedObject integerValue];
   if (h <= 0) h = 1440;
@@ -16497,10 +16514,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
     [self.captureDurationPopup selectItemAtIndex:1];
     [cv addSubview:self.captureDurationPopup];
-    ColorHoverButton *folder = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(340, 204, 140, 38)];
-    folder.title = @"打开保存文件夹"; folder.hoverColor = [NSColor systemTealColor];
-    folder.target = self; folder.action = @selector(openCaptureFolder:);
-    [folder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:folder];
+    self.captureSystemAudioCheck = [NSButton checkboxWithTitle:@"系统声音" target:self action:@selector(captureAudioChanged:)];
+    self.captureSystemAudioCheck.frame = NSMakeRect(340, 212, 94, 22);
+    id sysObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureSystemAudio"];
+    self.captureSystemAudioCheck.state = (!sysObj || [sysObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
+    [cv addSubview:self.captureSystemAudioCheck];
+    self.captureMicCheck = [NSButton checkboxWithTitle:@"麦克风" target:self action:@selector(captureAudioChanged:)];
+    self.captureMicCheck.frame = NSMakeRect(440, 212, 90, 22);
+    self.captureMicCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"] ? NSControlStateValueOn : NSControlStateValueOff;
+    [cv addSubview:self.captureMicCheck];
     self.captureStatusLabel = [self label:@"截图会保存到 ~/Pictures/DockLaunchers Captures" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     self.captureStatusLabel.frame = NSMakeRect(20, 158, 520, 40);
     self.captureStatusLabel.maximumNumberOfLines = 2;
@@ -16539,6 +16561,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureImagePathField.stringValue = savedImgDir.length ? savedImgDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
   NSString *savedVidDir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureVideoDirectory"];
   self.captureVideoPathField.stringValue = savedVidDir.length ? savedVidDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+  id sysObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureSystemAudio"];
+  self.captureSystemAudioCheck.state = (!sysObj || [sysObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
+  self.captureMicCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"] ? NSControlStateValueOn : NSControlStateValueOff;
   [NSApp activateIgnoringOtherApps:YES];
   [self.captureWindow makeKeyAndOrderFront:nil];
 }
