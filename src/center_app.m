@@ -2534,10 +2534,11 @@ static void HideDockHoverTip(void) {
 - (void)applyWindowChrome:(NSWindow *)w {
   if (!w) return;
   if ([w isKindOfClass:[NSPanel class]]) return;
-  if (w.sheetParent || w.level >= NSStatusWindowLevel) return;
+  if (w.sheetParent) return;
   if (!(w.styleMask & NSWindowStyleMaskTitled) || !(w.styleMask & NSWindowStyleMaskClosable)) return;
   if (objc_getAssociatedObject(w, "DLCenterChrome")) return;
   objc_setAssociatedObject(w, "DLCenterChrome", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  objc_setAssociatedObject(w, "DLCenterBaseLevel", @(w.level), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
   if (!self.pinnedWindows) self.pinnedWindows = [NSMutableSet set];
   NSButton *close = [w standardWindowButton:NSWindowCloseButton];
   NSButton *mini = [w standardWindowButton:NSWindowMiniaturizeButton];
@@ -2580,7 +2581,8 @@ static void HideDockHoverTip(void) {
   BOOL nowPinned = !pinned;
   if (nowPinned) {
     [self.pinnedWindows addObject:key];
-    w.level = NSFloatingWindowLevel;
+    NSInteger base = [objc_getAssociatedObject(w, "DLCenterBaseLevel") integerValue];
+    w.level = MAX(base, NSFloatingWindowLevel);
     sender.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"已钉住"];
     sender.contentTintColor = [NSColor whiteColor];
     sender.layer.backgroundColor = [NSColor systemOrangeColor].CGColor;
@@ -2589,7 +2591,8 @@ static void HideDockHoverTip(void) {
     sender.toolTip = @"已钉住，点击取消钉住";
   } else {
     [self.pinnedWindows removeObject:key];
-    w.level = NSNormalWindowLevel;
+    NSInteger base = [objc_getAssociatedObject(w, "DLCenterBaseLevel") integerValue];
+    w.level = base;
     sender.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"钉住"];
     sender.contentTintColor = [NSColor systemOrangeColor];
     sender.layer.backgroundColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.16].CGColor;
