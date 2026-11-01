@@ -12057,7 +12057,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
     self.imageToolTable.rowHeight = 32;
     self.imageToolTable.dataSource = self; self.imageToolTable.delegate = self;
+    self.imageToolTable.target = self;
+    self.imageToolTable.doubleAction = @selector(imagePreviewSelected:);
     sv.documentView = self.imageToolTable; [cv addSubview:sv];
+    ColorHoverButton *preview = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(452, 24, 100, 30)];
+    preview.title = @"预览"; preview.hoverColor = [NSColor systemTealColor];
+    preview.target = self; preview.action = @selector(imagePreviewSelected:);
+    preview.toolTip = @"预览选中的图片，双击图片也可以";
+    [preview applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:preview];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(564, 24, 100, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeImageTools:);
@@ -12128,6 +12136,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   [self showToast:[NSString stringWithFormat:@"转换完成：%ld 个成功，%ld 个失败", (long)ok, (long)fail]];
   [[NSWorkspace sharedWorkspace] openURL:p.URL];
+}
+
+- (void)imagePreviewSelected:(id)sender {
+  if (!self.imageToolItems.count) { [self showToast:@"请先添加图片"]; return; }
+  NSInteger row = self.imageToolTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.imageToolItems.count) row = 0;
+  self.diskPreviewMode = NO;
+  self.userFilesPreviewPath = self.imageToolItems[row];
+  QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
+  panel.dataSource = self;
+  panel.delegate = self;
+  [panel makeKeyAndOrderFront:nil];
+  [panel reloadData];
 }
 
 - (void)closeImageTools:(id)sender { [self.imageToolWindow orderOut:nil]; }
