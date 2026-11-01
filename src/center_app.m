@@ -5149,7 +5149,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"AI 数据历史版本";
-  a.informativeText = @"选择版本可恢复或单独删除；自动清除按保留天数执行。";
+  a.informativeText = @"恢复会覆盖当前 AI 服务列表，恢复前会自动保存当前版本；API Key 单独保存，按条目标识保留。";
   a.accessoryView = accessory;
   [a addButtonWithTitle:@"恢复此版本"];
   [a addButtonWithTitle:@"删除此版本"];
@@ -5171,11 +5171,22 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   NSData *d = [NSData dataWithContentsOfFile:path];
   if (!d.length) { [self showToast:@"历史版本读取失败"]; return; }
+  [self recordAIHistorySnapshotForce:YES];
   [d writeToFile:[self aiStorePath] atomically:YES];
   self.aiEntries = nil;
   [self loadAIEntries];
+  for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
+    if (![self.aiEntries[i] isKindOfClass:[NSDictionary class]]) continue;
+    NSMutableDictionary *e = [self.aiEntries[i] mutableCopy];
+    NSString *kid = e[@"kid"];
+    if (kid.length && ![e[@"api"] length]) {
+      NSString *stored = AIKeychainGet(kid);
+      if (stored.length) e[@"api"] = stored;
+    }
+    self.aiEntries[i] = e;
+  }
   [self rebuildAIDisplay];
-  [self showToast:@"已恢复 AI 数据历史版本"];
+  [self showToast:@"已恢复 AI 数据历史版本，恢复前状态已自动保存"];
 }
 
 - (void)buildAIView {
