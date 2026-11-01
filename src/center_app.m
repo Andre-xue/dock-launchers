@@ -4460,9 +4460,6 @@ static BOOL ValidGroupName(NSString *raw) {
   return [dir stringByAppendingPathComponent:@"ai_entries.json"];
 }
 - (void)hydrateAIKeys {
-  static BOOL hydrated = NO;
-  if (hydrated) return;
-  hydrated = YES;
   if (!self.aiEntries) return;
   for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
     if (![self.aiEntries[i] isKindOfClass:[NSDictionary class]]) continue;
@@ -4499,6 +4496,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (!self.aiSelected) self.aiSelected = [NSMutableSet set];
   if (!self.aiRevealedNames) self.aiRevealedNames = [NSMutableSet set];
   if (!self.aiRevealedQuotas) self.aiRevealedQuotas = [NSMutableSet set];
+  [self hydrateAIKeys];
   if (migrated) [self saveAIEntries];
   else if (self.aiEntries.count) [self recordAIHistorySnapshot];
 }
