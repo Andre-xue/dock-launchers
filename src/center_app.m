@@ -12049,7 +12049,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.pdfWindow.contentView;
     NSTextField *title = [self label:@"PDF 工具" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 450, 300, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"合并多个 PDF，或把每个 PDF 按页拆成单独文件" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *sub = [self label:@"合并多个 PDF，或按页拆分；拖动列表可调整合并顺序" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 428, 500, 18); [cv addSubview:sub];
     ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 388, 100, 30)];
     add.title = @"添加 PDF"; add.hoverColor = [NSColor systemBlueColor];
@@ -12081,6 +12081,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.pdfTable.dataSource = self; self.pdfTable.delegate = self;
     self.pdfTable.target = self;
     self.pdfTable.doubleAction = @selector(pdfPreviewSelected:);
+    [self.pdfTable registerForDraggedTypes:@[@"DockLaunchersPDFRow"]];
     sv.documentView = self.pdfTable; [cv addSubview:sv];
     NSTextField *pl = [self label:@"页码" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     pl.frame = NSMakeRect(20, 34, 40, 18); [cv addSubview:pl];
@@ -12172,6 +12173,36 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   [self showToast:[NSString stringWithFormat:@"已拆分生成 %ld 个 PDF", (long)made]];
   if (made > 0) [[NSWorkspace sharedWorkspace] openURL:p.URL];
+}
+
+- (id<NSPasteboardWriting>)tableView:(NSTableView *)tableView pasteboardWriterForRow:(NSInteger)row {
+  if (tableView != self.pdfTable) return nil;
+  NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
+  [item setString:[NSString stringWithFormat:@"%ld", (long)row] forType:@"DockLaunchersPDFRow"];
+  return item;
+}
+
+- (NSDragOperation)tableView:(NSTableView *)tableView validateDrop:(id<NSDraggingInfo>)info proposedRow:(NSInteger)row proposedDropOperation:(NSTableViewDropOperation)dropOperation {
+  if (tableView != self.pdfTable) return NSDragOperationNone;
+  [tableView setDropRow:row dropOperation:NSTableViewDropAbove];
+  return NSDragOperationMove;
+}
+
+- (BOOL)tableView:(NSTableView *)tableView acceptDrop:(id<NSDraggingInfo>)info row:(NSInteger)row dropOperation:(NSTableViewDropOperation)dropOperation {
+  if (tableView != self.pdfTable) return NO;
+  NSString *value = [[info draggingPasteboard] stringForType:@"DockLaunchersPDFRow"];
+  NSInteger from = value.integerValue;
+  if (from < 0 || from >= (NSInteger)self.pdfItems.count) return NO;
+  NSMutableArray *items = [self.pdfItems mutableCopy];
+  id moved = items[from];
+  [items removeObjectAtIndex:from];
+  NSInteger to = row;
+  if (to > from) to--;
+  to = MAX(0, MIN(to, (NSInteger)items.count));
+  [items insertObject:moved atIndex:to];
+  self.pdfItems = items;
+  [self.pdfTable reloadData];
+  return YES;
 }
 
 - (void)pdfExtractPages:(id)sender {
