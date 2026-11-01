@@ -1483,6 +1483,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSView *quickGroupContainer;
 @property (strong) NSSegmentedControl *quickTabs;
 @property (strong) DLCircularMenuView *radialMenu;
+@property (strong) NSView *radialRootView;
+@property (strong) NSVisualEffectView *radialMediaBar;
+@property (strong) NSButton *radialMediaArtButton, *radialMediaPlayButton;
+@property (strong) NSTextField *radialMediaTitleLabel, *radialMediaArtistLabel;
 @property (strong) NSMutableSet *pinnedWindows;
 @property (strong) NSArray<NSArray<NSDictionary *> *> *radialPages;
 @property NSInteger radialPage;
@@ -2878,32 +2882,70 @@ static void HideDockHoverTip(void) {
 }
 
 - (void)updateMediaStatusItem {
+  [self updateRadialMediaBar];
+}
+
+- (void)updateRadialMediaBar {
+  if (!self.radialMediaBar) return;
   NSString *title = [self mediaCurrentTitle];
-  BOOL shouldShow = self.mediaPlaying && title.length > 0;
-  if (!shouldShow) {
-    if (self.mediaStatusItem) {
-      if (self.mediaPopover.isShown) [self.mediaPopover close];
-      [[NSStatusBar systemStatusBar] removeStatusItem:self.mediaStatusItem];
-      self.mediaStatusItem = nil;
+  BOOL show = self.mediaPlaying && title.length > 0;
+  if (!show) {
+    self.radialMediaBar.hidden = YES;
+    if (self.radialRootView.frame.size.height != 360) {
+      self.radialRootView.frame = NSMakeRect(0,0,340,360);
+      self.popover.contentSize = NSMakeSize(340, 360);
     }
     return;
   }
-  if (!self.mediaStatusItem) {
-    self.mediaStatusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
-    self.mediaStatusItem.button.imagePosition = NSImageLeft;
-    self.mediaStatusItem.button.imageScaling = NSImageScaleProportionallyDown;
-    self.mediaStatusItem.button.target = self;
-    self.mediaStatusItem.button.action = @selector(mediaStatusButtonClicked:);
+  self.radialMediaBar.hidden = NO;
+  if (self.radialRootView.frame.size.height != 412) {
+    self.radialRootView.frame = NSMakeRect(0,0,340,412);
+    self.popover.contentSize = NSMakeSize(340, 412);
   }
-  BOOL video = [self.mediaBundleID containsString:@"QuickTime"] || [self.mediaBundleID containsString:@"vlc"] || [self.mediaBundleID containsString:@"iina"] || [self.mediaBundleID containsString:@"TV"];
-  NSString *symbol = video ? @"play.rectangle.fill" : @"music.note";
-  self.mediaStatusItem.button.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
+  self.radialMediaTitleLabel.stringValue = title;
   NSString *artist = [self mediaCurrentArtist];
-  NSString *display = artist.length ? [NSString stringWithFormat:@"%@ — %@", title, artist] : title;
-  if (display.length > 34) display = [[display substringToIndex:33] stringByAppendingString:@"…"];
-  self.mediaStatusItem.button.title = [NSString stringWithFormat:@" %@", display];
-  self.mediaStatusItem.button.toolTip = artist.length ? [NSString stringWithFormat:@"%@ — %@\n左键打开播放器，右键控制", title, artist] : [NSString stringWithFormat:@"%@\n左键打开播放器，右键控制", title];
+  self.radialMediaArtistLabel.stringValue = artist.length ? artist : @"正在播放";
+  NSData *artData = self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoArtworkData"];
+  NSImage *art = [artData isKindOfClass:[NSData class]] ? [[NSImage alloc] initWithData:artData] : nil;
+  self.radialMediaArtButton.image = art ?: [self mediaPlaceholderArtwork:NO];
+  self.radialMediaPlayButton.image = [NSImage imageWithSystemSymbolName:(self.mediaPlaying ? @"pause.fill" : @"play.fill") accessibilityDescription:nil];
+}
+
+- (void)radialMediaArtClicked:(id)sender {
+  if (!self.mediaPopover) {
+    [self buildMediaCardIfNeeded];
+  }
+  [self buildMediaCardIfNeeded];
   [self updateMediaCard];
+  [self.mediaPopover showRelativeToRect:self.radialMediaArtButton.bounds ofView:self.radialMediaArtButton preferredEdge:NSRectEdgeMinY];
+}
+
+- (void)showRadialMediaMenu:(id)sender {
+  NSMenu *menu = [[NSMenu alloc] initWithTitle:@"媒体"];
+  NSMenuItem *header = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"%@ — %@", [self mediaCurrentTitle], [self mediaCurrentArtist]] action:nil keyEquivalent:@""];
+  header.enabled = NO; [menu addItem:header];
+  [menu addItem:[NSMenuItem separatorItem]];
+  [menu addItemWithTitle:self.mediaPlaying ? @"暂停" : @"播放" action:@selector(mediaTogglePlayPause:) keyEquivalent:@""].target = self;
+  [menu addItemWithTitle:@"上一首" action:@selector(mediaPreviousTrack:) keyEquivalent:@""].target = self;
+  [menu addItemWithTitle:@"下一首" action:@selector(mediaNextTrack:) keyEquivalent:@""].target = self;
+  [menu addItemWithTitle:@"打开播放器" action:@selector(openCurrentMediaPlayer:) keyEquivalent:@""].target = self;
+  NSMenuItem *playlistItem = [[NSMenuItem alloc] initWithTitle:@"播放列表" action:nil keyEquivalent:@""];
+  NSMenu *playlistMenu = [[NSMenu alloc] initWithTitle:@"播放列表"];
+  NSArray *names = [self mediaPlaylistNames];
+  if (names.count) {
+    for (NSString *name in names) {
+      NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:name action:@selector(playMediaPlaylistTrack:) keyEquivalent:@""];
+      it.target = self; it.representedObject = name; [playlistMenu addItem:it];
+    }
+  } else {
+    NSMenuItem *none = [[NSMenuItem alloc] initWithTitle:[self mediaAppSupportsPlaylist] ? @"无法读取播放列表" : @"当前播放器不支持播放列表" action:nil keyEquivalent:@""];
+    none.enabled = NO; [playlistMenu addItem:none];
+  }
+  playlistItem.submenu = playlistMenu; [menu addItem:playlistItem];
+  NSMenuItem *playersItem = [[NSMenuItem alloc] initWithTitle:@"切换播放器" action:nil keyEquivalent:@""];
+  playersItem.submenu = [self mediaPlayersMenu];
+  [menu addItem:playersItem];
+  [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, 24) inView:(NSView *)sender];
 }
 
 - (void)mediaStatusButtonClicked:(id)sender {
@@ -15433,6 +15475,38 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.radialPageLabel.alignment = NSTextAlignmentCenter;
     self.radialPageLabel.frame = NSMakeRect(150,8,48,16);
     [root addSubview:self.radialPageLabel];
+    self.radialRootView = root;
+    NSVisualEffectView *mediaBar = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(8, 360, 324, 48)];
+    mediaBar.material = NSVisualEffectMaterialHUDWindow;
+    mediaBar.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    mediaBar.state = NSVisualEffectStateActive;
+    mediaBar.wantsLayer = YES;
+    mediaBar.layer.cornerRadius = 12;
+    mediaBar.layer.masksToBounds = YES;
+    mediaBar.hidden = YES;
+    NSButton *artBtn = [NSButton buttonWithImage:nil target:self action:@selector(radialMediaArtClicked:)];
+    artBtn.frame = NSMakeRect(8, 7, 34, 34);
+    artBtn.bezelStyle = NSBezelStyleInline; artBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
+    artBtn.wantsLayer = YES; artBtn.layer.cornerRadius = 7; artBtn.layer.masksToBounds = YES;
+    [mediaBar addSubview:artBtn];
+    NSTextField *mt = [self label:@"" size:12 bold:YES color:[NSColor labelColor]];
+    mt.frame = NSMakeRect(50, 24, 160, 16); [mediaBar addSubview:mt];
+    NSTextField *ma = [self label:@"" size:9 bold:NO color:[NSColor secondaryLabelColor]];
+    ma.frame = NSMakeRect(50, 8, 160, 14); [mediaBar addSubview:ma];
+    NSClickGestureRecognizer *openAppClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openCurrentMediaPlayer:)];
+    [mt addGestureRecognizer:openAppClick];
+    [ma addGestureRecognizer:[[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openCurrentMediaPlayer:)]];
+    NSButton *mprev = [self mediaIconButton:@"backward.fill" action:@selector(mediaPreviousTrack:) frame:NSMakeRect(210, 9, 24, 28)];
+    NSButton *mplay = [self mediaIconButton:@"play.fill" action:@selector(mediaTogglePlayPause:) frame:NSMakeRect(236, 9, 24, 28)];
+    NSButton *mnext = [self mediaIconButton:@"forward.fill" action:@selector(mediaNextTrack:) frame:NSMakeRect(262, 9, 24, 28)];
+    NSButton *more = [self mediaIconButton:@"ellipsis" action:@selector(showRadialMediaMenu:) frame:NSMakeRect(290, 9, 26, 28)];
+    [mediaBar addSubview:mprev]; [mediaBar addSubview:mplay]; [mediaBar addSubview:mnext]; [mediaBar addSubview:more];
+    [root addSubview:mediaBar];
+    self.radialMediaBar = mediaBar;
+    self.radialMediaArtButton = artBtn;
+    self.radialMediaTitleLabel = mt;
+    self.radialMediaArtistLabel = ma;
+    self.radialMediaPlayButton = mplay;
     [self radialApplyPage];
     pop.contentSize = NSMakeSize(340, 360);
   } else {
