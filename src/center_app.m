@@ -861,7 +861,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
   rc.outputURL = segmentURL;
   rc.videoCodecType = [rc.availableVideoCodecTypes containsObject:AVVideoCodecTypeHEVC] ? AVVideoCodecTypeHEVC : AVVideoCodecTypeH264;
   rc.outputFileType = AVFileTypeMPEG4;
-  rc.mixesAudioWithMicrophone = YES;
+  rc.mixesAudioWithMicrophone = NO;
   self.recordingOutput = [[SCRecordingOutput alloc] initWithConfiguration:rc delegate:self];
   NSError *err = nil;
   SCStream *stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:self];
@@ -924,14 +924,20 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
   }
   AVMutableComposition *comp = [AVMutableComposition composition];
   AVMutableCompositionTrack *videoTrack = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
-  AVMutableCompositionTrack *audioTrack = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+  NSMutableArray<AVMutableCompositionTrack *> *audioTracks = [NSMutableArray array];
   CMTime cursor = kCMTimeZero;
   for (NSURL *u in valid) {
     AVURLAsset *asset = [AVURLAsset URLAssetWithURL:u options:nil];
     AVAssetTrack *v = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
-    AVAssetTrack *a = [asset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+    NSArray *audios = [asset tracksWithMediaType:AVMediaTypeAudio];
     if (v) [videoTrack insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:v atTime:cursor error:NULL];
-    if (a) [audioTrack insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:a atTime:cursor error:NULL];
+    for (NSInteger i = 0; i < (NSInteger)audios.count && i < 2; i++) {
+      while ((NSInteger)audioTracks.count <= i) {
+        AVMutableCompositionTrack *at = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+        [audioTracks addObject:at];
+      }
+      [audioTracks[i] insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:audios[i] atTime:cursor error:NULL];
+    }
     cursor = CMTimeAdd(cursor, asset.duration);
   }
   [[NSFileManager defaultManager] removeItemAtURL:self.finalOutputURL error:NULL];
@@ -16940,10 +16946,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   AVMutableCompositionTrack *sv = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
   NSError *insErr = nil;
   [sv insertTimeRange:CMTimeRangeMake(kCMTimeZero, screenAsset.duration) ofTrack:screenVideo atTime:kCMTimeZero error:&insErr];
-  AVMutableCompositionTrack *sa = nil;
-  if (screenAudio) {
-    sa = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
-    [sa insertTimeRange:CMTimeRangeMake(kCMTimeZero, screenAsset.duration) ofTrack:screenAudio atTime:kCMTimeZero error:NULL];
+  NSArray *screenAudios = [screenAsset tracksWithMediaType:AVMediaTypeAudio];
+  NSMutableArray<AVMutableCompositionTrack *> *audioTracks = [NSMutableArray array];
+  for (NSInteger ai = 0; ai < (NSInteger)screenAudios.count && ai < 2; ai++) {
+    AVMutableCompositionTrack *at = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+    [at insertTimeRange:CMTimeRangeMake(kCMTimeZero, screenAsset.duration) ofTrack:screenAudios[ai] atTime:kCMTimeZero error:NULL];
+    [audioTracks addObject:at];
   }
   AVMutableCompositionTrack *cv = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
   CMTime screenDuration = screenAsset.duration;
@@ -16999,11 +17007,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPreset1920x1080];
   ex.videoComposition = vc;
   NSInteger micGainDB = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
-  if (micGainDB != 0 && sa) {
+  if (audioTracks.count) {
     AVMutableAudioMix *am = [AVMutableAudioMix audioMix];
-    AVMutableAudioMixInputParameters *ap = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:sa];
-    [ap setVolume:pow(10.0, micGainDB / 20.0) atTime:kCMTimeZero];
-    am.inputParameters = @[ap];
+    NSMutableArray *params = [NSMutableArray array];
+    for (NSInteger ai = 0; ai < (NSInteger)audioTracks.count; ai++) {
+      AVMutableAudioMixInputParameters *ap = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:audioTracks[ai]];
+      float vol = (ai == 0) ? 1.0f : pow(10.0, micGainDB / 20.0);
+      [ap setVolume:vol atTime:kCMTimeZero];
+      [params addObject:ap];
+    }
+    am.inputParameters = params;
     ex.audioMix = am;
   }
   ex.outputURL = [NSURL fileURLWithPath:outPath];
@@ -17469,22 +17482,37 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }];
 }
 
+- (BOOL)fileNeedsAudioMix:(NSString *)path {
+  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return NO;
+  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
+  return [asset tracksWithMediaType:AVMediaTypeAudio].count > 1;
+}
+
 - (void)applyMicGainToFile:(NSString *)path gainDB:(NSInteger)gainDB completion:(void (^)(BOOL ok))completion {
-  if (gainDB == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:path]) { if (completion) completion(YES); return; }
+  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) { if (completion) completion(NO); return; }
   AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
   AVAssetTrack *video = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
-  AVAssetTrack *audio = [asset tracksWithMediaType:AVMediaTypeAudio].firstObject;
-  if (!video || !audio) { if (completion) completion(YES); return; }
+  NSArray *audios = [asset tracksWithMediaType:AVMediaTypeAudio];
+  if (!video || !audios.count || (audios.count == 1 && gainDB == 0)) { if (completion) completion(YES); return; }
   AVMutableComposition *comp = [AVMutableComposition composition];
   AVMutableCompositionTrack *v = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
-  AVMutableCompositionTrack *a = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
   [v insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:video atTime:kCMTimeZero error:NULL];
-  [a insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:audio atTime:kCMTimeZero error:NULL];
+  NSMutableArray<AVMutableCompositionTrack *> *audioTracks = [NSMutableArray array];
+  for (NSInteger i = 0; i < (NSInteger)audios.count && i < 2; i++) {
+    AVMutableCompositionTrack *a = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+    [a insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:audios[i] atTime:kCMTimeZero error:NULL];
+    [audioTracks addObject:a];
+  }
   AVMutableAudioMix *mix = [AVMutableAudioMix audioMix];
-  AVMutableAudioMixInputParameters *ap = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:a];
-  [ap setVolume:pow(10.0, gainDB / 20.0) atTime:kCMTimeZero];
-  mix.inputParameters = @[ap];
-  NSString *tmp = [[path stringByDeletingPathExtension] stringByAppendingString:@"-gain.mp4"];
+  NSMutableArray *params = [NSMutableArray array];
+  for (NSInteger i = 0; i < (NSInteger)audioTracks.count; i++) {
+    AVMutableAudioMixInputParameters *ap = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:audioTracks[i]];
+    float vol = (i == 0) ? 1.0f : pow(10.0, gainDB / 20.0);
+    [ap setVolume:vol atTime:kCMTimeZero];
+    [params addObject:ap];
+  }
+  mix.inputParameters = params;
+  NSString *tmp = [[path stringByDeletingPathExtension] stringByAppendingString:@"-mix.mp4"];
   [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
   AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetHEVCHighestQuality];
   ex.audioMix = mix;
@@ -17508,7 +17536,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)finalizeCaptureFile:(NSString *)path error:(NSError *)error {
   NSInteger gainDB = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
-  if (gainDB != 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+  BOOL needsAudio = [self fileNeedsAudioMix:path] || (gainDB != 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]);
+  if (needsAudio) {
     self.captureStatusLabel.stringValue = @"正在调整麦克风音量…";
     __weak typeof(self) weakSelf = self;
     [self applyMicGainToFile:path gainDB:gainDB completion:^(BOOL ok) {
