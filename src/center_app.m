@@ -679,20 +679,30 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) SCStream *stream;
 @property (strong) SCRecordingOutput *recordingOutput;
 @property (strong) NSURL *outputURL;
+@property (strong) NSURL *finalOutputURL;
+@property (strong) NSMutableArray<NSURL *> *segmentURLs;
+@property (strong) SCContentFilter *savedFilter;
+@property (strong) SCStreamConfiguration *savedConfig;
 @property (strong) SCContentSharingPicker *picker;
 @property (copy) void (^onStarted)(void);
+@property (copy) void (^onPaused)(void);
 @property (copy) void (^onFinished)(NSURL *url, NSError *error);
 @property NSInteger scene;
 @property NSInteger seconds;
 @property NSRect region;
-@property BOOL finished;
+@property NSInteger segmentIndex;
+@property BOOL paused, stopping, finishing, finished;
 @property (strong) dispatch_block_t stopWork;
 - (void)startWithScene:(NSInteger)scene seconds:(NSInteger)seconds region:(NSRect)region url:(NSURL *)url;
+- (void)pause;
+- (void)resume;
 - (void)stop;
 @end
 @implementation DLScreenRecorder
 - (void)startWithScene:(NSInteger)scene seconds:(NSInteger)seconds region:(NSRect)region url:(NSURL *)url {
-  self.scene = scene; self.seconds = seconds; self.region = region; self.outputURL = url; self.finished = NO;
+  self.scene = scene; self.seconds = seconds; self.region = region;
+  self.finalOutputURL = url; self.segmentURLs = [NSMutableArray array];
+  self.segmentIndex = 0; self.paused = NO; self.stopping = NO; self.finishing = NO; self.finished = NO;
   if (scene == DLRecordSceneWindow || scene == DLRecordSceneApplication) {
     self.picker = [SCContentSharingPicker sharedPicker];
     SCContentSharingPickerConfiguration *cfg = [[SCContentSharingPickerConfiguration alloc] init];
@@ -718,23 +728,36 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
     config.captureMicrophone = micAudio;
     config.sampleRate = 48000;
     config.channelCount = 2;
+    NSInteger targetH = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureQuality"];
+    if (targetH <= 0) targetH = 1440;
     if (scene == DLRecordSceneRegion && region.size.width > 1) {
       config.sourceRect = CGRectMake(region.origin.x - display.frame.origin.x, display.frame.size.height - (region.origin.y - display.frame.origin.y + region.size.height), region.size.width, region.size.height);
-      CGFloat scale = MIN(1.0, MIN(1920.0 / MAX(1.0, region.size.width), 1080.0 / MAX(1.0, region.size.height)));
+      CGFloat scale = MIN(1.0, MIN(3840.0 / MAX(1.0, region.size.width), (CGFloat)targetH / MAX(1.0, region.size.height)));
       config.width = MAX(2, (size_t)llround(region.size.width * scale));
       config.height = MAX(2, (size_t)llround(region.size.height * scale));
     } else {
       CGFloat aspect = display.frame.size.height > 0 ? display.frame.size.width / display.frame.size.height : 16.0/9.0;
-      config.height = 1080;
-      config.width = MIN(1920, MAX(640, (size_t)llround(1080.0 * aspect)));
+      config.height = (size_t)targetH;
+      config.width = MIN(3840, MAX(640, (size_t)llround((CGFloat)targetH * aspect)));
     }
     [self startStreamWithFilter:filter configuration:config];
   }];
 }
 
+- (NSURL *)nextSegmentURL {
+  NSString *base = [self.finalOutputURL.lastPathComponent stringByDeletingPathExtension];
+  NSString *part = [NSString stringWithFormat:@"%@-part%ld.mp4", base, (long)self.segmentIndex];
+  return [[self.finalOutputURL URLByDeletingLastPathComponent] URLByAppendingPathComponent:part];
+}
+
 - (void)startStreamWithFilter:(SCContentFilter *)filter configuration:(SCStreamConfiguration *)config {
+  self.savedFilter = filter;
+  self.savedConfig = config;
+  NSURL *segmentURL = [self nextSegmentURL];
+  [[NSFileManager defaultManager] removeItemAtURL:segmentURL error:NULL];
+  self.outputURL = segmentURL;
   SCRecordingOutputConfiguration *rc = [[SCRecordingOutputConfiguration alloc] init];
-  rc.outputURL = self.outputURL;
+  rc.outputURL = segmentURL;
   rc.videoCodecType = [rc.availableVideoCodecTypes containsObject:AVVideoCodecTypeHEVC] ? AVVideoCodecTypeHEVC : AVVideoCodecTypeH264;
   rc.outputFileType = AVFileTypeMPEG4;
   rc.mixesAudioWithMicrophone = YES;
@@ -748,7 +771,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
     if (error) { [weakSelf finishWithError:error]; return; }
     dispatch_async(dispatch_get_main_queue(), ^{
       if (weakSelf.onStarted) weakSelf.onStarted();
-      if (weakSelf.seconds > 0) {
+      if (weakSelf.seconds > 0 && !weakSelf.stopWork) {
         weakSelf.stopWork = dispatch_block_create(0, ^{ [weakSelf stop]; });
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(weakSelf.seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), weakSelf.stopWork);
       }
@@ -756,20 +779,85 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
   }];
 }
 
+- (void)pause {
+  if (self.paused || !self.stream) return;
+  self.paused = YES;
+  if (self.stopWork) { dispatch_block_cancel(self.stopWork); self.stopWork = nil; }
+  [self.stream stopCaptureWithCompletionHandler:nil];
+}
+
+- (void)resume {
+  if (!self.paused || self.stopping) return;
+  self.paused = NO;
+  self.segmentIndex++;
+  self.seconds = 0;
+  [self startStreamWithFilter:self.savedFilter configuration:self.savedConfig];
+}
+
 - (void)stop {
-  if (!self.stream) return;
+  self.stopping = YES;
+  if (self.stopWork) { dispatch_block_cancel(self.stopWork); self.stopWork = nil; }
+  if (self.paused || !self.stream) { [self mergeAndFinish]; return; }
   [self.stream stopCaptureWithCompletionHandler:nil];
 }
 
 - (void)finishWithError:(NSError *)error {
   if (self.finished) return;
   self.finished = YES;
-  if (self.stopWork) dispatch_block_cancel(self.stopWork);
-  if (self.onFinished) self.onFinished(self.outputURL, error);
+  if (self.stopWork) { dispatch_block_cancel(self.stopWork); self.stopWork = nil; }
+  if (self.onFinished) self.onFinished(self.finalOutputURL, error);
+}
+
+- (void)mergeAndFinish {
+  if (self.finishing) return;
+  self.finishing = YES;
+  NSMutableArray *valid = [NSMutableArray array];
+  for (NSURL *u in self.segmentURLs) if ([[NSFileManager defaultManager] fileExistsAtPath:u.path]) [valid addObject:u];
+  if (!valid.count) { [self finishWithError:[NSError errorWithDomain:@"DockLaunchers" code:3 userInfo:@{NSLocalizedDescriptionKey:@"没有可保存的录屏数据"}]]; return; }
+  if (valid.count == 1) {
+    NSURL *src = valid.firstObject;
+    [[NSFileManager defaultManager] removeItemAtURL:self.finalOutputURL error:NULL];
+    [[NSFileManager defaultManager] moveItemAtURL:src toURL:self.finalOutputURL error:NULL];
+    [self finishWithError:nil];
+    return;
+  }
+  AVMutableComposition *comp = [AVMutableComposition composition];
+  AVMutableCompositionTrack *videoTrack = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+  AVMutableCompositionTrack *audioTrack = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+  CMTime cursor = kCMTimeZero;
+  for (NSURL *u in valid) {
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:u options:nil];
+    AVAssetTrack *v = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+    AVAssetTrack *a = [asset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+    if (v) [videoTrack insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:v atTime:cursor error:NULL];
+    if (a) [audioTrack insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:a atTime:cursor error:NULL];
+    cursor = CMTimeAdd(cursor, asset.duration);
+  }
+  [[NSFileManager defaultManager] removeItemAtURL:self.finalOutputURL error:NULL];
+  AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetHighestQuality];
+  ex.outputURL = self.finalOutputURL;
+  ex.outputFileType = AVFileTypeMPEG4;
+  ex.shouldOptimizeForNetworkUse = YES;
+  __weak typeof(self) weakSelf = self;
+  [ex exportAsynchronouslyWithCompletionHandler:^{
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (ex.status == AVAssetExportSessionStatusCompleted) {
+        for (NSURL *u in valid) [[NSFileManager defaultManager] removeItemAtURL:u error:NULL];
+        [weakSelf finishWithError:nil];
+      } else {
+        [weakSelf finishWithError:ex.error ?: [NSError errorWithDomain:@"DockLaunchers" code:4 userInfo:@{NSLocalizedDescriptionKey:@"录屏合并失败"}]];
+      }
+    });
+  }];
 }
 
 - (void)recordingOutputDidStartRecording:(SCRecordingOutput *)recordingOutput {}
-- (void)recordingOutputDidFinishRecording:(SCRecordingOutput *)recordingOutput { [self finishWithError:nil]; }
+- (void)recordingOutputDidFinishRecording:(SCRecordingOutput *)recordingOutput {
+  if (self.outputURL && [[NSFileManager defaultManager] fileExistsAtPath:self.outputURL.path]) [self.segmentURLs addObject:self.outputURL];
+  if (self.paused) { self.stream = nil; if (self.onPaused) self.onPaused(); return; }
+  if (self.stopping) { self.stream = nil; [self mergeAndFinish]; return; }
+  [self finishWithError:nil];
+}
 - (void)recordingOutput:(SCRecordingOutput *)recordingOutput didFailWithError:(NSError *)error { [self finishWithError:error]; }
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error { if (error) [self finishWithError:error]; }
 - (void)contentSharingPicker:(SCContentSharingPicker *)picker didUpdateWithFilter:(SCContentFilter *)filter forStream:(SCStream *)stream {
@@ -954,8 +1042,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTimer *captureCountdownTimer;
 @property NSInteger captureCountdownRemaining;
 @property (strong) AVCaptureVideoPreviewLayer *captureCameraLayer;
-@property (strong) ColorHoverButton *captureRecordButton;
-@property BOOL captureRecording;
+@property (strong) ColorHoverButton *captureRecordButton, *capturePauseButton;
+@property BOOL captureRecording, capturePaused;
 @property (strong) NSButton *captureCopyCheck;
 @property (strong) NSTableView *groupPanelTable;
 @property (strong) NSArray *groupPanelItems;
@@ -16519,7 +16607,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)showCaptureTool:(id)sender {
   if (!self.captureWindow) {
-    self.captureWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,430) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.captureWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,430) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.captureWindow.title = @"截图 / 录屏";
     self.captureWindow.releasedWhenClosed = NO;
     self.captureWindow.level = NSNormalWindowLevel;
@@ -16580,13 +16668,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.captureQualityPopup selectItemAtIndex:qidx];
     self.captureQualityPopup.target = self; self.captureQualityPopup.action = @selector(captureQualityChanged:);
     [cv addSubview:self.captureQualityPopup];
-    self.captureRecordButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 204, 120, 38)];
+    self.captureRecordButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 204, 100, 38)];
     self.captureRecordButton.title = @"开始录屏"; self.captureRecordButton.hoverColor = [NSColor systemRedColor];
     self.captureRecordButton.target = self; self.captureRecordButton.action = @selector(captureVideo:);
     [self.captureRecordButton applyColor:[NSColor systemRedColor] textColor:[NSColor whiteColor]]; [cv addSubview:self.captureRecordButton];
+    self.capturePauseButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(126, 204, 84, 38)];
+    self.capturePauseButton.title = @"暂停"; self.capturePauseButton.hoverColor = [NSColor systemOrangeColor];
+    self.capturePauseButton.target = self; self.capturePauseButton.action = @selector(pauseCapture:);
+    [self.capturePauseButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    self.capturePauseButton.hidden = YES;
+    [cv addSubview:self.capturePauseButton];
     NSTextField *vl = [self label:@"录制时长" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    vl.frame = NSMakeRect(156, 216, 60, 18); [cv addSubview:vl];
-    self.captureDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(220, 208, 100, 26) pullsDown:NO];
+    vl.frame = NSMakeRect(218, 216, 60, 18); [cv addSubview:vl];
+    self.captureDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(282, 208, 96, 26) pullsDown:NO];
     NSArray *durations = @[@10, @30, @60, @120, @0];
     for (NSNumber *d in durations) {
       NSString *t = [d integerValue] > 0 ? [NSString stringWithFormat:@"%@ 秒", d] : @"手动停止";
@@ -16596,12 +16690,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.captureDurationPopup selectItemAtIndex:1];
     [cv addSubview:self.captureDurationPopup];
     self.captureSystemAudioCheck = [NSButton checkboxWithTitle:@"系统声音" target:self action:@selector(captureAudioChanged:)];
-    self.captureSystemAudioCheck.frame = NSMakeRect(340, 212, 94, 22);
+    self.captureSystemAudioCheck.frame = NSMakeRect(392, 212, 94, 22);
     id sysObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureSystemAudio"];
     self.captureSystemAudioCheck.state = (!sysObj || [sysObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
     [cv addSubview:self.captureSystemAudioCheck];
     self.captureMicCheck = [NSButton checkboxWithTitle:@"麦克风" target:self action:@selector(captureAudioChanged:)];
-    self.captureMicCheck.frame = NSMakeRect(440, 212, 90, 22);
+    self.captureMicCheck.frame = NSMakeRect(492, 212, 90, 22);
     self.captureMicCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"] ? NSControlStateValueOn : NSControlStateValueOff;
     [cv addSubview:self.captureMicCheck];
     self.captureStatusLabel = [self label:@"截图会保存到 ~/Pictures/DockLaunchers Captures" size:10 bold:NO color:[NSColor secondaryLabelColor]];
@@ -16774,8 +16868,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger seconds = [self.captureDurationPopup.selectedItem.representedObject integerValue];
   NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mp4", [self captureTimestamp]]];
   self.captureRecording = YES;
+  self.capturePaused = NO;
   [self startCameraPreviewIfNeeded];
   self.captureRecordButton.title = @"停止录屏";
+  self.capturePauseButton.hidden = NO;
+  self.capturePauseButton.title = @"暂停";
   self.captureRecordButton.hoverColor = [NSColor systemOrangeColor];
   self.captureStatusLabel.stringValue = @"正在启动录屏…";
   __weak typeof(self) weakSelf = self;
@@ -16788,7 +16885,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   rec.onFinished = ^(NSURL *url, NSError *error) {
     dispatch_async(dispatch_get_main_queue(), ^{
       weakSelf.captureRecording = NO;
+      weakSelf.capturePaused = NO;
       [weakSelf stopCameraPreview];
+      weakSelf.capturePauseButton.hidden = YES;
       weakSelf.captureRecordButton.title = @"开始录屏";
       weakSelf.captureRecordButton.hoverColor = [NSColor systemRedColor];
       if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
@@ -16804,6 +16903,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     });
   };
   [rec startWithScene:scene seconds:seconds region:region url:[NSURL fileURLWithPath:path]];
+}
+
+- (void)pauseCapture:(id)sender {
+  if (!self.captureRecording || !self.captureRecorder) return;
+  if (self.capturePaused) {
+    [self.captureRecorder resume];
+    self.capturePaused = NO;
+    self.capturePauseButton.title = @"暂停";
+    self.captureStatusLabel.stringValue = @"继续录制…";
+  } else {
+    [self.captureRecorder pause];
+    self.capturePaused = YES;
+    self.capturePauseButton.title = @"继续";
+    self.captureStatusLabel.stringValue = @"已暂停录制，点「继续」恢复";
+  }
 }
 
 - (void)captureVideo:(id)sender {
