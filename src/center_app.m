@@ -761,6 +761,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property NSInteger clipboardPreviewRow;
 @property (strong) NSSearchField *clipboardSearch;
 @property (strong) NSRunningApplication *clipboardPreviousApp;
+@property (strong) NSWindow *clipboardSaveWindow;
+@property (strong) NSTextField *clipboardSaveNameField, *clipboardSaveDirField;
+@property (strong) NSDictionary *clipboardSaveItem;
 @property BOOL clipboardFavoritesOnly;
 @property (strong) NSPopUpButton *clipboardDaysPopup;
 @property (strong) ColorHoverButton *processMetricButton;
@@ -4932,42 +4935,79 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)saveClipboardSelectedAsFile:(id)sender {
   NSDictionary *it = [self clipboardSelectedItem];
   if (!it) return;
+  self.clipboardSaveItem = it;
   BOOL isImage = [it[@"kind"] isEqualToString:@"image"];
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    [NSApp activateIgnoringOtherApps:YES];
-    NSOpenPanel *op = [NSOpenPanel openPanel];
-    op.canChooseDirectories = YES;
-    op.canChooseFiles = NO;
-    op.allowsMultipleSelection = NO;
-    op.canCreateDirectories = YES;
-    op.prompt = @"保存到这里";
-    op.message = isImage ? @"选择保存图片的文件夹" : @"选择保存文本的文件夹";
-    NSView *av = [[NSView alloc] initWithFrame:NSMakeRect(0,0,380,56)];
-    NSTextField *label = [self label:@"文件名" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
-    label.frame = NSMakeRect(0, 34, 80, 18); [av addSubview:label];
-    NSTextField *nameField = [[NSTextField alloc] initWithFrame:NSMakeRect(84, 28, 290, 26)];
-    nameField.stringValue = isImage ? (it[@"file"] ?: @"剪贴板图片.png") : @"剪贴板文本.txt";
-    [av addSubview:nameField];
-    op.accessoryView = av;
-    if ([op runModal] != NSModalResponseOK || !op.URL) return;
-    NSString *name = nameField.stringValue;
-    NSString *ext = isImage ? @"png" : @"txt";
-    if (![name.pathExtension.lowercaseString isEqualToString:ext]) name = [name stringByAppendingPathExtension:ext];
-    NSString *path = [op.URL.path stringByAppendingPathComponent:name];
-    if (isImage) {
-      NSString *src = [[self clipboardImagesDir] stringByAppendingPathComponent:(it[@"file"] ?: @"")];
-      NSData *data = [NSData dataWithContentsOfFile:src];
-      if (!data) { [self showToast:@"图片文件不存在"]; return; }
-      NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:data];
-      NSData *png = rep ? [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] : data;
-      if (![png writeToFile:path atomically:YES]) { [self showToast:@"保存失败"]; return; }
-    } else {
-      NSString *text = it[@"text"] ?: @"";
-      if (![text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL]) { [self showToast:@"保存失败"]; return; }
-    }
-    [self showToast:@"已保存"];
-    [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];
-  });
+  if (!self.clipboardSaveWindow) {
+    self.clipboardSaveWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,500,230) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.clipboardSaveWindow.title = @"另存为";
+    self.clipboardSaveWindow.releasedWhenClosed = NO;
+    self.clipboardSaveWindow.level = NSNormalWindowLevel;
+    NSView *cv = self.clipboardSaveWindow.contentView;
+    NSTextField *title = [self label:@"保存剪贴板内容" size:17 bold:YES color:nil];
+    title.frame = NSMakeRect(24, 186, 300, 24); [cv addSubview:title];
+    NSTextField *nl = [self label:@"文件名" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
+    nl.frame = NSMakeRect(24, 152, 60, 18); [cv addSubview:nl];
+    self.clipboardSaveNameField = [[NSTextField alloc] initWithFrame:NSMakeRect(90, 148, 386, 26)];
+    [cv addSubview:self.clipboardSaveNameField];
+    NSTextField *dl = [self label:@"文件夹" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
+    dl.frame = NSMakeRect(24, 112, 60, 18); [cv addSubview:dl];
+    self.clipboardSaveDirField = [[NSTextField alloc] initWithFrame:NSMakeRect(90, 108, 386, 26)];
+    [cv addSubview:self.clipboardSaveDirField];
+    NSTextField *hint = [self label:@"可直接修改文件夹路径；默认保存到下载文件夹" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    hint.frame = NSMakeRect(90, 84, 380, 16); [cv addSubview:hint];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(284, 30, 100, 32)];
+    save.title = @"保存"; save.hoverColor = [NSColor systemGreenColor];
+    save.target = self; save.action = @selector(performClipboardSave:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(392, 30, 84, 32)];
+    cancel.title = @"取消"; cancel.hoverColor = [NSColor systemGrayColor];
+    cancel.target = self; cancel.action = @selector(cancelClipboardSave:);
+    [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
+    [self.clipboardSaveWindow center];
+  }
+  NSString *defaultName = isImage ? (it[@"file"] ?: @"剪贴板图片.png") : @"剪贴板文本.txt";
+  self.clipboardSaveNameField.stringValue = defaultName;
+  NSString *downloads = [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"];
+  self.clipboardSaveDirField.stringValue = downloads;
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.clipboardSaveWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)cancelClipboardSave:(id)sender {
+  [self.clipboardSaveWindow orderOut:nil];
+  self.clipboardSaveItem = nil;
+}
+
+- (void)performClipboardSave:(id)sender {
+  NSDictionary *it = self.clipboardSaveItem;
+  if (!it) return;
+  BOOL isImage = [it[@"kind"] isEqualToString:@"image"];
+  NSString *name = [self.clipboardSaveNameField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!name.length) { [self showToast:@"请填写文件名"]; return; }
+  name = name.lastPathComponent;
+  NSString *ext = isImage ? @"png" : @"txt";
+  if (![name.pathExtension.lowercaseString isEqualToString:ext]) name = [name stringByAppendingPathExtension:ext];
+  NSString *dir = [self.clipboardSaveDirField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!dir.length) dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"];
+  if ([dir hasPrefix:@"~"]) dir = [dir stringByExpandingTildeInPath];
+  BOOL isDir = NO;
+  if (![[NSFileManager defaultManager] fileExistsAtPath:dir isDirectory:&isDir] || !isDir) { [self showToast:@"文件夹不存在"]; return; }
+  NSString *path = [dir stringByAppendingPathComponent:name];
+  if (isImage) {
+    NSString *src = [[self clipboardImagesDir] stringByAppendingPathComponent:(it[@"file"] ?: @"")];
+    NSData *data = [NSData dataWithContentsOfFile:src];
+    if (!data) { [self showToast:@"图片文件不存在"]; return; }
+    NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:data];
+    NSData *png = rep ? [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] : data;
+    if (![png writeToFile:path atomically:YES]) { [self showToast:@"保存失败"]; return; }
+  } else {
+    NSString *text = it[@"text"] ?: @"";
+    if (![text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL]) { [self showToast:@"保存失败"]; return; }
+  }
+  [self.clipboardSaveWindow orderOut:nil];
+  self.clipboardSaveItem = nil;
+  [self showToast:@"已保存"];
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];
 }
 
 - (void)pasteClipboardToPreviousApp:(id)sender {
