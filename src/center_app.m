@@ -17,6 +17,10 @@
 #import <QuickLookThumbnailing/QuickLookThumbnailing.h>
 #import <Photos/Photos.h>
 #import <AVFoundation/AVFoundation.h>
+typedef void (*DLMRInfoFn)(dispatch_queue_t, void (^)(CFDictionaryRef info));
+typedef void (*DLMRPlayFn)(dispatch_queue_t, void (^)(Boolean playing));
+typedef void (*DLMRPIDFn)(dispatch_queue_t, void (^)(int pid));
+typedef void (*DLMRSendFn)(unsigned int command, NSDictionary *options);
 #import <CoreMedia/CoreMedia.h>
 #import <Vision/Vision.h>
 #import <PDFKit/PDFKit.h>
@@ -1013,6 +1017,26 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 - (void)applyConsoleMetricSelection;
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
+@property (strong) NSStatusItem *mediaStatusItem;
+@property (strong) NSTimer *mediaPollTimer;
+@property (strong) NSDictionary *mediaNowPlaying;
+@property (strong) NSString *mediaBundleID;
+@property NSInteger mediaPID;
+@property BOOL mediaPlaying;
+@property BOOL mediaPollInFlight;
+@property (assign) void *mediaRemoteHandle;
+@property (assign) void *mediaGetInfoFn;
+@property (assign) void *mediaGetPlayingFn;
+@property (assign) void *mediaSendCmdFn;
+@property (assign) void *mediaGetPIDFn;
+@property (strong) NSPopover *mediaPopover;
+@property (strong) NSView *mediaCard;
+@property (strong) NSImageView *mediaCardArt;
+@property (strong) NSTextField *mediaCardPlayer, *mediaCardArtist, *mediaCardTime;
+@property (strong) NSButton *mediaCardTitleButton, *mediaCardPlayButton;
+@property (strong) NSSlider *mediaCardProgress;
+@property (strong) NSArray *mediaPlaylistCache;
+@property (strong) NSDate *mediaPlaylistCacheDate;
 @property (strong) NSWindow *window;
 @property (strong) NSTextField *centerTitleLabel;
 @property (strong) NSView *sideView;
@@ -2684,6 +2708,414 @@ static void HideDockHoverTip(void) {
   exit(failed);
 }
 
+- (void)startMediaWidget {
+  void *handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_LAZY);
+  if (!handle) return;
+  self.mediaRemoteHandle = handle;
+  self.mediaGetInfoFn = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo");
+  self.mediaGetPlayingFn = dlsym(handle, "MRMediaRemoteGetNowPlayingApplicationIsPlaying");
+  self.mediaSendCmdFn = dlsym(handle, "MRMediaRemoteSendCommand");
+  self.mediaGetPIDFn = dlsym(handle, "MRMediaRemoteGetNowPlayingApplicationPID");
+  if (!self.mediaGetInfoFn || !self.mediaGetPlayingFn) return;
+  __weak typeof(self) weakSelf = self;
+  self.mediaPollTimer = [NSTimer scheduledTimerWithTimeInterval:1.2 repeats:YES block:^(NSTimer *timer) {
+    [weakSelf pollMediaNowPlaying];
+  }];
+  [self pollMediaNowPlaying];
+}
+
+- (void)pollMediaNowPlaying {
+  if (self.mediaPollInFlight || !self.mediaGetInfoFn) return;
+  self.mediaPollInFlight = YES;
+  DLMRInfoFn getInfo = (DLMRInfoFn)self.mediaGetInfoFn;
+  DLMRPlayFn getPlaying = (DLMRPlayFn)self.mediaGetPlayingFn;
+  DLMRPIDFn getPID = (DLMRPIDFn)self.mediaGetPIDFn;
+  __weak typeof(self) weakSelf = self;
+  dispatch_queue_t q = dispatch_get_global_queue(QOS_CLASS_UTILITY, 0);
+  getInfo(q, ^(CFDictionaryRef info) {
+    NSDictionary *dict = info ? [(__bridge NSDictionary *)info copy] : nil;
+    if (!getPlaying) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        weakSelf.mediaNowPlaying = dict; weakSelf.mediaPlaying = dict != nil; weakSelf.mediaPollInFlight = NO; [weakSelf updateMediaStatusItem];
+      });
+      return;
+    }
+    getPlaying(q, ^(Boolean playing) {
+      if (!getPID) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          weakSelf.mediaNowPlaying = dict; weakSelf.mediaPlaying = playing != 0; weakSelf.mediaPollInFlight = NO; [weakSelf updateMediaStatusItem];
+        });
+        return;
+      }
+      getPID(q, ^(int pid) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          weakSelf.mediaNowPlaying = dict;
+          weakSelf.mediaPlaying = (playing != 0);
+          weakSelf.mediaPID = pid;
+          NSRunningApplication *app = pid > 0 ? [NSRunningApplication runningApplicationWithProcessIdentifier:pid] : nil;
+          weakSelf.mediaBundleID = app.bundleIdentifier ?: @"";
+          weakSelf.mediaPollInFlight = NO;
+          [weakSelf updateMediaStatusItem];
+        });
+      });
+    });
+  });
+}
+
+- (NSString *)mediaCurrentTitle {
+  NSString *title = self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoTitle"];
+  if (![title isKindOfClass:[NSString class]] || !title.length) return @"";
+  return title;
+}
+
+- (NSString *)mediaCurrentArtist {
+  id a = self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoArtist"];
+  return [a isKindOfClass:[NSString class]] ? a : @"";
+}
+
+- (void)updateMediaStatusItem {
+  NSString *title = [self mediaCurrentTitle];
+  BOOL shouldShow = self.mediaPlaying && title.length > 0;
+  if (!shouldShow) {
+    if (self.mediaStatusItem) {
+      if (self.mediaPopover.isShown) [self.mediaPopover close];
+      [[NSStatusBar systemStatusBar] removeStatusItem:self.mediaStatusItem];
+      self.mediaStatusItem = nil;
+    }
+    return;
+  }
+  if (!self.mediaStatusItem) {
+    self.mediaStatusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
+    self.mediaStatusItem.button.imagePosition = NSImageLeft;
+    self.mediaStatusItem.button.imageScaling = NSImageScaleProportionallyDown;
+    self.mediaStatusItem.button.target = self;
+    self.mediaStatusItem.button.action = @selector(mediaStatusButtonClicked:);
+  }
+  BOOL video = [self.mediaBundleID containsString:@"QuickTime"] || [self.mediaBundleID containsString:@"vlc"] || [self.mediaBundleID containsString:@"iina"] || [self.mediaBundleID containsString:@"TV"];
+  NSString *symbol = video ? @"play.rectangle.fill" : @"music.note";
+  self.mediaStatusItem.button.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
+  NSString *artist = [self mediaCurrentArtist];
+  NSString *display = artist.length ? [NSString stringWithFormat:@"%@ — %@", title, artist] : title;
+  if (display.length > 34) display = [[display substringToIndex:33] stringByAppendingString:@"…"];
+  self.mediaStatusItem.button.title = [NSString stringWithFormat:@" %@", display];
+  self.mediaStatusItem.button.toolTip = artist.length ? [NSString stringWithFormat:@"%@ — %@\n左键打开播放器，右键控制", title, artist] : [NSString stringWithFormat:@"%@\n左键打开播放器，右键控制", title];
+  [self updateMediaCard];
+}
+
+- (void)mediaStatusButtonClicked:(id)sender {
+  NSEvent *event = [NSApp currentEvent];
+  if (event.type == NSEventTypeRightMouseDown || (event.modifierFlags & NSEventModifierFlagControl)) {
+    [self showMediaControlMenu];
+  } else {
+    [self toggleMediaPopover];
+  }
+}
+
+- (void)toggleMediaPopover {
+  if (self.mediaPopover.isShown) { [self.mediaPopover close]; return; }
+  if (!self.mediaStatusItem) return;
+  [self buildMediaCardIfNeeded];
+  [self updateMediaCard];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.mediaPopover showRelativeToRect:self.mediaStatusItem.button.bounds ofView:self.mediaStatusItem.button preferredEdge:NSRectEdgeMinY];
+}
+
+- (NSButton *)mediaIconButton:(NSString *)symbol action:(SEL)action frame:(NSRect)frame {
+  NSButton *b = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil] target:self action:action];
+  b.frame = frame;
+  b.bezelStyle = NSBezelStyleTexturedRounded;
+  b.imageScaling = NSImageScaleProportionallyDown;
+  return b;
+}
+
+- (void)buildMediaCardIfNeeded {
+  if (self.mediaPopover) return;
+  NSRect frame = NSMakeRect(0,0,320,470);
+  NSVisualEffectView *card = [[NSVisualEffectView alloc] initWithFrame:frame];
+  card.material = NSVisualEffectMaterialHUDWindow;
+  card.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+  card.state = NSVisualEffectStateActive;
+  card.wantsLayer = YES;
+  card.layer.cornerRadius = 18;
+  card.layer.masksToBounds = YES;
+  self.mediaCard = card;
+
+  NSTextField *player = [self label:@"媒体播放" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+  player.frame = NSMakeRect(18, 438, 180, 16); [card addSubview:player];
+  self.mediaCardPlayer = player;
+  NSButton *playlistBtn = [NSButton buttonWithTitle:@"播放列表" target:self action:@selector(showMediaPlaylistMenuFromButton:)];
+  playlistBtn.frame = NSMakeRect(196, 428, 76, 26);
+  playlistBtn.bezelStyle = NSBezelStyleRounded;
+  playlistBtn.font = [NSFont systemFontOfSize:10 weight:NSFontWeightMedium];
+  [card addSubview:playlistBtn];
+  NSButton *playersBtn = [self mediaIconButton:@"gearshape.fill" action:@selector(showMediaPlayersMenuFromButton:) frame:NSMakeRect(278, 430, 26, 24)];
+  [card addSubview:playersBtn];
+
+  NSImageView *art = [[NSImageView alloc] initWithFrame:NSMakeRect(18, 172, 284, 248)];
+  art.imageScaling = NSImageScaleProportionallyUpOrDown;
+  art.wantsLayer = YES;
+  art.layer.cornerRadius = 14;
+  art.layer.masksToBounds = YES;
+  [card addSubview:art];
+  self.mediaCardArt = art;
+
+  NSButton *titleBtn = [NSButton buttonWithTitle:@"" target:self action:@selector(openCurrentMediaPlayer:)];
+  titleBtn.frame = NSMakeRect(18, 136, 284, 28);
+  titleBtn.bezelStyle = NSBezelStyleInline;
+  titleBtn.alignment = NSTextAlignmentLeft;
+  titleBtn.font = [NSFont systemFontOfSize:20 weight:NSFontWeightBold];
+  titleBtn.bordered = NO;
+  [card addSubview:titleBtn];
+  self.mediaCardTitleButton = titleBtn;
+
+  NSTextField *artist = [self label:@"" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  artist.frame = NSMakeRect(18, 116, 284, 18); [card addSubview:artist];
+  self.mediaCardArtist = artist;
+
+  NSSlider *slider = [[NSSlider alloc] initWithFrame:NSMakeRect(18, 90, 284, 18)];
+  slider.minValue = 0; slider.maxValue = 1; slider.doubleValue = 0; slider.enabled = NO;
+  [card addSubview:slider];
+  self.mediaCardProgress = slider;
+  NSTextField *time = [self label:@"0:00 / 0:00" size:9 bold:NO color:[NSColor secondaryLabelColor]];
+  time.frame = NSMakeRect(18, 72, 284, 14); [card addSubview:time];
+  self.mediaCardTime = time;
+
+  NSButton *prev = [self mediaIconButton:@"backward.fill" action:@selector(mediaPreviousTrack:) frame:NSMakeRect(82, 20, 38, 34)];
+  NSButton *play = [self mediaIconButton:@"pause.fill" action:@selector(mediaTogglePlayPause:) frame:NSMakeRect(141, 16, 44, 42)];
+  NSButton *next = [self mediaIconButton:@"forward.fill" action:@selector(mediaNextTrack:) frame:NSMakeRect(206, 20, 38, 34)];
+  [card addSubview:prev]; [card addSubview:play]; [card addSubview:next];
+  self.mediaCardPlayButton = play;
+
+  NSViewController *vc = [[NSViewController alloc] init];
+  vc.view = card;
+  self.mediaPopover = [[NSPopover alloc] init];
+  self.mediaPopover.contentViewController = vc;
+  self.mediaPopover.contentSize = frame.size;
+  self.mediaPopover.behavior = NSPopoverBehaviorTransient;
+}
+
+- (NSImage *)mediaPlaceholderArtwork:(BOOL)video {
+  NSSize size = NSMakeSize(284, 248);
+  NSImage *img = [[NSImage alloc] initWithSize:size];
+  [img lockFocus];
+  NSGradient *g = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithCalibratedRed:0.16 green:0.18 blue:0.24 alpha:1] endingColor:[NSColor colorWithCalibratedRed:0.30 green:0.24 blue:0.38 alpha:1]];
+  [g drawInRect:NSMakeRect(0,0,size.width,size.height) angle:-35];
+  NSString *symbol = video ? @"play.rectangle.fill" : @"music.note";
+  NSImage *icon = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
+  NSRect r = NSMakeRect((size.width-72)/2, (size.height-72)/2, 72, 72);
+  [[NSColor colorWithCalibratedWhite:1 alpha:0.82] set];
+  [icon drawInRect:r fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:0.9];
+  [img unlockFocus];
+  return img;
+}
+
+- (void)updateMediaCard {
+  if (!self.mediaPopover) return;
+  NSString *title = [self mediaCurrentTitle];
+  NSString *artist = [self mediaCurrentArtist];
+  self.mediaCardTitleButton.title = title;
+  self.mediaCardArtist.stringValue = artist.length ? artist : @"";
+  NSRunningApplication *app = self.mediaPID > 0 ? [NSRunningApplication runningApplicationWithProcessIdentifier:self.mediaPID] : nil;
+  self.mediaCardPlayer.stringValue = app.localizedName ?: @"正在播放";
+  self.mediaCardPlayButton.image = [NSImage imageWithSystemSymbolName:(self.mediaPlaying ? @"pause.fill" : @"play.fill") accessibilityDescription:nil];
+  NSData *artData = self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoArtworkData"];
+  if ([artData isKindOfClass:[NSData class]] && artData.length) {
+    NSImage *img = [[NSImage alloc] initWithData:artData];
+    BOOL video = [self.mediaBundleID containsString:@"QuickTime"] || [self.mediaBundleID containsString:@"vlc"] || [self.mediaBundleID containsString:@"iina"] || [self.mediaBundleID containsString:@"TV"];
+    self.mediaCardArt.image = img ?: [self mediaPlaceholderArtwork:video];
+  } else {
+    BOOL video = [self.mediaBundleID containsString:@"QuickTime"] || [self.mediaBundleID containsString:@"vlc"] || [self.mediaBundleID containsString:@"iina"] || [self.mediaBundleID containsString:@"TV"];
+    self.mediaCardArt.image = [self mediaPlaceholderArtwork:video];
+  }
+  double duration = [self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoDuration"] doubleValue];
+  double elapsed = [self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoElapsedTime"] doubleValue];
+  if (duration > 0) {
+    self.mediaCardProgress.maxValue = duration;
+    self.mediaCardProgress.doubleValue = elapsed;
+    NSInteger e = MAX(0, (NSInteger)elapsed), d = MAX(0, (NSInteger)duration);
+    self.mediaCardTime.stringValue = [NSString stringWithFormat:@"%ld:%02ld / %ld:%02ld", (long)(e/60), (long)(e%60), (long)(d/60), (long)(d%60)];
+  } else {
+    self.mediaCardProgress.maxValue = 1;
+    self.mediaCardProgress.doubleValue = 0;
+    self.mediaCardTime.stringValue = @"正在播放";
+  }
+}
+
+- (NSMenu *)mediaPlayersMenu {
+  NSMenu *playersMenu = [[NSMenu alloc] initWithTitle:@"切换播放器"];
+  NSArray *known = @[@"com.apple.Music", @"com.spotify.client", @"com.apple.QuickTimePlayerX", @"com.colliderli.iina", @"org.videolan.vlc", @"com.apple.TV"];
+  NSMutableSet *seen = [NSMutableSet set];
+  for (NSString *bundle in known) {
+    NSRunningApplication *app = [[NSRunningApplication runningApplicationsWithBundleIdentifier:bundle] firstObject];
+    NSString *name = app.localizedName;
+    if (!name) {
+      NSURL *url = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bundle];
+      if (!url) continue;
+      name = [[NSFileManager defaultManager] displayNameAtPath:url.path];
+    }
+    if (!name || [seen containsObject:name]) continue;
+    [seen addObject:name];
+    NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:name action:@selector(switchMediaPlayer:) keyEquivalent:@""];
+    it.target = self; it.representedObject = bundle;
+    if ([bundle isEqualToString:self.mediaBundleID]) it.state = NSControlStateValueOn;
+    [playersMenu addItem:it];
+  }
+  return playersMenu;
+}
+
+- (void)showMediaPlayersMenuFromButton:(id)sender {
+  NSMenu *menu = [self mediaPlayersMenu];
+  [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, 24) inView:(NSView *)sender];
+}
+
+- (void)showMediaPlaylistMenuFromButton:(id)sender {
+  NSMenu *menu = [[NSMenu alloc] initWithTitle:@"播放列表"];
+  NSArray *names = [self mediaPlaylistNames];
+  if (names.count) {
+    for (NSString *name in names) {
+      NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:name action:@selector(playMediaPlaylistTrack:) keyEquivalent:@""];
+      it.target = self; it.representedObject = name; [menu addItem:it];
+    }
+  } else {
+    NSMenuItem *none = [[NSMenuItem alloc] initWithTitle:[self mediaAppSupportsPlaylist] ? @"无法读取播放列表" : @"当前播放器不支持播放列表" action:nil keyEquivalent:@""];
+    none.enabled = NO; [menu addItem:none];
+  }
+  [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, 24) inView:(NSView *)sender];
+}
+
+- (void)mediaSendCommand:(unsigned int)command {
+  DLMRSendFn send = (DLMRSendFn)self.mediaSendCmdFn;
+  if (send) send(command, nil);
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self pollMediaNowPlaying]; });
+}
+
+- (void)mediaTogglePlayPause:(id)sender { [self mediaSendCommand:self.mediaPlaying ? 1 : 0]; }
+- (void)mediaPreviousTrack:(id)sender { [self mediaSendCommand:5]; }
+- (void)mediaNextTrack:(id)sender { [self mediaSendCommand:4]; }
+
+- (void)openCurrentMediaPlayer:(id)sender {
+  NSRunningApplication *app = self.mediaPID > 0 ? [NSRunningApplication runningApplicationWithProcessIdentifier:self.mediaPID] : nil;
+  if (!app && self.mediaBundleID.length) app = [[NSRunningApplication runningApplicationsWithBundleIdentifier:self.mediaBundleID] firstObject];
+  if (!app && self.mediaBundleID.length) {
+    NSURL *url = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:self.mediaBundleID];
+    if (url) [[NSWorkspace sharedWorkspace] openURL:url];
+    return;
+  }
+  [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+}
+
+- (BOOL)mediaAppSupportsPlaylist {
+  return [self.mediaBundleID isEqualToString:@"com.apple.Music"] || [self.mediaBundleID isEqualToString:@"com.spotify.client"];
+}
+
+- (NSString *)runOsascript:(NSString *)script {
+  NSTask *task = [[NSTask alloc] init];
+  task.launchPath = @"/usr/bin/osascript";
+  task.arguments = @[@"-e", script];
+  NSPipe *pipe = [NSPipe pipe];
+  task.standardOutput = pipe;
+  task.standardError = [NSPipe pipe];
+  @try { [task launch]; } @catch (NSException *e) { return nil; }
+  NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
+  [task waitUntilExit];
+  if (task.terminationStatus != 0) return nil;
+  return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+
+- (NSArray<NSString *> *)mediaPlaylistNames {
+  if (![self mediaAppSupportsPlaylist]) return @[];
+  if (self.mediaPlaylistCache && self.mediaPlaylistCacheDate && [[NSDate date] timeIntervalSinceDate:self.mediaPlaylistCacheDate] < 4.0) return self.mediaPlaylistCache;
+  NSString *appName = [self.mediaBundleID isEqualToString:@"com.apple.Music"] ? @"Music" : @"Spotify";
+  NSString *script = [NSString stringWithFormat:@"tell application \"%@\"\nif it is running then\nset text item delimiters to linefeed\nreturn (name of every track of current playlist) as text\nend if\nend tell", appName];
+  NSString *out = [self runOsascript:script];
+  if (!out.length) return @[];
+  NSMutableArray *names = [NSMutableArray array];
+  for (NSString *line in [out componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+    if (line.length) [names addObject:line];
+    if (names.count >= 80) break;
+  }
+  self.mediaPlaylistCache = names;
+  self.mediaPlaylistCacheDate = [NSDate date];
+  return names;
+}
+
+- (void)playMediaPlaylistTrack:(NSMenuItem *)item {
+  NSString *name = item.representedObject;
+  if (!name.length) return;
+  NSString *escaped = [name stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"];
+  escaped = [escaped stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+  NSString *appName = [self.mediaBundleID isEqualToString:@"com.apple.Music"] ? @"Music" : @"Spotify";
+  NSString *script = [NSString stringWithFormat:@"tell application \"%@\" to play track \"%@\"", appName, escaped];
+  [self runOsascript:script];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self pollMediaNowPlaying]; });
+}
+
+- (void)switchMediaPlayer:(NSMenuItem *)item {
+  NSString *bundle = item.representedObject;
+  if (!bundle.length) return;
+  NSRunningApplication *app = [[NSRunningApplication runningApplicationsWithBundleIdentifier:bundle] firstObject];
+  if (!app) {
+    NSURL *url = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bundle];
+    if (url) [[NSWorkspace sharedWorkspace] openURL:url];
+    return;
+  }
+  [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+  if ([bundle isEqualToString:@"com.apple.Music"] || [bundle isEqualToString:@"com.spotify.client"]) {
+    NSString *appName = [bundle isEqualToString:@"com.apple.Music"] ? @"Music" : @"Spotify";
+    [self runOsascript:[NSString stringWithFormat:@"tell application \"%@\" to play", appName]];
+  }
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self pollMediaNowPlaying]; });
+}
+
+- (void)showMediaControlMenu {
+  NSMenu *menu = [[NSMenu alloc] initWithTitle:@"媒体"];
+  NSMenuItem *header = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"%@ — %@", [self mediaCurrentTitle], [self mediaCurrentArtist]] action:nil keyEquivalent:@""];
+  header.enabled = NO;
+  [menu addItem:header];
+  [menu addItem:[NSMenuItem separatorItem]];
+  [menu addItemWithTitle:self.mediaPlaying ? @"暂停" : @"播放" action:@selector(mediaTogglePlayPause:) keyEquivalent:@""].target = self;
+  [menu addItemWithTitle:@"上一首" action:@selector(mediaPreviousTrack:) keyEquivalent:@""].target = self;
+  [menu addItemWithTitle:@"下一首" action:@selector(mediaNextTrack:) keyEquivalent:@""].target = self;
+  [menu addItemWithTitle:@"打开播放器" action:@selector(openCurrentMediaPlayer:) keyEquivalent:@""].target = self;
+  NSMenuItem *playlistItem = [[NSMenuItem alloc] initWithTitle:@"播放列表" action:nil keyEquivalent:@""];
+  NSMenu *playlistMenu = [[NSMenu alloc] initWithTitle:@"播放列表"];
+  NSArray *names = [self mediaPlaylistNames];
+  if (names.count) {
+    for (NSString *name in names) {
+      NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:name action:@selector(playMediaPlaylistTrack:) keyEquivalent:@""];
+      it.target = self; it.representedObject = name; [playlistMenu addItem:it];
+    }
+  } else {
+    NSMenuItem *none = [[NSMenuItem alloc] initWithTitle:[self mediaAppSupportsPlaylist] ? @"无法读取播放列表" : @"当前播放器不支持播放列表" action:nil keyEquivalent:@""];
+    none.enabled = NO; [playlistMenu addItem:none];
+  }
+  playlistItem.submenu = playlistMenu;
+  [menu addItem:playlistItem];
+  NSMenuItem *playersItem = [[NSMenuItem alloc] initWithTitle:@"切换播放器" action:nil keyEquivalent:@""];
+  NSMenu *playersMenu = [[NSMenu alloc] initWithTitle:@"切换播放器"];
+  NSArray *known = @[@"com.apple.Music", @"com.spotify.client", @"com.apple.QuickTimePlayerX", @"com.colliderli.iina", @"org.videolan.vlc", @"com.apple.TV"];
+  NSMutableSet *seen = [NSMutableSet set];
+  for (NSString *bundle in known) {
+    NSArray *running = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundle];
+    NSRunningApplication *app = running.firstObject;
+    NSString *name = app.localizedName;
+    if (!name) {
+      NSURL *url = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bundle];
+      if (!url) continue;
+      name = [[NSFileManager defaultManager] displayNameAtPath:url.path];
+    }
+    if (!name || [seen containsObject:name]) continue;
+    [seen addObject:name];
+    NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:name action:@selector(switchMediaPlayer:) keyEquivalent:@""];
+    it.target = self; it.representedObject = bundle;
+    if ([bundle isEqualToString:self.mediaBundleID]) it.state = NSControlStateValueOn;
+    [playersMenu addItem:it];
+  }
+  playersItem.submenu = playersMenu;
+  [menu addItem:playersItem];
+  [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, self.mediaStatusItem.button.bounds.size.height) inView:self.mediaStatusItem.button];
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
   // 单实例：避免重复 Dock 图标/菜单栏图标
   NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
@@ -2718,6 +3150,7 @@ static void HideDockHoverTip(void) {
   self.statusItem.button.title = @"";
   self.statusItem.button.target = self;
   self.statusItem.button.action = @selector(togglePopover:);
+  [self startMediaWidget];
   NSNotificationCenter *wsnc = [[NSWorkspace sharedWorkspace] notificationCenter];
   for (NSString *n in @[NSWorkspaceDidMountNotification, NSWorkspaceDidUnmountNotification, NSWorkspaceDidRenameVolumeNotification]) {
     [wsnc addObserver:self selector:@selector(volumesChanged:) name:n object:nil];
