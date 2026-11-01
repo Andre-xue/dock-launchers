@@ -12164,22 +12164,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     title.frame = NSMakeRect(20, 450, 300, 28); [cv addSubview:title];
     NSTextField *sub = [self label:@"合并多个 PDF，或按页拆分；拖动列表或上移/下移调整合并顺序" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 428, 500, 18); [cv addSubview:sub];
-    ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 388, 100, 30)];
+    ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 388, 96, 30)];
     add.title = @"添加 PDF"; add.hoverColor = [NSColor systemBlueColor];
     add.target = self; add.action = @selector(pdfAddFiles:);
     [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
-    ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(128, 388, 70, 30)];
+    ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(122, 388, 64, 30)];
     clear.title = @"清空"; clear.hoverColor = [NSColor systemRedColor];
     clear.target = self; clear.action = @selector(pdfClear:);
     [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
-    ColorHoverButton *merge = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(400, 388, 110, 30)];
+    ColorHoverButton *merge = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(300, 388, 100, 30)];
     merge.title = @"合并 PDF"; merge.hoverColor = [NSColor systemGreenColor];
     merge.target = self; merge.action = @selector(pdfMerge:);
     [merge applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:merge];
-    ColorHoverButton *split = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(518, 388, 120, 30)];
+    ColorHoverButton *split = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(408, 388, 100, 30)];
     split.title = @"按页拆分"; split.hoverColor = [NSColor systemOrangeColor];
     split.target = self; split.action = @selector(pdfSplit:);
     [split applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:split];
+    ColorHoverButton *exportImg = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(516, 388, 120, 30)];
+    exportImg.title = @"导出图片"; exportImg.hoverColor = [NSColor systemPinkColor];
+    exportImg.target = self; exportImg.action = @selector(pdfExportImages:);
+    exportImg.toolTip = @"把选中 PDF 的指定页码导出为 PNG";
+    [exportImg applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:exportImg];
 
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 70, 628, 300)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
@@ -12350,6 +12355,39 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.pdfItems = items;
   [self.pdfTable reloadData];
   [self.pdfTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row + 1] byExtendingSelection:NO];
+}
+
+- (void)pdfExportImages:(id)sender {
+  if (!self.pdfItems.count) { [self showToast:@"请先添加 PDF"]; return; }
+  NSInteger row = self.pdfTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.pdfItems.count) row = 0;
+  NSString *path = self.pdfItems[row];
+  PDFDocument *doc = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
+  if (!doc) { [self showToast:@"PDF 读取失败"]; return; }
+  NSInteger total = doc.pageCount;
+  NSInteger start = self.pdfStartField.integerValue; if (start <= 0) start = 1;
+  NSInteger end = self.pdfEndField.integerValue; if (end <= 0) end = total;
+  start = MAX(1, MIN(start, total)); end = MAX(1, MIN(end, total));
+  if (start > end) { NSInteger t = start; start = end; end = t; }
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = NO; p.canChooseDirectories = YES; p.allowsMultipleSelection = NO;
+  p.message = @"选择图片保存文件夹";
+  if ([p runModal] != NSModalResponseOK) return;
+  NSString *base = path.lastPathComponent.stringByDeletingPathExtension;
+  NSInteger made = 0;
+  for (NSInteger i = start - 1; i < end; i++) {
+    PDFPage *page = [doc pageAtIndex:i];
+    if (!page) continue;
+    NSImage *img = [page thumbnailOfSize:NSMakeSize(1600, 2200) forBox:kPDFDisplayBoxMediaBox];
+    if (!img) continue;
+    NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:[img TIFFRepresentation]];
+    NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    if (!png) continue;
+    NSString *name = [NSString stringWithFormat:@"%@_第%ld页.png", base, (long)(i + 1)];
+    if ([png writeToFile:[p.URL.path stringByAppendingPathComponent:name] atomically:YES]) made++;
+  }
+  [self showToast:[NSString stringWithFormat:@"已导出 %ld 张图片", (long)made]];
+  if (made > 0) [[NSWorkspace sharedWorkspace] openURL:p.URL];
 }
 
 - (void)pdfExtractPages:(id)sender {
