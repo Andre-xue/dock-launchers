@@ -23,6 +23,7 @@
 #import <NaturalLanguage/NaturalLanguage.h>
 #import <Carbon/Carbon.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
 
@@ -628,6 +629,161 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 }
 @end
 
+@interface DLRegionSelectView : NSView
+@property NSPoint startPoint;
+@property NSRect selection;
+@property (copy) void (^onComplete)(NSRect rect);
+@property (copy) void (^onCancel)(void);
+@end
+@implementation DLRegionSelectView
+- (BOOL)acceptsFirstResponder { return YES; }
+- (void)mouseDown:(NSEvent *)event {
+  self.startPoint = [self convertPoint:event.locationInWindow fromView:nil];
+  self.selection = NSZeroRect;
+  [self setNeedsDisplay:YES];
+}
+- (void)mouseDragged:(NSEvent *)event {
+  NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+  self.selection = NSMakeRect(MIN(self.startPoint.x, p.x), MIN(self.startPoint.y, p.y), fabs(p.x - self.startPoint.x), fabs(p.y - self.startPoint.y));
+  [self setNeedsDisplay:YES];
+}
+- (void)mouseUp:(NSEvent *)event {
+  if (self.selection.size.width < 12 || self.selection.size.height < 12) {
+    if (self.onCancel) self.onCancel();
+    return;
+  }
+  NSRect screenRect = [self.window convertRectToScreen:self.selection];
+  if (self.onComplete) self.onComplete(screenRect);
+}
+- (void)drawRect:(NSRect)dirtyRect {
+  [[NSColor colorWithCalibratedWhite:0 alpha:0.22] setFill];
+  NSBezierPath *all = [NSBezierPath bezierPathWithRect:self.bounds];
+  if (self.selection.size.width > 0 && self.selection.size.height > 0) {
+    [all appendBezierPathWithRect:self.selection];
+    all.windingRule = NSWindingRuleEvenOdd;
+  }
+  [all fill];
+  if (self.selection.size.width > 0) {
+    [[NSColor whiteColor] setStroke];
+    NSBezierPath *border = [NSBezierPath bezierPathWithRect:self.selection];
+    border.lineWidth = 2; [border stroke];
+    NSString *tip = @"拖动选择录屏区域，松开开始";
+    [tip drawAtPoint:NSMakePoint(self.selection.origin.x, self.selection.origin.y + self.selection.size.height + 8) withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor whiteColor]}];
+  }
+}
+@end
+
+typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordSceneWindow = 1, DLRecordSceneApplication = 2, DLRecordSceneRegion = 3 };
+
+@interface DLScreenRecorder : NSObject <SCStreamDelegate, SCRecordingOutputDelegate, SCContentSharingPickerObserver>
+@property (strong) SCStream *stream;
+@property (strong) SCRecordingOutput *recordingOutput;
+@property (strong) NSURL *outputURL;
+@property (strong) SCContentSharingPicker *picker;
+@property (copy) void (^onStarted)(void);
+@property (copy) void (^onFinished)(NSURL *url, NSError *error);
+@property NSInteger scene;
+@property NSInteger seconds;
+@property NSRect region;
+@property BOOL finished;
+@property (strong) dispatch_block_t stopWork;
+- (void)startWithScene:(NSInteger)scene seconds:(NSInteger)seconds region:(NSRect)region url:(NSURL *)url;
+- (void)stop;
+@end
+@implementation DLScreenRecorder
+- (void)startWithScene:(NSInteger)scene seconds:(NSInteger)seconds region:(NSRect)region url:(NSURL *)url {
+  self.scene = scene; self.seconds = seconds; self.region = region; self.outputURL = url; self.finished = NO;
+  if (scene == DLRecordSceneWindow || scene == DLRecordSceneApplication) {
+    self.picker = [SCContentSharingPicker sharedPicker];
+    SCContentSharingPickerConfiguration *cfg = [[SCContentSharingPickerConfiguration alloc] init];
+    cfg.allowedPickerModes = scene == DLRecordSceneWindow ? SCContentSharingPickerModeSingleWindow : SCContentSharingPickerModeSingleApplication;
+    cfg.allowsChangingSelectedContent = NO;
+    self.picker.defaultConfiguration = cfg;
+    self.picker.active = YES;
+    [self.picker addObserver:self];
+    [self.picker presentPickerUsingContentStyle:(scene == DLRecordSceneWindow ? SCShareableContentStyleWindow : SCShareableContentStyleApplication)];
+    return;
+  }
+  [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *error) {
+    if (error || !content.displays.count) { [self finishWithError:error ?: [NSError errorWithDomain:@"DockLaunchers" code:1 userInfo:@{NSLocalizedDescriptionKey:@"无法访问屏幕内容，请允许屏幕录制权限"}]]; return; }
+    SCDisplay *display = content.displays.firstObject;
+    SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+    SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
+    config.showsCursor = YES;
+    config.minimumFrameInterval = CMTimeMake(1, 30);
+    config.capturesAudio = NO;
+    config.captureMicrophone = NO;
+    if (scene == DLRecordSceneRegion && region.size.width > 1) {
+      config.sourceRect = CGRectMake(region.origin.x - display.frame.origin.x, display.frame.size.height - (region.origin.y - display.frame.origin.y + region.size.height), region.size.width, region.size.height);
+      CGFloat scale = MIN(1.0, MIN(1920.0 / MAX(1.0, region.size.width), 1080.0 / MAX(1.0, region.size.height)));
+      config.width = MAX(2, (size_t)llround(region.size.width * scale));
+      config.height = MAX(2, (size_t)llround(region.size.height * scale));
+    } else {
+      CGFloat aspect = display.frame.size.height > 0 ? display.frame.size.width / display.frame.size.height : 16.0/9.0;
+      config.height = 1080;
+      config.width = MIN(1920, MAX(640, (size_t)llround(1080.0 * aspect)));
+    }
+    [self startStreamWithFilter:filter configuration:config];
+  }];
+}
+
+- (void)startStreamWithFilter:(SCContentFilter *)filter configuration:(SCStreamConfiguration *)config {
+  SCRecordingOutputConfiguration *rc = [[SCRecordingOutputConfiguration alloc] init];
+  rc.outputURL = self.outputURL;
+  rc.videoCodecType = AVVideoCodecTypeH264;
+  rc.outputFileType = AVFileTypeMPEG4;
+  self.recordingOutput = [[SCRecordingOutput alloc] initWithConfiguration:rc delegate:self];
+  NSError *err = nil;
+  SCStream *stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:self];
+  if (![stream addRecordingOutput:self.recordingOutput error:&err]) { [self finishWithError:err]; return; }
+  self.stream = stream;
+  __weak typeof(self) weakSelf = self;
+  [stream startCaptureWithCompletionHandler:^(NSError *error) {
+    if (error) { [weakSelf finishWithError:error]; return; }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (weakSelf.onStarted) weakSelf.onStarted();
+      if (weakSelf.seconds > 0) {
+        weakSelf.stopWork = dispatch_block_create(0, ^{ [weakSelf stop]; });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(weakSelf.seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), weakSelf.stopWork);
+      }
+    });
+  }];
+}
+
+- (void)stop {
+  if (!self.stream) return;
+  [self.stream stopCaptureWithCompletionHandler:nil];
+}
+
+- (void)finishWithError:(NSError *)error {
+  if (self.finished) return;
+  self.finished = YES;
+  if (self.stopWork) dispatch_block_cancel(self.stopWork);
+  if (self.onFinished) self.onFinished(self.outputURL, error);
+}
+
+- (void)recordingOutputDidStartRecording:(SCRecordingOutput *)recordingOutput {}
+- (void)recordingOutputDidFinishRecording:(SCRecordingOutput *)recordingOutput { [self finishWithError:nil]; }
+- (void)recordingOutput:(SCRecordingOutput *)recordingOutput didFailWithError:(NSError *)error { [self finishWithError:error]; }
+- (void)stream:(SCStream *)stream didStopWithError:(NSError *)error { if (error) [self finishWithError:error]; }
+- (void)contentSharingPicker:(SCContentSharingPicker *)picker didUpdateWithFilter:(SCContentFilter *)filter forStream:(SCStream *)stream {
+  [picker removeObserver:self];
+  SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
+  config.showsCursor = YES;
+  config.minimumFrameInterval = CMTimeMake(1, 30);
+  config.capturesAudio = NO;
+  config.captureMicrophone = NO;
+  config.width = 1920;
+  config.height = 1080;
+  [self startStreamWithFilter:filter configuration:config];
+}
+- (void)contentSharingPicker:(SCContentSharingPicker *)picker didCancelForStream:(SCStream *)stream {
+  [picker removeObserver:self];
+  [self finishWithError:[NSError errorWithDomain:@"DockLaunchers" code:2 userInfo:@{NSLocalizedDescriptionKey:@"已取消选择录制内容"}]];
+}
+- (void)contentSharingPickerStartDidFailWithError:(NSError *)error { [self finishWithError:error]; }
+@end
+
 @interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate>
 - (void)hideClipboardPreview;
 - (void)installClipboardHoverMonitor;
@@ -774,7 +930,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSArray *captureHistoryItems;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
-@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup;
+@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup;
+@property (strong) DLScreenRecorder *captureRecorder;
+@property (strong) NSWindow *captureRegionWindow;
 @property (strong) ColorHoverButton *captureRecordButton;
 @property BOOL captureRecording;
 @property (strong) NSButton *captureCopyCheck;
@@ -16138,40 +16296,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
 }
 
-- (void)quickScreenshot:(id)sender {
-  NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
-  NSTask *t = [[NSTask alloc] init];
-  t.launchPath = @"/usr/sbin/screencapture";
-  t.arguments = @[@"-i", @"-x", path];
-  t.terminationHandler = ^(NSTask *task) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-      if (task.terminationStatus == 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
-        NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
-        if (img) { [[NSPasteboard generalPasteboard] clearContents]; [[NSPasteboard generalPasteboard] writeObjects:@[img]]; }
-        [self showToast:@"截图已保存并复制"];
-      } else {
-        [self showToast:@"截图已取消或没有屏幕录制权限"];
-      }
-    });
-  };
-  @try { [t launch]; } @catch (NSException *e) { [self showToast:@"无法启动截图"]; }
-}
-
-- (void)quickRecord:(id)sender {
-  NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mov", [self captureTimestamp]]];
-  NSTask *t = [[NSTask alloc] init];
-  t.launchPath = @"/usr/sbin/screencapture";
-  t.arguments = @[@"-v", @"-V", @"30", path];
-  t.terminationHandler = ^(NSTask *task) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-      if (task.terminationStatus == 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]) [self showToast:@"录屏已保存"];
-      else [self showToast:@"录屏已取消或没有屏幕录制权限"];
-    });
-  };
-  [self showToast:@"开始录制，30 秒后自动结束"];
-  @try { [t launch]; } @catch (NSException *e) { [self showToast:@"无法启动录屏"]; }
-}
-
 - (void)showCaptureHistory:(id)sender {
   if (!self.captureHistoryWindow) {
     self.captureHistoryWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,700,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -16323,6 +16447,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
     }
+    NSTextField *sceneLabel = [self label:@"场景" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    sceneLabel.frame = NSMakeRect(418, 312, 32, 18); [cv addSubview:sceneLabel];
+    self.captureScenePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(452, 306, 100, 26) pullsDown:NO];
+    [self.captureScenePopup addItemsWithTitles:@[@"全屏", @"窗口", @"应用程序", @"区域"]];
+    [cv addSubview:self.captureScenePopup];
     NSTextField *dl = [self label:@"延迟" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     dl.frame = NSMakeRect(20, 270, 40, 18); [cv addSubview:dl];
     self.captureDelayPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(64, 264, 100, 26) pullsDown:NO];
@@ -16446,40 +16575,116 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return [df stringFromDate:[NSDate date]];
 }
 
-- (void)captureVideo:(id)sender {
-  if (self.captureRecording) {
-    [self.captureTask interrupt];
-    self.captureStatusLabel.stringValue = @"正在停止录屏…";
-    return;
-  }
-  if (self.captureTask && self.captureTask.isRunning) { [self showToast:@"正在录制中"]; return; }
+- (void)beginCaptureRegion:(void (^)(NSRect region))completion {
+  NSScreen *screen = [NSScreen mainScreen];
+  NSRect frame = screen.frame;
+  NSWindow *w = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+  w.opaque = NO;
+  w.backgroundColor = [NSColor colorWithCalibratedWhite:0 alpha:0.18];
+  w.level = NSScreenSaverWindowLevel;
+  w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+  DLRegionSelectView *view = [[DLRegionSelectView alloc] initWithFrame:NSMakeRect(0,0,frame.size.width,frame.size.height)];
+  __weak typeof(self) weakSelf = self;
+  view.onComplete = ^(NSRect rect) {
+    [w orderOut:nil];
+    weakSelf.captureRegionWindow = nil;
+    if (completion) completion(rect);
+  };
+  view.onCancel = ^{
+    [w orderOut:nil];
+    weakSelf.captureRegionWindow = nil;
+    weakSelf.captureStatusLabel.stringValue = @"已取消区域选择";
+  };
+  w.contentView = view;
+  self.captureRegionWindow = w;
+  [NSApp activateIgnoringOtherApps:YES];
+  [w makeKeyAndOrderFront:nil];
+  [w makeFirstResponder:view];
+}
+
+- (void)startCaptureRecorderWithScene:(NSInteger)scene region:(NSRect)region {
+  if (!self.captureRecorder) self.captureRecorder = [[DLScreenRecorder alloc] init];
   NSInteger seconds = [self.captureDurationPopup.selectedItem.representedObject integerValue];
-  NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mov", [self captureTimestamp]]];
-  NSTask *t = [[NSTask alloc] init];
-  t.launchPath = @"/usr/sbin/screencapture";
-  NSMutableArray *args = [NSMutableArray arrayWithObject:@"-v"];
-  if (seconds > 0) [args addObjectsFromArray:@[@"-V", [NSString stringWithFormat:@"%ld", (long)seconds]]];
-  [args addObject:path];
-  t.arguments = args;
-  self.captureTask = t;
+  NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mp4", [self captureTimestamp]]];
   self.captureRecording = YES;
   self.captureRecordButton.title = @"停止录屏";
   self.captureRecordButton.hoverColor = [NSColor systemOrangeColor];
-  self.captureStatusLabel.stringValue = seconds > 0 ? [NSString stringWithFormat:@"正在录制，%ld 秒后自动停止…", (long)seconds] : @"正在录制，点「停止录屏」结束";
+  self.captureStatusLabel.stringValue = @"正在启动录屏…";
+  __weak typeof(self) weakSelf = self;
+  DLScreenRecorder *rec = self.captureRecorder;
+  rec.onStarted = ^{
+    dispatch_async(dispatch_get_main_queue(), ^{
+      weakSelf.captureStatusLabel.stringValue = seconds > 0 ? [NSString stringWithFormat:@"正在录制，%ld 秒后自动停止…", (long)seconds] : @"正在录制，点「停止录屏」结束";
+    });
+  };
+  rec.onFinished = ^(NSURL *url, NSError *error) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      weakSelf.captureRecording = NO;
+      weakSelf.captureRecordButton.title = @"开始录屏";
+      weakSelf.captureRecordButton.hoverColor = [NSColor systemRedColor];
+      if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        weakSelf.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
+        [weakSelf showToast:@"录屏已保存"];
+      } else if (error) {
+        weakSelf.captureStatusLabel.stringValue = error.localizedDescription ?: @"录屏失败";
+        [weakSelf showToast:error.localizedDescription ?: @"录屏失败"];
+      } else {
+        weakSelf.captureStatusLabel.stringValue = @"录屏已取消";
+      }
+      weakSelf.captureRecorder = nil;
+    });
+  };
+  [rec startWithScene:scene seconds:seconds region:region url:[NSURL fileURLWithPath:path]];
+}
+
+- (void)captureVideo:(id)sender {
+  if (self.captureRecording) {
+    [self.captureRecorder stop];
+    self.captureStatusLabel.stringValue = @"正在停止录屏…";
+    return;
+  }
+  NSInteger scene = self.captureScenePopup.indexOfSelectedItem;
+  if (scene == 3) {
+    __weak typeof(self) weakSelf = self;
+    [self beginCaptureRegion:^(NSRect region) {
+      if (region.size.width < 12 || region.size.height < 12) return;
+      [weakSelf startCaptureRecorderWithScene:3 region:region];
+    }];
+    return;
+  }
+  [self startCaptureRecorderWithScene:scene region:NSZeroRect];
+}
+
+- (void)quickScreenshot:(id)sender {
+  NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/sbin/screencapture";
+  t.arguments = @[@"-i", @"-x", path];
   t.terminationHandler = ^(NSTask *task) {
     dispatch_async(dispatch_get_main_queue(), ^{
-      self.captureRecording = NO;
-      self.captureRecordButton.title = @"开始录屏";
-      self.captureRecordButton.hoverColor = [NSColor systemRedColor];
-      if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
-        self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
-        [self showToast:@"录屏已保存"];
+      if (task.terminationStatus == 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+        if (img) { [[NSPasteboard generalPasteboard] clearContents]; [[NSPasteboard generalPasteboard] writeObjects:@[img]]; }
+        [self showToast:@"截图已保存并复制"];
       } else {
-        self.captureStatusLabel.stringValue = @"录屏已取消，或没有屏幕录制权限";
+        [self showToast:@"截图已取消或没有屏幕录制权限"];
       }
     });
   };
-  @try { [t launch]; } @catch (NSException *e) { self.captureRecording = NO; self.captureRecordButton.title = @"开始录屏"; self.captureStatusLabel.stringValue = @"无法启动录屏"; }
+  @try { [t launch]; } @catch (NSException *e) { [self showToast:@"无法启动截图"]; }
+}
+
+- (void)quickRecord:(id)sender {
+  NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mp4", [self captureTimestamp]]];
+  DLScreenRecorder *rec = [[DLScreenRecorder alloc] init];
+  rec.onFinished = ^(NSURL *url, NSError *error) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if ([[NSFileManager defaultManager] fileExistsAtPath:path]) [self showToast:@"录屏已保存"];
+      else [self showToast:error.localizedDescription ?: @"录屏已取消"];
+    });
+  };
+  [rec startWithScene:0 seconds:30 region:NSZeroRect url:[NSURL fileURLWithPath:path]];
+  [self showToast:@"开始录制，30 秒后自动结束"];
 }
 
 - (void)showGroupPanel:(id)sender {
