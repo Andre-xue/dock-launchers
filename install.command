@@ -139,6 +139,8 @@ sign_app "$RECOVER_APP"
 
 # 安装菜单栏控制台（若已构建）
 if [ -d "$ROOT/build/DockLaunchers控制台.app" ]; then
+  pkill -f "$HOME/Applications/DockLaunchers控制台.app/Contents/MacOS/DockLaunchers" 2>/dev/null || true
+  sleep 1
   rm -rf "$HOME/Applications/DockLaunchers控制台.app"
   cp -R "$ROOT/build/DockLaunchers控制台.app" "$HOME/Applications/"
   sign_app "$HOME/Applications/DockLaunchers控制台.app"
@@ -152,7 +154,7 @@ if [ -d "$ROOT/build/DockLaunchers控制台.app" ]; then
 <key>Label</key><string>com.docklaunchers.center</string>
 <key>ProgramArguments</key><array><string>$HOME/Applications/DockLaunchers控制台.app/Contents/MacOS/DockLaunchers</string></array>
 <key>RunAtLoad</key><true/>
-<key>KeepAlive</key><false/>
+<key>KeepAlive</key><true/>
 </dict></plist>
 PLIST
   launchctl unload "$AGENT" 2>/dev/null || true
