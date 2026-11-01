@@ -2577,16 +2577,8 @@ static void HideDockHoverTip(void) {
   if (!self.pinnedWindows) self.pinnedWindows = [NSMutableSet set];
   NSValue *key = [NSValue valueWithNonretainedObject:w];
   BOOL pinned = [self.pinnedWindows containsObject:key];
-  if (pinned) {
-    [self.pinnedWindows removeObject:key];
-    w.level = NSNormalWindowLevel;
-    sender.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"钉住"];
-    sender.contentTintColor = [NSColor systemOrangeColor];
-    sender.layer.backgroundColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.16].CGColor;
-    sender.layer.borderColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.65].CGColor;
-    sender.layer.shadowOpacity = 0.28;
-    sender.toolTip = @"钉住窗口";
-  } else {
+  BOOL nowPinned = !pinned;
+  if (nowPinned) {
     [self.pinnedWindows addObject:key];
     w.level = NSFloatingWindowLevel;
     sender.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"已钉住"];
@@ -2595,10 +2587,19 @@ static void HideDockHoverTip(void) {
     sender.layer.borderColor = [NSColor systemOrangeColor].CGColor;
     sender.layer.shadowOpacity = 0.5;
     sender.toolTip = @"已钉住，点击取消钉住";
+  } else {
+    [self.pinnedWindows removeObject:key];
+    w.level = NSNormalWindowLevel;
+    sender.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"钉住"];
+    sender.contentTintColor = [NSColor systemOrangeColor];
+    sender.layer.backgroundColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.16].CGColor;
+    sender.layer.borderColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.65].CGColor;
+    sender.layer.shadowOpacity = 0.28;
+    sender.toolTip = @"钉住窗口";
   }
   NSButton *close = [w standardWindowButton:NSWindowCloseButton];
-  if (close) close.enabled = !pinned;
-  [self showToast:(pinned ? @"窗口已取消钉住，可以关闭" : @"窗口已钉住，关闭按钮暂不可用")];
+  if (close) close.enabled = !nowPinned;
+  [self showToast:(nowPinned ? @"窗口已钉住，关闭按钮暂不可用" : @"窗口已取消钉住，可以关闭")];
 }
 
 - (BOOL)windowShouldClose:(NSWindow *)sender {
