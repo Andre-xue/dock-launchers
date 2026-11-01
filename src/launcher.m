@@ -730,6 +730,11 @@ static NSColor *ThemeSel(NSInteger t) {
   NSMenuItem *rm = [[NSMenuItem alloc] initWithTitle:@"从分组移除" action:@selector(contextRemoveFromGroup:) keyEquivalent:@""];
   rm.target = self; rm.tag = self.idx; [m addItem:rm];
   [m addItem:[NSMenuItem separatorItem]];
+  NSMenuItem *reveal = [[NSMenuItem alloc] initWithTitle:@"在 Finder 中显示" action:@selector(contextRevealInFinder:) keyEquivalent:@""];
+  reveal.target = self; reveal.tag = self.idx; [m addItem:reveal];
+  NSMenuItem *copyPath = [[NSMenuItem alloc] initWithTitle:@"复制应用路径" action:@selector(contextCopyAppPath:) keyEquivalent:@""];
+  copyPath.target = self; copyPath.tag = self.idx; [m addItem:copyPath];
+  [m addItem:[NSMenuItem separatorItem]];
   NSMenuItem *di = [[NSMenuItem alloc] initWithTitle:@"从 Dock 导入应用…" action:@selector(contextDockImport:) keyEquivalent:@""];
   di.target = self; [m addItem:di];
   [NSMenu popUpContextMenu:m withEvent:event forView:self];
@@ -739,6 +744,17 @@ static NSColor *ThemeSel(NSInteger t) {
 }
 - (void)contextDockImport:(NSMenuItem *)item {
   [self.ctrl performSelector:@selector(importAppsFromDock:) withObject:nil];
+}
+- (void)contextRevealInFinder:(NSMenuItem *)item {
+  NSString *path = ResolveAppPath(self.targetPath) ?: self.targetPath;
+  if (!path.length) return;
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];
+}
+- (void)contextCopyAppPath:(NSMenuItem *)item {
+  NSString *path = ResolveAppPath(self.targetPath) ?: self.targetPath;
+  if (!path.length) return;
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:path forType:NSPasteboardTypeString];
 }
 - (void)contextRemoveFromGroup:(NSMenuItem *)item {
   [self.ctrl performSelector:@selector(removeRowAtIndex:) withObject:@(item.tag)];
