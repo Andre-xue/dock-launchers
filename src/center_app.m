@@ -2757,7 +2757,15 @@ static void HideDockHoverTip(void) {
   [self pollMediaNowPlaying];
 }
 
+- (BOOL)preferAppleScriptMedia {
+  return self.mediaUsingFallback ||
+    [self.mediaBundleID isEqualToString:@"com.apple.Music"] ||
+    [self.mediaBundleID isEqualToString:@"com.spotify.client"] ||
+    [self.mediaBundleID isEqualToString:@"com.apple.QuickTimePlayerX"];
+}
+
 - (void)pollMediaNowPlaying {
+  if ([self preferAppleScriptMedia]) { [self pollFallbackMedia]; return; }
   if (self.mediaPollInFlight || !self.mediaGetInfoFn) return;
   self.mediaPollInFlight = YES;
   DLMRInfoFn getInfo = (DLMRInfoFn)self.mediaGetInfoFn;
@@ -3538,7 +3546,8 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
   NSString *appName = [self.mediaBundleID isEqualToString:@"com.apple.Music"] ? @"Music" : @"Spotify";
   NSString *script = [NSString stringWithFormat:@"tell application \"%@\" to play track \"%@\"", appName, escaped];
   [self runOsascript:script];
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self pollMediaNowPlaying]; });
+  self.mediaArtworkKey = nil;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self pollFallbackMedia]; });
 }
 
 - (void)switchMediaPlayer:(NSMenuItem *)item {
