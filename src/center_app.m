@@ -1033,6 +1033,14 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSView *mediaCard;
 @property (strong) NSImageView *mediaCardArt;
 @property (strong) NSTextField *mediaCardPlayer, *mediaCardArtist, *mediaCardTime;
+@property (strong) NSScrollView *mediaCardLyricsScroll;
+@property (strong) NSTextView *mediaCardLyricsView;
+@property (strong) NSButton *mediaCardFavoriteButton;
+@property BOOL mediaCardShowingLyrics;
+@property (strong) NSString *mediaLyricsCacheKey;
+@property (strong) NSString *mediaLyricsCacheText;
+@property BOOL mediaFavoriteState;
+@property (strong) NSString *mediaFavoriteCacheKey;
 @property (strong) NSButton *mediaCardTitleButton, *mediaCardPlayButton;
 @property (strong) NSSlider *mediaCardProgress;
 @property (strong) NSArray *mediaPlaylistCache;
@@ -2858,6 +2866,24 @@ static void HideDockHoverTip(void) {
   art.layer.masksToBounds = YES;
   [card addSubview:art];
   self.mediaCardArt = art;
+  NSClickGestureRecognizer *artClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(toggleMediaLyrics:)];
+  [art addGestureRecognizer:artClick];
+  art.toolTip = @"点击显示歌词";
+
+  NSScrollView *lyricsScroll = [[NSScrollView alloc] initWithFrame:art.frame];
+  lyricsScroll.hasVerticalScroller = YES;
+  lyricsScroll.drawsBackground = NO;
+  lyricsScroll.borderType = NSNoBorder;
+  lyricsScroll.hidden = YES;
+  NSTextView *lyrics = [[NSTextView alloc] initWithFrame:NSMakeRect(0,0,art.frame.size.width,art.frame.size.height)];
+  lyrics.editable = NO; lyrics.selectable = YES; lyrics.drawsBackground = NO;
+  lyrics.font = [NSFont systemFontOfSize:13 weight:NSFontWeightRegular];
+  lyrics.textColor = [NSColor labelColor];
+  lyrics.textContainerInset = NSMakeSize(4, 8);
+  lyricsScroll.documentView = lyrics;
+  [card addSubview:lyricsScroll];
+  self.mediaCardLyricsScroll = lyricsScroll;
+  self.mediaCardLyricsView = lyrics;
 
   NSButton *titleBtn = [NSButton buttonWithTitle:@"" target:self action:@selector(openCurrentMediaPlayer:)];
   titleBtn.frame = NSMakeRect(18, 136, 284, 28);
@@ -2883,8 +2909,10 @@ static void HideDockHoverTip(void) {
   NSButton *prev = [self mediaIconButton:@"backward.fill" action:@selector(mediaPreviousTrack:) frame:NSMakeRect(82, 20, 38, 34)];
   NSButton *play = [self mediaIconButton:@"pause.fill" action:@selector(mediaTogglePlayPause:) frame:NSMakeRect(141, 16, 44, 42)];
   NSButton *next = [self mediaIconButton:@"forward.fill" action:@selector(mediaNextTrack:) frame:NSMakeRect(206, 20, 38, 34)];
-  [card addSubview:prev]; [card addSubview:play]; [card addSubview:next];
+  NSButton *fav = [self mediaIconButton:@"heart" action:@selector(toggleMediaFavorite:) frame:NSMakeRect(268, 20, 34, 34)];
+  [card addSubview:prev]; [card addSubview:play]; [card addSubview:next]; [card addSubview:fav];
   self.mediaCardPlayButton = play;
+  self.mediaCardFavoriteButton = fav;
 
   NSViewController *vc = [[NSViewController alloc] init];
   vc.view = card;
@@ -2909,6 +2937,46 @@ static void HideDockHoverTip(void) {
   return img;
 }
 
+- (void)toggleMediaLyrics:(id)sender {
+  if (!self.mediaPopover) return;
+  self.mediaCardShowingLyrics = !self.mediaCardShowingLyrics;
+  self.mediaCardArt.hidden = self.mediaCardShowingLyrics;
+  self.mediaCardLyricsScroll.hidden = !self.mediaCardShowingLyrics;
+  if (self.mediaCardShowingLyrics) {
+    NSString *key = [NSString stringWithFormat:@"%@|%@", [self mediaCurrentTitle], [self mediaCurrentArtist]];
+    if ([self.mediaLyricsCacheKey isEqualToString:key] && self.mediaLyricsCacheText.length) {
+      self.mediaCardLyricsView.string = self.mediaLyricsCacheText;
+      return;
+    }
+    if (![self.mediaBundleID isEqualToString:@"com.apple.Music"]) {
+      self.mediaCardLyricsView.string = @"当前播放器不支持歌词显示";
+      return;
+    }
+    NSString *out = [self runOsascript:@"tell application \"Music\"\nif it is running then\nreturn lyrics of current track\nend if\nend tell"];
+    if (out.length) {
+      self.mediaLyricsCacheKey = key;
+      self.mediaLyricsCacheText = out;
+      self.mediaCardLyricsView.string = out;
+    } else {
+      self.mediaCardLyricsView.string = @"暂无歌词";
+    }
+  }
+}
+
+- (void)toggleMediaFavorite:(id)sender {
+  if ([self.mediaBundleID isEqualToString:@"com.apple.Music"]) {
+    NSString *out = [self runOsascript:@"tell application \"Music\"\nif it is running then\nset favorited of current track to not (favorited of current track)\nreturn favorited of current track\nend if\nend tell"];
+    self.mediaFavoriteState = [out.lowercaseString containsString:@"true"];
+  } else if ([self.mediaBundleID isEqualToString:@"com.spotify.client"]) {
+    [self runOsascript:@"tell application \"Spotify\"\nif it is running then\nset starred of current track to not (starred of current track)\nend if\nend tell"];
+    self.mediaFavoriteState = !self.mediaFavoriteState;
+  } else {
+    [self showToast:@"当前播放器不支持收藏"];
+    return;
+  }
+  [self updateMediaCard];
+}
+
 - (void)updateMediaCard {
   if (!self.mediaPopover) return;
   NSString *title = [self mediaCurrentTitle];
@@ -2918,6 +2986,24 @@ static void HideDockHoverTip(void) {
   NSRunningApplication *app = self.mediaPID > 0 ? [NSRunningApplication runningApplicationWithProcessIdentifier:self.mediaPID] : nil;
   self.mediaCardPlayer.stringValue = app.localizedName ?: @"正在播放";
   self.mediaCardPlayButton.image = [NSImage imageWithSystemSymbolName:(self.mediaPlaying ? @"pause.fill" : @"play.fill") accessibilityDescription:nil];
+  NSString *favKey = [NSString stringWithFormat:@"%@|%@|%@", self.mediaBundleID ?: @"", title, artist];
+  if (![self.mediaFavoriteCacheKey isEqualToString:favKey]) {
+    self.mediaFavoriteCacheKey = favKey;
+    self.mediaFavoriteState = NO;
+    if ([self.mediaBundleID isEqualToString:@"com.apple.Music"]) {
+      NSString *out = [self runOsascript:@"tell application \"Music\"\nif it is running then\nreturn favorited of current track\nend if\nend tell"];
+      self.mediaFavoriteState = [out.lowercaseString containsString:@"true"];
+    }
+  }
+  self.mediaCardFavoriteButton.image = [NSImage imageWithSystemSymbolName:(self.mediaFavoriteState ? @"heart.fill" : @"heart") accessibilityDescription:nil];
+  self.mediaCardFavoriteButton.contentTintColor = self.mediaFavoriteState ? [NSColor systemPinkColor] : nil;
+  if (self.mediaCardShowingLyrics) {
+    self.mediaCardArt.hidden = YES;
+    self.mediaCardLyricsScroll.hidden = NO;
+  } else {
+    self.mediaCardArt.hidden = NO;
+    self.mediaCardLyricsScroll.hidden = YES;
+  }
   NSData *artData = self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoArtworkData"];
   if ([artData isKindOfClass:[NSData class]] && artData.length) {
     NSImage *img = [[NSImage alloc] initWithData:artData];
