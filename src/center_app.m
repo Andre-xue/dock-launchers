@@ -1175,7 +1175,13 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property BOOL captureCameraComposing;
 @property (strong) NSWindow *captureCameraWindow, *captureCountdownWindow;
 @property (strong) NSTextField *captureCountdownLabel;
-@property (strong) NSTimer *captureCountdownTimer;
+@property (strong) NSTimer *captureCountdownTimer, *captureHUDTimer;
+@property (strong) NSPanel *captureHUDWindow;
+@property (strong) NSTextField *captureHUDLabel;
+@property (strong) NSButton *captureHUDPauseButton;
+@property (strong) NSDate *captureHUDStartDate;
+@property NSTimeInterval captureHUDPausedElapsed;
+@property BOOL captureHUDPaused;
 @property NSInteger captureCountdownRemaining;
 @property (strong) AVCaptureVideoPreviewLayer *captureCameraLayer;
 @property (strong) ColorHoverButton *captureRecordButton, *capturePauseButton;
@@ -17785,6 +17791,76 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
 }
 
+- (void)startCaptureHUD {
+  [self stopCaptureHUD];
+  NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,230,48) styleMask:NSWindowStyleMaskBorderless|NSWindowStyleMaskNonactivatingPanel backing:NSBackingStoreBuffered defer:NO];
+  p.opaque = NO;
+  p.backgroundColor = [NSColor colorWithCalibratedWhite:0.08 alpha:0.86];
+  p.level = NSFloatingWindowLevel;
+  p.hasShadow = YES;
+  p.sharingType = NSWindowSharingNone;
+  p.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+  p.movableByWindowBackground = YES;
+  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,230,48)];
+  v.wantsLayer = YES;
+  v.layer.cornerRadius = 12;
+  v.layer.masksToBounds = YES;
+  NSTextField *lab = [self label:@"00:00" size:15 bold:YES color:[NSColor whiteColor]];
+  lab.frame = NSMakeRect(14, 14, 96, 20); lab.tag = 100;
+  [v addSubview:lab];
+  NSButton *pause = [NSButton buttonWithTitle:@"暂停" target:self action:@selector(hudPause:)];
+  pause.frame = NSMakeRect(112, 10, 56, 28);
+  pause.bezelStyle = NSBezelStyleRounded;
+  [v addSubview:pause];
+  NSButton *stop = [NSButton buttonWithTitle:@"停止" target:self action:@selector(hudStop:)];
+  stop.frame = NSMakeRect(170, 10, 54, 28);
+  stop.bezelStyle = NSBezelStyleRounded;
+  [v addSubview:stop];
+  p.contentView = v;
+  NSRect vis = [NSScreen mainScreen].visibleFrame;
+  [p setFrameOrigin:NSMakePoint(NSMaxX(vis) - 250, NSMaxY(vis) - 64)];
+  self.captureHUDWindow = p;
+  self.captureHUDLabel = lab;
+  self.captureHUDPauseButton = pause;
+  self.captureHUDStartDate = [NSDate date];
+  self.captureHUDPaused = NO;
+  self.captureHUDPausedElapsed = 0;
+  [p orderFrontRegardless];
+  __weak typeof(self) weakSelf = self;
+  self.captureHUDTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *timer) {
+    if (!weakSelf.captureHUDWindow) return;
+    NSTimeInterval elapsed = weakSelf.captureHUDPaused ? weakSelf.captureHUDPausedElapsed : [[NSDate date] timeIntervalSinceDate:weakSelf.captureHUDStartDate];
+    NSInteger sec = MAX(0, (NSInteger)elapsed);
+    weakSelf.captureHUDLabel.stringValue = [NSString stringWithFormat:@"%02ld:%02ld", (long)(sec/60), (long)(sec%60)];
+  }];
+}
+
+- (void)stopCaptureHUD {
+  [self.captureHUDTimer invalidate]; self.captureHUDTimer = nil;
+  [self.captureHUDWindow orderOut:nil];
+  self.captureHUDWindow = nil;
+  self.captureHUDLabel = nil;
+  self.captureHUDPauseButton = nil;
+}
+
+- (void)hudPause:(id)sender {
+  if (!self.captureRecording) return;
+  [self pauseCapture:nil];
+  if (self.capturePaused) {
+    self.captureHUDPausedElapsed = [[NSDate date] timeIntervalSinceDate:self.captureHUDStartDate];
+    self.captureHUDPaused = YES;
+    self.captureHUDPauseButton.title = @"继续";
+  } else {
+    self.captureHUDStartDate = [NSDate dateWithTimeIntervalSinceNow:-self.captureHUDPausedElapsed];
+    self.captureHUDPaused = NO;
+    self.captureHUDPauseButton.title = @"暂停";
+  }
+}
+
+- (void)hudStop:(id)sender {
+  if (self.captureRecording) [self captureVideo:nil];
+}
+
 - (void)finishCaptureUI {
   self.captureRecording = NO;
   self.capturePaused = NO;
@@ -17811,6 +17887,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureCameraWaiting = NO;
   self.capturePendingScreenPath = nil;
   [self startCameraPreviewIfNeeded];
+  [self startCaptureHUD];
   self.captureRecordButton.title = @"停止录屏";
   self.capturePauseButton.hidden = NO;
   self.capturePauseButton.title = @"暂停";
