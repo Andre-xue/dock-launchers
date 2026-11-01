@@ -1024,6 +1024,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property NSInteger mediaPID;
 @property BOOL mediaPlaying;
 @property BOOL mediaPollInFlight;
+@property BOOL mediaUsingFallback;
+@property BOOL mediaFallbackInFlight;
+@property (strong) NSString *mediaLastActiveBundle;
 @property (assign) void *mediaRemoteHandle;
 @property (assign) void *mediaGetInfoFn;
 @property (assign) void *mediaGetPlayingFn;
@@ -2726,6 +2729,7 @@ static void HideDockHoverTip(void) {
   self.mediaGetPIDFn = dlsym(handle, "MRMediaRemoteGetNowPlayingApplicationPID");
   if (!self.mediaGetInfoFn || !self.mediaGetPlayingFn) return;
   __weak typeof(self) weakSelf = self;
+  [[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self selector:@selector(mediaWorkspaceActivated:) name:NSWorkspaceDidActivateApplicationNotification object:nil];
   self.mediaPollTimer = [NSTimer scheduledTimerWithTimeInterval:1.2 repeats:YES block:^(NSTimer *timer) {
     [weakSelf pollMediaNowPlaying];
   }];
@@ -2744,25 +2748,32 @@ static void HideDockHoverTip(void) {
     NSDictionary *dict = info ? [(__bridge NSDictionary *)info copy] : nil;
     if (!getPlaying) {
       dispatch_async(dispatch_get_main_queue(), ^{
-        weakSelf.mediaNowPlaying = dict; weakSelf.mediaPlaying = dict != nil; weakSelf.mediaPollInFlight = NO; [weakSelf updateMediaStatusItem];
+        weakSelf.mediaPollInFlight = NO;
+        if (!dict) { [weakSelf pollFallbackMedia]; return; }
+        weakSelf.mediaNowPlaying = dict; weakSelf.mediaPlaying = dict != nil; [weakSelf updateMediaStatusItem];
       });
       return;
     }
     getPlaying(q, ^(Boolean playing) {
       if (!getPID) {
         dispatch_async(dispatch_get_main_queue(), ^{
-          weakSelf.mediaNowPlaying = dict; weakSelf.mediaPlaying = playing != 0; weakSelf.mediaPollInFlight = NO; [weakSelf updateMediaStatusItem];
+          weakSelf.mediaPollInFlight = NO;
+          if (!dict || playing == 0) { [weakSelf pollFallbackMedia]; return; }
+          weakSelf.mediaUsingFallback = NO;
+          weakSelf.mediaNowPlaying = dict; weakSelf.mediaPlaying = YES; [weakSelf updateMediaStatusItem];
         });
         return;
       }
       getPID(q, ^(int pid) {
         dispatch_async(dispatch_get_main_queue(), ^{
+          weakSelf.mediaPollInFlight = NO;
+          if (!dict || playing == 0) { [weakSelf pollFallbackMedia]; return; }
+          weakSelf.mediaUsingFallback = NO;
           weakSelf.mediaNowPlaying = dict;
-          weakSelf.mediaPlaying = (playing != 0);
+          weakSelf.mediaPlaying = YES;
           weakSelf.mediaPID = pid;
           NSRunningApplication *app = pid > 0 ? [NSRunningApplication runningApplicationWithProcessIdentifier:pid] : nil;
           weakSelf.mediaBundleID = app.bundleIdentifier ?: @"";
-          weakSelf.mediaPollInFlight = NO;
           [weakSelf updateMediaStatusItem];
         });
       });
@@ -2779,6 +2790,91 @@ static void HideDockHoverTip(void) {
 - (NSString *)mediaCurrentArtist {
   id a = self.mediaNowPlaying[@"kMRMediaRemoteNowPlayingInfoArtist"];
   return [a isKindOfClass:[NSString class]] ? a : @"";
+}
+
+- (void)mediaWorkspaceActivated:(NSNotification *)note {
+  NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
+  NSString *bundle = app.bundleIdentifier ?: @"";
+  NSArray *known = @[@"com.apple.Music", @"com.spotify.client", @"com.apple.QuickTimePlayerX", @"com.colliderli.iina", @"org.videolan.vlc", @"com.apple.TV"];
+  if ([known containsObject:bundle]) {
+    self.mediaLastActiveBundle = bundle;
+    if (self.mediaUsingFallback) [self pollFallbackMedia];
+  }
+}
+
+- (void)pollFallbackMedia {
+  if (self.mediaFallbackInFlight) return;
+  self.mediaFallbackInFlight = YES;
+  NSMutableString *script = [NSMutableString stringWithString:@"set out to \"\"\n"];
+  NSWorkspace *ws = [NSWorkspace sharedWorkspace];
+  if ([ws URLForApplicationWithBundleIdentifier:@"com.apple.Music"]) {
+    [script appendString:@"tell application \"Music\"\nif it is running then\nif player state is playing then\nset out to out & \"com.apple.Music\" & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (player position) & linefeed & (duration of current track) & linefeed & \"===\" & linefeed\nend if\nend if\nend tell\n"];
+  }
+  if ([ws URLForApplicationWithBundleIdentifier:@"com.spotify.client"]) {
+    [script appendString:@"tell application \"Spotify\"\nif it is running then\nif player state is playing then\nset out to out & \"com.spotify.client\" & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (player position) & linefeed & ((duration of current track) / 1000) & linefeed & \"===\" & linefeed\nend if\nend if\nend tell\n"];
+  }
+  if ([ws URLForApplicationWithBundleIdentifier:@"com.apple.QuickTimePlayerX"]) {
+    [script appendString:@"tell application \"QuickTime Player\"\nif it is running then\nrepeat with d in documents\nif playing of d then\nset out to out & \"com.apple.QuickTimePlayerX\" & linefeed & (name of d) & linefeed & \"\" & linefeed & (current time of d) & linefeed & (duration of d) & linefeed & \"===\" & linefeed\nend if\nend repeat\nend if\nend tell\n"];
+  }
+  [script appendString:@"return out"];
+  __weak typeof(self) weakSelf = self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    NSString *out = [weakSelf runOsascript:script] ?: @"";
+    dispatch_async(dispatch_get_main_queue(), ^{
+      weakSelf.mediaFallbackInFlight = NO;
+      [weakSelf applyFallbackOutput:out];
+    });
+  });
+}
+
+- (void)applyFallbackOutput:(NSString *)out {
+  NSMutableArray *blocks = [NSMutableArray array];
+  NSMutableArray *lines = [NSMutableArray array];
+  for (NSString *line in [out componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+    if ([line isEqualToString:@"==="]) {
+      if (lines.count >= 5) [blocks addObject:[lines copy]];
+      [lines removeAllObjects];
+    } else if (line.length) [lines addObject:line];
+  }
+  if (lines.count >= 5) [blocks addObject:[lines copy]];
+  if (!blocks.count) {
+    self.mediaUsingFallback = YES;
+    self.mediaNowPlaying = nil;
+    self.mediaPlaying = NO;
+    [self updateMediaStatusItem];
+    return;
+  }
+  NSArray *chosen = blocks.firstObject;
+  for (NSArray *b in blocks) if (self.mediaLastActiveBundle.length && [b[0] isEqualToString:self.mediaLastActiveBundle]) { chosen = b; break; }
+  NSString *title = chosen[1]; NSString *artist = chosen[2];
+  double elapsed = [chosen[3] doubleValue]; double duration = [chosen[4] doubleValue];
+  self.mediaUsingFallback = YES;
+  self.mediaPlaying = YES;
+  self.mediaBundleID = chosen[0];
+  self.mediaNowPlaying = @{@"kMRMediaRemoteNowPlayingInfoTitle": title ?: @"", @"kMRMediaRemoteNowPlayingInfoArtist": artist ?: @"", @"kMRMediaRemoteNowPlayingInfoElapsedTime": @(elapsed), @"kMRMediaRemoteNowPlayingInfoDuration": @(duration)};
+  NSRunningApplication *app = [[NSRunningApplication runningApplicationsWithBundleIdentifier:self.mediaBundleID] firstObject];
+  self.mediaPID = app.processIdentifier;
+  [self updateMediaStatusItem];
+}
+
+- (void)sendFallbackCommand:(unsigned int)command {
+  NSString *bundle = self.mediaBundleID;
+  if ([bundle isEqualToString:@"com.apple.QuickTimePlayerX"]) {
+    NSString *act = command == 1 ? @"pause document 1" : @"play document 1";
+    [self runOsascript:[NSString stringWithFormat:@"tell application \"QuickTime Player\" to %@", act]];
+    return;
+  }
+  NSString *appName = nil;
+  if ([bundle isEqualToString:@"com.apple.Music"]) appName = @"Music";
+  else if ([bundle isEqualToString:@"com.spotify.client"]) appName = @"Spotify";
+  if (!appName) return;
+  NSString *act = nil;
+  if (command == 0) act = @"play";
+  else if (command == 1) act = @"pause";
+  else if (command == 2) act = @"playpause";
+  else if (command == 4) act = @"next track";
+  else if (command == 5) act = @"previous track";
+  if (act) [self runOsascript:[NSString stringWithFormat:@"tell application \"%@\" to %@", appName, act]];
 }
 
 - (void)updateMediaStatusItem {
@@ -2937,30 +3033,32 @@ static void HideDockHoverTip(void) {
   return img;
 }
 
+- (void)loadMediaLyricsForCurrentTrack {
+  NSString *key = [NSString stringWithFormat:@"%@|%@", [self mediaCurrentTitle], [self mediaCurrentArtist]];
+  if ([self.mediaLyricsCacheKey isEqualToString:key] && self.mediaLyricsCacheText.length) {
+    self.mediaCardLyricsView.string = self.mediaLyricsCacheText;
+    return;
+  }
+  if (![self.mediaBundleID isEqualToString:@"com.apple.Music"]) {
+    self.mediaCardLyricsView.string = @"当前播放器不支持歌词显示";
+    return;
+  }
+  NSString *out = [self runOsascript:@"tell application \"Music\"\nif it is running then\nreturn lyrics of current track\nend if\nend tell"];
+  if (out.length) {
+    self.mediaLyricsCacheKey = key;
+    self.mediaLyricsCacheText = out;
+    self.mediaCardLyricsView.string = out;
+  } else {
+    self.mediaCardLyricsView.string = @"暂无歌词";
+  }
+}
+
 - (void)toggleMediaLyrics:(id)sender {
   if (!self.mediaPopover) return;
   self.mediaCardShowingLyrics = !self.mediaCardShowingLyrics;
   self.mediaCardArt.hidden = self.mediaCardShowingLyrics;
   self.mediaCardLyricsScroll.hidden = !self.mediaCardShowingLyrics;
-  if (self.mediaCardShowingLyrics) {
-    NSString *key = [NSString stringWithFormat:@"%@|%@", [self mediaCurrentTitle], [self mediaCurrentArtist]];
-    if ([self.mediaLyricsCacheKey isEqualToString:key] && self.mediaLyricsCacheText.length) {
-      self.mediaCardLyricsView.string = self.mediaLyricsCacheText;
-      return;
-    }
-    if (![self.mediaBundleID isEqualToString:@"com.apple.Music"]) {
-      self.mediaCardLyricsView.string = @"当前播放器不支持歌词显示";
-      return;
-    }
-    NSString *out = [self runOsascript:@"tell application \"Music\"\nif it is running then\nreturn lyrics of current track\nend if\nend tell"];
-    if (out.length) {
-      self.mediaLyricsCacheKey = key;
-      self.mediaLyricsCacheText = out;
-      self.mediaCardLyricsView.string = out;
-    } else {
-      self.mediaCardLyricsView.string = @"暂无歌词";
-    }
-  }
+  if (self.mediaCardShowingLyrics) [self loadMediaLyricsForCurrentTrack];
 }
 
 - (void)toggleMediaFavorite:(id)sender {
@@ -3000,6 +3098,8 @@ static void HideDockHoverTip(void) {
   if (self.mediaCardShowingLyrics) {
     self.mediaCardArt.hidden = YES;
     self.mediaCardLyricsScroll.hidden = NO;
+    NSString *lyricKey = [NSString stringWithFormat:@"%@|%@", title, artist];
+    if (![self.mediaLyricsCacheKey isEqualToString:lyricKey]) [self loadMediaLyricsForCurrentTrack];
   } else {
     self.mediaCardArt.hidden = NO;
     self.mediaCardLyricsScroll.hidden = YES;
@@ -3070,9 +3170,13 @@ static void HideDockHoverTip(void) {
 }
 
 - (void)mediaSendCommand:(unsigned int)command {
-  DLMRSendFn send = (DLMRSendFn)self.mediaSendCmdFn;
-  if (send) send(command, nil);
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self pollMediaNowPlaying]; });
+  if (self.mediaUsingFallback) {
+    [self sendFallbackCommand:command];
+  } else {
+    DLMRSendFn send = (DLMRSendFn)self.mediaSendCmdFn;
+    if (send) send(command, nil);
+  }
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self pollMediaNowPlaying]; });
 }
 
 - (void)mediaTogglePlayPause:(id)sender { [self mediaSendCommand:self.mediaPlaying ? 1 : 0]; }
