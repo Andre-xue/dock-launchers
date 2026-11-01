@@ -12445,18 +12445,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   tl.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
   tl.stringValue = title;
   [cv addSubview:tl];
-  ColorHoverButton *zoomOut = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, ph+16, 34, 26)];
-  zoomOut.title = @"−"; zoomOut.hoverColor = [NSColor systemBlueColor];
-  zoomOut.toolTip = @"缩小页面内容";
-  zoomOut.target = self; zoomOut.action = @selector(zoomDetachedOut:);
-  [zoomOut applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [cv addSubview:zoomOut];
-  ColorHoverButton *zoomIn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(228, ph+16, 34, 26)];
-  zoomIn.title = @"+"; zoomIn.hoverColor = [NSColor systemBlueColor];
-  zoomIn.toolTip = @"放大页面内容";
-  zoomIn.target = self; zoomIn.action = @selector(zoomDetachedIn:);
-  [zoomIn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  [cv addSubview:zoomIn];
   NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(8, 8, pw, ph)];
   sv.hasHorizontalScroller = YES; sv.hasVerticalScroller = YES;
   sv.autohidesScrollers = YES;
