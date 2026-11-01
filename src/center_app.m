@@ -16752,6 +16752,36 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)openCaptureVideoFolder:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self captureVideoDirectory]]]; }
 - (void)closeCaptureHistory:(id)sender { [self.captureHistoryWindow orderOut:nil]; }
 
+- (void)chooseCaptureImageFolder:(id)sender { [self chooseCaptureFolderForVideo:NO]; }
+- (void)chooseCaptureVideoFolder:(id)sender { [self chooseCaptureFolderForVideo:YES]; }
+
+- (void)chooseCaptureFolderForVideo:(BOOL)video {
+  NSOpenPanel *panel = [NSOpenPanel openPanel];
+  panel.canChooseFiles = NO;
+  panel.canChooseDirectories = YES;
+  panel.allowsMultipleSelection = NO;
+  panel.canCreateDirectories = YES;
+  panel.prompt = @"选择";
+  panel.message = video ? @"选择录屏保存文件夹" : @"选择截图保存文件夹";
+  NSString *current = video ? [self captureVideoDirectory] : [self captureImageDirectory];
+  if (current.length) panel.directoryURL = [NSURL fileURLWithPath:current];
+  __weak typeof(self) weakSelf = self;
+  [panel beginSheetModalForWindow:self.captureWindow completionHandler:^(NSModalResponse result) {
+    if (result != NSModalResponseOK || !panel.URL.path.length) return;
+    NSString *dir = panel.URL.path;
+    if (video) {
+      [[NSUserDefaults standardUserDefaults] setObject:dir forKey:@"centerCaptureVideoDirectory"];
+      weakSelf.captureVideoPathField.stringValue = dir;
+    } else {
+      [[NSUserDefaults standardUserDefaults] setObject:dir forKey:@"centerCaptureImageDirectory"];
+      weakSelf.captureImagePathField.stringValue = dir;
+    }
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+    weakSelf.captureStatusLabel.stringValue = [NSString stringWithFormat:@"%@保存目录已应用：%@", video ? @"录屏" : @"截图", dir];
+  }];
+}
+
+
 - (NSString *)captureImageDirectory {
   NSString *dir = self.captureImagePathField.stringValue;
   if (!dir.length) dir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureImageDirectory"];
@@ -17161,18 +17191,36 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     // Row 6: save paths, aligned.
     NSTextField *imgLabel = [self label:@"截图保存" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     imgLabel.frame = NSMakeRect(24, 222, 70, 18); [cv addSubview:imgLabel];
-    self.captureImagePathField = [[NSTextField alloc] initWithFrame:NSMakeRect(100, 216, 344, 26)];
-    self.captureImagePathField.target = self;
-    self.captureImagePathField.action = @selector(captureImagePathChanged:);
-    self.captureImagePathField.toolTip = @"截图保存文件夹，支持 ~";
+    self.captureImagePathField = [[NSTextField alloc] initWithFrame:NSMakeRect(100, 216, 270, 26)];
+    self.captureImagePathField.editable = NO;
+    self.captureImagePathField.selectable = NO;
+    self.captureImagePathField.bezeled = NO;
+    self.captureImagePathField.drawsBackground = NO;
+    self.captureImagePathField.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    self.captureImagePathField.toolTip = @"点击打开当前截图保存目录";
+    NSClickGestureRecognizer *imgClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openCaptureFolder:)];
+    [self.captureImagePathField addGestureRecognizer:imgClick];
     [cv addSubview:self.captureImagePathField];
+    ColorHoverButton *imgChange = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(378, 214, 78, 28)];
+    imgChange.title = @"选择…"; imgChange.hoverColor = [NSColor systemBlueColor];
+    imgChange.target = self; imgChange.action = @selector(chooseCaptureImageFolder:);
+    [imgChange applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:imgChange];
     NSTextField *vidLabel = [self label:@"录屏保存" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     vidLabel.frame = NSMakeRect(496, 222, 70, 18); [cv addSubview:vidLabel];
-    self.captureVideoPathField = [[NSTextField alloc] initWithFrame:NSMakeRect(570, 216, 344, 26)];
-    self.captureVideoPathField.target = self;
-    self.captureVideoPathField.action = @selector(captureVideoPathChanged:);
-    self.captureVideoPathField.toolTip = @"录屏保存文件夹，支持 ~";
+    self.captureVideoPathField = [[NSTextField alloc] initWithFrame:NSMakeRect(570, 216, 270, 26)];
+    self.captureVideoPathField.editable = NO;
+    self.captureVideoPathField.selectable = NO;
+    self.captureVideoPathField.bezeled = NO;
+    self.captureVideoPathField.drawsBackground = NO;
+    self.captureVideoPathField.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    self.captureVideoPathField.toolTip = @"点击打开当前录屏保存目录";
+    NSClickGestureRecognizer *vidClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openCaptureVideoFolder:)];
+    [self.captureVideoPathField addGestureRecognizer:vidClick];
     [cv addSubview:self.captureVideoPathField];
+    ColorHoverButton *vidChange = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(848, 214, 76, 28)];
+    vidChange.title = @"选择…"; vidChange.hoverColor = [NSColor systemPurpleColor];
+    vidChange.target = self; vidChange.action = @selector(chooseCaptureVideoFolder:);
+    [vidChange applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:vidChange];
 
     self.captureStatusLabel = [self label:@"截图和录屏会自动保存到各自目录" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     self.captureStatusLabel.frame = NSMakeRect(24, 184, 890, 22);
