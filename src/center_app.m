@@ -15795,9 +15795,32 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSImage *ic = [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil];
     [out addObject:@{@"title": e[@"name"] ?: @"AI 服务", @"subtitle": @"AI 管理 · 查看余额", @"type": @"AI", @"page": @2, @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
   }
-  [out addObject:@{@"title": @"AI 翻译", @"subtitle": @"截图 / 划词 / 文档翻译", @"type": @"工具", @"tool": @"translate", @"icon": [NSImage imageWithSystemSymbolName:@"character.bubble" accessibilityDescription:nil]}];
-  [out addObject:@{@"title": @"压缩 / 解压", @"subtitle": @"ZIP / TAR.GZ", @"type": @"工具", @"tool": @"compress", @"icon": [NSImage imageWithSystemSymbolName:@"archivebox" accessibilityDescription:nil]}];
-  [out addObject:@{@"title": @"剪贴板历史", @"subtitle": @"最近复制的文字", @"type": @"工具", @"tool": @"clipboard", @"icon": [NSImage imageWithSystemSymbolName:@"doc.on.clipboard" accessibilityDescription:nil]}];
+  NSArray *tools = @[
+    @[@"AI 翻译", @"截图 / 划词 / 文档翻译", @"translate", @"character.bubble"],
+    @[@"压缩 / 解压", @"ZIP / TAR.GZ", @"compress", @"archivebox"],
+    @[@"PDF 工具", @"合并 / 拆分 / 提取页码 / 导出图片", @"pdf", @"doc.richtext"],
+    @[@"图片工具", @"批量转换格式 / 分辨率 / 旋转", @"image", @"photo.on.rectangle.angled"],
+    @[@"批量重命名", @"查找替换 / 前后缀 / 自动序号", @"rename", @"square.and.pencil"],
+    @[@"剪贴板历史", @"最近复制的文字和图片", @"clipboard", @"doc.on.clipboard"],
+    @[@"窗口布局", @"保存和恢复窗口位置", @"layouts", @"rectangle.split.2x2"],
+    @[@"大文件清理", @"扫描并清理大文件", @"largefiles", @"externaldrive"],
+    @[@"重复文件", @"按大小和哈希查找重复项", @"duplicates", @"doc.on.doc"],
+    @[@"进程管理", @"查看和结束进程", @"process", @"cpu"],
+    @[@"使用统计", @"应用启动次数与推荐", @"usage", @"chart.bar"],
+    @[@"启动项", @"启动项和登录项管理", @"startup", @"power"],
+    @[@"提示词库", @"管理和导出 AI 提示词", @"prompts", @"text.book.closed"],
+    @[@"Dock 外观", @"图标大小 / 放大 / 自动隐藏 / 位置", @"appearance", @"paintbrush"],
+    @[@"应用密码", @"设置敏感操作密码", @"password", @"lock"],
+    @[@"应用内快捷键", @"控制台窗口内快捷键", @"appshortcuts", @"keyboard"],
+    @[@"全局快捷键", @"任意应用可用的快捷键", @"globalshortcuts", @"globe"],
+    @[@"磁盘分析", @"浏览磁盘文件", @"disk", @"internaldrive"],
+    @[@"应用搜索", @"搜索并打开应用", @"appsearch", @"magnifyingglass"],
+    @[@"打开控制台", @"显示主控制台", @"console", @"macwindow"]
+  ];
+  for (NSArray *t in tools) {
+    NSImage *ic = [NSImage imageWithSystemSymbolName:t[3] accessibilityDescription:nil];
+    [out addObject:@{@"title": t[0], @"subtitle": t[1], @"type": @"工具", @"tool": t[2], @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+  }
   return out;
 }
 
@@ -15811,9 +15834,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSString *path = item[@"path"];
     if (path.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
   } else if ([type isEqualToString:@"工具"]) {
-    if ([item[@"tool"] isEqualToString:@"translate"]) [self showTranslationWindow:nil];
-    else if ([item[@"tool"] isEqualToString:@"clipboard"]) [self showClipboardWindow:nil];
-    else [self showCompressWindow:nil];
+    NSString *tool = item[@"tool"] ?: @"";
+    if ([tool isEqualToString:@"translate"]) [self showTranslationWindow:nil];
+    else if ([tool isEqualToString:@"compress"]) [self showCompressWindow:nil];
+    else if ([tool isEqualToString:@"pdf"]) [self showPDFTools:nil];
+    else if ([tool isEqualToString:@"image"]) [self showImageTools:nil];
+    else if ([tool isEqualToString:@"rename"]) [self showBatchRenamer:nil];
+    else if ([tool isEqualToString:@"clipboard"]) [self showClipboardWindow:nil];
+    else if ([tool isEqualToString:@"layouts"]) [self showWindowLayouts:nil];
+    else if ([tool isEqualToString:@"largefiles"]) [self showLargeFileCleaner:nil];
+    else if ([tool isEqualToString:@"duplicates"]) [self showDuplicateFinder:nil];
+    else if ([tool isEqualToString:@"process"]) [self showProcessManager:nil];
+    else if ([tool isEqualToString:@"usage"]) [self showUsageStats:nil];
+    else if ([tool isEqualToString:@"startup"]) [self showStartupItems:nil];
+    else if ([tool isEqualToString:@"prompts"]) [self showPromptLibrary:nil];
+    else if ([tool isEqualToString:@"appearance"]) [self showDockAppearance:nil];
+    else if ([tool isEqualToString:@"password"]) [self showPasswordSettings:nil];
+    else if ([tool isEqualToString:@"appshortcuts"]) [self showAppShortcutSettings:nil];
+    else if ([tool isEqualToString:@"globalshortcuts"]) [self openShortcutSettings:nil];
+    else if ([tool isEqualToString:@"disk"]) [self openDiskAnalysisFromMenu];
+    else if ([tool isEqualToString:@"appsearch"]) [self showAppSearch:nil];
+    else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
 }
 
