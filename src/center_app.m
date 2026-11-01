@@ -832,6 +832,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) ColorHoverButton *dupScanButton;
 @property (strong) NSWindow *largeFileWindow;
 @property (strong) NSTableView *largeFileTable;
+@property (strong) NSArray *largeFileAllItems;
+@property (strong) NSSearchField *largeFileSearch;
 @property (strong) NSArray *largeFileItems;
 @property BOOL largeFileScanning;
 @property (strong) NSPopUpButton *largeFileScopePopup;
@@ -10615,6 +10617,11 @@ static BOOL ValidGroupName(NSString *raw) {
     title.frame = NSMakeRect(20, 490, 300, 28); [cv addSubview:title];
     NSTextField *sub = [self label:@"扫描大文件；移到废纸篓前会验证应用密码" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 468, 520, 18); [cv addSubview:sub];
+    self.largeFileSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(540, 464, 200, 28)];
+    self.largeFileSearch.placeholderString = @"搜索文件名或路径";
+    self.largeFileSearch.target = self; self.largeFileSearch.action = @selector(largeFileFilterChanged:);
+    [self.largeFileSearch setContinuous:YES];
+    [cv addSubview:self.largeFileSearch];
 
     self.largeFileScopePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(20, 428, 170, 26) pullsDown:NO];
     NSArray *scopes = @[@[@"主目录", NSHomeDirectory()], @[@"下载", [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"]], @[@"桌面", [NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"]], @[@"影片文件夹", [NSHomeDirectory() stringByAppendingPathComponent:@"Movies"]], @[@"所有视频（全主目录）", @"__videos__"]];
@@ -10710,13 +10717,30 @@ static BOOL ValidGroupName(NSString *raw) {
     }
     [files sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"size"] compare:a[@"size"]]; }];
     dispatch_async(dispatch_get_main_queue(), ^{
-      weakSelf.largeFileItems = files;
+      weakSelf.largeFileAllItems = files;
       weakSelf.largeFileScanning = NO;
       weakSelf.largeFileScanButton.enabled = YES;
       weakSelf.largeFileStatus.stringValue = [NSString stringWithFormat:@"找到 %ld 个大于阈值的文件（最多显示 400 个）", (long)files.count];
-      [weakSelf.largeFileTable reloadData];
+      [weakSelf applyLargeFileFilter];
     });
   });
+}
+
+- (void)largeFileFilterChanged:(id)sender { [self applyLargeFileFilter]; }
+
+- (void)applyLargeFileFilter {
+  NSString *q = [self.largeFileSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  if (!q.length) {
+    self.largeFileItems = self.largeFileAllItems ?: @[];
+  } else {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *it in self.largeFileAllItems ?: @[]) {
+      NSString *hay = [NSString stringWithFormat:@"%@ %@", it[@"name"] ?: @"", it[@"path"] ?: @""].lowercaseString;
+      if ([hay containsString:q]) [out addObject:it];
+    }
+    self.largeFileItems = out;
+  }
+  [self.largeFileTable reloadData];
 }
 
 - (void)trashLargeFiles:(id)sender {
