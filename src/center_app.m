@@ -1028,6 +1028,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSStatusItem *mediaStatusItem;
 @property (strong) NSTimer *mediaPollTimer;
 @property (strong) NSDictionary *mediaNowPlaying;
+@property (strong) NSDictionary *mediaStableNowPlaying;
+@property (strong) NSString *mediaStableBundle;
 @property (strong) NSString *mediaArtworkKey;
 @property (strong) NSImage *mediaArtworkImage;
 @property (strong) NSData *mediaArtworkData;
@@ -2859,6 +2861,21 @@ static void HideDockHoverTip(void) {
   });
 }
 
+- (BOOL)isBundleRunning:(NSString *)bundle {
+  if (!bundle.length) return NO;
+  for (NSRunningApplication *a in [[NSWorkspace sharedWorkspace] runningApplications]) {
+    NSString *bid = a.bundleIdentifier ?: @"";
+    NSString *path = a.bundleURL.path ?: @"";
+    if ([bid isEqualToString:bundle]) return YES;
+    if ([bundle containsString:@"com.soda.music"] && ([bid containsString:@"com.soda.music"] || [path containsString:@"汽水音乐.app"])) return YES;
+    if ([bundle containsString:@"netease"] && ([bid containsString:@"netease"] || [path containsString:@"网易云音乐.app"])) return YES;
+    if ([bundle containsString:@"QQMusic"] || [bundle containsString:@"qqmusic"]) {
+      if ([bid containsString:@"QQMusic"] || [bid containsString:@"qqmusic"] || [path containsString:@"QQ音乐.app"] || [path containsString:@"QQMusic.app"]) return YES;
+    }
+  }
+  return NO;
+}
+
 - (BOOL)isMediaSourceAppRunning {
   NSString *bundle = self.mediaBundleID ?: @"";
   if (!bundle.length) return NO;
@@ -3165,6 +3182,19 @@ static void DLPostMediaKeyEvent(int key, BOOL down) {
 }
 
 - (void)updateMediaStatusItem {
+  NSString *title = [self mediaCurrentTitle];
+  if (title.length) {
+    self.mediaStableNowPlaying = self.mediaNowPlaying;
+    self.mediaStableBundle = self.mediaBundleID;
+  } else if (self.mediaStableNowPlaying && [self isBundleRunning:self.mediaStableBundle]) {
+    self.mediaBundleID = self.mediaStableBundle;
+    self.mediaNowPlaying = self.mediaStableNowPlaying;
+  } else if (self.mediaStableNowPlaying && ![self isBundleRunning:self.mediaStableBundle]) {
+    self.mediaStableNowPlaying = nil;
+    self.mediaStableBundle = nil;
+    self.mediaNowPlaying = nil;
+    self.mediaPlaying = NO;
+  }
   [self updateRadialMediaBar];
 }
 
