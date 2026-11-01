@@ -5103,6 +5103,27 @@ static BOOL ValidGroupName(NSString *raw) {
   }
 }
 
+- (void)deleteAllAIHistory:(id)sender {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *dir = [self aiHistoryDir];
+  NSArray *files = [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+  NSInteger count = 0;
+  for (NSString *f in files) if ([f.pathExtension.lowercaseString isEqualToString:@"json"]) count++;
+  if (!count) { [self showToast:@"暂无历史版本"]; return; }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"删除全部 %ld 个历史版本？", (long)count];
+  a.informativeText = @"此操作不可恢复；当前 AI 服务数据不会被删除。";
+  [a addButtonWithTitle:@"删除全部"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSInteger ok = 0;
+  for (NSString *f in files) {
+    if (![f.pathExtension.lowercaseString isEqualToString:@"json"]) continue;
+    if ([fm removeItemAtPath:[dir stringByAppendingPathComponent:f] error:NULL]) ok++;
+  }
+  [self showToast:[NSString stringWithFormat:@"已删除 %ld 个历史版本", (long)ok]];
+}
+
 - (void)saveAIHistoryNow:(id)sender {
   [self recordAIHistorySnapshotForce:YES];
   [self showToast:@"已保存当前 AI 数据版本"];
@@ -5115,7 +5136,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSArray *files = [[fm contentsOfDirectoryAtPath:dir error:NULL] sortedArrayUsingSelector:@selector(compare:)] ?: @[];
   if (!files.count) { [self showToast:@"暂无历史版本，修改 AI 数据后会自动生成"]; return; }
 
-  NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0,0,390,82)];
+  NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0,0,520,82)];
   NSTextField *versionLabel = [self label:@"历史版本" size:10.5 bold:YES color:[NSColor secondaryLabelColor]];
   versionLabel.frame = NSMakeRect(0, 62, 80, 18); [accessory addSubview:versionLabel];
   NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 34, 340, 28) pullsDown:NO];
@@ -5146,6 +5167,11 @@ static BOOL ValidGroupName(NSString *raw) {
   saveNow.target = self; saveNow.action = @selector(saveAIHistoryNow:);
   [saveNow applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [accessory addSubview:saveNow];
+  ColorHoverButton *deleteAll = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(396, 0, 116, 26)];
+  deleteAll.title = @"删除全部"; deleteAll.hoverColor = [NSColor systemRedColor];
+  deleteAll.target = self; deleteAll.action = @selector(deleteAllAIHistory:);
+  [deleteAll applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [accessory addSubview:deleteAll];
 
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"AI 数据历史版本";
