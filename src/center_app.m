@@ -755,6 +755,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSPopUpButton *imageFormatPopup;
 @property (strong) NSPopUpButton *imageResolutionPopup;
 @property (strong) NSWindow *pdfWindow;
+@property (strong) NSTextField *pdfStartField, *pdfEndField;
 @property (strong) NSTableView *pdfTable;
 @property (strong) NSArray *pdfItems;
 @property (strong) NSWindow *batchRenameWindow;
@@ -12079,6 +12080,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.pdfTable.rowHeight = 32;
     self.pdfTable.dataSource = self; self.pdfTable.delegate = self;
     sv.documentView = self.pdfTable; [cv addSubview:sv];
+    NSTextField *pl = [self label:@"页码" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    pl.frame = NSMakeRect(20, 34, 40, 18); [cv addSubview:pl];
+    self.pdfStartField = [[NSTextField alloc] initWithFrame:NSMakeRect(62, 28, 54, 26)];
+    self.pdfStartField.placeholderString = @"起始";
+    [cv addSubview:self.pdfStartField];
+    NSTextField *dash = [self label:@"–" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    dash.frame = NSMakeRect(120, 34, 12, 18); [cv addSubview:dash];
+    self.pdfEndField = [[NSTextField alloc] initWithFrame:NSMakeRect(134, 28, 54, 26)];
+    self.pdfEndField.placeholderString = @"结束";
+    [cv addSubview:self.pdfEndField];
+    ColorHoverButton *extract = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(198, 24, 104, 30)];
+    extract.title = @"提取页码"; extract.hoverColor = [NSColor systemPurpleColor];
+    extract.target = self; extract.action = @selector(pdfExtractPages:);
+    [extract applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:extract];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(544, 24, 100, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closePDFTools:);
@@ -12148,6 +12164,36 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   [self showToast:[NSString stringWithFormat:@"已拆分生成 %ld 个 PDF", (long)made]];
   if (made > 0) [[NSWorkspace sharedWorkspace] openURL:p.URL];
+}
+
+- (void)pdfExtractPages:(id)sender {
+  if (!self.pdfItems.count) { [self showToast:@"请先添加 PDF"]; return; }
+  NSInteger row = self.pdfTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.pdfItems.count) row = 0;
+  NSString *path = self.pdfItems[row];
+  PDFDocument *doc = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
+  if (!doc) { [self showToast:@"PDF 读取失败"]; return; }
+  NSInteger total = doc.pageCount;
+  NSInteger start = self.pdfStartField.integerValue;
+  NSInteger end = self.pdfEndField.integerValue;
+  if (start <= 0) start = 1;
+  if (end <= 0) end = total;
+  start = MAX(1, MIN(start, total));
+  end = MAX(1, MIN(end, total));
+  if (start > end) { NSInteger t = start; start = end; end = t; }
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  NSString *base = path.lastPathComponent.stringByDeletingPathExtension;
+  sp.nameFieldStringValue = [NSString stringWithFormat:@"%@_第%ld-%ld页.pdf", base, (long)start, (long)end];
+  sp.allowedFileTypes = @[@"pdf"];
+  if ([sp runModal] != NSModalResponseOK) return;
+  PDFDocument *out = [[PDFDocument alloc] init];
+  for (NSInteger i = start - 1; i < end; i++) {
+    PDFPage *page = [doc pageAtIndex:i];
+    if (page) [out insertPage:page atIndex:[out pageCount]];
+  }
+  if (![out writeToURL:sp.URL]) { [self showToast:@"提取失败"]; return; }
+  [self showToast:[NSString stringWithFormat:@"已提取第 %ld–%ld 页", (long)start, (long)end]];
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[sp.URL]];
 }
 
 - (void)closePDFTools:(id)sender { [self.pdfWindow orderOut:nil]; }
