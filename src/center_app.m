@@ -754,7 +754,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSTableView *imageToolTable;
 @property (strong) NSArray *imageToolItems;
 @property (strong) NSPopUpButton *imageFormatPopup;
-@property (strong) NSPopUpButton *imageResolutionPopup;
+@property (strong) NSPopUpButton *imageResolutionPopup, *imageRotatePopup;
 @property (strong) NSWindow *pdfWindow;
 @property (strong) NSTextField *pdfStartField, *pdfEndField;
 @property (strong) NSTableView *pdfTable;
@@ -12045,6 +12045,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
     [self.imageResolutionPopup selectItemAtIndex:3];
     [cv addSubview:self.imageResolutionPopup];
+    NSTextField *rol = [self label:@"旋转" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    rol.frame = NSMakeRect(464, 390, 40, 18); [cv addSubview:rol];
+    self.imageRotatePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(508, 384, 146, 26) pullsDown:NO];
+    NSArray *rotTitles = @[@"不旋转", @"左转 90°", @"右转 90°", @"旋转 180°"];
+    NSArray *rotValues = @[@0, @270, @90, @180];
+    for (NSInteger i = 0; i < rotTitles.count; i++) {
+      [self.imageRotatePopup addItemWithTitle:rotTitles[i]];
+      self.imageRotatePopup.lastItem.representedObject = rotValues[i];
+    }
+    [cv addSubview:self.imageRotatePopup];
 
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 70, 648, 296)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
@@ -12126,6 +12136,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSString *out = [[p.URL.path stringByAppendingPathComponent:base] stringByAppendingPathExtension:ext];
     if ([[out stringByStandardizingPath] isEqualToString:[path stringByStandardizingPath]]) out = [[p.URL.path stringByAppendingPathComponent:[base stringByAppendingString:@"_converted"]] stringByAppendingPathExtension:ext];
     NSMutableArray *args = [NSMutableArray arrayWithObjects:@"-s", @"format", format, nil];
+    NSInteger rotate = [self.imageRotatePopup.selectedItem.representedObject integerValue];
+    if (rotate != 0) [args addObjectsFromArray:@[@"-r", [NSString stringWithFormat:@"%ld", (long)rotate]]];
     if ([format isEqualToString:@"jpeg"]) [args addObjectsFromArray:@[@"-s", @"formatOptions", [NSString stringWithFormat:@"%ld", quality]]];
     if (maxSide > 0) [args addObjectsFromArray:@[@"--resampleHeightWidthMax", [NSString stringWithFormat:@"%ld", (long)maxSide]]];
     [args addObjectsFromArray:@[path, @"--out", out]];
