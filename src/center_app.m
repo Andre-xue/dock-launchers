@@ -11756,6 +11756,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   if (![out writeToURL:sp.URL]) { [self showToast:@"合并失败"]; return; }
   [self showToast:[NSString stringWithFormat:@"已合并 %ld 个 PDF", (long)self.pdfItems.count]];
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[sp.URL]];
 }
 
 - (void)pdfSplit:(id)sender {
@@ -11781,6 +11782,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
   }
   [self showToast:[NSString stringWithFormat:@"已拆分生成 %ld 个 PDF", (long)made]];
+  if (made > 0) [[NSWorkspace sharedWorkspace] openURL:p.URL];
 }
 
 - (void)closePDFTools:(id)sender { [self.pdfWindow orderOut:nil]; }
