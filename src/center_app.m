@@ -894,6 +894,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSButton *diskPersonalCheck;
 @property (strong) NSArray *diskVolumes;
 @property (strong) NSTableView *diskTable;
+@property (strong) NSSearchField *diskSearch;
 @property (strong) NSScrollView *diskScroll;
 @property (strong) DiskTypeControl *diskTypeSegment;
 @property (strong) NSTextField *diskHintLabel;
@@ -7177,6 +7178,11 @@ static BOOL ValidGroupName(NSString *raw) {
   NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,750,660)];
   NSTextField *h = [self label:@"文件管理" size:24 bold:YES color:nil];
   h.frame = NSMakeRect(24, 600, 300, 32); [v addSubview:h];
+  self.diskSearch = [[NSSearchField alloc] initWithFrame:NSMakeRect(500, 602, 226, 28)];
+  self.diskSearch.placeholderString = @"搜索当前目录文件";
+  self.diskSearch.target = self; self.diskSearch.action = @selector(diskSearchChanged:);
+  [self.diskSearch setContinuous:YES];
+  [v addSubview:self.diskSearch];
 
   self.diskVolumePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(154, 560, 150, 28) pullsDown:NO];
   self.diskVolumePopup.target = self;
@@ -7778,6 +7784,8 @@ static BOOL ValidGroupName(NSString *raw) {
   [self diskFilterChanged:nil];
 }
 
+- (void)diskSearchChanged:(id)sender { [self diskFilterChanged:nil]; }
+
 - (void)diskClearDate:(id)sender {
   self.diskDateFilter = nil;
   self.diskDateButton.title = @"选择日期";
@@ -7798,6 +7806,15 @@ static BOOL ValidGroupName(NSString *raw) {
     return;
   }
   NSArray *base = self.diskFileData;
+  NSString *query = [self.diskSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  if (query.length) {
+    NSMutableArray *matched = [NSMutableArray array];
+    for (NSDictionary *d in base) {
+      NSString *hay = [NSString stringWithFormat:@"%@ %@", d[@"name"] ?: @"", d[@"path"] ?: @""].lowercaseString;
+      if ([hay containsString:query]) [matched addObject:d];
+    }
+    base = matched;
+  }
   if (self.diskDateFilter) {
     NSCalendar *cal = [NSCalendar currentCalendar];
     NSDate *day = self.diskDateFilter;
