@@ -656,8 +656,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSTableView *imageToolTable;
 @property (strong) NSArray *imageToolItems;
 @property (strong) NSPopUpButton *imageFormatPopup;
-@property (strong) NSSlider *imageQualitySlider;
-@property (strong) NSTextField *imageQualityLabel, *imageMaxWidthField;
+@property (strong) NSPopUpButton *imageResolutionPopup;
 @property (strong) NSWindow *pdfWindow;
 @property (strong) NSTableView *pdfTable;
 @property (strong) NSArray *pdfItems;
@@ -11737,20 +11736,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.imageFormatPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(64, 384, 120, 26) pullsDown:NO];
     [self.imageFormatPopup addItemsWithTitles:@[@"JPEG", @"PNG", @"HEIC", @"TIFF"]];
     [cv addSubview:self.imageFormatPopup];
-    NSTextField *ql = [self label:@"质量" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    ql.frame = NSMakeRect(204, 390, 40, 18); [cv addSubview:ql];
-    self.imageQualitySlider = [[NSSlider alloc] initWithFrame:NSMakeRect(248, 386, 160, 24)];
-    self.imageQualitySlider.minValue = 0.1; self.imageQualitySlider.maxValue = 1.0;
-    self.imageQualitySlider.doubleValue = 0.8;
-    self.imageQualitySlider.target = self; self.imageQualitySlider.action = @selector(imageQualityChanged:);
-    [cv addSubview:self.imageQualitySlider];
-    self.imageQualityLabel = [self label:@"80%" size:10.5 bold:YES color:[NSColor systemTealColor]];
-    self.imageQualityLabel.frame = NSMakeRect(414, 390, 50, 18); [cv addSubview:self.imageQualityLabel];
-    NSTextField *wl = [self label:@"最大边长" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    wl.frame = NSMakeRect(474, 390, 60, 18); [cv addSubview:wl];
-    self.imageMaxWidthField = [[NSTextField alloc] initWithFrame:NSMakeRect(538, 384, 126, 26)];
-    self.imageMaxWidthField.placeholderString = @"0 = 原始尺寸";
-    [cv addSubview:self.imageMaxWidthField];
+    NSTextField *rl = [self label:@"分辨率" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    rl.frame = NSMakeRect(204, 390, 50, 18); [cv addSubview:rl];
+    self.imageResolutionPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(258, 384, 190, 26) pullsDown:NO];
+    NSArray *resTitles = @[@"原始尺寸", @"4K（3840）", @"2K（2560）", @"1080p（1920）", @"720p（1280）", @"480p（854）"];
+    NSArray *resSides = @[@0, @3840, @2560, @1920, @1280, @854];
+    for (NSInteger i = 0; i < resTitles.count; i++) {
+      [self.imageResolutionPopup addItemWithTitle:resTitles[i]];
+      self.imageResolutionPopup.lastItem.representedObject = resSides[i];
+    }
+    [self.imageResolutionPopup selectItemAtIndex:2];
+    [cv addSubview:self.imageResolutionPopup];
 
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 70, 648, 296)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
@@ -11804,7 +11800,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)imageClear:(id)sender { self.imageToolItems = @[]; [self.imageToolTable reloadData]; }
-- (void)imageQualityChanged:(NSSlider *)s { self.imageQualityLabel.stringValue = [NSString stringWithFormat:@"%ld%%", (long)llround(s.doubleValue * 100)]; }
 
 - (void)imageConvert:(id)sender {
   if (!self.imageToolItems.count) { [self showToast:@"请先添加图片"]; return; }
@@ -11817,8 +11812,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger fi = MAX(0, self.imageFormatPopup.indexOfSelectedItem);
   NSString *format = formats[MIN(fi, 3)];
   NSString *ext = exts[MIN(fi, 3)];
-  long quality = (long)llround(self.imageQualitySlider.doubleValue * 100);
-  NSInteger maxSide = self.imageMaxWidthField.integerValue;
+  long quality = 85;
+  NSInteger maxSide = [self.imageResolutionPopup.selectedItem.representedObject integerValue];
   NSInteger ok = 0, fail = 0;
   for (NSString *path in self.imageToolItems) {
     NSString *base = path.lastPathComponent.stringByDeletingPathExtension;
