@@ -873,7 +873,14 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
   if (![stream addRecordingOutput:self.recordingOutput error:&err]) { [self finishWithError:err]; return; }
   self.stream = stream;
   __weak typeof(self) weakSelf = self;
+  __block BOOL startSettled = NO;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (startSettled || self.finished) return;
+    [self.stream stopCaptureWithCompletionHandler:nil];
+    [self finishWithError:[NSError errorWithDomain:@"DockLaunchers" code:5 userInfo:@{NSLocalizedDescriptionKey:@"屏幕录制启动超时，请检查屏幕录制权限后重试"}]];
+  });
   [stream startCaptureWithCompletionHandler:^(NSError *error) {
+    startSettled = YES;
     if (error) { [weakSelf finishWithError:error]; return; }
     dispatch_async(dispatch_get_main_queue(), ^{
       if (weakSelf.onStarted) weakSelf.onStarted();
@@ -18736,6 +18743,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
 }
 
+- (BOOL)ensureScreenCapturePermission {
+  if (CGPreflightScreenCaptureAccess()) return YES;
+  CGRequestScreenCaptureAccess();
+  self.captureStatusLabel.stringValue = @"需要屏幕录制权限";
+  NSAlert *alert = [[NSAlert alloc] init];
+  alert.messageText = @"需要屏幕录制权限";
+  alert.informativeText = @"请在「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 DockLaunchers 控制台，然后重新打开应用。授权后可能需要重启控制台才能开始录屏。";
+  [alert addButtonWithTitle:@"打开系统设置"];
+  [alert addButtonWithTitle:@"稍后"];
+  if ([alert runModal] == NSAlertFirstButtonReturn) {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"]];
+  }
+  [self showToast:@"录屏需要屏幕录制权限"];
+  return NO;
+}
+
 - (void)captureVideo:(id)sender {
   if (self.captureRecording) {
     [self.captureRecorder stop];
@@ -18745,6 +18768,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger scene = self.captureScenePopup.indexOfSelectedItem;
   NSInteger delay = [self captureRecordCountdownSeconds];
   __weak typeof(self) weakSelf = self;
+  if (![self ensureScreenCapturePermission]) return;
   if (scene == 3) {
     [self beginCaptureRegion:^(NSRect region) {
       if (region.size.width < 12 || region.size.height < 12) return;
@@ -18777,6 +18801,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)quickRecord:(id)sender {
+  if (![self ensureScreenCapturePermission]) return;
   NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mp4", [self captureTimestamp]]];
   DLScreenRecorder *rec = [[DLScreenRecorder alloc] init];
   rec.onFinished = ^(NSURL *url, NSError *error) {
