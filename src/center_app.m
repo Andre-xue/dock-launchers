@@ -954,6 +954,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSView *quickGroupContainer;
 @property (strong) NSSegmentedControl *quickTabs;
 @property (strong) DLCircularMenuView *radialMenu;
+@property (strong) NSArray<NSArray<NSDictionary *> *> *radialPages;
+@property NSInteger radialPage;
+@property (strong) NSTextField *radialPageLabel;
 @property (strong) NSMapTable *detachedPanels;
 @property (strong) NSMapTable *detachedScrolls;
 @property (strong) NSTextField *quickDetailTitle, *quickDetailValue, *quickDetailSub, *quickDetailExtra;
@@ -12266,6 +12269,54 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)closeBatchRenamer:(id)sender { [self.batchRenameWindow orderOut:nil]; }
 
+- (void)radialApplyPage {
+  if (!self.radialPages.count) return;
+  if (self.radialPage < 0) self.radialPage = 0;
+  if (self.radialPage >= (NSInteger)self.radialPages.count) self.radialPage = self.radialPages.count - 1;
+  self.radialMenu.items = self.radialPages[self.radialPage];
+  self.radialMenu.hovered = -1;
+  self.radialMenu.needsDisplay = YES;
+  if (self.radialPageLabel) self.radialPageLabel.stringValue = [NSString stringWithFormat:@"%ld / %ld", (long)(self.radialPage + 1), (long)self.radialPages.count];
+}
+
+- (void)radialPrevPage:(id)sender {
+  if (!self.radialPages.count) return;
+  self.radialPage = (self.radialPage - 1 + (NSInteger)self.radialPages.count) % (NSInteger)self.radialPages.count;
+  [self radialApplyPage];
+}
+
+- (void)radialNextPage:(id)sender {
+  if (!self.radialPages.count) return;
+  self.radialPage = (self.radialPage + 1) % (NSInteger)self.radialPages.count;
+  [self radialApplyPage];
+}
+
+- (void)performRadialAction:(NSString *)action {
+  if (!action.length) return;
+  if ([action isEqualToString:@"translate"]) [self showTranslationWindow:nil];
+  else if ([action isEqualToString:@"compress"]) [self showCompressWindow:nil];
+  else if ([action isEqualToString:@"pdf"]) [self showPDFTools:nil];
+  else if ([action isEqualToString:@"image"]) [self showImageTools:nil];
+  else if ([action isEqualToString:@"rename"]) [self showBatchRenamer:nil];
+  else if ([action isEqualToString:@"clipboard"]) [self showClipboardWindow:nil];
+  else if ([action isEqualToString:@"scene"]) { [self rebuildQuickSceneTab]; [self showDetachedPage:self.quickScenePage title:@"场景模式"]; }
+  else if ([action isEqualToString:@"ai"]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; }
+  else if ([action isEqualToString:@"layouts"]) [self showWindowLayouts:nil];
+  else if ([action isEqualToString:@"largefiles"]) [self showLargeFileCleaner:nil];
+  else if ([action isEqualToString:@"duplicates"]) [self showDuplicateFinder:nil];
+  else if ([action isEqualToString:@"startup"]) [self showStartupItems:nil];
+  else if ([action isEqualToString:@"process"]) [self showProcessManager:nil];
+  else if ([action isEqualToString:@"usage"]) [self showUsageStats:nil];
+  else if ([action isEqualToString:@"appsearch"]) [self showAppSearch:nil];
+  else if ([action isEqualToString:@"quickpanel"]) [self showQuickPanel];
+  else if ([action isEqualToString:@"prompts"]) [self showPromptLibrary:nil];
+  else if ([action isEqualToString:@"appearance"]) [self showDockAppearance:nil];
+  else if ([action isEqualToString:@"password"]) [self showPasswordSettings:nil];
+  else if ([action isEqualToString:@"appshortcuts"]) [self showAppShortcutSettings:nil];
+  else if ([action isEqualToString:@"globalshortcuts"]) [self openShortcutSettings:nil];
+  else if ([action isEqualToString:@"about"]) [self showAbout:nil];
+}
+
 - (void)showDetachedPage:(NSView *)page title:(NSString *)title {
   if (!page) return;
   if (!self.detachedPanels) self.detachedPanels = [NSMapTable strongToStrongObjectsMapTable];
@@ -13218,28 +13269,44 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [root addSubview:self.statusMetricButton positioned:NSWindowAbove relativeTo:nil];
   BOOL skipRadial = getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER") || getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI") || getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_AI_HIDE_MAIN") || getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_PROCESS") || getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_SCENE") || getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER_TOOLS");
   if (!skipRadial) {
-    self.radialMenu = [[DLCircularMenuView alloc] initWithFrame:NSMakeRect(0,0,420,440)];
-    self.radialMenu.items = @[
-      @{@"title": @"翻译", @"symbol": @"character.bubble.fill"},
-      @{@"title": @"压缩", @"symbol": @"archivebox.fill"},
-      @{@"title": @"PDF", @"symbol": @"doc.richtext"},
-      @{@"title": @"图片", @"symbol": @"photo.on.rectangle.angled"},
-      @{@"title": @"重命名", @"symbol": @"square.and.pencil"},
-      @{@"title": @"剪贴板", @"symbol": @"doc.on.clipboard.fill"},
-      @{@"title": @"场景", @"symbol": @"rectangle.3.group.fill"},
-      @{@"title": @"AI", @"symbol": @"sparkles"}
+    self.radialPages = @[
+      @[
+        @{@"title": @"翻译", @"symbol": @"character.bubble.fill", @"action": @"translate"},
+        @{@"title": @"压缩", @"symbol": @"archivebox.fill", @"action": @"compress"},
+        @{@"title": @"PDF", @"symbol": @"doc.richtext", @"action": @"pdf"},
+        @{@"title": @"图片", @"symbol": @"photo.on.rectangle.angled", @"action": @"image"},
+        @{@"title": @"重命名", @"symbol": @"square.and.pencil", @"action": @"rename"},
+        @{@"title": @"剪贴板", @"symbol": @"doc.on.clipboard.fill", @"action": @"clipboard"},
+        @{@"title": @"场景", @"symbol": @"rectangle.3.group.fill", @"action": @"scene"},
+        @{@"title": @"AI", @"symbol": @"sparkles", @"action": @"ai"}
+      ],
+      @[
+        @{@"title": @"窗口布局", @"symbol": @"rectangle.split.2x2", @"action": @"layouts"},
+        @{@"title": @"大文件", @"symbol": @"externaldrive.fill", @"action": @"largefiles"},
+        @{@"title": @"重复文件", @"symbol": @"doc.on.doc.fill", @"action": @"duplicates"},
+        @{@"title": @"启动项", @"symbol": @"power", @"action": @"startup"},
+        @{@"title": @"进程", @"symbol": @"cpu", @"action": @"process"},
+        @{@"title": @"使用统计", @"symbol": @"chart.bar.fill", @"action": @"usage"},
+        @{@"title": @"应用搜索", @"symbol": @"magnifyingglass", @"action": @"appsearch"},
+        @{@"title": @"快速面板", @"symbol": @"command", @"action": @"quickpanel"}
+      ],
+      @[
+        @{@"title": @"提示词库", @"symbol": @"text.book.closed.fill", @"action": @"prompts"},
+        @{@"title": @"Dock 外观", @"symbol": @"paintbrush.fill", @"action": @"appearance"},
+        @{@"title": @"应用密码", @"symbol": @"lock.fill", @"action": @"password"},
+        @{@"title": @"应用快捷键", @"symbol": @"keyboard", @"action": @"appshortcuts"},
+        @{@"title": @"全局快捷键", @"symbol": @"globe", @"action": @"globalshortcuts"},
+        @{@"title": @"关于", @"symbol": @"info.circle.fill", @"action": @"about"}
+      ]
     ];
+    self.radialPage = 0;
+    self.radialMenu = [[DLCircularMenuView alloc] initWithFrame:NSMakeRect(0,0,420,440)];
     __weak typeof(self) weakSelf = self;
     self.radialMenu.onSegment = ^(NSInteger index) {
+      if (index < 0 || index >= (NSInteger)weakSelf.radialMenu.items.count) return;
+      NSString *action = weakSelf.radialMenu.items[index][@"action"] ?: @"";
       [weakSelf.popover performClose:nil];
-      if (index == 0) [weakSelf showTranslationWindow:nil];
-      else if (index == 1) [weakSelf showCompressWindow:nil];
-      else if (index == 2) [weakSelf showPDFTools:nil];
-      else if (index == 3) [weakSelf showImageTools:nil];
-      else if (index == 4) [weakSelf showBatchRenamer:nil];
-      else if (index == 5) [weakSelf showClipboardWindow:nil];
-      else if (index == 6) { [weakSelf rebuildQuickSceneTab]; [weakSelf showDetachedPage:weakSelf.quickScenePage title:@"场景模式"]; }
-      else if (index == 7) { [weakSelf rebuildQuickAITab]; [weakSelf showDetachedPage:weakSelf.quickAIPage title:@"AI 管理"]; }
+      [weakSelf performRadialAction:action];
     };
     self.radialMenu.onCenter = ^(BOOL doubleClick) {
       [weakSelf.popover performClose:nil];
@@ -13247,6 +13314,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       else [weakSelf showDetachedPage:weakSelf.quickOverview title:@"概览"];
     };
     [root addSubview:self.radialMenu positioned:NSWindowAbove relativeTo:nil];
+    ColorHoverButton *prev = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(126,8,34,24)];
+    prev.title = @"‹"; prev.hoverColor = [NSColor systemBlueColor];
+    prev.target = self; prev.action = @selector(radialPrevPage:);
+    [prev applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [root addSubview:prev];
+    ColorHoverButton *next = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(260,8,34,24)];
+    next.title = @"›"; next.hoverColor = [NSColor systemBlueColor];
+    next.target = self; next.action = @selector(radialNextPage:);
+    [next applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [root addSubview:next];
+    self.radialPageLabel = [self label:@"1 / 3" size:9.5 bold:YES color:[NSColor secondaryLabelColor]];
+    self.radialPageLabel.alignment = NSTextAlignmentCenter;
+    self.radialPageLabel.frame = NSMakeRect(186,12,48,16);
+    [root addSubview:self.radialPageLabel];
+    [self radialApplyPage];
     pop.contentSize = NSMakeSize(420, 440);
   } else {
     pop.contentSize = NSMakeSize(420, 620);
