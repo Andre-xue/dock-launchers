@@ -4933,24 +4933,27 @@ static BOOL ValidGroupName(NSString *raw) {
   NSDictionary *it = [self clipboardSelectedItem];
   if (!it) return;
   BOOL isImage = [it[@"kind"] isEqualToString:@"image"];
-  NSSavePanel *sp = [NSSavePanel savePanel];
-  NSString *defaultName = isImage ? (it[@"file"] ?: @"剪贴板图片.png") : @"剪贴板文本.txt";
-  sp.nameFieldStringValue = defaultName;
-  sp.allowedFileTypes = isImage ? @[@"png"] : @[@"txt"];
-  if ([sp runModal] != NSModalResponseOK) return;
-  if (isImage) {
-    NSString *src = [[self clipboardImagesDir] stringByAppendingPathComponent:(it[@"file"] ?: @"")];
-    NSData *data = [NSData dataWithContentsOfFile:src];
-    if (!data) { [self showToast:@"图片文件不存在"]; return; }
-    NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:data];
-    NSData *png = rep ? [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] : data;
-    if (![png writeToURL:sp.URL atomically:YES]) { [self showToast:@"保存失败"]; return; }
-  } else {
-    NSString *text = it[@"text"] ?: @"";
-    if (![text writeToURL:sp.URL atomically:YES encoding:NSUTF8StringEncoding error:NULL]) { [self showToast:@"保存失败"]; return; }
-  }
-  [self showToast:@"已保存"];
-  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[sp.URL]];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    [NSApp activateIgnoringOtherApps:YES];
+    NSSavePanel *sp = [NSSavePanel savePanel];
+    NSString *defaultName = isImage ? (it[@"file"] ?: @"剪贴板图片.png") : @"剪贴板文本.txt";
+    sp.nameFieldStringValue = defaultName;
+    sp.allowedFileTypes = isImage ? @[@"png"] : @[@"txt"];
+    if ([sp runModal] != NSModalResponseOK) return;
+    if (isImage) {
+      NSString *src = [[self clipboardImagesDir] stringByAppendingPathComponent:(it[@"file"] ?: @"")];
+      NSData *data = [NSData dataWithContentsOfFile:src];
+      if (!data) { [self showToast:@"图片文件不存在"]; return; }
+      NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:data];
+      NSData *png = rep ? [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] : data;
+      if (![png writeToURL:sp.URL atomically:YES]) { [self showToast:@"保存失败"]; return; }
+    } else {
+      NSString *text = it[@"text"] ?: @"";
+      if (![text writeToURL:sp.URL atomically:YES encoding:NSUTF8StringEncoding error:NULL]) { [self showToast:@"保存失败"]; return; }
+    }
+    [self showToast:@"已保存"];
+    [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[sp.URL]];
+  });
 }
 
 - (void)pasteClipboardToPreviousApp:(id)sender {
