@@ -1930,26 +1930,52 @@ static void HideDockHoverTip(void) {
 @property (strong) NSArray<NSDictionary *> *filtered;
 @property (copy) NSArray<NSDictionary *> *(^dataProvider)(void);
 @property (copy) void (^openHandler)(NSDictionary *item);
+@property (strong) NSPopUpButton *categoryPopup;
+@property (strong) NSPopUpButton *groupPopup;
+@property (strong) NSTextField *groupLabel;
+@property NSInteger category;
+@property (copy) NSString *selectedGroup;
 - (void)showPanel;
 - (void)hidePanel;
 @end
 
 @implementation QuickPanelController
 - (void)buildWindow {
-  self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,470) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+  self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
   self.window.title = @"快速面板";
   self.window.releasedWhenClosed = NO;
   self.window.level = NSStatusWindowLevel;
   self.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
   self.window.backgroundColor = [NSColor colorWithCalibratedWhite:0.98 alpha:1.0];
   NSView *cv = self.window.contentView;
-  self.search = [[NSSearchField alloc] initWithFrame:NSMakeRect(16, 420, 528, 34)];
+  self.search = [[NSSearchField alloc] initWithFrame:NSMakeRect(16, 470, 528, 34)];
   self.search.placeholderString = @"搜索分组、应用、页面、AI 服务、工具…";
   self.search.delegate = self;
   self.search.target = self; self.search.action = @selector(searchChanged:);
   self.search.sendsSearchStringImmediately = YES;
   [cv addSubview:self.search];
-  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 16, 528, 392)];
+  NSTextField *catLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(16, 434, 38, 18)];
+  catLabel.stringValue = @"分类"; catLabel.editable = NO; catLabel.bordered = NO; catLabel.drawsBackground = NO;
+  catLabel.font = [NSFont systemFontOfSize:10.5 weight:NSFontWeightSemibold];
+  catLabel.textColor = [NSColor secondaryLabelColor];
+  [cv addSubview:catLabel];
+  self.categoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(58, 428, 132, 26) pullsDown:NO];
+  [self.categoryPopup addItemsWithTitles:@[@"全部", @"分组 Dock", @"分组应用", @"控制台", @"快捷设置", @"系统", @"工具"]];
+  self.categoryPopup.target = self;
+  self.categoryPopup.action = @selector(categoryChanged:);
+  [cv addSubview:self.categoryPopup];
+  self.groupLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(204, 434, 60, 18)];
+  self.groupLabel.stringValue = @"分组"; self.groupLabel.editable = NO; self.groupLabel.bordered = NO; self.groupLabel.drawsBackground = NO;
+  self.groupLabel.font = [NSFont systemFontOfSize:10.5 weight:NSFontWeightSemibold];
+  self.groupLabel.textColor = [NSColor secondaryLabelColor];
+  [cv addSubview:self.groupLabel];
+  self.groupPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(264, 428, 200, 26) pullsDown:NO];
+  self.groupPopup.target = self;
+  self.groupPopup.action = @selector(groupChanged:);
+  [cv addSubview:self.groupPopup];
+  self.groupLabel.hidden = YES;
+  self.groupPopup.hidden = YES;
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 16, 528, 398)];
   sv.hasVerticalScroller = YES;
   sv.borderType = NSNoBorder;
   sv.drawsBackground = YES;
@@ -1973,6 +1999,7 @@ static void HideDockHoverTip(void) {
   if (!self.window) [self buildWindow];
   if (self.dataProvider) self.items = self.dataProvider() ?: @[];
   self.search.stringValue = @"";
+  [self rebuildGroupPopup];
   [self filterWithQuery:@""];
   [NSApp activateIgnoringOtherApps:YES];
   [self.window makeKeyAndOrderFront:nil];
@@ -1985,15 +2012,50 @@ static void HideDockHoverTip(void) {
 }
 - (void)hidePanel { [self.window orderOut:nil]; }
 
+- (void)rebuildGroupPopup {
+  [self.groupPopup removeAllItems];
+  NSMutableArray *groups = [NSMutableArray array];
+  for (NSDictionary *it in self.items) {
+    if ([it[@"category"] integerValue] != 2) continue;
+    NSString *g = it[@"group"] ?: @"";
+    if (g.length && ![groups containsObject:g]) [groups addObject:g];
+  }
+  [groups sortUsingSelector:@selector(localizedCompare:)];
+  [self.groupPopup addItemWithTitle:@"全部分组"];
+  for (NSString *g in groups) [self.groupPopup addItemWithTitle:g];
+  if (self.selectedGroup.length && [groups containsObject:self.selectedGroup]) [self.groupPopup selectItemWithTitle:self.selectedGroup];
+  else if (groups.count) { self.selectedGroup = groups.firstObject; [self.groupPopup selectItemWithTitle:self.selectedGroup]; }
+  else { self.selectedGroup = @""; [self.groupPopup selectItemAtIndex:0]; }
+}
+
+- (void)categoryChanged:(id)sender {
+  self.category = self.categoryPopup.indexOfSelectedItem;
+  BOOL showGroup = (self.category == 2);
+  self.groupLabel.hidden = !showGroup;
+  self.groupPopup.hidden = !showGroup;
+  [self filterWithQuery:self.search.stringValue];
+}
+
+- (void)groupChanged:(id)sender {
+  self.selectedGroup = self.groupPopup.indexOfSelectedItem > 0 ? self.groupPopup.titleOfSelectedItem : @"";
+  [self filterWithQuery:self.search.stringValue];
+}
+
 - (void)searchChanged:(id)sender { [self filterWithQuery:self.search.stringValue]; }
 
 - (void)filterWithQuery:(NSString *)q {
   NSString *needle = [q stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+  NSMutableArray *base = [NSMutableArray array];
+  for (NSDictionary *it in self.items ?: @[]) {
+    if (self.category > 0 && [it[@"category"] integerValue] != self.category) continue;
+    if (self.category == 2 && self.selectedGroup.length && ![it[@"group"] isEqualToString:self.selectedGroup]) continue;
+    [base addObject:it];
+  }
   if (!needle.length) {
-    self.filtered = self.items ?: @[];
+    self.filtered = base;
   } else {
     NSMutableArray *out = [NSMutableArray array];
-    for (NSDictionary *it in self.items) {
+    for (NSDictionary *it in base) {
       NSString *hay = [NSString stringWithFormat:@"%@ %@ %@", it[@"title"] ?: @"", it[@"subtitle"] ?: @"", it[@"type"] ?: @""].lowercaseString;
       if ([hay containsString:needle]) [out addObject:it];
     }
@@ -15763,7 +15825,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSArray *pageIcons = @[@"chart.line.uptrend.xyaxis", @"square.grid.2x2", @"sparkles", @"externaldrive", @"trash", @"gearshape"];
   for (NSInteger i = 0; i < pages.count; i++) {
     NSImage *ic = [NSImage imageWithSystemSymbolName:pageIcons[i] accessibilityDescription:nil];
-    [out addObject:@{@"title": pages[i], @"subtitle": @"控制台页面", @"type": @"页面", @"page": @(i), @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+    [out addObject:@{@"title": pages[i], @"subtitle": @"控制台页面", @"type": @"页面", @"page": @(i), @"category": @3, @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
   }
   NSFileManager *fm = [NSFileManager defaultManager];
   NSArray *groups = [[fm contentsOfDirectoryAtPath:GroupDir() error:NULL] sortedArrayUsingSelector:@selector(localizedCompare:)];
@@ -15772,54 +15834,56 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSString *path = [GroupDir() stringByAppendingPathComponent:f];
     NSImage *icon = [[NSImage alloc] initWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"]];
     if (!icon) icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
-    [out addObject:@{@"title": [f stringByDeletingPathExtension], @"subtitle": @"Dock 分组", @"type": @"分组", @"path": path, @"icon": icon ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+    [out addObject:@{@"title": [f stringByDeletingPathExtension], @"subtitle": @"Dock 分组", @"type": @"分组", @"path": path, @"category": @1, @"icon": icon ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
   }
   NSString *listsDir = [GroupDir() stringByAppendingPathComponent:@"lists"];
-  NSMutableSet *seenApps = [NSMutableSet set];
   for (NSString *list in [[fm contentsOfDirectoryAtPath:listsDir error:NULL] sortedArrayUsingSelector:@selector(localizedCompare:)]) {
     if (![list.pathExtension isEqualToString:@"txt"]) continue;
+    NSString *groupName = list.stringByDeletingPathExtension;
     NSString *body = [NSString stringWithContentsOfFile:[listsDir stringByAppendingPathComponent:list] encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+    NSMutableSet *seenGroupApps = [NSMutableSet set];
     for (NSString *line in [body componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
       if (!line.length) continue;
       NSArray *parts = [line componentsSeparatedByString:@"|"];
       NSString *name = parts.firstObject;
       NSString *path = [self resolveApplicationPathForName:name];
-      if (!path || [seenApps containsObject:path]) continue;
-      [seenApps addObject:path];
+      if (!path || [seenGroupApps containsObject:path]) continue;
+      [seenGroupApps addObject:path];
       NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
-      [out addObject:@{@"title": name, @"subtitle": [NSString stringWithFormat:@"应用 · %@", list.stringByDeletingPathExtension], @"type": @"应用", @"path": path, @"icon": icon ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+      [out addObject:@{@"title": name, @"subtitle": [NSString stringWithFormat:@"分组应用 · %@", groupName], @"type": @"分组应用", @"group": groupName, @"path": path, @"category": @2, @"icon": icon ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
     }
   }
   [self loadAIEntries];
   for (NSDictionary *e in self.aiEntries) {
     NSImage *ic = [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil];
-    [out addObject:@{@"title": e[@"name"] ?: @"AI 服务", @"subtitle": @"AI 管理 · 查看余额", @"type": @"AI", @"page": @2, @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+    [out addObject:@{@"title": e[@"name"] ?: @"AI 服务", @"subtitle": @"AI 管理 · 查看余额", @"type": @"AI", @"page": @2, @"category": @3, @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
   }
-  NSArray *tools = @[
-    @[@"AI 翻译", @"截图 / 划词 / 文档翻译", @"translate", @"character.bubble"],
-    @[@"压缩 / 解压", @"ZIP / TAR.GZ", @"compress", @"archivebox"],
-    @[@"PDF 工具", @"合并 / 拆分 / 提取页码 / 导出图片", @"pdf", @"doc.richtext"],
-    @[@"图片工具", @"批量转换格式 / 分辨率 / 旋转", @"image", @"photo.on.rectangle.angled"],
-    @[@"批量重命名", @"查找替换 / 前后缀 / 自动序号", @"rename", @"square.and.pencil"],
-    @[@"剪贴板历史", @"最近复制的文字和图片", @"clipboard", @"doc.on.clipboard"],
-    @[@"窗口布局", @"保存和恢复窗口位置", @"layouts", @"rectangle.split.2x2"],
-    @[@"大文件清理", @"扫描并清理大文件", @"largefiles", @"externaldrive"],
-    @[@"重复文件", @"按大小和哈希查找重复项", @"duplicates", @"doc.on.doc"],
-    @[@"进程管理", @"查看和结束进程", @"process", @"cpu"],
-    @[@"使用统计", @"应用启动次数与推荐", @"usage", @"chart.bar"],
-    @[@"启动项", @"启动项和登录项管理", @"startup", @"power"],
-    @[@"提示词库", @"管理和导出 AI 提示词", @"prompts", @"text.book.closed"],
-    @[@"Dock 外观", @"图标大小 / 放大 / 自动隐藏 / 位置", @"appearance", @"paintbrush"],
-    @[@"应用密码", @"设置敏感操作密码", @"password", @"lock"],
-    @[@"应用内快捷键", @"控制台窗口内快捷键", @"appshortcuts", @"keyboard"],
-    @[@"全局快捷键", @"任意应用可用的快捷键", @"globalshortcuts", @"globe"],
-    @[@"磁盘分析", @"浏览磁盘文件", @"disk", @"internaldrive"],
-    @[@"应用搜索", @"搜索并打开应用", @"appsearch", @"magnifyingglass"],
-    @[@"打开控制台", @"显示主控制台", @"console", @"macwindow"]
+  NSArray *entries = @[
+    @[@"窗口布局", @"快捷设置 · 保存和恢复窗口位置", @"layouts", @"rectangle.split.2x2", @4],
+    @[@"Dock 外观", @"快捷设置 · 图标大小 / 放大 / 自动隐藏 / 位置", @"appearance", @"paintbrush", @4],
+    @[@"应用密码", @"快捷设置 · 敏感操作密码", @"password", @"lock", @4],
+    @[@"应用内快捷键", @"快捷设置 · 控制台窗口内快捷键", @"appshortcuts", @"keyboard", @4],
+    @[@"全局快捷键", @"快捷设置 · 任意应用可用的快捷键", @"globalshortcuts", @"globe", @4],
+    @[@"启动项", @"系统 · 启动项和登录项管理", @"startup", @"power", @5],
+    @[@"进程管理", @"系统 · 查看和结束进程", @"process", @"cpu", @5],
+    @[@"使用统计", @"系统 · 应用启动次数与推荐", @"usage", @"chart.bar", @5],
+    @[@"AI 管理", @"工具 · 查看 AI 服务和余额", @"aimgmt", @"sparkles", @6],
+    @[@"压缩 / 解压", @"工具 · ZIP / TAR.GZ", @"compress", @"archivebox", @6],
+    @[@"PDF 工具", @"工具 · 合并 / 拆分 / 提取页码 / 导出图片", @"pdf", @"doc.richtext", @6],
+    @[@"AI 翻译", @"工具 · 截图 / 划词 / 文档翻译", @"translate", @"character.bubble", @6],
+    @[@"图片工具", @"工具 · 批量转换格式 / 分辨率 / 旋转", @"image", @"photo.on.rectangle.angled", @6],
+    @[@"批量重命名", @"工具 · 查找替换 / 前后缀 / 自动序号", @"rename", @"square.and.pencil", @6],
+    @[@"剪贴板历史", @"工具 · 最近复制的文字和图片", @"clipboard", @"doc.on.clipboard", @6],
+    @[@"大文件清理", @"工具 · 扫描并清理大文件", @"largefiles", @"externaldrive", @6],
+    @[@"重复文件", @"工具 · 按大小和哈希查找重复项", @"duplicates", @"doc.on.doc", @6],
+    @[@"提示词库", @"工具 · 管理和导出 AI 提示词", @"prompts", @"text.book.closed", @6],
+    @[@"磁盘分析", @"工具 · 浏览磁盘文件", @"disk", @"internaldrive", @6],
+    @[@"应用搜索", @"工具 · 搜索并打开应用", @"appsearch", @"magnifyingglass", @6],
+    @[@"打开控制台", @"控制台 · 显示主窗口", @"console", @"macwindow", @3]
   ];
-  for (NSArray *t in tools) {
+  for (NSArray *t in entries) {
     NSImage *ic = [NSImage imageWithSystemSymbolName:t[3] accessibilityDescription:nil];
-    [out addObject:@{@"title": t[0], @"subtitle": t[1], @"type": @"工具", @"tool": t[2], @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+    [out addObject:@{@"title": t[0], @"subtitle": t[1], @"type": @"工具", @"tool": t[2], @"category": t[4], @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
   }
   return out;
 }
@@ -15854,6 +15918,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"globalshortcuts"]) [self openShortcutSettings:nil];
     else if ([tool isEqualToString:@"disk"]) [self openDiskAnalysisFromMenu];
     else if ([tool isEqualToString:@"appsearch"]) [self showAppSearch:nil];
+    else if ([tool isEqualToString:@"aimgmt"]) { [self showWindow:nil]; [self showSection:2]; }
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
 }
