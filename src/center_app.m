@@ -1940,6 +1940,7 @@ static void HideDockHoverTip(void) {
 @property (strong) NSTextField *groupLabel;
 @property NSInteger category;
 @property (copy) NSString *selectedGroup;
+@property (strong) id keyMonitor;
 - (void)showPanel;
 - (void)hidePanel;
 @end
@@ -2002,6 +2003,25 @@ static void HideDockHoverTip(void) {
 
 - (void)showPanel {
   if (!self.window) [self buildWindow];
+  if (!self.keyMonitor) {
+    __weak typeof(self) weakSelf = self;
+    self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+      if (!weakSelf.window.isVisible || e.window != weakSelf.window) return e;
+      if (e.keyCode == 53) { [weakSelf hidePanel]; return nil; }
+      if (e.keyCode == 36 || e.keyCode == 76) { [weakSelf openSelected]; return nil; }
+      if (e.keyCode == 125 || e.keyCode == 126) {
+        NSInteger row = weakSelf.table.selectedRow;
+        row = (e.keyCode == 125) ? MIN((NSInteger)weakSelf.filtered.count - 1, row + 1) : MAX(0, row - 1);
+        if (row < 0) row = 0;
+        if (weakSelf.filtered.count) {
+          [weakSelf.table selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+          [weakSelf.table scrollRowToVisible:row];
+        }
+        return nil;
+      }
+      return e;
+    }];
+  }
   if (self.dataProvider) self.items = self.dataProvider() ?: @[];
   self.search.stringValue = @"";
   [self rebuildGroupPopup];
@@ -15952,6 +15972,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)showColorSampler:(id)sender {
+  [self showToast:@"点击屏幕任意位置取色"];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     if (!NSClassFromString(@"NSColorSampler")) { [self showToast:@"当前系统不支持屏幕取色"]; return; }
     if (!self.colorSampler) self.colorSampler = [[NSColorSampler alloc] init];
