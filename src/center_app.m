@@ -797,6 +797,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *pdfWindow;
 @property (strong) NSTextField *pdfStartField, *pdfEndField;
 @property (strong) id pdfFinderMonitor;
+@property (strong) id imageFinderMonitor;
 @property (strong) NSTableView *pdfTable;
 @property (strong) NSArray *pdfItems;
 @property (strong) NSWindow *batchRenameWindow;
@@ -12064,6 +12065,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     clear.title = @"清空"; clear.hoverColor = [NSColor systemRedColor];
     clear.target = self; clear.action = @selector(imageClear:);
     [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    ColorHoverButton *finderImport = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(344, 428, 96, 30)];
+    finderImport.title = @"访达导入"; finderImport.hoverColor = [NSColor systemGreenColor];
+    finderImport.target = self; finderImport.action = @selector(imageImportFinderSelection:);
+    finderImport.toolTip = @"先在访达选中图片，再点这里；也可按住 Command 双击列表";
+    [finderImport applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:finderImport];
     ColorHoverButton *convert = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(556, 428, 108, 30)];
     convert.title = @"开始转换"; convert.hoverColor = [NSColor systemGreenColor];
     convert.target = self; convert.action = @selector(imageConvert:);
@@ -12113,7 +12119,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.imageToolTable.dataSource = self; self.imageToolTable.delegate = self;
     
     self.imageToolTable.target = self;
-    self.imageToolTable.doubleAction = @selector(imagePreviewSelected:);
+    self.imageToolTable.doubleAction = @selector(imageTableDoubleClicked:);
     sv.documentView = self.imageToolTable; [cv addSubview:sv];
     ColorHoverButton *preview = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(452, 24, 100, 30)];
     preview.title = @"预览"; preview.hoverColor = [NSColor systemTealColor];
@@ -12127,6 +12133,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     self.imageToolItems = @[];
     [self.imageToolWindow center];
+  }
+  if (!self.imageFinderMonitor) {
+    __weak typeof(self) weakImgWin = self;
+    self.imageFinderMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent *(NSEvent *e) {
+      if (weakImgWin.imageToolWindow.isVisible && e.window == weakImgWin.imageToolWindow && e.clickCount >= 2 && (e.modifierFlags & NSEventModifierFlagCommand)) {
+        [weakImgWin imageImportFinderSelection:nil];
+        return nil;
+      }
+      return e;
+    }];
   }
   [NSApp activateIgnoringOtherApps:YES];
   [self.imageToolWindow makeKeyAndOrderFront:nil];
@@ -12193,6 +12209,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   [self showToast:[NSString stringWithFormat:@"转换完成：%ld 个成功，%ld 个失败", (long)ok, (long)fail]];
   [[NSWorkspace sharedWorkspace] openURL:p.URL];
+}
+
+- (void)imageImportFinderSelection:(id)sender {
+  NSArray *paths = [self finderSelectedPaths];
+  if (!paths.count) { [self showToast:@"请先在访达选中图片文件"]; return; }
+  [self addImagePaths:paths];
+}
+
+- (void)imageTableDoubleClicked:(id)sender {
+  if (([NSEvent modifierFlags] & NSEventModifierFlagCommand) != 0) [self imageImportFinderSelection:nil];
+  else [self imagePreviewSelected:nil];
 }
 
 - (void)imagePreviewSelected:(id)sender {
