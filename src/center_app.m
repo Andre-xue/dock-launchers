@@ -3383,12 +3383,12 @@ static void HideDockHoverTip(void) {
   [self applyWindowChrome:self.window];
   self.sampleSeconds = 2;
   self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
-  NSImage *menuIcon = [NSImage imageWithSystemSymbolName:@"square.grid.2x2.fill" accessibilityDescription:@"DockLaunchers"];
-  menuIcon.template = YES;
+  NSImage *menuIcon = [self characterImage:20];
+  menuIcon.template = NO;
   self.statusItem.button.image = menuIcon;
   self.statusItem.button.imagePosition = NSImageLeft;
   self.statusItem.button.imageScaling = NSImageScaleProportionallyDown;
-  self.statusItem.button.title = @" DL";
+  self.statusItem.button.title = @"";
   self.statusItem.button.target = self;
   self.statusItem.button.action = @selector(togglePopover:);
   [self startMediaWidget];
