@@ -3479,6 +3479,7 @@ static void HideDockHoverTip(void) {
     [self removeDockEntry:selfPath];
     [self addDockEntry:selfPath label:@"DockLaunchers控制台"];
     [self ensureGroupDockEntries];
+    [self repairGroupDockIconsIfNeeded];
     [self killDock];
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")) {
@@ -5920,6 +5921,51 @@ static BOOL ValidGroupName(NSString *raw) {
     NSString *label = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [[f stringByDeletingPathExtension] stringByReplacingOccurrencesOfString:@"DockLaunchers" withString:@""];
     [self addDockEntry:path label:label];
   }
+}
+
+- (void)repairGroupDockIconsIfNeeded {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSInteger version = 2;
+  if ([ud integerForKey:@"centerGroupIconsRepairVersion"] >= version) return;
+  NSDictionary *map = @{@"工具": @"工具组", @"工作": @"工作组", @"聊天": @"聊天组", @"外网": @"外网组", @"影音": @"影音组", @"Ai": @"Ai组", @"AI": @"Ai组", @"Docker": @"Docker组"};
+  NSString *dir = [GroupDir() stringByAppendingPathComponent:@"DockLaunchers"];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSArray *files = [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+  BOOL changed = NO;
+  for (NSString *f in files) {
+    if (![f hasSuffix:@".app"]) continue;
+    NSString *app = [dir stringByAppendingPathComponent:f];
+    NSString *plist = [app stringByAppendingPathComponent:@"Contents/Info.plist"];
+    NSMutableDictionary *info = [[NSDictionary dictionaryWithContentsOfFile:plist] mutableCopy];
+    if (!info) continue;
+    NSString *label = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [f stringByDeletingPathExtension];
+    NSString *iconName = map[label];
+    if (!iconName) continue;
+    NSString *src = [[NSBundle mainBundle] pathForResource:iconName ofType:@"icns" inDirectory:@"GroupIcons"];
+    if (!src) continue;
+    NSString *res = [app stringByAppendingPathComponent:@"Contents/Resources"];
+    [fm createDirectoryAtPath:res withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSString *dst = [res stringByAppendingPathComponent:@"AppIcon.icns"];
+    NSData *want = [NSData dataWithContentsOfFile:src];
+    NSData *have = [NSData dataWithContentsOfFile:dst];
+    if (!want || [want isEqualToData:have]) continue;
+    [fm removeItemAtPath:dst error:NULL];
+    if (![fm copyItemAtPath:src toPath:dst error:NULL]) continue;
+    info[@"CFBundleIconFile"] = @"AppIcon";
+    [info writeToFile:plist atomically:YES];
+    NSTask *sign = [[NSTask alloc] init];
+    sign.launchPath = @"/usr/bin/codesign";
+    sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", app];
+    @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
+    NSTask *reg = [[NSTask alloc] init];
+    reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+    reg.arguments = @[@"-f", app];
+    @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
+    changed = YES;
+  }
+  [ud setInteger:version forKey:@"centerGroupIconsRepairVersion"];
+  [ud synchronize];
+  if (changed) [self killDock];
 }
 
 - (void)addDockEntry:(NSString *)path label:(NSString *)label {
