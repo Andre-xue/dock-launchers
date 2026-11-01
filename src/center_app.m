@@ -13042,6 +13042,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (self.radialPage < 0) self.radialPage = 0;
   if (self.radialPage >= (NSInteger)self.radialPages.count) self.radialPage = self.radialPages.count - 1;
   self.radialMenu.items = self.radialPages[self.radialPage];
+  [[NSUserDefaults standardUserDefaults] setInteger:self.radialPage forKey:@"centerRadialLastPage"];
   self.radialMenu.hovered = -1;
   self.radialMenu.needsDisplay = YES;
   if (self.radialPageLabel) self.radialPageLabel.stringValue = [NSString stringWithFormat:@"%ld / %ld", (long)(self.radialPage + 1), (long)self.radialPages.count];
@@ -14116,7 +14117,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"磁盘分析", @"symbol": @"internaldrive.fill", @"action": @"disk"}
       ]
     ];
-    self.radialPage = 0;
+    NSInteger savedPage = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerRadialLastPage"];
+    self.radialPage = MAX(0, MIN(savedPage, (NSInteger)self.radialPages.count - 1));
     self.radialMenu = [[DLCircularMenuView alloc] initWithFrame:NSMakeRect(0,0,340,360)];
     __weak typeof(self) weakSelf = self;
     self.radialMenu.onSegment = ^(NSInteger index) {
