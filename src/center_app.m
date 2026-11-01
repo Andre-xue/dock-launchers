@@ -589,6 +589,7 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSButton *photoSystemRadio, *photoLocalRadio;
 @property (strong) NSTextField *photoPermissionStatus;
 @property (strong) NSWindow *appPasswordWindow;
+@property (strong) NSButton *pwLaunchLockCheck;
 @property (strong) NSSecureTextField *pwCurrentField, *pwNewField, *pwConfirmField;
 @property (strong) NSTextField *pwStatusLabel;
 @property (strong) NSMutableArray *appShortcuts;
@@ -2014,6 +2015,11 @@ static void HideDockHoverTip(void) {
   [self buildPopover];
   [self applyThemeFromDefaults];
   [self startSceneAutoIfNeeded];
+  if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerLaunchLock"] && [self hasAppPassword] && !getenv("DOCKLAUNCHERS_CENTER_SKIP_LOCK")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      if (![self promptForAppPassword]) [NSApp terminate:nil];
+    });
+  }
   self.diskKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
     if (e.keyCode == 49 && self.section == 3 && self.diskCollectionScroll.hidden == NO) {
       [self previewSelectedDiskFile];
@@ -5540,6 +5546,10 @@ static BOOL ValidGroupName(NSString *raw) {
     [cv addSubview:self.pwConfirmField];
     self.pwStatusLabel = [self label:@"" size:10.5 bold:NO color:[NSColor systemRedColor]];
     self.pwStatusLabel.frame = NSMakeRect(24, 100, 420, 18); [cv addSubview:self.pwStatusLabel];
+    self.pwLaunchLockCheck = [NSButton checkboxWithTitle:@"启动 DockLaunchers 时要求输入应用密码" target:self action:@selector(launchLockChanged:)];
+    self.pwLaunchLockCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerLaunchLock"] ? NSControlStateValueOn : NSControlStateValueOff;
+    self.pwLaunchLockCheck.frame = NSMakeRect(24, 72, 380, 20);
+    [cv addSubview:self.pwLaunchLockCheck];
     ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 30, 120, 32)];
     save.title = @"保存密码"; save.hoverColor = [NSColor systemGreenColor];
     save.target = self; save.action = @selector(saveAppPassword:);
@@ -5557,6 +5567,23 @@ static BOOL ValidGroupName(NSString *raw) {
   [NSApp activateIgnoringOtherApps:YES];
   [self.appPasswordWindow makeKeyAndOrderFront:nil];
   [self.appPasswordWindow orderFrontRegardless];
+}
+
+- (void)launchLockChanged:(NSButton *)sender {
+  if (sender.state == NSControlStateValueOn) {
+    if (![self hasAppPassword]) {
+      sender.state = NSControlStateValueOff;
+      [self showToast:@"请先设置应用密码再启用启动锁定"];
+      return;
+    }
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"启用启动锁定？";
+    a.informativeText = @"下次启动 DockLaunchers 控制台时需要输入应用密码，取消会退出控制台。忘记密码时需要删除本地密码文件才能重置。";
+    [a addButtonWithTitle:@"启用"];
+    [a addButtonWithTitle:@"取消"];
+    if ([a runModal] != NSAlertFirstButtonReturn) { sender.state = NSControlStateValueOff; return; }
+  }
+  [[NSUserDefaults standardUserDefaults] setBool:(sender.state == NSControlStateValueOn) forKey:@"centerLaunchLock"];
 }
 
 - (void)saveAppPassword:(id)sender {
@@ -5587,6 +5614,7 @@ static BOOL ValidGroupName(NSString *raw) {
     return;
   }
   [[NSFileManager defaultManager] removeItemAtPath:AppPasswordFilePath() error:NULL];
+  [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"centerLaunchLock"];
   [self showToast:@"应用密码已清除"];
   [self.appPasswordWindow orderOut:nil];
   self.appPasswordWindow = nil;
