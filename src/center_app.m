@@ -2352,6 +2352,9 @@ static void HideDockHoverTip(void) {
       [self openShortcutSettings:nil];
     });
   }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_DISK")) {
+    [self openDiskAnalysisFromMenu];
+  }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_TRANSLATE")) {
     [self showTranslationWindow:nil];
   }
@@ -12381,6 +12384,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self radialApplyPage];
 }
 
+- (void)openDiskAnalysisFromMenu {
+  [self showWindow:nil];
+  [self showSection:3];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (self.diskVolumePopup.numberOfItems > 0) [self refreshDiskAnalysis];
+  });
+}
+
 - (void)performRadialAction:(NSString *)action {
   if (!action.length) return;
   if ([action isEqualToString:@"translate"]) [self showTranslationWindow:nil];
@@ -12404,7 +12415,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"password"]) [self showPasswordSettings:nil];
   else if ([action isEqualToString:@"appshortcuts"]) [self showAppShortcutSettings:nil];
   else if ([action isEqualToString:@"globalshortcuts"]) [self openShortcutSettings:nil];
-  else if ([action isEqualToString:@"disk"]) { [self showWindow:nil]; [self showSection:3]; }
+  else if ([action isEqualToString:@"disk"]) [self openDiskAnalysisFromMenu];
 }
 
 - (void)showDetachedPage:(NSView *)page title:(NSString *)title {
