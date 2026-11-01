@@ -670,9 +670,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 - (void)translateCurrentText;
 @property (strong) NSTimer *translationAutoTimer;
 @property BOOL translationBusy;
-@property EventHotKeyRef translationHotKey, selectionHotKey, translateHotKey, appSearchHotKey, quickPanelHotKey, clipboardHotKey, consoleHotKey;
-@property UInt32 shotKeyCode, shotModifiers, selectionKeyCode, selectionModifiers, translateKeyCode, translateModifiers, appSearchKeyCode, appSearchModifiers, quickPanelKeyCode, quickPanelModifiers, clipboardKeyCode, clipboardModifiers, consoleKeyCode, consoleModifiers;
-@property (strong) NSString *shotShortcutDisplay, *selectionShortcutDisplay, *translateShortcutDisplay, *appSearchShortcutDisplay, *quickPanelShortcutDisplay, *clipboardShortcutDisplay, *consoleShortcutDisplay;
+@property EventHotKeyRef translationHotKey, selectionHotKey, translateHotKey, appSearchHotKey, quickPanelHotKey, clipboardHotKey, consoleHotKey, screenshotHotKey, recordHotKey;
+@property UInt32 shotKeyCode, shotModifiers, selectionKeyCode, selectionModifiers, translateKeyCode, translateModifiers, appSearchKeyCode, appSearchModifiers, quickPanelKeyCode, quickPanelModifiers, clipboardKeyCode, clipboardModifiers, consoleKeyCode, consoleModifiers, screenshotKeyCode, screenshotModifiers, recordKeyCode, recordModifiers;
+@property (strong) NSString *shotShortcutDisplay, *selectionShortcutDisplay, *translateShortcutDisplay, *appSearchShortcutDisplay, *quickPanelShortcutDisplay, *clipboardShortcutDisplay, *consoleShortcutDisplay, *screenshotShortcutDisplay, *recordShortcutDisplay;
 @property (strong) NSMutableArray *shortcutButtons;
 @property (strong) NSWindow *shortcutSettingsWindow;
 @property (strong) NSWindow *groupShortcutWindow;
@@ -768,6 +768,11 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSWindow *colorWindow;
 @property (strong) NSWindow *fileSearchWindow;
 @property (strong) NSWindow *groupPanelWindow;
+@property (strong) NSWindow *captureWindow;
+@property (strong) NSTextField *captureStatusLabel;
+@property (strong) NSTask *captureTask;
+@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup;
+@property (strong) NSButton *captureCopyCheck;
 @property (strong) NSTableView *groupPanelTable;
 @property (strong) NSArray *groupPanelItems;
 @property (strong) NSSearchField *groupPanelSearch;
@@ -2820,14 +2825,16 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   else if (hk.id == 5) [c showAppSearch:nil];
   else if (hk.id == 6) [c showClipboardWindow:nil];
   else if (hk.id == 7) { [c showWindow:nil]; [c showSection:0]; }
+  else if (hk.id == 8) [c quickScreenshot:nil];
+  else if (hk.id == 9) [c quickRecord:nil];
   else if (hk.id >= 100) [c openGroupByHotkeyID:hk.id];
   return noErr;
 }
 
 - (BOOL)registerHotKeyForAction:(NSInteger)action code:(UInt32)code modifiers:(UInt32)mods display:(NSString *)display {
-  EventHotKeyRef old = action == 0 ? self.translationHotKey : (action == 1 ? self.selectionHotKey : (action == 2 ? self.translateHotKey : (action == 3 ? self.appSearchHotKey : (action == 4 ? self.quickPanelHotKey : (action == 5 ? self.clipboardHotKey : self.consoleHotKey)))));
+  EventHotKeyRef old = action == 0 ? self.translationHotKey : (action == 1 ? self.selectionHotKey : (action == 2 ? self.translateHotKey : (action == 3 ? self.appSearchHotKey : (action == 4 ? self.quickPanelHotKey : (action == 5 ? self.clipboardHotKey : (action == 6 ? self.consoleHotKey : (action == 7 ? self.screenshotHotKey : self.recordHotKey)))))));
   if (old) UnregisterEventHotKey(old);
-  EventHotKeyID hid = {'DLTR', (UInt32)(action == 3 ? 5 : (action == 4 ? 4 : (action == 5 ? 6 : (action == 6 ? 7 : action + 1))))};
+  EventHotKeyID hid = {'DLTR', (UInt32)(action == 3 ? 5 : (action == 4 ? 4 : (action == 5 ? 6 : (action == 6 ? 7 : (action == 7 ? 8 : 9)))))};
   EventHotKeyRef ref = NULL;
   OSStatus st = RegisterEventHotKey(code, mods, hid, GetApplicationEventTarget(), 0, &ref);
   if (st != noErr) return NO;
@@ -2837,10 +2844,12 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   else if (action == 3) { self.appSearchHotKey = ref; self.appSearchKeyCode = code; self.appSearchModifiers = mods; self.appSearchShortcutDisplay = display; }
   else if (action == 4) { self.quickPanelHotKey = ref; self.quickPanelKeyCode = code; self.quickPanelModifiers = mods; self.quickPanelShortcutDisplay = display; }
   else if (action == 5) { self.clipboardHotKey = ref; self.clipboardKeyCode = code; self.clipboardModifiers = mods; self.clipboardShortcutDisplay = display; }
-  else { self.consoleHotKey = ref; self.consoleKeyCode = code; self.consoleModifiers = mods; self.consoleShortcutDisplay = display; }
-  NSArray *kc = @[@"centerShotKeyCode", @"centerSelectKeyCode", @"centerTranslateKeyCode", @"centerAppSearchKeyCode", @"centerQuickPanelKeyCode", @"centerClipboardKeyCode", @"centerConsoleKeyCode"];
-  NSArray *km = @[@"centerShotModifiers", @"centerSelectModifiers", @"centerTranslateModifiers", @"centerAppSearchModifiers", @"centerQuickPanelModifiers", @"centerClipboardModifiers", @"centerConsoleModifiers"];
-  NSArray *kd = @[@"centerShotKeyDisplay", @"centerSelectKeyDisplay", @"centerTranslateKeyDisplay", @"centerAppSearchKeyDisplay", @"centerQuickPanelKeyDisplay", @"centerClipboardKeyDisplay", @"centerConsoleKeyDisplay"];
+  else if (action == 6) { self.consoleHotKey = ref; self.consoleKeyCode = code; self.consoleModifiers = mods; self.consoleShortcutDisplay = display; }
+  else if (action == 7) { self.screenshotHotKey = ref; self.screenshotKeyCode = code; self.screenshotModifiers = mods; self.screenshotShortcutDisplay = display; }
+  else { self.recordHotKey = ref; self.recordKeyCode = code; self.recordModifiers = mods; self.recordShortcutDisplay = display; }
+  NSArray *kc = @[@"centerShotKeyCode", @"centerSelectKeyCode", @"centerTranslateKeyCode", @"centerAppSearchKeyCode", @"centerQuickPanelKeyCode", @"centerClipboardKeyCode", @"centerConsoleKeyCode", @"centerScreenshotKeyCode", @"centerRecordKeyCode"];
+  NSArray *km = @[@"centerShotModifiers", @"centerSelectModifiers", @"centerTranslateModifiers", @"centerAppSearchModifiers", @"centerQuickPanelModifiers", @"centerClipboardModifiers", @"centerConsoleModifiers", @"centerScreenshotModifiers", @"centerRecordModifiers"];
+  NSArray *kd = @[@"centerShotKeyDisplay", @"centerSelectKeyDisplay", @"centerTranslateKeyDisplay", @"centerAppSearchKeyDisplay", @"centerQuickPanelKeyDisplay", @"centerClipboardKeyDisplay", @"centerConsoleKeyDisplay", @"centerScreenshotKeyDisplay", @"centerRecordKeyDisplay"];
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
   [ud setInteger:code forKey:kc[action]];
   [ud setInteger:mods forKey:km[action]];
@@ -2888,6 +2897,16 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   self.consoleShortcutDisplay = [ud stringForKey:@"centerConsoleKeyDisplay"];
   if (!self.consoleShortcutDisplay.length) { self.consoleKeyCode = kVK_ANSI_C; self.consoleModifiers = controlKey | optionKey; self.consoleShortcutDisplay = @"⌃⌥C"; }
   [self registerHotKeyForAction:6 code:self.consoleKeyCode modifiers:self.consoleModifiers display:self.consoleShortcutDisplay];
+  self.screenshotKeyCode = (UInt32)[ud integerForKey:@"centerScreenshotKeyCode"];
+  self.screenshotModifiers = (UInt32)[ud integerForKey:@"centerScreenshotModifiers"];
+  self.screenshotShortcutDisplay = [ud stringForKey:@"centerScreenshotKeyDisplay"];
+  if (!self.screenshotShortcutDisplay.length) { self.screenshotKeyCode = kVK_ANSI_S; self.screenshotModifiers = controlKey | optionKey; self.screenshotShortcutDisplay = @"⌃⌥S"; }
+  [self registerHotKeyForAction:7 code:self.screenshotKeyCode modifiers:self.screenshotModifiers display:self.screenshotShortcutDisplay];
+  self.recordKeyCode = (UInt32)[ud integerForKey:@"centerRecordKeyCode"];
+  self.recordModifiers = (UInt32)[ud integerForKey:@"centerRecordModifiers"];
+  self.recordShortcutDisplay = [ud stringForKey:@"centerRecordKeyDisplay"];
+  if (!self.recordShortcutDisplay.length) { self.recordKeyCode = kVK_ANSI_R; self.recordModifiers = controlKey | optionKey; self.recordShortcutDisplay = @"⌃⌥R"; }
+  [self registerHotKeyForAction:8 code:self.recordKeyCode modifiers:self.recordModifiers display:self.recordShortcutDisplay];
 }
 
 - (NSString *)shortcutDisplayForAction:(NSInteger)action {
@@ -2897,12 +2916,14 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   if (action == 3) return self.appSearchShortcutDisplay;
   if (action == 4) return self.quickPanelShortcutDisplay;
   if (action == 5) return self.clipboardShortcutDisplay;
-  return self.consoleShortcutDisplay;
+  if (action == 6) return self.consoleShortcutDisplay;
+  if (action == 7) return self.screenshotShortcutDisplay;
+  return self.recordShortcutDisplay;
 }
 
 - (void)refreshShortcutButtons {
   for (ColorHoverButton *b in self.shortcutButtons) {
-    if (b.tag >= 0 && b.tag <= 6) b.title = [self shortcutDisplayForAction:b.tag];
+    if (b.tag >= 0 && b.tag <= 8) b.title = [self shortcutDisplayForAction:b.tag];
   }
 }
 
@@ -12024,7 +12045,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)showDockAppearance:(id)sender {
   if (!self.dockAppearanceWindow) {
-    self.dockAppearanceWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,522) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.dockAppearanceWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,626) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.dockAppearanceWindow.title = @"Dock 外观";
     self.dockAppearanceWindow.releasedWhenClosed = NO;
     self.dockAppearanceWindow.level = NSNormalWindowLevel;
@@ -15261,21 +15282,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)openShortcutSettings:(id)sender {
   if (!self.shortcutSettingsWindow) {
-    self.shortcutSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,522) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.shortcutSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,626) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.shortcutSettingsWindow.title = @"快捷键设置";
     self.shortcutSettingsWindow.releasedWhenClosed = NO;
     self.shortcutSettingsWindow.level = NSNormalWindowLevel;
     NSView *cv = self.shortcutSettingsWindow.contentView;
     NSTextField *t = [self label:@"快捷键设置" size:18 bold:YES color:nil];
-    t.frame = NSMakeRect(24, 476, 300, 24); [cv addSubview:t];
+    t.frame = NSMakeRect(24, 580, 300, 24); [cv addSubview:t];
     NSTextField *h = [self label:@"点击右侧快捷键，然后按下新的组合键；Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    h.frame = NSMakeRect(24, 454, 430, 18); [cv addSubview:h];
-    NSArray *names = @[@"截图翻译", @"划词翻译", @"翻译当前文本", @"应用搜索", @"打开快速面板", @"打开剪贴板", @"打开控制台"];
+    h.frame = NSMakeRect(24, 558, 430, 18); [cv addSubview:h];
+    NSArray *names = @[@"截图翻译", @"划词翻译", @"翻译当前文本", @"应用搜索", @"打开快速面板", @"打开剪贴板", @"打开控制台", @"区域截图", @"录屏 30 秒"];
     self.shortcutButtons = [NSMutableArray array];
-    for (NSInteger i = 0; i < 7; i++) {
+    for (NSInteger i = 0; i < 9; i++) {
       NSTextField *l = [self label:names[i] size:13 bold:YES color:nil];
-      l.frame = NSMakeRect(28, 397 - i * 52, 160, 22); [cv addSubview:l];
-      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, 392 - i * 52, 240, 32)];
+      l.frame = NSMakeRect(28, 501 - i * 52, 160, 22); [cv addSubview:l];
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, 496 - i * 52, 240, 32)];
       b.tag = i;
       b.title = [self shortcutDisplayForAction:i];
       b.hoverColor = [NSColor systemTealColor];
@@ -15519,8 +15540,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if (mods & shiftKey) [disp appendString:@"⇧"];
     if (mods & cmdKey) [disp appendString:@"⌘"];
     [disp appendString:key];
-    UInt32 oldCode = action == 0 ? weakSelf.shotKeyCode : (action == 1 ? weakSelf.selectionKeyCode : (action == 2 ? weakSelf.translateKeyCode : (action == 3 ? weakSelf.appSearchKeyCode : (action == 4 ? weakSelf.quickPanelKeyCode : (action == 5 ? weakSelf.clipboardKeyCode : weakSelf.consoleKeyCode)))));
-    UInt32 oldMods = action == 0 ? weakSelf.shotModifiers : (action == 1 ? weakSelf.selectionModifiers : (action == 2 ? weakSelf.translateModifiers : (action == 3 ? weakSelf.appSearchModifiers : (action == 4 ? weakSelf.quickPanelModifiers : (action == 5 ? weakSelf.clipboardModifiers : weakSelf.consoleModifiers)))));
+    UInt32 oldCode = action == 0 ? weakSelf.shotKeyCode : (action == 1 ? weakSelf.selectionKeyCode : (action == 2 ? weakSelf.translateKeyCode : (action == 3 ? weakSelf.appSearchKeyCode : (action == 4 ? weakSelf.quickPanelKeyCode : (action == 5 ? weakSelf.clipboardKeyCode : (action == 6 ? weakSelf.consoleKeyCode : (action == 7 ? weakSelf.screenshotKeyCode : weakSelf.recordKeyCode)))))));
+    UInt32 oldMods = action == 0 ? weakSelf.shotModifiers : (action == 1 ? weakSelf.selectionModifiers : (action == 2 ? weakSelf.translateModifiers : (action == 3 ? weakSelf.appSearchModifiers : (action == 4 ? weakSelf.quickPanelModifiers : (action == 5 ? weakSelf.clipboardModifiers : (action == 6 ? weakSelf.consoleModifiers : (action == 7 ? weakSelf.screenshotModifiers : weakSelf.recordModifiers)))))));
     NSString *oldDisp = [weakSelf shortcutDisplayForAction:action];
     if (![weakSelf registerHotKeyForAction:action code:(UInt32)e.keyCode modifiers:mods display:disp]) {
       [weakSelf registerHotKeyForAction:action code:oldCode modifiers:oldMods display:oldDisp];
@@ -16037,6 +16058,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @[@"应用搜索", @"工具 · 搜索并打开应用", @"appsearch", @"magnifyingglass", @6],
     @[@"屏幕取色器", @"工具 · 拾取屏幕颜色并复制色值", @"color", @"eyedropper", @6],
     @[@"文件搜索", @"工具 · 按文件名搜索本机文件", @"filesearch", @"doc.text.magnifyingglass", @6],
+    @[@"截图 / 录屏", @"工具 · 全屏、区域、窗口截图和屏幕录制", @"capture", @"camera.viewfinder", @6],
     @[@"打开控制台", @"控制台 · 显示主窗口", @"console", @"macwindow", @3]
   ];
   for (NSArray *t in entries) {
@@ -16079,8 +16101,182 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"aimgmt"]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; }
     else if ([tool isEqualToString:@"color"]) [self showColorSampler:nil];
     else if ([tool isEqualToString:@"filesearch"]) [self showFileSearch:nil];
+    else if ([tool isEqualToString:@"capture"]) [self showCaptureTool:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
+}
+
+- (void)quickScreenshot:(id)sender {
+  NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/sbin/screencapture";
+  t.arguments = @[@"-i", @"-x", path];
+  t.terminationHandler = ^(NSTask *task) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (task.terminationStatus == 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+        if (img) { [[NSPasteboard generalPasteboard] clearContents]; [[NSPasteboard generalPasteboard] writeObjects:@[img]]; }
+        [self showToast:@"截图已保存并复制"];
+      } else {
+        [self showToast:@"截图已取消或没有屏幕录制权限"];
+      }
+    });
+  };
+  @try { [t launch]; } @catch (NSException *e) { [self showToast:@"无法启动截图"]; }
+}
+
+- (void)quickRecord:(id)sender {
+  NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mov", [self captureTimestamp]]];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/sbin/screencapture";
+  t.arguments = @[@"-v", @"-V", @"30", path];
+  t.terminationHandler = ^(NSTask *task) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (task.terminationStatus == 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]) [self showToast:@"录屏已保存"];
+      else [self showToast:@"录屏已取消或没有屏幕录制权限"];
+    });
+  };
+  [self showToast:@"开始录制，30 秒后自动结束"];
+  @try { [t launch]; } @catch (NSException *e) { [self showToast:@"无法启动录屏"]; }
+}
+
+- (NSString *)captureDirectory {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return dir;
+}
+
+- (void)showCaptureTool:(id)sender {
+  if (!self.captureWindow) {
+    self.captureWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,430) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.captureWindow.title = @"截图 / 录屏";
+    self.captureWindow.releasedWhenClosed = NO;
+    self.captureWindow.level = NSNormalWindowLevel;
+    NSView *cv = self.captureWindow.contentView;
+    NSTextField *title = [self label:@"截图 / 录屏" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 386, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"区域和窗口截图可交互选择；录屏自动保存到图片文件夹" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 364, 500, 18); [cv addSubview:sub];
+    NSArray *modes = @[@"全屏截图", @"区域截图", @"窗口截图"];
+    NSArray *sels = @[@"captureFullScreen:", @"captureRegion:", @"captureWindowShot:"];
+    for (NSInteger i = 0; i < 3; i++) {
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20 + i * 132, 306, 120, 38)];
+      b.title = modes[i]; b.hoverColor = [NSColor systemBlueColor];
+      b.target = self; b.action = NSSelectorFromString(sels[i]);
+      [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      [cv addSubview:b];
+    }
+    NSTextField *dl = [self label:@"延迟" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    dl.frame = NSMakeRect(20, 270, 40, 18); [cv addSubview:dl];
+    self.captureDelayPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(64, 264, 100, 26) pullsDown:NO];
+    [self.captureDelayPopup addItemsWithTitles:@[@"不延迟", @"3 秒", @"5 秒", @"10 秒"]];
+    [cv addSubview:self.captureDelayPopup];
+    self.captureCopyCheck = [NSButton checkboxWithTitle:@"截图后复制到剪贴板" target:nil action:nil];
+    self.captureCopyCheck.state = NSControlStateValueOn;
+    self.captureCopyCheck.frame = NSMakeRect(184, 266, 190, 22); [cv addSubview:self.captureCopyCheck];
+    ColorHoverButton *record = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 204, 120, 38)];
+    record.title = @"开始录屏"; record.hoverColor = [NSColor systemRedColor];
+    record.target = self; record.action = @selector(captureVideo:);
+    [record applyColor:[NSColor systemRedColor] textColor:[NSColor whiteColor]]; [cv addSubview:record];
+    NSTextField *vl = [self label:@"录制时长" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    vl.frame = NSMakeRect(156, 216, 60, 18); [cv addSubview:vl];
+    self.captureDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(220, 208, 100, 26) pullsDown:NO];
+    NSArray *durations = @[@10, @30, @60, @120];
+    for (NSNumber *d in durations) { [self.captureDurationPopup addItemWithTitle:[NSString stringWithFormat:@"%@ 秒", d]]; self.captureDurationPopup.lastItem.representedObject = d; }
+    [self.captureDurationPopup selectItemAtIndex:1];
+    [cv addSubview:self.captureDurationPopup];
+    ColorHoverButton *folder = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(340, 204, 140, 38)];
+    folder.title = @"打开保存文件夹"; folder.hoverColor = [NSColor systemTealColor];
+    folder.target = self; folder.action = @selector(openCaptureFolder:);
+    [folder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:folder];
+    self.captureStatusLabel = [self label:@"截图会保存到 ~/Pictures/DockLaunchers Captures" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    self.captureStatusLabel.frame = NSMakeRect(20, 158, 520, 40);
+    self.captureStatusLabel.maximumNumberOfLines = 2;
+    [cv addSubview:self.captureStatusLabel];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(440, 110, 100, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeCaptureTool:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.captureWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.captureWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)openCaptureFolder:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self captureDirectory]]]; }
+- (void)closeCaptureTool:(id)sender { [self.captureWindow orderOut:nil]; }
+
+- (void)runScreenshotArgs:(NSArray *)args path:(NSString *)path {
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/sbin/screencapture";
+  t.arguments = args;
+  self.captureTask = t;
+  self.captureStatusLabel.stringValue = @"正在截图…";
+  t.terminationHandler = ^(NSTask *task) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (task.terminationStatus == 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        if (self.captureCopyCheck.state == NSControlStateValueOn) {
+          NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+          if (img) {
+            [[NSPasteboard generalPasteboard] clearContents];
+            [[NSPasteboard generalPasteboard] writeObjects:@[img]];
+          }
+        }
+        self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"已保存：%@", path.lastPathComponent];
+        [self showToast:@"截图已保存"];
+      } else {
+        self.captureStatusLabel.stringValue = @"截图已取消，或没有屏幕录制权限";
+      }
+    });
+  };
+  @try { [t launch]; } @catch (NSException *e) { self.captureStatusLabel.stringValue = @"无法启动截图"; }
+}
+
+- (void)captureFullScreen:(id)sender {
+  NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
+  NSInteger delay = self.captureDelayPopup.indexOfSelectedItem * 3;
+  NSMutableArray *args = [NSMutableArray arrayWithObjects:@"-x", nil];
+  if (delay > 0) [args addObjectsFromArray:@[@"-T", [NSString stringWithFormat:@"%ld", (long)delay]]];
+  [args addObject:path];
+  [self runScreenshotArgs:args path:path];
+}
+
+- (void)captureRegion:(id)sender {
+  NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
+  [self runScreenshotArgs:@[@"-i", @"-x", path] path:path];
+}
+
+- (void)captureWindowShot:(id)sender {
+  NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
+  [self runScreenshotArgs:@[@"-i", @"-W", @"-x", path] path:path];
+}
+
+- (NSString *)captureTimestamp {
+  NSDateFormatter *df = [[NSDateFormatter alloc] init];
+  df.dateFormat = @"yyyyMMdd-HHmmss";
+  return [df stringFromDate:[NSDate date]];
+}
+
+- (void)captureVideo:(id)sender {
+  if (self.captureTask && self.captureTask.isRunning) { [self showToast:@"正在录制中"]; return; }
+  NSInteger seconds = [self.captureDurationPopup.selectedItem.representedObject integerValue];
+  NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mov", [self captureTimestamp]]];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/sbin/screencapture";
+  t.arguments = @[@"-v", @"-V", [NSString stringWithFormat:@"%ld", (long)seconds], path];
+  self.captureTask = t;
+  self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"正在录制，%ld 秒后自动停止…", (long)seconds];
+  t.terminationHandler = ^(NSTask *task) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (task.terminationStatus == 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
+        [self showToast:@"录屏已保存"];
+      } else {
+        self.captureStatusLabel.stringValue = @"录屏已取消，或没有屏幕录制权限";
+      }
+    });
+  };
+  @try { [t launch]; } @catch (NSException *e) { self.captureStatusLabel.stringValue = @"无法启动录屏"; }
 }
 
 - (void)showGroupPanel:(id)sender {
