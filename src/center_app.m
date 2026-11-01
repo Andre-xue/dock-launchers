@@ -615,6 +615,8 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSButton *clipboardSelectAll;
 @property (strong) NSMutableArray *quickReplyItems;
 @property (strong) ColorHoverButton *clipboardPauseBtn, *clipboardFavBtn, *clipboardAddQuickBtn, *clipboardEditQuickBtn;
+@property (strong) NSWindow *clipboardOCRWindow;
+@property (strong) NSTextView *clipboardOCRTextView;
 @property (strong) NSPanel *clipboardPreviewPanel;
 @property (strong) NSImageView *clipboardPreviewImageView;
 @property (strong) NSTextView *clipboardPreviewTextView;
@@ -4990,6 +4992,78 @@ static BOOL ValidGroupName(NSString *raw) {
   self.clipboardPreviewScroll.hidden = YES;
 }
 
+- (void)showClipboardOCRText:(NSString *)text {
+  if (!self.clipboardOCRWindow) {
+    self.clipboardOCRWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,540,400) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.clipboardOCRWindow.title = @"图片文字识别";
+    self.clipboardOCRWindow.releasedWhenClosed = NO;
+    self.clipboardOCRWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.clipboardOCRWindow.contentView;
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 64, 508, 310)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.clipboardOCRTextView = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+    self.clipboardOCRTextView.editable = NO;
+    self.clipboardOCRTextView.selectable = YES;
+    self.clipboardOCRTextView.font = [NSFont systemFontOfSize:13];
+    sv.documentView = self.clipboardOCRTextView;
+    [cv addSubview:sv];
+    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(16, 20, 110, 32)];
+    copy.title = @"复制文字"; copy.hoverColor = [NSColor systemGreenColor];
+    copy.target = self; copy.action = @selector(copyClipboardOCRText:);
+    [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(424, 20, 100, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeClipboardOCR:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.clipboardOCRWindow center];
+  }
+  self.clipboardOCRTextView.string = text ?: @"";
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.clipboardOCRWindow makeKeyAndOrderFront:nil];
+  [self.clipboardOCRWindow orderFrontRegardless];
+}
+
+- (void)ocrClipboardRow:(NSButton *)sender {
+  NSInteger row = sender.tag;
+  if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return;
+  NSDictionary *it = self.clipboardVisibleItems[row];
+  if (![it[@"kind"] isEqualToString:@"image"]) { [self showToast:@"请选择图片记录"]; return; }
+  NSString *path = [[self clipboardImagesDir] stringByAppendingPathComponent:it[@"file"] ?: @""];
+  NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+  if (!img) { [self showToast:@"图片文件不存在"]; return; }
+  CGImageRef cg = [img CGImageForProposedRect:NULL context:nil hints:nil];
+  if (!cg) { [self showToast:@"图片读取失败"]; return; }
+  [self showToast:@"正在识别图片文字…"];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSMutableString *out = [NSMutableString string];
+    VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
+    req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
+    req.recognitionLanguages = @[@"zh-Hans", @"en-US"];
+    req.usesLanguageCorrection = YES;
+    VNImageRequestHandler *h = [[VNImageRequestHandler alloc] initWithCGImage:cg options:@{}];
+    NSError *err = nil;
+    [h performRequests:@[req] error:&err];
+    for (VNRecognizedTextObservation *o in req.results) {
+      VNRecognizedText *t = [[o topCandidates:1] firstObject];
+      if (t.string.length) [out appendFormat:@"%@\n", t.string];
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!out.length) { [self showToast:@"没有识别到文字"]; return; }
+      [self showClipboardOCRText:out];
+    });
+  });
+}
+
+- (void)copyClipboardOCRText:(id)sender {
+  NSString *text = self.clipboardOCRTextView.string;
+  if (!text.length) return;
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:text forType:NSPasteboardTypeString];
+  [self showToast:@"识别文字已复制"];
+}
+
+- (void)closeClipboardOCR:(id)sender { [self.clipboardOCRWindow orderOut:nil]; }
+
 - (void)showClipboardPreviewForRow:(NSInteger)row {
   if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) return;
   if (!self.clipboardWindow.isVisible) return;
@@ -8250,6 +8324,15 @@ static BOOL ValidGroupName(NSString *raw) {
       NSTextField *l = [self label:[text stringByReplacingOccurrencesOfString:@"\n" withString:@" "] size:11.5 bold:YES color:nil];
       l.lineBreakMode = NSLineBreakByTruncatingTail;
       l.frame = NSMakeRect(78, 24, col.width - 160, 18); [v addSubview:l];
+    }
+    if (isImage) {
+      NSButton *ocrBtn = [NSButton buttonWithTitle:@"识" target:self action:@selector(ocrClipboardRow:)];
+      ocrBtn.bordered = NO; ocrBtn.tag = row;
+      ocrBtn.font = [NSFont systemFontOfSize:10.5 weight:NSFontWeightMedium];
+      ocrBtn.contentTintColor = [NSColor systemOrangeColor];
+      ocrBtn.toolTip = @"识别图片文字";
+      ocrBtn.frame = NSMakeRect(col.width - 112, 16, 28, 26);
+      [v addSubview:ocrBtn];
     }
     NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"MM-dd HH:mm:ss";
     NSDate *date = [it[@"date"] isKindOfClass:[NSDate class]] ? it[@"date"] : [NSDate date];
