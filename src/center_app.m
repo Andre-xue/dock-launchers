@@ -1149,7 +1149,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSArray *captureHistoryItems;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
-@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup, *captureRecordCountdownPopup;
+@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup, *captureRecordCountdownPopup, *captureMicGainPopup;
+@property (strong) id clickGlobalMonitor, clickLocalMonitor;
+@property (strong) NSMutableArray *clickRingWindows;
 @property (strong) NSButton *captureCursorCheck, *captureClickCheck;
 @property (strong) NSButton *captureSystemAudioCheck, *captureMicCheck;
 @property (strong) DLScreenRecorder *captureRecorder;
@@ -16917,19 +16919,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   AVMutableVideoCompositionLayerInstruction *screenLayer = [AVMutableVideoCompositionLayerInstruction videoCompositionLayerInstructionWithAssetTrack:sv];
   AVMutableVideoCompositionLayerInstruction *camLayer = [AVMutableVideoCompositionLayerInstruction videoCompositionLayerInstructionWithAssetTrack:cv];
   NSString *pipPreset = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCapturePiPPreset"] ?: @"br-medium";
+  BOOL pipMirror = [pipPreset hasSuffix:@"mirror"];
+  NSString *pipBase = pipMirror ? [pipPreset stringByReplacingOccurrencesOfString:@"-mirror" withString:@""] : pipPreset;
   CGFloat pipFrac = 0.24;
-  if ([pipPreset hasSuffix:@"small"]) pipFrac = 0.18;
-  else if ([pipPreset hasSuffix:@"large"]) pipFrac = 0.30;
-  BOOL pipLeft = [pipPreset hasPrefix:@"bl"] || [pipPreset hasPrefix:@"tl"];
-  BOOL pipTop = [pipPreset hasPrefix:@"tr"] || [pipPreset hasPrefix:@"tl"];
+  if ([pipBase hasSuffix:@"small"]) pipFrac = 0.18;
+  else if ([pipBase hasSuffix:@"large"]) pipFrac = 0.30;
+  BOOL pipLeft = [pipBase hasPrefix:@"bl"] || [pipBase hasPrefix:@"tl"];
+  BOOL pipTop = [pipBase hasPrefix:@"tr"] || [pipBase hasPrefix:@"tl"];
   CGFloat targetW = renderSize.width * pipFrac;
   CGFloat scale = targetW / MAX(1, cameraVideo.naturalSize.width);
   CGFloat targetH = MAX(1, cameraVideo.naturalSize.height * scale);
   CGFloat margin = renderSize.width * 0.02;
   CGFloat pipX = pipLeft ? margin : (renderSize.width - targetW - margin);
   CGFloat pipY = pipTop ? margin : (renderSize.height - targetH - margin);
-  CGAffineTransform t = CGAffineTransformMakeScale(scale, scale);
-  t = CGAffineTransformTranslate(t, pipX / scale, pipY / scale);
+  CGAffineTransform t = pipMirror ? CGAffineTransformMake(-scale, 0, 0, scale, pipX + targetW, pipY) : CGAffineTransformMake(scale, 0, 0, scale, pipX, pipY);
+  (void)t;
   [camLayer setTransform:t atTime:kCMTimeZero];
   inst.layerInstructions = @[camLayer, screenLayer];
   vc.instructions = @[inst];
@@ -16937,6 +16941,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[NSFileManager defaultManager] removeItemAtPath:outPath error:NULL];
   AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPreset1920x1080];
   ex.videoComposition = vc;
+  NSInteger micGainDB = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
+  if (micGainDB != 0 && sa) {
+    AVMutableAudioMix *am = [AVMutableAudioMix audioMix];
+    AVMutableAudioMixInputParameters *ap = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:sa];
+    [ap setVolume:pow(10.0, micGainDB / 20.0) atTime:kCMTimeZero];
+    am.inputParameters = @[ap];
+    ex.audioMix = am;
+  }
   ex.outputURL = [NSURL fileURLWithPath:outPath];
   ex.outputFileType = AVFileTypeMPEG4;
   ex.shouldOptimizeForNetworkUse = YES;
@@ -16982,6 +16994,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)capturePiPChanged:(id)sender {
   NSString *v = self.capturePiPPopup.selectedItem.representedObject ?: @"br-medium";
   [[NSUserDefaults standardUserDefaults] setObject:v forKey:@"centerCapturePiPPreset"];
+}
+
+- (void)captureMicGainChanged:(id)sender {
+  NSInteger g = [self.captureMicGainPopup.selectedItem.representedObject integerValue];
+  [[NSUserDefaults standardUserDefaults] setInteger:g forKey:@"centerCaptureMicGain"];
 }
 
 - (void)capturePointerChanged:(id)sender {
@@ -17089,8 +17106,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *pipLabel = [self label:@"画中画" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     pipLabel.frame = NSMakeRect(714, 362, 50, 18); [cv addSubview:pipLabel];
     self.capturePiPPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(764, 356, 150, 26) pullsDown:NO];
-    NSArray *pipTitles = @[@"右下 · 中", @"右下 · 小", @"右下 · 大", @"左下 · 中", @"右上 · 中", @"左上 · 中"];
-    NSArray *pipVals = @[@"br-medium", @"br-small", @"br-large", @"bl-medium", @"tr-medium", @"tl-medium"];
+    NSArray *pipTitles = @[@"右下 · 中", @"右下 · 小", @"右下 · 大", @"左下 · 中", @"右上 · 中", @"左上 · 中", @"右下 · 镜像", @"左下 · 镜像", @"右上 · 镜像", @"左上 · 镜像"];
+    NSArray *pipVals = @[@"br-medium", @"br-small", @"br-large", @"bl-medium", @"tr-medium", @"tl-medium", @"br-medium-mirror", @"bl-medium-mirror", @"tr-medium-mirror", @"tl-medium-mirror"];
     for (NSInteger i = 0; i < pipTitles.count; i++) { [self.capturePiPPopup addItemWithTitle:pipTitles[i]]; self.capturePiPPopup.lastItem.representedObject = pipVals[i]; }
     self.capturePiPPopup.target = self; self.capturePiPPopup.action = @selector(capturePiPChanged:);
     [cv addSubview:self.capturePiPPopup];
@@ -17118,6 +17135,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureMicCheck.frame = NSMakeRect(744, 314, 90, 22);
     self.captureMicCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"] ? NSControlStateValueOn : NSControlStateValueOff;
     [cv addSubview:self.captureMicCheck];
+    self.captureMicGainPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(838, 312, 86, 26) pullsDown:NO];
+    NSArray *gains = @[@0, @6, @12];
+    for (NSNumber *g in gains) { [self.captureMicGainPopup addItemWithTitle:[NSString stringWithFormat:@"%@%ld dB", [g integerValue] > 0 ? @"+" : @"", (long)[g integerValue]]]; self.captureMicGainPopup.lastItem.representedObject = g; }
+    self.captureMicGainPopup.target = self; self.captureMicGainPopup.action = @selector(captureMicGainChanged:);
+    [cv addSubview:self.captureMicGainPopup];
 
     // Row 5: screenshot action; recording countdown/pointer.
     ColorHoverButton *historyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 264, 120, 32)];
@@ -17190,6 +17212,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (NSMenuItem *mi in self.captureCameraPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedCam ?: @""]) [self.captureCameraPopup selectItem:mi];
   NSString *savedPiP = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCapturePiPPreset"];
   for (NSMenuItem *mi in self.capturePiPPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedPiP ?: @"br-medium"]) [self.capturePiPPopup selectItem:mi];
+  NSInteger micGain = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
+  for (NSMenuItem *mi in self.captureMicGainPopup.itemArray) if ([mi.representedObject integerValue] == micGain) [self.captureMicGainPopup selectItem:mi];
   [NSApp activateIgnoringOtherApps:YES];
   [self.captureWindow makeKeyAndOrderFront:nil];
 }
@@ -17318,6 +17342,126 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [w makeFirstResponder:view];
 }
 
+- (void)startClickHighlighting {
+  BOOL enabled = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowClicks"] ? [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureShowClicks"] : YES;
+  if (!enabled) return;
+  [self stopClickHighlighting];
+  self.clickRingWindows = [NSMutableArray array];
+  __weak typeof(self) weakSelf = self;
+  self.clickGlobalMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown|NSEventMaskRightMouseDown) handler:^(NSEvent *event) {
+    dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf showClickRingAtPoint:NSEvent.mouseLocation]; });
+  }];
+  self.clickLocalMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown|NSEventMaskRightMouseDown) handler:^NSEvent *(NSEvent *event) {
+    dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf showClickRingAtPoint:NSEvent.mouseLocation]; });
+    return event;
+  }];
+}
+
+- (void)stopClickHighlighting {
+  if (self.clickGlobalMonitor) { [NSEvent removeMonitor:self.clickGlobalMonitor]; self.clickGlobalMonitor = nil; }
+  if (self.clickLocalMonitor) { [NSEvent removeMonitor:self.clickLocalMonitor]; self.clickLocalMonitor = nil; }
+  for (NSWindow *w in self.clickRingWindows) [w orderOut:nil];
+  [self.clickRingWindows removeAllObjects];
+}
+
+- (void)showClickRingAtPoint:(NSPoint)screenPoint {
+  CGFloat size = 54;
+  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(screenPoint.x - size/2, screenPoint.y - size/2, size, size) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+  w.opaque = NO;
+  w.backgroundColor = [NSColor clearColor];
+  w.level = NSScreenSaverWindowLevel;
+  w.alphaValue = 1.0;
+  w.ignoresMouseEvents = YES;
+  w.hasShadow = NO;
+  w.sharingType = NSWindowSharingReadOnly;
+  w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+  NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,size,size)];
+  v.wantsLayer = YES;
+  v.layer.cornerRadius = size/2;
+  v.layer.borderWidth = 3.5;
+  v.layer.borderColor = [NSColor colorWithCalibratedRed:1 green:0.62 blue:0.15 alpha:1].CGColor;
+  v.layer.backgroundColor = [NSColor colorWithCalibratedRed:1 green:0.62 blue:0.15 alpha:0.20].CGColor;
+  w.contentView = v;
+  [w orderFrontRegardless];
+  [self.clickRingWindows addObject:w];
+  __weak typeof(self) weakSelf = self;
+  [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+    ctx.duration = 0.55;
+    w.animator.alphaValue = 0.0;
+  } completionHandler:^{
+    [w orderOut:nil];
+    [weakSelf.clickRingWindows removeObject:w];
+  }];
+}
+
+- (void)applyMicGainToFile:(NSString *)path gainDB:(NSInteger)gainDB completion:(void (^)(BOOL ok))completion {
+  if (gainDB == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:path]) { if (completion) completion(YES); return; }
+  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
+  AVAssetTrack *video = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+  AVAssetTrack *audio = [asset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+  if (!video || !audio) { if (completion) completion(YES); return; }
+  AVMutableComposition *comp = [AVMutableComposition composition];
+  AVMutableCompositionTrack *v = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+  AVMutableCompositionTrack *a = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+  [v insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:video atTime:kCMTimeZero error:NULL];
+  [a insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:audio atTime:kCMTimeZero error:NULL];
+  AVMutableAudioMix *mix = [AVMutableAudioMix audioMix];
+  AVMutableAudioMixInputParameters *ap = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:a];
+  [ap setVolume:pow(10.0, gainDB / 20.0) atTime:kCMTimeZero];
+  mix.inputParameters = @[ap];
+  NSString *tmp = [[path stringByDeletingPathExtension] stringByAppendingString:@"-gain.mp4"];
+  [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+  AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetHEVCHighestQuality];
+  ex.audioMix = mix;
+  ex.outputURL = [NSURL fileURLWithPath:tmp];
+  ex.outputFileType = AVFileTypeMPEG4;
+  ex.shouldOptimizeForNetworkUse = YES;
+  [ex exportAsynchronouslyWithCompletionHandler:^{
+    dispatch_async(dispatch_get_main_queue(), ^{
+      NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:tmp error:NULL];
+      BOOL ok = (ex.status == AVAssetExportSessionStatusCompleted) || (attrs && [attrs[NSFileSize] longLongValue] > 0);
+      if (ok) {
+        [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
+        [[NSFileManager defaultManager] moveItemAtPath:tmp toPath:path error:NULL];
+      } else {
+        [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+      }
+      if (completion) completion(ok);
+    });
+  }];
+}
+
+- (void)finalizeCaptureFile:(NSString *)path error:(NSError *)error {
+  NSInteger gainDB = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
+  if (gainDB != 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+    self.captureStatusLabel.stringValue = @"正在调整麦克风音量…";
+    __weak typeof(self) weakSelf = self;
+    [self applyMicGainToFile:path gainDB:gainDB completion:^(BOOL ok) {
+      [weakSelf finishCaptureUI];
+      if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        weakSelf.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
+        [weakSelf showToast:ok ? @"录屏已保存" : @"录屏已保存，音量调整失败"];
+      } else if (error) {
+        weakSelf.captureStatusLabel.stringValue = error.localizedDescription ?: @"录屏失败";
+        [weakSelf showToast:error.localizedDescription ?: @"录屏失败"];
+      } else {
+        weakSelf.captureStatusLabel.stringValue = @"录屏已取消";
+      }
+    }];
+    return;
+  }
+  [self finishCaptureUI];
+  if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+    self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
+    [self showToast:@"录屏已保存"];
+  } else if (error) {
+    self.captureStatusLabel.stringValue = error.localizedDescription ?: @"录屏失败";
+    [self showToast:error.localizedDescription ?: @"录屏失败"];
+  } else {
+    self.captureStatusLabel.stringValue = @"录屏已取消";
+  }
+}
+
 - (void)finishCaptureUI {
   self.captureRecording = NO;
   self.capturePaused = NO;
@@ -17356,16 +17500,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         [weakSelf.captureCameraMovieOutput stopRecording];
         return;
       }
-      [weakSelf finishCaptureUI];
-      if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
-        weakSelf.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
-        [weakSelf showToast:@"录屏已保存"];
-      } else if (error) {
-        weakSelf.captureStatusLabel.stringValue = error.localizedDescription ?: @"录屏失败";
-        [weakSelf showToast:error.localizedDescription ?: @"录屏失败"];
-      } else {
-        weakSelf.captureStatusLabel.stringValue = @"录屏已取消";
-      }
+      [weakSelf finalizeCaptureFile:path error:error];
     });
   };
   [rec startWithScene:scene seconds:seconds region:region url:[NSURL fileURLWithPath:path]];
