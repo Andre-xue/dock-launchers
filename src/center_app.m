@@ -589,6 +589,45 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 }
 @end
 
+@interface DLDropScrollView : NSScrollView
+@property (copy) void (^onPaths)(NSArray<NSString *> *paths);
+@property (strong) NSSet<NSString *> *allowedExtensions;
+@end
+@implementation DLDropScrollView
+- (instancetype)initWithFrame:(NSRect)frame {
+  self = [super initWithFrame:frame];
+  if (self) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType]];
+  return self;
+}
+- (NSArray<NSString *> *)dropPaths:(id<NSDraggingInfo>)info {
+  NSMutableArray *out = [NSMutableArray array];
+  NSArray *urls = [[info draggingPasteboard] readObjectsForClasses:@[[NSURL class]] options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+  for (NSURL *u in urls) if (u.path.length) [out addObject:u.path];
+  if (!out.count) {
+    NSArray *names = [[info draggingPasteboard] propertyListForType:NSFilenamesPboardType];
+    if ([names isKindOfClass:[NSArray class]]) for (id n in names) if ([n isKindOfClass:[NSString class]]) [out addObject:n];
+  }
+  return out;
+}
+- (BOOL)hasAllowedPath:(id<NSDraggingInfo>)info {
+  for (NSString *p in [self dropPaths:info]) {
+    BOOL isDir = NO;
+    if ([[NSFileManager defaultManager] fileExistsAtPath:p isDirectory:&isDir] && isDir) return YES;
+    if ([self.allowedExtensions containsObject:p.pathExtension.lowercaseString]) return YES;
+  }
+  return NO;
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)info { return [self hasAllowedPath:info] ? NSDragOperationCopy : NSDragOperationNone; }
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)info { return [self hasAllowedPath:info] ? NSDragOperationCopy : NSDragOperationNone; }
+- (BOOL)prepareForDragOperation:(id<NSDraggingInfo>)info { return [self hasAllowedPath:info]; }
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)info {
+  NSArray *paths = [self dropPaths:info];
+  if (!paths.count) return NO;
+  if (self.onPaths) self.onPaths(paths);
+  return YES;
+}
+@end
+
 @interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate>
 - (void)hideClipboardPreview;
 - (void)installClipboardHoverMonitor;
@@ -12056,8 +12095,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
     [cv addSubview:self.imageRotatePopup];
 
-    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 70, 648, 296)];
+    DLDropScrollView *sv = [[DLDropScrollView alloc] initWithFrame:NSMakeRect(16, 70, 648, 296)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    sv.allowedExtensions = [NSSet setWithArray:@[@"jpg", @"jpeg", @"png", @"heic", @"tiff", @"gif"]];
+    __weak typeof(self) weakImg = self;
+    sv.onPaths = ^(NSArray<NSString *> *paths) { [weakImg addImagePaths:paths]; };
     self.imageToolTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
     NSArray *cols = @[@[@"iname", @"图片", @440.0], @[@"idim", @"尺寸", @110.0], @[@"isize", @"大小", @90.0]];
     for (NSArray *c in cols) {
@@ -12068,7 +12110,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.imageToolTable.rowHeight = 32;
     self.imageToolTable.allowsMultipleSelection = YES;
     self.imageToolTable.dataSource = self; self.imageToolTable.delegate = self;
-    [self.imageToolTable registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    
     self.imageToolTable.target = self;
     self.imageToolTable.doubleAction = @selector(imagePreviewSelected:);
     sv.documentView = self.imageToolTable; [cv addSubview:sv];
@@ -12200,8 +12242,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     exportImg.toolTip = @"把选中 PDF 的指定页码导出为 PNG";
     [exportImg applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:exportImg];
 
-    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 70, 628, 300)];
+    DLDropScrollView *sv = [[DLDropScrollView alloc] initWithFrame:NSMakeRect(16, 70, 628, 300)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    sv.allowedExtensions = [NSSet setWithObject:@"pdf"];
+    __weak typeof(self) weakPDF = self;
+    sv.onPaths = ^(NSArray<NSString *> *paths) { [weakPDF addPDFPaths:paths]; };
     self.pdfTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
     NSArray *cols = @[@[@"pdfname", @"文件", @430.0], @[@"pdfpages", @"页数", @80.0], @[@"pdfsize", @"大小", @90.0]];
     for (NSArray *c in cols) {
@@ -12214,7 +12259,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.pdfTable.dataSource = self; self.pdfTable.delegate = self;
     self.pdfTable.target = self;
     self.pdfTable.doubleAction = @selector(pdfPreviewSelected:);
-    [self.pdfTable registerForDraggedTypes:@[@"DockLaunchersPDFRow", NSPasteboardTypeFileURL]];
+    [self.pdfTable registerForDraggedTypes:@[@"DockLaunchersPDFRow"]];
     sv.documentView = self.pdfTable; [cv addSubview:sv];
     NSTextField *pl = [self label:@"页码" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     pl.frame = NSMakeRect(20, 34, 40, 18); [cv addSubview:pl];
@@ -12257,6 +12302,51 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [NSApp activateIgnoringOtherApps:YES];
   [self.pdfWindow makeKeyAndOrderFront:nil];
   [self.pdfWindow orderFrontRegardless];
+}
+
+- (void)addPDFPaths:(NSArray<NSString *> *)paths {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSMutableArray *items = [self.pdfItems mutableCopy] ?: [NSMutableArray array];
+  NSInteger added = 0;
+  for (NSString *path in paths) {
+    BOOL isDir = NO;
+    if ([fm fileExistsAtPath:path isDirectory:&isDir] && isDir) {
+      NSDirectoryEnumerator *en = [fm enumeratorAtPath:path];
+      for (NSString *rel in en) {
+        if (![rel.pathExtension.lowercaseString isEqualToString:@"pdf"]) continue;
+        NSString *full = [path stringByAppendingPathComponent:rel];
+        if (![items containsObject:full]) { [items addObject:full]; added++; }
+      }
+    } else if ([path.pathExtension.lowercaseString isEqualToString:@"pdf"] && ![items containsObject:path]) {
+      [items addObject:path]; added++;
+    }
+  }
+  self.pdfItems = items;
+  [self.pdfTable reloadData];
+  if (added) [self showToast:[NSString stringWithFormat:@"已添加 %ld 个 PDF", (long)added]];
+}
+
+- (void)addImagePaths:(NSArray<NSString *> *)paths {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSSet *exts = [NSSet setWithArray:@[@"jpg", @"jpeg", @"png", @"heic", @"tiff", @"gif"]];
+  NSMutableArray *items = [self.imageToolItems mutableCopy] ?: [NSMutableArray array];
+  NSInteger added = 0;
+  for (NSString *path in paths) {
+    BOOL isDir = NO;
+    if ([fm fileExistsAtPath:path isDirectory:&isDir] && isDir) {
+      NSDirectoryEnumerator *en = [fm enumeratorAtPath:path];
+      for (NSString *rel in en) {
+        if (![exts containsObject:rel.pathExtension.lowercaseString]) continue;
+        NSString *full = [path stringByAppendingPathComponent:rel];
+        if (![items containsObject:full]) { [items addObject:full]; added++; }
+      }
+    } else if ([exts containsObject:path.pathExtension.lowercaseString] && ![items containsObject:path]) {
+      [items addObject:path]; added++;
+    }
+  }
+  self.imageToolItems = items;
+  [self.imageToolTable reloadData];
+  if (added) [self showToast:[NSString stringWithFormat:@"已添加 %ld 张图片", (long)added]];
 }
 
 - (void)pdfAddFiles:(id)sender {
