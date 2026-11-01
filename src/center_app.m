@@ -2933,6 +2933,15 @@ static void HideDockHoverTip(void) {
 }
 
 - (void)updateRadialMediaBar {
+  if (self.radialPlayerPage && !self.radialPlayerPage.hidden) {
+    if (!self.mediaPlaying || ![[self mediaCurrentTitle] length]) {
+      [self showRadialPlayerPage:NO];
+      [self.popover performClose:nil];
+    } else {
+      [self updateRadialPlayerPage];
+    }
+    return;
+  }
   if (!self.radialMediaBar) return;
   NSString *title = [self mediaCurrentTitle];
   BOOL show = self.mediaPlaying && title.length > 0;
