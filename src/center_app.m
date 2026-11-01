@@ -675,6 +675,99 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 
 typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordSceneWindow = 1, DLRecordSceneApplication = 2, DLRecordSceneRegion = 3 };
 
+@interface DLAnnotateView : NSView
+@property (strong) NSImage *image;
+@property (strong) NSMutableArray<NSDictionary *> *items;
+@property (strong) NSColor *strokeColor;
+@property CGFloat strokeWidth;
+@property NSInteger tool; // 0 pen, 1 rect, 2 arrow
+@property NSPoint startPoint;
+@property (strong) NSMutableArray<NSValue *> *penPoints;
+@end
+@implementation DLAnnotateView
+- (BOOL)isFlipped { return NO; }
+- (void)drawRect:(NSRect)dirtyRect {
+  [self.image drawInRect:self.bounds];
+  for (NSDictionary *it in self.items) {
+    NSColor *c = it[@"color"] ?: [NSColor systemRedColor];
+    [c setStroke];
+    CGFloat w = [it[@"width"] doubleValue] > 0 ? [it[@"width"] doubleValue] : 4;
+    NSInteger t = [it[@"tool"] integerValue];
+    if (t == 0) {
+      NSArray *pts = it[@"points"];
+      if (pts.count > 1) {
+        NSBezierPath *path = [NSBezierPath bezierPath];
+        path.lineWidth = w; path.lineCapStyle = NSLineCapStyleRound; path.lineJoinStyle = NSLineJoinStyleRound;
+        [path moveToPoint:[pts[0] pointValue]];
+        for (NSInteger i = 1; i < (NSInteger)pts.count; i++) [path lineToPoint:[pts[i] pointValue]];
+        [path stroke];
+      }
+    } else {
+      NSPoint a = [it[@"start"] pointValue], b = [it[@"end"] pointValue];
+      if (t == 1) {
+        NSBezierPath *p = [NSBezierPath bezierPathWithRect:NSMakeRect(MIN(a.x,b.x), MIN(a.y,b.y), fabs(b.x-a.x), fabs(b.y-a.y))];
+        p.lineWidth = w; [p stroke];
+      } else {
+        NSBezierPath *p = [NSBezierPath bezierPath];
+        p.lineWidth = w; [p moveToPoint:a]; [p lineToPoint:b]; [p stroke];
+        CGFloat angle = atan2(b.y-a.y, b.x-a.x);
+        CGFloat len = MAX(12, w * 3.5);
+        NSPoint p1 = NSMakePoint(b.x - len * cos(angle - 0.45), b.y - len * sin(angle - 0.45));
+        NSPoint p2 = NSMakePoint(b.x - len * cos(angle + 0.45), b.y - len * sin(angle + 0.45));
+        NSBezierPath *head = [NSBezierPath bezierPath];
+        [head moveToPoint:b]; [head lineToPoint:p1]; [head moveToPoint:b]; [head lineToPoint:p2];
+        [head stroke];
+      }
+    }
+  }
+}
+- (void)mouseDown:(NSEvent *)event {
+  self.startPoint = [self convertPoint:event.locationInWindow fromView:nil];
+  self.penPoints = [NSMutableArray arrayWithObject:[NSValue valueWithPoint:self.startPoint]];
+}
+- (void)mouseDragged:(NSEvent *)event {
+  NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+  if (self.tool == 0) {
+    [self.penPoints addObject:[NSValue valueWithPoint:p]];
+    [self setNeedsDisplay:YES];
+  } else {
+    [self setNeedsDisplay:YES];
+  }
+}
+- (void)mouseUp:(NSEvent *)event {
+  NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+  NSColor *c = self.strokeColor ?: [NSColor systemRedColor];
+  if (self.tool == 0) {
+    if (self.penPoints.count > 1) [self.items addObject:@{@"tool":@0, @"points":[self.penPoints copy], @"color":c, @"width":@(self.strokeWidth)}];
+  } else if (self.tool == 1) {
+    if (fabs(p.x-self.startPoint.x) > 4 && fabs(p.y-self.startPoint.y) > 4) [self.items addObject:@{@"tool":@1, @"start":[NSValue valueWithPoint:self.startPoint], @"end":[NSValue valueWithPoint:p], @"color":c, @"width":@(self.strokeWidth)}];
+  } else if (self.tool == 2) {
+    if (hypot(p.x-self.startPoint.x, p.y-self.startPoint.y) > 8) [self.items addObject:@{@"tool":@2, @"start":[NSValue valueWithPoint:self.startPoint], @"end":[NSValue valueWithPoint:p], @"color":c, @"width":@(self.strokeWidth)}];
+  }
+  self.penPoints = nil;
+  [self setNeedsDisplay:YES];
+}
+- (void)undo { if (self.items.count) { [self.items removeLastObject]; [self setNeedsDisplay:YES]; } }
+- (NSData *)pngData {
+  CGFloat scale = 1.0;
+  for (NSImageRep *ir in self.image.representations) {
+    if (ir.pixelsWide > 0 && self.image.size.width > 0) scale = MAX(scale, ir.pixelsWide / self.image.size.width);
+  }
+  NSInteger w = MAX(1, (NSInteger)llround(self.bounds.size.width * scale));
+  NSInteger h = MAX(1, (NSInteger)llround(self.bounds.size.height * scale));
+  NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:w pixelsHigh:h bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+  if (!rep) return nil;
+  NSGraphicsContext *ctx = [NSGraphicsContext graphicsContextWithBitmapImageRep:rep];
+  [NSGraphicsContext saveGraphicsState];
+  [NSGraphicsContext setCurrentContext:ctx];
+  CGContextScaleCTM(ctx.CGContext, scale, scale);
+  [self drawRect:self.bounds];
+  [ctx flushGraphics];
+  [NSGraphicsContext restoreGraphicsState];
+  return [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+}
+@end
+
 @interface DLScreenRecorder : NSObject <SCStreamDelegate, SCRecordingOutputDelegate, SCContentSharingPickerObserver>
 @property (strong) SCStream *stream;
 @property (strong) SCRecordingOutput *recordingOutput;
@@ -1026,7 +1119,13 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *fileSearchWindow;
 @property (strong) NSWindow *groupPanelWindow;
 @property (strong) NSWindow *captureWindow;
-@property (strong) NSWindow *captureHistoryWindow;
+@property (strong) NSWindow *captureHistoryWindow, *annotateWindow;
+@property (strong) DLAnnotateView *annotateView;
+@property (strong) NSSegmentedControl *annotateToolControl;
+@property (strong) NSColorWell *annotateColorWell;
+@property (strong) NSPopUpButton *annotateWidthPopup;
+@property (strong) NSTextField *annotateStatus;
+@property (strong) NSString *annotateSourcePath;
 @property (strong) NSTableView *captureHistoryTable;
 @property (strong) NSArray *captureHistoryItems;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
@@ -16405,6 +16504,103 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
 }
 
+- (void)showAnnotationForPath:(NSString *)path {
+  NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+  if (!img) { [self showToast:@"无法读取图片"]; return; }
+  if (!self.annotateWindow) {
+    self.annotateWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,900,660) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.annotateWindow.title = @"截图标注";
+    self.annotateWindow.releasedWhenClosed = NO;
+    self.annotateWindow.level = NSNormalWindowLevel;
+    NSView *cv = self.annotateWindow.contentView;
+    self.annotateToolControl = [NSSegmentedControl segmentedControlWithLabels:@[@"画笔", @"矩形", @"箭头"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(annotateToolChanged:)];
+    self.annotateToolControl.frame = NSMakeRect(16, 618, 210, 28);
+    self.annotateToolControl.selectedSegment = 0;
+    [cv addSubview:self.annotateToolControl];
+    self.annotateColorWell = [[NSColorWell alloc] initWithFrame:NSMakeRect(236, 618, 44, 28)];
+    self.annotateColorWell.color = [NSColor systemRedColor];
+    self.annotateColorWell.target = self; self.annotateColorWell.action = @selector(annotateColorChanged:);
+    [cv addSubview:self.annotateColorWell];
+    self.annotateWidthPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(288, 618, 80, 28) pullsDown:NO];
+    [self.annotateWidthPopup addItemsWithTitles:@[@"细", @"中", @"粗"]];
+    self.annotateWidthPopup.target = self; self.annotateWidthPopup.action = @selector(annotateWidthChanged:);
+    [cv addSubview:self.annotateWidthPopup];
+    ColorHoverButton *undo = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(380, 618, 70, 28)];
+    undo.title = @"撤销"; undo.hoverColor = [NSColor systemOrangeColor];
+    undo.target = self; undo.action = @selector(undoAnnotation:);
+    [undo applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:undo];
+    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(458, 618, 80, 28)];
+    copy.title = @"复制"; copy.hoverColor = [NSColor systemBlueColor];
+    copy.target = self; copy.action = @selector(copyAnnotation:);
+    [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(546, 618, 90, 28)];
+    save.title = @"保存 PNG"; save.hoverColor = [NSColor systemGreenColor];
+    save.target = self; save.action = @selector(saveAnnotation:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(790, 618, 90, 28)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeAnnotation:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 16, 868, 590)];
+    sv.hasVerticalScroller = YES; sv.hasHorizontalScroller = YES; sv.borderType = NSBezelBorder;
+    sv.drawsBackground = NO;
+    self.annotateView = [[DLAnnotateView alloc] initWithFrame:NSMakeRect(0,0,868,590)];
+    self.annotateView.strokeColor = [NSColor systemRedColor];
+    self.annotateView.strokeWidth = 4;
+    self.annotateView.items = [NSMutableArray array];
+    sv.documentView = self.annotateView;
+    [cv addSubview:sv];
+    [self.annotateWindow center];
+  }
+  self.annotateSourcePath = path;
+  self.annotateView.image = img;
+  self.annotateView.items = [NSMutableArray array];
+  self.annotateView.frame = NSMakeRect(0,0,MAX(200,img.size.width),MAX(200,img.size.height));
+  [self.annotateView setNeedsDisplay:YES];
+  [self.annotateWindow setTitle:[NSString stringWithFormat:@"截图标注 · %@", path.lastPathComponent]];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.annotateWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)annotateToolChanged:(id)sender {
+  if (!self.annotateView) return;
+  self.annotateView.tool = self.annotateToolControl.selectedSegment;
+  [self.annotateView.window makeFirstResponder:self.annotateView];
+}
+- (void)annotateColorChanged:(id)sender { if (self.annotateView) self.annotateView.strokeColor = self.annotateColorWell.color; }
+- (void)annotateWidthChanged:(id)sender {
+  NSArray *vals = @[@2, @4, @7];
+  NSInteger i = self.annotateWidthPopup.indexOfSelectedItem;
+  if (self.annotateView) self.annotateView.strokeWidth = (i >= 0 && i < (NSInteger)vals.count) ? [vals[i] doubleValue] : 4;
+}
+- (void)undoAnnotation:(id)sender { [self.annotateView undo]; }
+- (void)copyAnnotation:(id)sender {
+  if (!self.annotateView) return;
+  NSData *png = [self.annotateView pngData];
+  NSImage *img = [[NSImage alloc] initWithData:png];
+  if (img) {
+    [[NSPasteboard generalPasteboard] clearContents];
+    [[NSPasteboard generalPasteboard] writeObjects:@[img]];
+    [self showToast:@"已复制标注图"];
+  }
+}
+- (void)saveAnnotation:(id)sender {
+  if (!self.annotateView || !self.annotateSourcePath.length) return;
+  NSData *png = [self.annotateView pngData];
+  if (!png.length) { [self showToast:@"保存失败"]; return; }
+  NSString *dir = self.annotateSourcePath.stringByDeletingLastPathComponent;
+  NSString *base = [self.annotateSourcePath.lastPathComponent stringByDeletingPathExtension];
+  NSString *name = [NSString stringWithFormat:@"%@-标注-%@.png", base, [self captureTimestamp]];
+  NSString *out = [dir stringByAppendingPathComponent:name];
+  if ([png writeToFile:out atomically:YES]) {
+    [self showToast:@"标注已保存"];
+    self.annotateStatus.stringValue = out;
+  } else {
+    [self showToast:@"保存失败"];
+  }
+}
+- (void)closeAnnotation:(id)sender { [self.annotateWindow orderOut:nil]; }
+
 - (void)showCaptureHistory:(id)sender {
   if (!self.captureHistoryWindow) {
     self.captureHistoryWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,700,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -16431,6 +16627,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureHistoryTable.doubleAction = @selector(openCaptureHistoryRow:);
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"文件"];
     [menu addItemWithTitle:@"打开" action:@selector(openCaptureHistoryRow:) keyEquivalent:@""].target = self;
+    [menu addItemWithTitle:@"标注截图" action:@selector(annotateCaptureHistoryRow:) keyEquivalent:@""].target = self;
     [menu addItemWithTitle:@"在 Finder 中显示" action:@selector(revealCaptureHistoryRow:) keyEquivalent:@""].target = self;
     self.captureHistoryTable.menu = menu;
     sv.documentView = self.captureHistoryTable; [cv addSubview:sv];
@@ -16446,6 +16643,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     vidFolder.title = @"录屏文件夹"; vidFolder.hoverColor = [NSColor systemPurpleColor];
     vidFolder.target = self; vidFolder.action = @selector(openCaptureVideoFolder:);
     [vidFolder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:vidFolder];
+    ColorHoverButton *annotate = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(410, 24, 120, 32)];
+    annotate.title = @"标注截图"; annotate.hoverColor = [NSColor systemRedColor];
+    annotate.target = self; annotate.action = @selector(annotateCaptureHistoryRow:);
+    [annotate applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:annotate];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(584, 24, 100, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeCaptureHistory:);
@@ -16492,6 +16693,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (row < 0) row = self.captureHistoryTable.clickedRow;
   if (row < 0 || row >= (NSInteger)self.captureHistoryItems.count) return;
   [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.captureHistoryItems[row][@"path"]]]];
+}
+
+- (void)annotateCaptureHistoryRow:(id)sender {
+  NSInteger row = self.captureHistoryTable.selectedRow;
+  if (row < 0) row = self.captureHistoryTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.captureHistoryItems.count) { [self showToast:@"请先选择一张截图"]; return; }
+  NSDictionary *it = self.captureHistoryItems[row];
+  if (![it[@"type"] isEqualToString:@"截图"]) { [self showToast:@"只能标注截图，录屏请用剪辑"]; return; }
+  [self showAnnotationForPath:it[@"path"]];
 }
 
 - (void)openCaptureVideoFolder:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self captureVideoDirectory]]]; }
