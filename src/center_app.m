@@ -652,6 +652,9 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 @property (strong) NSArray *appSearchFiltered;
 @property (strong) NSTextField *appSearchStatus;
 @property (strong) NSPopUpButton *promptCategoryPopup;
+@property (strong) NSWindow *pdfWindow;
+@property (strong) NSTableView *pdfTable;
+@property (strong) NSArray *pdfItems;
 @property (strong) NSWindow *batchRenameWindow;
 @property (strong) NSTableView *batchRenameTable;
 @property (strong) NSArray *batchRenamePaths;
@@ -8027,6 +8030,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.dupTable) return self.dupItems.count;
+  if (tableView == self.pdfTable) return self.pdfItems.count;
   if (tableView == self.batchRenameTable) return self.batchRenamePreview.count;
   if (tableView == self.layoutTable) return self.savedLayouts.count;
   if (tableView == self.appSearchTable) return self.appSearchFiltered.count;
@@ -8074,6 +8078,27 @@ static BOOL ValidGroupName(NSString *raw) {
       link.bordered = NO; link.tag = row; link.alignment = NSTextAlignmentLeft;
       link.font = [NSFont systemFontOfSize:9.5]; link.contentTintColor = [NSColor controlAccentColor];
       link.frame = NSMakeRect(4, 5, col.width - 8, 22); [v addSubview:link];
+    }
+    return v;
+  }
+  if (tableView == self.pdfTable) {
+    if (row < 0 || row >= (NSInteger)self.pdfItems.count) return nil;
+    NSString *path = self.pdfItems[row];
+    NSString *ident = col.identifier;
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,32)];
+    if ([ident isEqualToString:@"pdfname"]) {
+      NSTextField *l = [self label:path.lastPathComponent size:11 bold:YES color:nil];
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
+    } else if ([ident isEqualToString:@"pdfpages"]) {
+      PDFDocument *doc = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
+      NSTextField *l = [self label:[NSString stringWithFormat:@"%ld", (long)doc.pageCount] size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
+    } else {
+      NSNumber *size = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL][NSFileSize];
+      NSTextField *l = [self label:[self gbString:size.unsignedLongLongValue] size:10.5 bold:YES color:[NSColor systemOrangeColor]];
+      l.alignment = NSTextAlignmentRight;
+      l.frame = NSMakeRect(4, 7, col.width - 8, 18); [v addSubview:l];
     }
     return v;
   }
@@ -11649,6 +11674,117 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return apps;
 }
 
+- (void)showPDFTools:(id)sender {
+  if (!self.pdfWindow) {
+    self.pdfWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,660,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.pdfWindow.title = @"PDF 工具";
+    self.pdfWindow.releasedWhenClosed = NO;
+    self.pdfWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.pdfWindow.contentView;
+    NSTextField *title = [self label:@"PDF 工具" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(20, 450, 300, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"合并多个 PDF，或把每个 PDF 按页拆成单独文件" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(20, 428, 500, 18); [cv addSubview:sub];
+    ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20, 388, 100, 30)];
+    add.title = @"添加 PDF"; add.hoverColor = [NSColor systemBlueColor];
+    add.target = self; add.action = @selector(pdfAddFiles:);
+    [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
+    ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(128, 388, 70, 30)];
+    clear.title = @"清空"; clear.hoverColor = [NSColor systemRedColor];
+    clear.target = self; clear.action = @selector(pdfClear:);
+    [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    ColorHoverButton *merge = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(400, 388, 110, 30)];
+    merge.title = @"合并 PDF"; merge.hoverColor = [NSColor systemGreenColor];
+    merge.target = self; merge.action = @selector(pdfMerge:);
+    [merge applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:merge];
+    ColorHoverButton *split = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(518, 388, 120, 30)];
+    split.title = @"按页拆分"; split.hoverColor = [NSColor systemOrangeColor];
+    split.target = self; split.action = @selector(pdfSplit:);
+    [split applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:split];
+
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 70, 628, 300)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.pdfTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSArray *cols = @[@[@"pdfname", @"文件", @430.0], @[@"pdfpages", @"页数", @80.0], @[@"pdfsize", @"大小", @90.0]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.pdfTable addTableColumn:col];
+    }
+    self.pdfTable.rowHeight = 32;
+    self.pdfTable.dataSource = self; self.pdfTable.delegate = self;
+    sv.documentView = self.pdfTable; [cv addSubview:sv];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(544, 24, 100, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closePDFTools:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    self.pdfItems = @[];
+    [self.pdfWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.pdfWindow makeKeyAndOrderFront:nil];
+  [self.pdfWindow orderFrontRegardless];
+}
+
+- (void)pdfAddFiles:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = YES;
+  p.allowedFileTypes = @[@"pdf"];
+  if ([p runModal] != NSModalResponseOK) return;
+  NSMutableArray *paths = [self.pdfItems mutableCopy] ?: [NSMutableArray array];
+  for (NSURL *u in p.URLs) if (![paths containsObject:u.path]) [paths addObject:u.path];
+  self.pdfItems = paths;
+  [self.pdfTable reloadData];
+}
+
+- (void)pdfClear:(id)sender { self.pdfItems = @[]; [self.pdfTable reloadData]; }
+
+- (void)pdfMerge:(id)sender {
+  if (self.pdfItems.count < 2) { [self showToast:@"至少添加两个 PDF"]; return; }
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  sp.nameFieldStringValue = @"合并.pdf";
+  sp.allowedFileTypes = @[@"pdf"];
+  if ([sp runModal] != NSModalResponseOK) return;
+  PDFDocument *out = [[PDFDocument alloc] init];
+  for (NSString *path in self.pdfItems) {
+    PDFDocument *doc = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
+    if (!doc) continue;
+    for (NSUInteger i = 0; i < doc.pageCount; i++) {
+      PDFPage *page = [doc pageAtIndex:i];
+      if (page) [out insertPage:page atIndex:[out pageCount]];
+    }
+  }
+  if (![out writeToURL:sp.URL]) { [self showToast:@"合并失败"]; return; }
+  [self showToast:[NSString stringWithFormat:@"已合并 %ld 个 PDF", (long)self.pdfItems.count]];
+}
+
+- (void)pdfSplit:(id)sender {
+  if (!self.pdfItems.count) { [self showToast:@"请先添加 PDF"]; return; }
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = NO; p.canChooseDirectories = YES; p.allowsMultipleSelection = NO;
+  p.message = @"选择拆分后 PDF 的保存文件夹";
+  if ([p runModal] != NSModalResponseOK) return;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSInteger made = 0;
+  for (NSString *path in self.pdfItems) {
+    PDFDocument *doc = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
+    if (!doc) continue;
+    NSString *base = path.lastPathComponent.stringByDeletingPathExtension;
+    for (NSUInteger i = 0; i < doc.pageCount; i++) {
+      PDFDocument *one = [[PDFDocument alloc] init];
+      PDFPage *page = [doc pageAtIndex:i];
+      if (!page) continue;
+      [one insertPage:page atIndex:0];
+      NSString *name = [NSString stringWithFormat:@"%@_第%ld页.pdf", base, (long)(i + 1)];
+      NSURL *url = [p.URL URLByAppendingPathComponent:name];
+      if ([one writeToURL:url]) made++;
+    }
+  }
+  [self showToast:[NSString stringWithFormat:@"已拆分生成 %ld 个 PDF", (long)made]];
+}
+
+- (void)closePDFTools:(id)sender { [self.pdfWindow orderOut:nil]; }
+
 - (void)showBatchRenamer:(id)sender {
   if (!self.batchRenameWindow) {
     self.batchRenameWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -12562,7 +12698,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [toolsPage addSubview:layoutBtn];
   NSTextField *ts = [self label:@"选择工具，打开独立窗口；可钉住置顶" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   ts.frame = NSMakeRect(16, 456, 388, 18); [toolsPage addSubview:ts];
-  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 296, 88, 140)];
+  ColorHoverButton *transBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 296, 72, 140)];
   transBtn.title = @"AI 翻译";
   transBtn.image = ToolIconImage(@"character.bubble.fill", [NSColor systemTealColor]);
   transBtn.imagePosition = NSImageAbove;
@@ -12573,11 +12709,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   transBtn.hoverDetail = @"截图 OCR、划词、文档/图片翻译，自动识别语言";
   [transBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   NSMutableParagraphStyle *tps = [[NSMutableParagraphStyle alloc] init]; tps.alignment = NSTextAlignmentCenter;
-  transBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"AI 翻译" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
+  transBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"AI 翻译" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
   transBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:transBtn];
 
-  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(122, 296, 88, 140)];
+  ColorHoverButton *zipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(104, 296, 72, 140)];
   zipBtn.title = @"压缩 / 解压";
   zipBtn.image = ToolIconImage(@"archivebox.fill", [NSColor systemOrangeColor]);
   zipBtn.imagePosition = NSImageAbove;
@@ -12587,11 +12723,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   zipBtn.hoverTitle = @"压缩 / 解压";
   zipBtn.hoverDetail = @"ZIP / TAR.GZ，本地处理，解压前做路径安全校验";
   [zipBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  zipBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"压缩 / 解压" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
+  zipBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"压缩 / 解压" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
   zipBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:zipBtn];
 
-  ColorHoverButton *clipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(220, 296, 88, 140)];
+  ColorHoverButton *clipBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(184, 296, 72, 140)];
   clipBtn.title = @"剪贴板";
   clipBtn.image = ToolIconImage(@"doc.on.clipboard.fill", [NSColor systemPurpleColor]);
   clipBtn.imagePosition = NSImageAbove;
@@ -12601,11 +12737,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   clipBtn.hoverTitle = @"剪贴板历史";
   clipBtn.hoverDetail = @"记录最近复制的文字，双击可重新复制";
   [clipBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-  clipBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"剪贴板" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
+  clipBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"剪贴板" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
   clipBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:clipBtn];
 
-  ColorHoverButton *renameBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(318, 296, 88, 140)];
+  ColorHoverButton *renameBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(264, 296, 72, 140)];
   renameBtn.title = @"批量重命名";
   renameBtn.image = ToolIconImage(@"square.and.pencil", [NSColor systemGreenColor]);
   renameBtn.imagePosition = NSImageAbove;
@@ -12618,6 +12754,20 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   renameBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"批量重命名" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
   renameBtn.layer.borderWidth = 0.6;
   [toolsPage addSubview:renameBtn];
+
+  ColorHoverButton *pdfBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(344, 296, 72, 140)];
+  pdfBtn.title = @"PDF 工具";
+  pdfBtn.image = ToolIconImage(@"doc.richtext", [NSColor systemRedColor]);
+  pdfBtn.imagePosition = NSImageAbove;
+  pdfBtn.imageScaling = NSImageScaleProportionallyUpOrDown;
+  pdfBtn.hoverColor = [NSColor systemRedColor];
+  pdfBtn.target = self; pdfBtn.action = @selector(showPDFTools:);
+  pdfBtn.hoverTitle = @"PDF 工具";
+  pdfBtn.hoverDetail = @"合并多个 PDF、按页拆分，全部本地处理";
+  [pdfBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  pdfBtn.attributedTitle = [[NSAttributedString alloc] initWithString:@"PDF 工具" attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[NSColor labelColor], NSParagraphStyleAttributeName:tps}];
+  pdfBtn.layer.borderWidth = 0.6;
+  [toolsPage addSubview:pdfBtn];
 
   NSTextField *tip = [self label:@"悬停查看用途，点击打开工具" size:10 bold:NO color:[NSColor tertiaryLabelColor]];
   tip.alignment = NSTextAlignmentCenter;
