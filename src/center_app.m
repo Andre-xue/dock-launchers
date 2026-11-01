@@ -947,6 +947,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSButton *captureSystemAudioCheck, *captureMicCheck;
 @property (strong) DLScreenRecorder *captureRecorder;
 @property (strong) NSWindow *captureRegionWindow;
+@property (strong) NSPopUpButton *captureCameraPopup;
+@property (strong) AVCaptureSession *captureCameraSession;
+@property (strong) NSWindow *captureCameraWindow;
+@property (strong) AVCaptureVideoPreviewLayer *captureCameraLayer;
 @property (strong) ColorHoverButton *captureRecordButton;
 @property BOOL captureRecording;
 @property (strong) NSButton *captureCopyCheck;
@@ -16432,6 +16436,64 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"截图保存到：%@", dir];
 }
 
+- (void)captureCameraChanged:(id)sender {
+  NSString *uid = self.captureCameraPopup.selectedItem.representedObject ?: @"";
+  [[NSUserDefaults standardUserDefaults] setObject:uid forKey:@"centerCaptureCameraID"];
+}
+
+- (void)stopCameraPreview {
+  if (self.captureCameraSession.isRunning) [self.captureCameraSession stopRunning];
+  self.captureCameraSession = nil;
+  [self.captureCameraWindow orderOut:nil];
+  self.captureCameraWindow = nil;
+  self.captureCameraLayer = nil;
+}
+
+- (void)startCameraPreviewIfNeeded {
+  NSString *uid = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureCameraID"];
+  if (!uid.length) { [self stopCameraPreview]; return; }
+  AVCaptureDevice *device = [AVCaptureDevice deviceWithUniqueID:uid];
+  if (!device) { [self stopCameraPreview]; return; }
+  __weak typeof(self) weakSelf = self;
+  [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!granted) { [weakSelf showToast:@"没有摄像头权限"]; return; }
+      [weakSelf stopCameraPreview];
+      AVCaptureSession *session = [[AVCaptureSession alloc] init];
+      session.sessionPreset = AVCaptureSessionPresetMedium;
+      NSError *err = nil;
+      AVCaptureDeviceInput *input = [AVCaptureDeviceInput deviceInputWithDevice:device error:&err];
+      if (!input || ![session canAddInput:input]) { [weakSelf showToast:@"无法启动摄像头"]; return; }
+      [session addInput:input];
+      NSRect vis = [NSScreen mainScreen].visibleFrame;
+      NSRect frame = NSMakeRect(NSMaxX(vis) - 260, NSMinY(vis) + 24, 236, 176);
+      NSWindow *w = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+      w.opaque = YES;
+      w.backgroundColor = [NSColor blackColor];
+      w.level = NSFloatingWindowLevel;
+      w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+      w.movableByWindowBackground = YES;
+      w.hasShadow = YES;
+      AVCaptureVideoPreviewLayer *layer = [AVCaptureVideoPreviewLayer layerWithSession:session];
+      layer.frame = NSMakeRect(0,0,frame.size.width,frame.size.height);
+      layer.videoGravity = AVLayerVideoGravityResizeAspectFill;
+      NSView *view = [[NSView alloc] initWithFrame:NSMakeRect(0,0,frame.size.width,frame.size.height)];
+      view.wantsLayer = YES;
+      [view.layer addSublayer:layer];
+      view.layer.borderWidth = 2;
+      view.layer.borderColor = [NSColor colorWithCalibratedRed:1 green:0.35 blue:0.25 alpha:0.9].CGColor;
+      view.layer.cornerRadius = 10;
+      view.layer.masksToBounds = YES;
+      w.contentView = view;
+      weakSelf.captureCameraSession = session;
+      weakSelf.captureCameraWindow = w;
+      weakSelf.captureCameraLayer = layer;
+      [w orderFront:nil];
+      dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ [session startRunning]; });
+    });
+  }];
+}
+
 - (void)captureAudioChanged:(id)sender {
   [[NSUserDefaults standardUserDefaults] setBool:(self.captureSystemAudioCheck.state == NSControlStateValueOn) forKey:@"centerCaptureSystemAudio"];
   [[NSUserDefaults standardUserDefaults] setBool:(self.captureMicCheck.state == NSControlStateValueOn) forKey:@"centerCaptureMicrophone"];
@@ -16463,6 +16525,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     title.frame = NSMakeRect(20, 386, 300, 28); [cv addSubview:title];
     NSTextField *sub = [self label:@"区域和窗口截图可交互选择；录屏自动保存到图片文件夹" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 364, 500, 18); [cv addSubview:sub];
+    NSTextField *camLabel = [self label:@"摄像头" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    camLabel.frame = NSMakeRect(330, 390, 50, 18); [cv addSubview:camLabel];
+    self.captureCameraPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(384, 382, 156, 26) pullsDown:NO];
+    [self.captureCameraPopup addItemWithTitle:@"关闭"];
+    self.captureCameraPopup.lastItem.representedObject = @"";
+    AVCaptureDeviceDiscoverySession *ds = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInWideAngleCamera, AVCaptureDeviceTypeExternal] mediaType:AVMediaTypeVideo position:AVCaptureDevicePositionUnspecified];
+    for (AVCaptureDevice *dev in ds.devices) {
+      NSString *name = dev.localizedName ?: @"摄像头";
+      if (dev.position == AVCaptureDevicePositionFront) name = [NSString stringWithFormat:@"前置 · %@", name];
+      [self.captureCameraPopup addItemWithTitle:name];
+      self.captureCameraPopup.lastItem.representedObject = dev.uniqueID ?: @"";
+    }
+    NSString *savedCam = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureCameraID"];
+    for (NSMenuItem *mi in self.captureCameraPopup.itemArray) if ([mi.representedObject isEqualToString:savedCam ?: @""]) [self.captureCameraPopup selectItem:mi];
+    self.captureCameraPopup.target = self; self.captureCameraPopup.action = @selector(captureCameraChanged:);
+    [cv addSubview:self.captureCameraPopup];
     NSArray *modes = @[@"全屏截图", @"区域截图", @"窗口截图"];
     NSArray *sels = @[@"captureFullScreen:", @"captureRegion:", @"captureWindowShot:"];
     for (NSInteger i = 0; i < 3; i++) {
@@ -16564,6 +16642,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   id sysObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureSystemAudio"];
   self.captureSystemAudioCheck.state = (!sysObj || [sysObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
   self.captureMicCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"] ? NSControlStateValueOn : NSControlStateValueOff;
+  NSString *savedCam = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureCameraID"];
+  for (NSMenuItem *mi in self.captureCameraPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedCam ?: @""]) [self.captureCameraPopup selectItem:mi];
   [NSApp activateIgnoringOtherApps:YES];
   [self.captureWindow makeKeyAndOrderFront:nil];
 }
@@ -16654,6 +16734,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger seconds = [self.captureDurationPopup.selectedItem.representedObject integerValue];
   NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mp4", [self captureTimestamp]]];
   self.captureRecording = YES;
+  [self startCameraPreviewIfNeeded];
   self.captureRecordButton.title = @"停止录屏";
   self.captureRecordButton.hoverColor = [NSColor systemOrangeColor];
   self.captureStatusLabel.stringValue = @"正在启动录屏…";
@@ -16667,6 +16748,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   rec.onFinished = ^(NSURL *url, NSError *error) {
     dispatch_async(dispatch_get_main_queue(), ^{
       weakSelf.captureRecording = NO;
+      [weakSelf stopCameraPreview];
       weakSelf.captureRecordButton.title = @"开始录屏";
       weakSelf.captureRecordButton.hoverColor = [NSColor systemRedColor];
       if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
