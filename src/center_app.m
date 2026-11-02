@@ -22296,6 +22296,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (id m in ids) {
     if (![m isKindOfClass:[NSString class]]) continue;
     NSString *low = [m lowercaseString];
+    if ([low containsString:@"edit"]) continue;
     for (NSString *k in keywords) if ([low containsString:k]) { [out addObject:m]; break; }
   }
   return out;
