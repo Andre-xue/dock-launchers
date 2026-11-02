@@ -18040,6 +18040,33 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return NO;
 }
 
+- (NSString *)capturePreflightIssue {
+  BOOL mic = self.captureMicCheck.state == NSControlStateValueOn;
+  if (mic) {
+    AVAuthorizationStatus st = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    if (st == AVAuthorizationStatusDenied || st == AVAuthorizationStatusRestricted)
+      return @"麦克风权限被拒绝。请在 系统设置 → 隐私与安全性 → 麦克风 中允许 DockLaunchers 控制台。";
+  }
+  NSString *camUID = self.captureCameraPopup.selectedItem.representedObject ?: @"";
+  if (camUID.length) {
+    AVAuthorizationStatus st = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+    if (st == AVAuthorizationStatusDenied || st == AVAuthorizationStatusRestricted)
+      return @"摄像头权限被拒绝。请在 系统设置 → 隐私与安全性 → 摄像头 中允许 DockLaunchers 控制台。";
+  }
+  NSString *dir = [self captureVideoDirectory];
+  NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:dir error:NULL];
+  unsigned long long freeBytes = [attrs[NSFileSystemFreeSize] unsignedLongLongValue];
+  if (freeBytes > 0 && freeBytes < 500ULL * 1024 * 1024)
+    return @"磁盘剩余空间不足 500 MB，录制可能失败。请清理磁盘后再试。";
+  return nil;
+}
+
+- (void)openPrivacyPaneForCaptureIssue:(NSString *)issue {
+  NSString *url = [issue containsString:@"摄像头"] ? @"x-apple.systempreferences:com.apple.preference.security?Privacy_Camera" :
+                  ([issue containsString:@"麦克风"] ? @"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone" : nil);
+  if (url) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:url]];
+}
+
 - (void)captureVideo:(id)sender {
   if (self.captureRecording) {
     [self.captureRecorder stop];
@@ -18050,6 +18077,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger delay = [self captureRecordCountdownSeconds];
   __weak typeof(self) weakSelf = self;
   if (![self ensureScreenCapturePermission]) return;
+  NSString *preflight = [self capturePreflightIssue];
+  if (preflight.length) {
+    self.captureStatusLabel.stringValue = preflight;
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"录制前检查未通过";
+    a.informativeText = preflight;
+    [a addButtonWithTitle:@"打开系统设置"];
+    [a addButtonWithTitle:@"取消"];
+    if ([a runModal] == NSAlertFirstButtonReturn) [self openPrivacyPaneForCaptureIssue:preflight];
+    return;
+  }
   if (scene == 3) {
     [self beginCaptureRegion:^(NSRect region) {
       if (region.size.width < 12 || region.size.height < 12) return;
