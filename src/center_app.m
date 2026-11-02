@@ -22440,6 +22440,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(384, 58, 90, 32)];
     cancel.title = @"取消"; cancel.hoverColor = [NSColor systemGrayColor]; cancel.target = self; cancel.action = @selector(closeSpeechSettings:);
     [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
+    self.speechSettingsWindow.level = NSFloatingWindowLevel + 1;
     [self.speechSettingsWindow center];
   }
   [self speechEngineChanged:nil];
