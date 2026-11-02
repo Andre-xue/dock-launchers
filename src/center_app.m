@@ -1419,6 +1419,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiImageURLField, *aiImageStatus, *aiVideoURLField, *aiVideoStatus;
 @property (strong) NSImageView *aiImagePreview, *aiVideoPreview;
 @property (copy) NSString *aiImageResultPath, *aiVideoResultPath, *aiVideoTaskID, *aiVideoPollURL, *aiVideoFirstFramePath;
+@property (strong) NSWindow *aiImageBatchWindow, *aiGalleryWindow;
+@property (strong) NSTextView *aiImageBatchTextView;
+@property (strong) NSMutableArray<NSString *> *aiImageBatchQueue;
+@property BOOL aiImageBatchRunning;
 @property NSInteger aiVideoPollCount;
 @property BOOL aiVideoSiliconFlow;
 @property (strong) NSTimer *aiVideoPollTimer;
@@ -1429,7 +1433,11 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiAssistantURLField, *aiAssistantStatus;
 @property BOOL aiAssistantBusy;
 @property (strong) NSTextField *videoPostFileLabel, *videoPostStart, *videoPostEnd, *videoPostStatus;
-@property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow;
+@property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow, *aiTTSWindow;
+@property (strong) NSPopUpButton *aiTTSServicePopup;
+@property (strong) NSTextField *aiTTSModelField, *aiTTSVoiceField, *aiTTSURLField, *aiTTSStatus;
+@property (strong) NSTextView *aiTTSText;
+@property (copy) NSString *aiTTSResultPath;
 @property (strong) NSPopUpButton *speechEnginePopup, *speechServicePopup;
 @property (strong) NSTextField *speechModelField;
 @property (strong) NSButton *speechServerCheck;
@@ -14900,6 +14908,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"recordrecent"]) [self openMostRecentRecording];
   else if ([action isEqualToString:@"meeting"]) [self openMeetingAssistant:nil];
   else if ([action isEqualToString:@"voicetext"]) [self openVoiceTextWindow:nil];
+  else if ([action isEqualToString:@"tts"]) [self openAITTSWindow:nil];
   else if ([action isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
   else if ([action isEqualToString:@"ocr"]) [self ocrLatestScreenshot:nil];
   else if ([action isEqualToString:@"shelf"]) [self openShelfWindow:nil];
@@ -16135,7 +16144,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"打开最近录像", @"symbol": @"film", @"action": @"recordrecent"},
         @{@"title": @"截屏/录屏", @"symbol": @"camera.viewfinder", @"action": @"capture"},
         @{@"title": @"会议助手", @"symbol": @"person.2.wave.2", @"action": @"meeting"},
-        @{@"title": @"语音转文字", @"symbol": @"waveform.badge.mic", @"action": @"voicetext"}
+        @{@"title": @"语音转文字", @"symbol": @"waveform.badge.mic", @"action": @"voicetext"},
+        @{@"title": @"语音合成", @"symbol": @"speaker.wave.3", @"action": @"tts"}
       ],
       @[
         @{@"title": @"重命名", @"symbol": @"square.and.pencil", @"action": @"rename"},
@@ -18507,6 +18517,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3077,@"cat":@1,@"title":@"系统隐私仪表盘",@"desc":@"查看并打开各项隐私权限",@"sel":@"openPrivacyDashboard:"},
     @{@"id":@3078,@"cat":@1,@"title":@"菜单栏页面自定义",@"desc":@"显示/隐藏和排序扇形页面",@"sel":@"openRadialPageCustomization:"},
     @{@"id":@3079,@"cat":@1,@"title":@"语音转写设置",@"desc":@"切换本机识别和第三方 Whisper",@"sel":@"openSpeechSettings:"},
+    @{@"id":@3080,@"cat":@1,@"title":@"AI 语音合成",@"desc":@"文本转语音与配音",@"sel":@"openAITTSWindow:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -19520,6 +19531,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"系统隐私仪表盘", @"subtitle": @"查看并打开各项隐私权限", @"type": @"工具", @"tool": @"privacy", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"lock.shield" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"菜单栏页面自定义", @"subtitle": @"显示/隐藏和排序扇形页面", @"type": @"工具", @"tool": @"radialcustom", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"slider.horizontal.3" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"语音转写设置", @"subtitle": @"本机识别 / 第三方 Whisper", @"type": @"工具", @"tool": @"speechsettings", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"mic.badge.plus" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"AI 语音合成", @"subtitle": @"文本转语音与配音", @"type": @"工具", @"tool": @"tts", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"speaker.wave.3" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 图片生成", @"subtitle": @"用 AI 服务生成图片", @"type": @"工具", @"tool": @"aiimage", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"photo.badge.plus" accessibilityDescription:nil] ?: recIcon}];
@@ -19662,6 +19674,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"privacy"]) [self openPrivacyDashboard:nil];
     else if ([tool isEqualToString:@"radialcustom"]) [self openRadialPageCustomization:nil];
     else if ([tool isEqualToString:@"speechsettings"]) [self openSpeechSettings:nil];
+    else if ([tool isEqualToString:@"tts"]) [self openAITTSWindow:nil];
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
     else if ([tool isEqualToString:@"aitext"]) [self openAIAssistant:nil];
@@ -22462,6 +22475,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *clearAll = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(244,20,110,28)];
     clearAll.title=@"清空全部"; clearAll.hoverColor=[NSColor systemRedColor]; clearAll.target=self; clearAll.action=@selector(clearAIImagePanel:);
     [clearAll applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearAll];
+    ColorHoverButton *batch = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(362,20,110,28)];
+    batch.title=@"批量生成…"; batch.hoverColor=[NSColor systemPurpleColor]; batch.target=self; batch.action=@selector(showAIImageBatch:);
+    [batch applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:batch];
+    ColorHoverButton *gallery = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(480,20,110,28)];
+    gallery.title=@"历史图库…"; gallery.hoverColor=[NSColor systemOrangeColor]; gallery.target=self; gallery.action=@selector(showAIImageGallery:);
+    [gallery applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gallery];
     self.aiImageStatus = [self label:@"输入提示词后点击生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.aiImageStatus.frame=NSMakeRect(244,266,390,18); [cv addSubview:self.aiImageStatus];
     self.aiImagePreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,60,610,190)];
@@ -22492,6 +22511,116 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     for (id x in [(NSDictionary *)obj allValues]) { NSString *u=[self firstURLStringInJSONObject:x]; if (u) return u; }
   }
   return nil;
+}
+
+- (NSString *)aiGeneratedDirectory {
+  NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AIGenerated"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return dir;
+}
+
+- (void)showAIImageBatch:(id)sender {
+  if (!self.aiImageBatchWindow) {
+    self.aiImageBatchWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,440) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiImageBatchWindow.title = @"AI 图片批量生成";
+    self.aiImageBatchWindow.releasedWhenClosed = NO;
+    NSView *cv = self.aiImageBatchWindow.contentView;
+    NSTextField *t = [self label:@"批量生成" size:18 bold:YES color:nil];
+    t.frame=NSMakeRect(24,396,300,24); [cv addSubview:t];
+    NSTextField *h = [self label:@"每行一个提示词；使用当前选择的服务和模型依次生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame=NSMakeRect(24,374,500,18); [cv addSubview:h];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,90,512,270)];
+    sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.aiImageBatchTextView = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+    self.aiImageBatchTextView.font=[NSFont systemFontOfSize:12];
+    self.aiImageBatchTextView.string=@"一只猫在草地上奔跑\n雨夜赛博朋克城市街道\n极简白色产品海报";
+    sv.documentView=self.aiImageBatchTextView; [cv addSubview:sv];
+    ColorHoverButton *start = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,48,120,32)];
+    start.title=@"开始批量"; start.hoverColor=[NSColor systemGreenColor]; start.target=self; start.action=@selector(startAIImageBatch:);
+    [start applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:start];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(436,48,100,32)];
+    close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeAIImageBatch:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.aiImageBatchWindow center];
+  }
+  [self forceWindowToFront:self.aiImageBatchWindow];
+}
+
+- (void)closeAIImageBatch:(id)sender { [self.aiImageBatchWindow orderOut:nil]; }
+
+- (void)startAIImageBatch:(id)sender {
+  NSMutableArray *lines = [NSMutableArray array];
+  for (NSString *line in [self.aiImageBatchTextView.string componentsSeparatedByString:@"\n"]) {
+    NSString *v = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (v.length) [lines addObject:v];
+  }
+  if (!lines.count) { [self showToast:@"请每行输入一个提示词"]; return; }
+  if (self.aiImageBusy) { [self showToast:@"当前正在生成，请稍后"]; return; }
+  self.aiImageBatchQueue = lines;
+  self.aiImageBatchRunning = YES;
+  [self.aiImageBatchWindow orderOut:nil];
+  [self runNextAIImageBatch];
+}
+
+- (void)runNextAIImageBatch {
+  if (!self.aiImageBatchRunning) return;
+  if (self.aiImageBusy) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [self runNextAIImageBatch]; });
+    return;
+  }
+  if (!self.aiImageBatchQueue.count) {
+    self.aiImageBatchRunning = NO;
+    self.aiImageStatus.stringValue = @"批量生成完成";
+    [self showToast:@"批量生成完成"];
+    return;
+  }
+  NSString *prompt = self.aiImageBatchQueue.firstObject;
+  [self.aiImageBatchQueue removeObjectAtIndex:0];
+  self.aiImagePrompt.string = prompt;
+  self.aiImageStatus.stringValue = [NSString stringWithFormat:@"批量生成：%@", prompt];
+  [self generateAIImage:nil];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.2*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [self runNextAIImageBatch]; });
+}
+
+- (void)showAIImageGallery:(id)sender {
+  if (!self.aiGalleryWindow) {
+    self.aiGalleryWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiGalleryWindow.title = @"AI 图片历史图库";
+    self.aiGalleryWindow.releasedWhenClosed = NO;
+    NSView *cv = self.aiGalleryWindow.contentView;
+    NSTextField *t = [self label:@"AI 图片历史图库" size:18 bold:YES color:nil];
+    t.frame=NSMakeRect(24,516,300,24); [cv addSubview:t];
+  }
+  NSView *cv = self.aiGalleryWindow.contentView;
+  NSScrollView *oldScroll = objc_getAssociatedObject(cv, "GalleryScroll");
+  if (oldScroll) [oldScroll removeFromSuperview];
+  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(20,60,720,440)];
+  sv.hasVerticalScroller=YES; sv.drawsBackground=NO;
+  objc_setAssociatedObject(cv, "GalleryScroll", sv, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  NSView *doc = [[NSView alloc] initWithFrame:NSMakeRect(0,0,700,440)];
+  NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:[self aiGeneratedDirectory] error:NULL] ?: @[];
+  NSMutableArray *imgs = [NSMutableArray array];
+  for (NSString *f in files) if ([@[@"png",@"jpg",@"jpeg"] containsObject:f.pathExtension.lowercaseString]) [imgs addObject:f];
+  [imgs sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b){ return [b compare:a]; }];
+  CGFloat x=8,y=300;
+  for (NSString *f in imgs) {
+    if (y < 8) break;
+    NSImage *img=[[NSImage alloc] initWithContentsOfFile:[[self aiGeneratedDirectory] stringByAppendingPathComponent:f]];
+    NSButton *b=[[NSButton alloc] initWithFrame:NSMakeRect(x,y,160,150)];
+    b.bordered=NO; b.image=img; b.imageScaling=NSImageScaleProportionallyUpOrDown;
+    b.toolTip=f;
+    objc_setAssociatedObject(b,"GalleryPath",f,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    b.target=self; b.action=@selector(openGalleryImage:);
+    [doc addSubview:b];
+    x+=170; if (x>560) { x=8; y-=160; }
+  }
+  sv.documentView=doc; [cv addSubview:sv];
+  [self forceWindowToFront:self.aiGalleryWindow];
+}
+
+- (void)openGalleryImage:(NSButton *)b {
+  NSString *f=objc_getAssociatedObject(b,"GalleryPath");
+  if (f.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[[self aiGeneratedDirectory] stringByAppendingPathComponent:f]]];
 }
 
 - (void)generateAIImage:(id)sender {
@@ -22996,6 +23125,145 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if ([p runModal] == NSModalResponseOK && p.URL.path.length) done(p.URL.path);
 }
 
+- (NSArray<NSDictionary *> *)ttsServices {
+  if (!self.aiEntries) [self loadAIEntries];
+  [self hydrateAIKeys];
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *e in self.aiEntries) if ([e[@"api"] length] && [[self aiModelCategoryKey:e] isEqualToString:@"speech"]) [out addObject:e];
+  return out;
+}
+
+- (void)openAITTSWindow:(id)sender {
+  if (!self.aiTTSWindow) {
+    self.aiTTSWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,660,600) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiTTSWindow.title = @"AI 语音合成";
+    self.aiTTSWindow.releasedWhenClosed = NO;
+    NSView *cv = self.aiTTSWindow.contentView;
+    NSTextField *t = [self label:@"AI 语音合成" size:20 bold:YES color:nil];
+    t.frame = NSMakeRect(24,556,300,28); [cv addSubview:t];
+    NSTextField *h = [self label:@"文本转语音；支持硅基流动 CosyVoice/MOSS 和 OpenAI 兼容 /audio/speech" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24,534,600,18); [cv addSubview:h];
+    self.aiTTSServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,498,180,28) pullsDown:NO];
+    self.aiTTSServicePopup.target = self; self.aiTTSServicePopup.action = @selector(aiTTSServiceChanged:);
+    [cv addSubview:self.aiTTSServicePopup];
+    self.aiTTSModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(212,498,200,28)];
+    self.aiTTSModelField.placeholderString=@"TTS 模型"; [cv addSubview:self.aiTTSModelField];
+    self.aiTTSVoiceField = [[NSTextField alloc] initWithFrame:NSMakeRect(420,498,216,28)];
+    self.aiTTSVoiceField.placeholderString=@"音色，例如 model:alex"; [cv addSubview:self.aiTTSVoiceField];
+    self.aiTTSURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,464,612,28)];
+    self.aiTTSURLField.placeholderString=@"/audio/speech 地址";
+    self.aiTTSURLField.editable=NO; self.aiTTSURLField.selectable=YES;
+    [cv addSubview:self.aiTTSURLField];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,150,612,300)];
+    sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.aiTTSText = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+    self.aiTTSText.font=[NSFont systemFontOfSize:12];
+    self.aiTTSText.string=@"请输入要朗读的文本。";
+    sv.documentView=self.aiTTSText; [cv addSubview:sv];
+    ColorHoverButton *gen = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,106,110,32)];
+    gen.title=@"生成语音"; gen.hoverColor=[NSColor systemBlueColor]; gen.target=self; gen.action=@selector(generateAITTS:);
+    [gen applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gen];
+    ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(142,106,100,32)];
+    open.title=@"打开语音"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openAITTSResult:);
+    [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250,106,100,32)];
+    clear.title=@"清空全部"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(clearAITTSPanel:);
+    [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    self.aiTTSStatus = [self label:@"选择服务后输入文本" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.aiTTSStatus.frame = NSMakeRect(24,70,612,18); [cv addSubview:self.aiTTSStatus];
+    [self.aiTTSWindow center];
+  }
+  [self reloadAITTSServices];
+  [self forceWindowToFront:self.aiTTSWindow];
+}
+
+- (void)reloadAITTSServices {
+  [self.aiTTSServicePopup removeAllItems];
+  NSArray *services = [self ttsServices];
+  for (NSInteger i=0;i<(NSInteger)services.count;i++) {
+    NSDictionary *e = services[i];
+    [self.aiTTSServicePopup addItemWithTitle:e[@"name"] ?: @"未命名"];
+    self.aiTTSServicePopup.lastItem.representedObject = @(i);
+  }
+  if (!services.count) {
+    [self.aiTTSServicePopup addItemWithTitle:@"请先在 AI 管理设置语音模型"];
+    self.aiTTSServicePopup.enabled=NO;
+    self.aiTTSStatus.stringValue=@"没有语音模型，请把支持 TTS 的服务分类设为「语音」";
+  } else {
+    self.aiTTSServicePopup.enabled=YES;
+    [self.aiTTSServicePopup selectItemAtIndex:0];
+    [self aiTTSServiceChanged:nil];
+  }
+}
+
+- (void)aiTTSServiceChanged:(id)sender {
+  NSArray *services = [self ttsServices];
+  NSInteger idx = [self.aiTTSServicePopup.selectedItem.representedObject integerValue];
+  if (idx < 0 || idx >= (NSInteger)services.count) return;
+  NSDictionary *e = services[idx];
+  NSString *name = [e[@"name"] ?: @"" lowercaseString];
+  NSString *base = e[@"apiBase"] ?: @"";
+  while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length-1];
+  if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length-@"/chat/completions".length];
+  self.aiTTSURLField.stringValue = base.length ? [base stringByAppendingString:@"/audio/speech"] : @"";
+  if ([name containsString:@"siliconflow"] || [name containsString:@"硅基流动"]) {
+    self.aiTTSModelField.stringValue = @"FunAudioLLM/CosyVoice2-0.5B";
+    self.aiTTSVoiceField.stringValue = @"FunAudioLLM/CosyVoice2-0.5B:alex";
+  } else if ([name containsString:@"openai"]) {
+    self.aiTTSModelField.stringValue = @"gpt-4o-mini-tts";
+    self.aiTTSVoiceField.stringValue = @"alloy";
+  } else {
+    if (!self.aiTTSModelField.stringValue.length) self.aiTTSModelField.stringValue = @"tts-1";
+    if (!self.aiTTSVoiceField.stringValue.length) self.aiTTSVoiceField.stringValue = @"alloy";
+  }
+}
+
+- (void)generateAITTS:(id)sender {
+  NSArray *services = [self ttsServices];
+  NSInteger idx = [self.aiTTSServicePopup.selectedItem.representedObject integerValue];
+  if (idx < 0 || idx >= (NSInteger)services.count) { self.aiTTSStatus.stringValue=@"请先配置语音模型"; return; }
+  NSDictionary *e = services[idx];
+  NSString *key = e[@"api"] ?: @"";
+  NSString *url = self.aiTTSURLField.stringValue;
+  NSString *model = self.aiTTSModelField.stringValue;
+  NSString *voice = self.aiTTSVoiceField.stringValue;
+  NSString *text = self.aiTTSText.string;
+  if (!key.length || !url.length || !model.length || !voice.length || !text.length) { self.aiTTSStatus.stringValue=@"请填写服务、模型、音色和文本"; return; }
+  NSDictionary *body = @{@"model":model,@"input":text,@"voice":voice,@"response_format":@"mp3"};
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  req.HTTPMethod=@"POST"; req.timeoutInterval=180;
+  [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  req.HTTPBody=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+  self.aiTTSStatus.stringValue=@"正在合成语音…";
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (err || !data.length) { weakSelf.aiTTSStatus.stringValue=err.localizedDescription ?: @"语音合成失败"; return; }
+      NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AIGenerated"];
+      [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+      NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
+      NSString *path=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"AI语音-%@.mp3",[df stringFromDate:[NSDate date]]]];
+      if (![data writeToFile:path atomically:YES]) { weakSelf.aiTTSStatus.stringValue=@"语音保存失败"; return; }
+      weakSelf.aiTTSResultPath=path;
+      weakSelf.aiTTSStatus.stringValue=[NSString stringWithFormat:@"已生成：%@",path.lastPathComponent];
+      NSSound *sound=[[NSSound alloc] initWithContentsOfFile:path byReference:YES];
+      [sound play];
+    });
+  }] resume];
+}
+
+- (void)openAITTSResult:(id)sender {
+  if (!self.aiTTSResultPath.length) { [self showToast:@"还没有生成语音"]; return; }
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.aiTTSResultPath]];
+}
+
+- (void)clearAITTSPanel:(id)sender {
+  self.aiTTSText.string=@"";
+  self.aiTTSResultPath=nil;
+  self.aiTTSStatus.stringValue=@"已清空";
+}
+
 - (void)openVoiceTextWindow:(id)sender {
   if (!self.voiceTextWindow) {
     self.voiceTextWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -23126,6 +23394,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     sv2.documentView = self.meetingSummary; [cv addSubview:sv2];
     self.meetingStatus = [self label:@"请选择录屏文件" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.meetingStatus.frame = NSMakeRect(24, 54, 820, 18); [cv addSubview:self.meetingStatus];
+    NSPopUpButton *exportMeeting = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(500, 14, 116, 32) pullsDown:NO];
+    [exportMeeting addItemsWithTitles:@[@"导出 TXT", @"导出 Markdown", @"导出 SRT 字幕"]];
+    exportMeeting.target = self; exportMeeting.action = @selector(exportMeetingTranscript:);
+    exportMeeting.font = [NSFont systemFontOfSize:10.5];
+    [cv addSubview:exportMeeting];
     ColorHoverButton *clearMeeting = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(630, 14, 116, 32)];
     clearMeeting.title = @"清空全部"; clearMeeting.hoverColor = [NSColor systemRedColor]; clearMeeting.target = self; clearMeeting.action = @selector(clearMeetingPanel:);
     [clearMeeting applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearMeeting];
@@ -23144,6 +23417,40 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
   }
   [self forceWindowToFront:self.meetingWindow];
+}
+
+- (void)exportMeetingTranscript:(NSPopUpButton *)sender {
+  NSString *transcript = self.meetingTranscript.string ?: @"";
+  NSString *summary = self.meetingSummary.string ?: @"";
+  if (!transcript.length && !summary.length) { [self showToast:@"没有可导出的内容"]; return; }
+  NSInteger idx = sender.indexOfSelectedItem;
+  NSString *ext = idx == 1 ? @"md" : (idx == 2 ? @"srt" : @"txt");
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  sp.allowedFileTypes = @[ext];
+  sp.nameFieldStringValue = [NSString stringWithFormat:@"会议纪要.%@", ext];
+  if ([sp runModal] != NSModalResponseOK) return;
+  NSString *content = @"";
+  if (idx == 2) {
+    NSMutableString *srt = [NSMutableString string];
+    NSArray *parts = [transcript componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"。！？\n"]];
+    NSInteger n = 0;
+    double start = 0;
+    for (NSString *p in parts) {
+      NSString *line = [p stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+      if (!line.length) continue;
+      n++;
+      double end = start + 3.0;
+      [srt appendFormat:@"%ld\n%02ld:%02ld:%02ld,000 --> %02ld:%02ld:%02ld,000\n%@\n\n", (long)n, (long)(start/3600), (long)((long)start%3600)/60, (long)((long)start%60), (long)(end/3600), (long)((long)end%3600)/60, (long)((long)end%60), line];
+      start = end;
+    }
+    content = srt;
+  } else if (idx == 1) {
+    content = [NSString stringWithFormat:@"# 会议纪要\n\n## 会议转写\n\n%@\n\n## AI 会议纪要\n\n%@\n", transcript, summary];
+  } else {
+    content = [NSString stringWithFormat:@"会议转写\n%@\n\nAI 会议纪要\n%@\n", transcript, summary];
+  }
+  [content writeToFile:sp.URL.path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  self.meetingStatus.stringValue = [NSString stringWithFormat:@"已导出：%@", sp.URL.lastPathComponent];
 }
 
 - (void)closeMeetingAssistant:(id)sender { [self.meetingWindow orderOut:nil]; }
