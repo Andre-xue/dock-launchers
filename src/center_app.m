@@ -21709,9 +21709,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiVisionServicePopup.target=self; self.aiVisionServicePopup.action=@selector(aiVisionServiceChanged:);
     [cv addSubview:self.aiVisionServicePopup];
     self.aiVisionModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(222,540,180,28)];
-    self.aiVisionModelField.placeholderString=@"视觉模型"; [cv addSubview:self.aiVisionModelField];
+    self.aiVisionModelField.placeholderString=@"自动读取服务视觉模型";
+    self.aiVisionModelField.editable=NO; self.aiVisionModelField.selectable=YES;
+    self.aiVisionModelField.toolTip=@"自动取 AI 管理里的视觉模型，未单独配置时读取该服务的模型";
+    [cv addSubview:self.aiVisionModelField];
     self.aiVisionURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(410,540,206,28)];
-    self.aiVisionURLField.placeholderString=@"/chat/completions 地址"; [cv addSubview:self.aiVisionURLField];
+    self.aiVisionURLField.placeholderString=@"/chat/completions 地址";
+    self.aiVisionURLField.editable=NO; self.aiVisionURLField.selectable=YES;
+    [cv addSubview:self.aiVisionURLField];
     NSArray *titles=@[@"选择图片",@"截图",@"粘贴图片",@"本地 OCR"];
     NSArray *sels=@[@"aiVisionPickImage:",@"aiVisionCapture:",@"aiVisionPaste:",@"aiVisionOCR:"];
     for(NSInteger i=0;i<4;i++){
@@ -21807,13 +21812,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   if([base hasSuffix:@"/chat/completions"]) base=[base substringToIndex:base.length-@"/chat/completions".length];
   self.aiVisionURLField.stringValue=base.length?[base stringByAppendingString:@"/chat/completions"]:@"";
-  NSString *model=e[@"visionModel"]?:@"";
+  NSString *model=e[@"visionModel"]?:e[@"model"]?:@"";
   if(!model.length){
     if([name containsString:@"openai"]||[name containsString:@"chatgpt"]) model=@"gpt-4o-mini";
     else if([name containsString:@"gemini"]||[name containsString:@"谷歌"]) model=@"gemini-1.5-flash";
     else if([name containsString:@"siliconflow"]||[name containsString:@"硅基流动"]) model=@"Qwen/Qwen2-VL-7B-Instruct";
   }
   self.aiVisionModelField.stringValue=model;
+  if (!model.length) self.aiVisionStatus.stringValue=@"该服务未配置模型，请先在 AI 管理填写模型或视觉模型";
+  else if ([name containsString:@"deepseek"]) self.aiVisionStatus.stringValue=@"DeepSeek 文本接口可能不支持图片；如失败请换多模态服务";
+  else self.aiVisionStatus.stringValue=@"模型和地址已自动读取，选择图片后发送";
 }
 
 - (void)sendAIVision {
