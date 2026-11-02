@@ -1246,6 +1246,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property BOOL captureCameraWaiting;
 @property BOOL captureCameraComposing;
 @property BOOL suppressCaptureToolShow;
+@property BOOL allowTerminate;
 @property (strong) NSWindow *captureCameraWindow, *captureCountdownWindow;
 @property (strong) NSTextField *captureCountdownLabel;
 @property (strong) NSTimer *captureCountdownTimer, *captureHUDTimer;
@@ -2776,6 +2777,8 @@ static void HideDockHoverTip(void) {
   NSMenu *menu = [[NSMenu alloc] initWithTitle:@"DockLaunchers"];
   [menu addItemWithTitle:@"打开环形菜单" action:@selector(togglePopover:) keyEquivalent:@""].target = self;
   [menu addItemWithTitle:@"打开控制台" action:@selector(showWindow:) keyEquivalent:@""].target = self;
+  [menu addItem:[NSMenuItem separatorItem]];
+  [menu addItemWithTitle:@"退出 DockLaunchers" action:@selector(quitApp:) keyEquivalent:@""].target = self;
   return menu;
 }
 
@@ -2816,6 +2819,7 @@ static void HideDockHoverTip(void) {
   self.statusItem.button.target = self;
   self.statusItem.button.action = @selector(togglePopover:);
   NSNotificationCenter *wsnc = [[NSWorkspace sharedWorkspace] notificationCenter];
+  [wsnc addObserver:self selector:@selector(workspaceWillPowerOff:) name:NSWorkspaceWillPowerOffNotification object:nil];
   for (NSString *n in @[NSWorkspaceDidMountNotification, NSWorkspaceDidUnmountNotification, NSWorkspaceDidRenameVolumeNotification]) {
     [wsnc addObserver:self selector:@selector(volumesChanged:) name:n object:nil];
   }
@@ -2831,7 +2835,7 @@ static void HideDockHoverTip(void) {
   [self startSceneAutoIfNeeded];
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerLaunchLock"] && [self hasAppPassword] && !getenv("DOCKLAUNCHERS_CENTER_SKIP_LOCK")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      if (![self promptForAppPassword]) [NSApp terminate:nil];
+      if (![self promptForAppPassword]) { self.allowTerminate = YES; [NSApp terminate:nil]; }
     });
   }
   self.diskKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
@@ -3461,7 +3465,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@"Main"];
   NSMenuItem *appItem = [[NSMenuItem alloc] initWithTitle:@"DockLaunchers" action:nil keyEquivalent:@""];
   NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"DockLaunchers"];
-  [appMenu addItemWithTitle:@"退出 DockLaunchers" action:@selector(terminate:) keyEquivalent:@"q"];
+  [appMenu addItemWithTitle:@"退出 DockLaunchers" action:@selector(quitApp:) keyEquivalent:@"q"];
   appItem.submenu = appMenu;
   [mainMenu addItem:appItem];
   NSMenuItem *editItem = [[NSMenuItem alloc] initWithTitle:@"编辑" action:nil keyEquivalent:@""];
@@ -3686,6 +3690,17 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 - (void)showWindow:(id)sender {
   [self.window makeKeyAndOrderFront:nil];
   [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+  if (self.allowTerminate) return NSTerminateNow;
+  [self.window orderOut:nil];
+  [self showToast:@"DockLaunchers 仍在菜单栏运行；需要退出请用「退出 DockLaunchers」"];
+  return NSTerminateCancel;
+}
+
+- (void)workspaceWillPowerOff:(NSNotification *)note {
+  self.allowTerminate = YES;
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
@@ -14646,7 +14661,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self showToast:(self.loginCheck.state == NSControlStateValueOn ? @"已开启开机自启" : @"已关闭开机自启")];
 }
 
-- (void)quitApp:(id)sender { [self unloadLoginAgent]; [NSApp terminate:nil]; }
+- (void)quitApp:(id)sender { self.allowTerminate = YES; [self unloadLoginAgent]; [NSApp terminate:nil]; }
 
 - (void)buildPopover {
   NSPopover *pop = [[NSPopover alloc] init];
