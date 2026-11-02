@@ -21596,6 +21596,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,260,100,30)];
     open.title=@"打开视频"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openAIVideo:);
     [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    ColorHoverButton *clearAll = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(244,20,110,28)];
+    clearAll.title=@"清空全部"; clearAll.hoverColor=[NSColor systemRedColor]; clearAll.target=self; clearAll.action=@selector(clearAIVideoPanel:);
+    [clearAll applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearAll];
     self.aiVideoStatus = [self label:@"输入提示词后点击生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.aiVideoStatus.frame=NSMakeRect(244,266,390,18); [cv addSubview:self.aiVideoStatus];
     self.aiVideoPreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,60,610,190)];
@@ -21869,6 +21872,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *send=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(474,44,142,30)];
     send.title=@"发送给 AI"; send.hoverColor=[NSColor systemBlueColor]; send.target=self; send.action=@selector(sendAIVision);
     [send applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:send];
+    ColorHoverButton *clearVision=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,14,110,26)];
+    clearVision.title=@"清空全部"; clearVision.hoverColor=[NSColor systemRedColor]; clearVision.target=self; clearVision.action=@selector(clearAIVisionPanel:);
+    [clearVision applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearVision];
     [self.aiVisionWindow center];
   }
   [self reloadAIVisionServices];
@@ -21938,6 +21944,47 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!model.length) self.aiVisionStatus.stringValue=@"该服务未配置模型，请先在 AI 管理填写模型或视觉模型";
   else if ([name containsString:@"deepseek"]) self.aiVisionStatus.stringValue=@"DeepSeek 文本接口可能不支持图片；如失败请换多模态服务";
   else self.aiVisionStatus.stringValue=@"模型和地址已自动读取，选择图片后发送";
+}
+
+- (void)clearAIImagePanel:(id)sender {
+  self.aiImagePrompt.string = @"";
+  self.aiImagePreview.image = nil;
+  self.aiImageResultPath = nil;
+  self.aiImageStatus.stringValue = @"已清空";
+}
+- (void)clearAIVideoPanel:(id)sender {
+  [self.aiVideoPollTimer invalidate];
+  self.aiVideoBusy = NO;
+  self.aiVideoPrompt.string = @"";
+  self.aiVideoPreview.image = nil;
+  self.aiVideoResultPath = nil;
+  self.aiVideoTaskID = nil;
+  self.aiVideoPollURL = nil;
+  self.aiVideoStatus.stringValue = @"已清空";
+}
+- (void)clearAIEditPanel:(id)sender {
+  self.aiEditPrompt.string = @"";
+  self.aiEditImagePath = nil;
+  self.aiEditResultPath = nil;
+  self.aiEditPreview.image = nil;
+  self.aiEditResultPreview.image = nil;
+  self.aiEditStatus.stringValue = @"已清空";
+}
+- (void)clearAIVisionPanel:(id)sender {
+  self.aiVisionPrompt.string = @"";
+  self.aiVisionOutput.string = @"";
+  self.aiVisionImagePath = nil;
+  self.aiVisionPreview.image = nil;
+  self.aiVisionStatus.stringValue = @"已清空";
+}
+- (void)clearVoiceTextPanel:(id)sender {
+  self.voiceTextOutput.string = @"";
+  self.voiceTextStatus.stringValue = @"已清空";
+}
+- (void)clearMeetingPanel:(id)sender {
+  self.meetingTranscript.string = @"";
+  self.meetingSummary.string = @"";
+  self.meetingStatus.stringValue = @"已清空";
 }
 
 - (void)sendAIVision {
@@ -22082,6 +22129,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *open=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,24,100,30)];
     open.title=@"打开结果";open.hoverColor=[NSColor systemTealColor];open.target=self;open.action=@selector(openAIEdit);
     [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:open];
+    ColorHoverButton *clearEdit=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(240,24,110,30)];
+    clearEdit.title=@"清空全部"; clearEdit.hoverColor=[NSColor systemRedColor]; clearEdit.target=self; clearEdit.action=@selector(clearAIEditPanel:);
+    [clearEdit applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:clearEdit];
     [self.aiEditWindow center];
   }
   [self reloadAIEditServices];
@@ -22322,6 +22372,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,260,100,30)];
     open.title=@"打开图片"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openAIImage:);
     [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    ColorHoverButton *clearAll = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(244,20,110,28)];
+    clearAll.title=@"清空全部"; clearAll.hoverColor=[NSColor systemRedColor]; clearAll.target=self; clearAll.action=@selector(clearAIImagePanel:);
+    [clearAll applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearAll];
     self.aiImageStatus = [self label:@"输入提示词后点击生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.aiImageStatus.frame=NSMakeRect(244,266,390,18); [cv addSubview:self.aiImageStatus];
     self.aiImagePreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,60,610,190)];
@@ -22873,6 +22926,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     sv.documentView = self.voiceTextOutput; [cv addSubview:sv];
     self.voiceTextStatus = [self label:@"请选择文件" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.voiceTextStatus.frame = NSMakeRect(24, 40, 580, 18); [cv addSubview:self.voiceTextStatus];
+    ColorHoverButton *clearVoice = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 8, 110, 26)];
+    clearVoice.title = @"清空全部"; clearVoice.hoverColor = [NSColor systemRedColor];
+    clearVoice.target = self; clearVoice.action = @selector(clearVoiceTextPanel:);
+    [clearVoice applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearVoice];
     self.voiceTextWindow.level = NSFloatingWindowLevel;
     [self.voiceTextWindow center];
   }
@@ -22966,6 +23023,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     sv2.documentView = self.meetingSummary; [cv addSubview:sv2];
     self.meetingStatus = [self label:@"请选择录屏文件" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.meetingStatus.frame = NSMakeRect(24, 54, 820, 18); [cv addSubview:self.meetingStatus];
+    ColorHoverButton *clearMeeting = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(630, 14, 116, 32)];
+    clearMeeting.title = @"清空全部"; clearMeeting.hoverColor = [NSColor systemRedColor]; clearMeeting.target = self; clearMeeting.action = @selector(clearMeetingPanel:);
+    [clearMeeting applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearMeeting];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(760, 14, 116, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor]; close.target = self; close.action = @selector(closeMeetingAssistant:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
