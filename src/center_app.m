@@ -7334,7 +7334,9 @@ static BOOL ValidGroupName(NSString *raw) {
   if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
   NSString *name = self.aiVisibleEntries[row][@"name"] ?: @"";
   if (!self.aiRevealedQuotas) self.aiRevealedQuotas = [NSMutableSet set];
-  if ([self.aiRevealedQuotas containsObject:name]) [self.aiRevealedQuotas removeObject:name];
+  BOOL revealing = ![self.aiRevealedQuotas containsObject:name];
+  if (revealing && ![self requestAdminAuthentication]) return;
+  if (!revealing) [self.aiRevealedQuotas removeObject:name];
   else [self.aiRevealedQuotas addObject:name];
   [self.aiTable reloadData];
 }
