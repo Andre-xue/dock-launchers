@@ -22002,11 +22002,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if([name containsString:@"豆包"]||[name containsString:@"方舟"]||[name containsString:@"doubao"]||[name containsString:@"volcengine"]) base=@"https://ark.cn-beijing.volces.com/api/v3";
   }
   if([base hasSuffix:@"/chat/completions"]) base=[base substringToIndex:base.length-@"/chat/completions".length];
-  self.aiEditURLField.stringValue=base.length?[base stringByAppendingString:@"/images/edits"]:@"";
-  NSString *model=e[@"editModel"]?:@"";
+  BOOL siliconEdit = [name containsString:@"siliconflow"] || [name containsString:@"硅基流动"] || [base containsString:@"siliconflow"];
+  self.aiEditURLField.stringValue = base.length ? [base stringByAppendingString:(siliconEdit ? @"/images/generations" : @"/images/edits")] : @"";
+  NSString *model=e[@"editModel"]?:e[@"model"]?:@"";
   if(!model.length){
     if([name containsString:@"openai"]||[name containsString:@"chatgpt"]) model=@"gpt-image-1";
-    else if([name containsString:@"siliconflow"]||[name containsString:@"硅基流动"]) model=@"Qwen/Qwen-Image-Edit";
+    else if(siliconEdit) model=@"Qwen/Qwen-Image-Edit-2509";
   }
   self.aiEditModelField.stringValue=model;
 }
@@ -22017,10 +22018,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.aiEditServicePopup removeAllItems];
   for(NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++){
     NSDictionary *e=self.aiEntries[i];
+    if (![[self aiModelCategoryKey:e] isEqualToString:@"edit"]) continue;
     [self.aiEditServicePopup addItemWithTitle:e[@"name"]?:@"未命名"];
     self.aiEditServicePopup.lastItem.representedObject=@(i);
   }
-  if(self.aiEditServicePopup.numberOfItems){[self.aiEditServicePopup selectItemAtIndex:0];[self aiEditServiceChanged:nil];}
+  if(!self.aiEditServicePopup.numberOfItems){
+    [self.aiEditServicePopup addItemWithTitle:@"请先在 AI 管理设置图片编辑模型"];
+    self.aiEditServicePopup.enabled=NO;
+    self.aiEditStatus.stringValue=@"没有图片编辑模型，请把服务分类设为「图片编辑」";
+  } else {
+    self.aiEditServicePopup.enabled=YES;
+    [self.aiEditServicePopup selectItemAtIndex:0];[self aiEditServiceChanged:nil];
+  }
 }
 
 - (void)openAIEditPanel:(id)sender {
@@ -22041,7 +22050,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.aiEditSizePopup addItemsWithTitles:@[@"1024x1024",@"1536x1024",@"1024x1536"]];
     [cv addSubview:self.aiEditSizePopup];
     self.aiEditURLField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,546,592,28)];
-    self.aiEditURLField.placeholderString=@"图片编辑 API 地址";[cv addSubview:self.aiEditURLField];
+    self.aiEditURLField.placeholderString=@"图片编辑 API 地址";
+    self.aiEditURLField.editable=NO; self.aiEditURLField.selectable=YES;
+    self.aiEditURLField.toolTip=@"根据所选 AI 服务自动填写";
+    [cv addSubview:self.aiEditURLField];
     ColorHoverButton *pick=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,504,120,30)];
     pick.title=@"选择图片…";pick.hoverColor=[NSColor systemTealColor];pick.target=self;pick.action=@selector(aiEditPickImage:);
     [pick applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:pick];
@@ -22088,24 +22100,35 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSData *imgData=[[NSData alloc] initWithContentsOfFile:self.aiEditImagePath];
   if(!imgData.length){self.aiEditStatus.stringValue=@"图片读取失败";return;}
   NSMutableDictionary *entry=[e mutableCopy];entry[@"editModel"]=model;entry[@"editAPI"]=url;self.aiEntries[idx]=entry;[self saveAIEntries];
-  NSString *boundary=[[NSUUID UUID] UUIDString];
-  NSMutableData *body=[NSMutableData data];
-  void (^field)(NSString*,NSString*)=^(NSString *name,NSString *value){
-    [body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"%@\"\r\n\r\n%@\r\n",boundary,name,value] dataUsingEncoding:NSUTF8StringEncoding]];
-  };
-  field(@"model",model);
-  field(@"prompt",prompt);
-  field(@"size",self.aiEditSizePopup.titleOfSelectedItem?:@"1024x1024");
-  field(@"n",@"1");
-  [body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"image\"; filename=\"image.png\"\r\nContent-Type: image/png\r\n\r\n",boundary] dataUsingEncoding:NSUTF8StringEncoding]];
-  [body appendData:imgData];
-  [body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
-  [body appendData:[[NSString stringWithFormat:@"--%@--\r\n",boundary] dataUsingEncoding:NSUTF8StringEncoding]];
-  NSString *contentType=[NSString stringWithFormat:@"multipart/form-data; boundary=%@",boundary];
+  NSString *editServiceName=[e[@"name"]?:@"" lowercaseString];
+  BOOL siliconEdit = [url containsString:@"siliconflow"] || [editServiceName containsString:@"siliconflow"] || [editServiceName containsString:@"硅基流动"];
   NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
-  req.HTTPMethod=@"POST";[req setValue:contentType forHTTPHeaderField:@"Content-Type"];
+  req.HTTPMethod=@"POST";
   [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
-  req.HTTPBody=body;req.timeoutInterval=180;
+  req.timeoutInterval=180;
+  if (siliconEdit) {
+    NSString *b64=[imgData base64EncodedStringWithOptions:0];
+    NSString *dataURL=[@"data:image/png;base64," stringByAppendingString:b64];
+    NSDictionary *json=@{@"model":model,@"prompt":prompt,@"image":dataURL};
+    req.HTTPBody=[NSJSONSerialization dataWithJSONObject:json options:0 error:NULL];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  } else {
+    NSString *boundary=[[NSUUID UUID] UUIDString];
+    NSMutableData *body=[NSMutableData data];
+    void (^field)(NSString*,NSString*)=^(NSString *name,NSString *value){
+      [body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"%@\"\r\n\r\n%@\r\n",boundary,name,value] dataUsingEncoding:NSUTF8StringEncoding]];
+    };
+    field(@"model",model);
+    field(@"prompt",prompt);
+    field(@"size",self.aiEditSizePopup.titleOfSelectedItem?:@"1024x1024");
+    field(@"n",@"1");
+    [body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"image\"; filename=\"image.png\"\r\nContent-Type: image/png\r\n\r\n",boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:imgData];
+    [body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:[[NSString stringWithFormat:@"--%@--\r\n",boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    [req setValue:[NSString stringWithFormat:@"multipart/form-data; boundary=%@",boundary] forHTTPHeaderField:@"Content-Type"];
+    req.HTTPBody=body;
+  }
   self.aiEditBusy=YES;self.aiEditStatus.stringValue=@"正在编辑图片…";
   __weak typeof(self) weakSelf=self;
   [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *rd,NSURLResponse *rsp,NSError *err){
