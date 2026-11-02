@@ -1374,7 +1374,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSSegmentedControl *capturePiPShapeControl;
 @property BOOL captureUsePreviewOverlay;
 @property (strong) NSPopUpButton *captureNoisePopup;
-@property (strong) NSButton *captureSystemAudioCheck, *captureMicCheck;
+@property (strong) NSButton *captureSystemAudioCheck, *captureMicCheck, *captureMicBoostCheck;
+@property NSInteger micBoostOldVolume;
+@property BOOL micBoostActive;
 @property (strong) NSLevelIndicator *captureMicLevelIndicator;
 @property (strong) AVAudioEngine *captureMicMeterEngine;
 @property (strong) DLScreenRecorder *captureRecorder;
@@ -18015,6 +18017,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
+  [self restoreMicBoost];
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudAutoSync"]) {
     NSString *dir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCloudSyncDirectory"];
     if (!dir.length) dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Mobile Documents/com~apple~CloudDocs/DockLaunchers"];
@@ -20235,6 +20238,47 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[NSUserDefaults standardUserDefaults] setObject:v forKey:@"centerCapturePiPPreset"];
 }
 
+- (void)captureMicBoostChanged:(id)sender {
+  BOOL on = self.captureMicBoostCheck.state == NSControlStateValueOn;
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerCaptureMicBoost"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (NSInteger)systemInputVolume {
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/osascript";
+  t.arguments = @[@"-e", @"input volume of (get volume settings)"];
+  NSPipe *pipe = [NSPipe pipe]; t.standardOutput = pipe; t.standardError = [NSPipe pipe];
+  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) { return -1; }
+  NSData *d = [pipe.fileHandleForReading readDataToEndOfFile];
+  NSString *s = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+  return s ? s.integerValue : -1;
+}
+
+- (void)setSystemInputVolume:(NSInteger)volume {
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/osascript";
+  t.arguments = @[@"-e", [NSString stringWithFormat:@"set volume input volume %ld", (long)MAX(0, MIN(100, volume))]];
+  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+}
+
+- (void)beginMicBoostIfNeeded {
+  if (self.micBoostActive) return;
+  if (!self.captureMicCheck || self.captureMicCheck.state != NSControlStateValueOn) return;
+  if (self.captureMicBoostCheck && self.captureMicBoostCheck.state != NSControlStateValueOn) return;
+  NSInteger old = [self systemInputVolume];
+  if (old < 0) return;
+  self.micBoostOldVolume = old;
+  self.micBoostActive = YES;
+  if (old < 100) [self setSystemInputVolume:100];
+}
+
+- (void)restoreMicBoost {
+  if (!self.micBoostActive) return;
+  self.micBoostActive = NO;
+  [self setSystemInputVolume:self.micBoostOldVolume];
+}
+
 - (void)captureMicGainChanged:(id)sender {
   NSInteger g = [self.captureMicGainPopup.selectedItem.representedObject integerValue];
   [[NSUserDefaults standardUserDefaults] setInteger:g forKey:@"centerCaptureMicGain"];
@@ -20424,6 +20468,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureMicLevelIndicator.levelIndicatorStyle = NSLevelIndicatorStyleContinuousCapacity;
     self.captureMicLevelIndicator.toolTip = @"麦克风实时电平（录音前检测）";
     [cv addSubview:self.captureMicLevelIndicator];
+    self.captureMicBoostCheck = [NSButton checkboxWithTitle:@"麦克风增强" target:self action:@selector(captureMicBoostChanged:)];
+    self.captureMicBoostCheck.frame = NSMakeRect(640, 264, 140, 20);
+    id boostVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureMicBoost"];
+    self.captureMicBoostCheck.state = (boostVal ? [boostVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
+    self.captureMicBoostCheck.toolTip = @"录制时临时把系统麦克风输入音量调到 100%，结束后恢复";
+    [cv addSubview:self.captureMicBoostCheck];
 
     // Row 5: screenshot action; recording countdown/pointer.
     ColorHoverButton *historyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 264, 120, 32)];
@@ -20534,7 +20584,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureVideoPathField.stringValue = savedVidDir.length ? savedVidDir : [NSHomeDirectory() stringByAppendingPathComponent:@"Pictures/DockLaunchers Captures"];
   id sysObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureSystemAudio"];
   self.captureSystemAudioCheck.state = (!sysObj || [sysObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
-  self.captureMicCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"] ? NSControlStateValueOn : NSControlStateValueOff;
+  id micVal2 = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureMicrophone"];
+  self.captureMicCheck.state = (micVal2 ? [micVal2 boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
+  id boostVal2 = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureMicBoost"];
+  if (self.captureMicBoostCheck) self.captureMicBoostCheck.state = (boostVal2 ? [boostVal2 boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
   id curObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowCursor"];
   self.captureCursorCheck.state = (!curObj || [curObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
   id clickObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowClicks"];
@@ -23239,6 +23292,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)finishCaptureUI {
+  [self restoreMicBoost];
   self.captureRecording = NO;
   self.capturePaused = NO;
   [self stopCaptureHUD];
@@ -23260,6 +23314,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!self.captureRecorder) self.captureRecorder = [[DLScreenRecorder alloc] init];
   NSInteger seconds = [self.captureDurationPopup.selectedItem.representedObject integerValue];
   NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mp4", [self captureTimestamp]]];
+  [self beginMicBoostIfNeeded];
   self.captureRecording = YES;
   self.capturePaused = NO;
   self.captureCameraSegments = [NSMutableArray array];
