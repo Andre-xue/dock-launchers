@@ -22598,6 +22598,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (NSString *)sttModelName {
   NSString *m = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerSTTModel"];
+  NSArray *services = [self sttServices];
+  NSInteger idx = [self sttSelectedServiceIndex];
+  BOOL silicon = NO;
+  if (idx >= 0 && idx < (NSInteger)services.count) {
+    NSString *name = [services[idx][@"name"] ?: @"" lowercaseString];
+    silicon = [name containsString:@"siliconflow"] || [name containsString:@"硅基流动"];
+  }
+  if (silicon) {
+    if (!m.length || [m isEqualToString:@"whisper-1"]) return @"FunAudioLLM/SenseVoiceSmall";
+    return m;
+  }
   return m.length ? m : @"whisper-1";
 }
 
@@ -22695,7 +22706,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *el = [self label:@"转写引擎" size:11 bold:NO color:[NSColor secondaryLabelColor]];
     el.frame = NSMakeRect(24, 224, 110, 18); [cv addSubview:el];
     self.speechServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(150, 176, 320, 28) pullsDown:NO];
-    self.speechServicePopup.target = self; self.speechServicePopup.action = @selector(speechSettingChanged:);
+    self.speechServicePopup.target = self; self.speechServicePopup.action = @selector(speechServiceChanged:);
     [cv addSubview:self.speechServicePopup];
     NSTextField *sl = [self label:@"AI 服务" size:11 bold:NO color:[NSColor secondaryLabelColor]];
     sl.frame = NSMakeRect(24, 182, 110, 18); [cv addSubview:sl];
@@ -22736,10 +22747,28 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger engine = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerSTTEngine"];
   [self.speechEnginePopup selectItemAtIndex:(engine == 1 ? 1 : 0)];
   self.speechModelField.stringValue = [self sttModelName];
+  NSInteger sel = [self sttSelectedServiceIndex];
+  NSArray *svc = [self sttServices];
+  if (sel >= 0 && sel < (NSInteger)svc.count) {
+    NSString *nm = [svc[sel][@"name"] ?: @"" lowercaseString];
+    if (([nm containsString:@"siliconflow"] || [nm containsString:@"硅基流动"]) && [self.speechModelField.stringValue isEqualToString:@"whisper-1"]) self.speechModelField.stringValue = @"FunAudioLLM/SenseVoiceSmall";
+  }
   self.speechServerCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerSTTAllowServer"] ? NSControlStateValueOn : NSControlStateValueOff;
   BOOL api = engine == 1;
   self.speechServicePopup.enabled = api;
   self.speechModelField.enabled = api;
+  [self speechSettingChanged:nil];
+}
+
+- (void)speechServiceChanged:(id)sender {
+  NSInteger idx = [self.speechServicePopup.selectedItem.representedObject integerValue];
+  NSArray *services = [self sttServices];
+  if (idx < 0 || idx >= (NSInteger)services.count) return;
+  NSDictionary *e = services[idx];
+  NSString *name = [e[@"name"] ?: @"" lowercaseString];
+  if ([name containsString:@"siliconflow"] || [name containsString:@"硅基流动"]) self.speechModelField.stringValue = @"FunAudioLLM/SenseVoiceSmall";
+  else if ([name containsString:@"openai"]) self.speechModelField.stringValue = @"whisper-1";
+  else if (!self.speechModelField.stringValue.length) self.speechModelField.stringValue = @"whisper-1";
   [self speechSettingChanged:nil];
 }
 
