@@ -1470,7 +1470,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) ColorHoverButton *aiCategoryButton;
 @property (strong) NSSearchField *aiSearchField;
 @property (strong) NSComboBox *dialogAIName;
-@property (strong) NSTextField *dialogAIQuota, *dialogAIEndpoint, *dialogAIApi, *dialogAINote, *dialogAIStatus;
+@property (strong) NSTextField *dialogAIQuota, *dialogAIEndpoint, *dialogAIApi, *dialogAINote, *dialogAIBase, *dialogAIModel, *dialogAIStatus;
 @property BOOL aiQuotaRefreshing;
 @property (strong) NSPopUpButton *diskVolumePopup;
 @property (strong) NSTextField *diskStatus;
@@ -3415,6 +3415,8 @@ static void HideDockHoverTip(void) {
 
 - (void)dlWindowBecameKey:(NSNotification *)note {
   if ([note.object isKindOfClass:[NSWindow class]]) [self applyWindowChrome:note.object];
+  if (note.object == self.aiAssistantWindow && self.aiAssistantWindow.isVisible) [self reloadAIAssistantServices];
+  if (note.object == self.translationWindow && self.translationWindow.isVisible) [self reloadTranslationProviders];
 }
 
 - (void)windowDidMove:(NSNotification *)notification {
@@ -7858,25 +7860,27 @@ static BOOL ValidGroupName(NSString *raw) {
   a.informativeText = @"输入 AI 名称即可自动识别并填写 API Key 获取地址；支持官方名和常用别名，例如千问 / Qwen / 通义千问。";
   [a addButtonWithTitle:@"保存"];
   [a addButtonWithTitle:@"取消"];
-  NSView *av = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 500, 250)];
-  NSArray *labels = @[@"名称", @"余量", @"链接地址", @"API Key", @"备注"];
-  NSArray *keys = @[@"name", @"quota", @"endpoint", @"api", @"note"];
+  NSView *av = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 500, 330)];
+  NSArray *labels = @[@"名称", @"余量", @"Key 获取页", @"API Key", @"备注", @"API 基础地址", @"模型"];
+  NSArray *keys = @[@"name", @"quota", @"endpoint", @"api", @"note", @"apiBase", @"model"];
   NSMutableArray *fields = [NSMutableArray array];
   for (NSInteger i = 0; i < labels.count; i++) {
     NSTextField *lab = [self label:labels[i] size:11.5 bold:NO color:[NSColor secondaryLabelColor]];
-    lab.frame = NSMakeRect(8, 214 - i*38, 100, 18); [av addSubview:lab];
+    lab.frame = NSMakeRect(8, 294 - i*38, 100, 18); [av addSubview:lab];
     NSTextField *tf;
     if (i == 0) {
-      NSComboBox *cb = [[NSComboBox alloc] initWithFrame:NSMakeRect(112, 208 - i*38, 370, 26)];
+      NSComboBox *cb = [[NSComboBox alloc] initWithFrame:NSMakeRect(112, 288 - i*38, 370, 26)];
       for (NSDictionary *p in [self aiPresets]) [cb addItemWithObjectValue:p[@"name"]];
       cb.editable = YES; cb.completes = YES; cb.delegate = self;
       tf = cb; self.dialogAIName = cb;
     } else {
-      tf = [[NSTextField alloc] initWithFrame:NSMakeRect(112, 208 - i*38, 370, 26)];
+      tf = [[NSTextField alloc] initWithFrame:NSMakeRect(112, 288 - i*38, 370, 26)];
       if (i == 1) self.dialogAIQuota = tf;
       if (i == 2) self.dialogAIEndpoint = tf;
       if (i == 3) self.dialogAIApi = tf;
       if (i == 4) self.dialogAINote = tf;
+      if (i == 5) self.dialogAIBase = tf;
+      if (i == 6) self.dialogAIModel = tf;
     }
     tf.stringValue = old[keys[i]] ?: @"";
     [av addSubview:tf]; [fields addObject:tf];
@@ -15799,6 +15803,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (NSDictionary *)translationAPIConfigForEntry:(NSDictionary *)e {
   NSString *name = [(e[@"name"] ?: @"") lowercaseString];
   NSString *base = nil, *model = nil;
+  NSString *savedBase = e[@"apiBase"] ?: @"";
+  NSString *savedModel = e[@"model"] ?: @"";
+  if (savedBase.length) {
+    base = [savedBase hasSuffix:@"/chat/completions"] ? [savedBase substringToIndex:savedBase.length - @"/chat/completions".length] : savedBase;
+  }
+  if (savedModel.length) model = savedModel;
   if ([name containsString:@"deepseek"] || [name containsString:@"深度求索"]) { base = @"https://api.deepseek.com/v1"; model = @"deepseek-chat"; }
   else if ([name containsString:@"openai"] || [name containsString:@"chatgpt"]) { base = @"https://api.openai.com/v1"; model = @"gpt-4o-mini"; }
   else if ([name containsString:@"gemini"] || [name containsString:@"谷歌"]) { base = @"https://generativelanguage.googleapis.com/v1beta/openai"; model = @"gemini-1.5-flash"; }
@@ -15830,6 +15840,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if ([tail hasSuffix:@"/"]) tail = [tail substringToIndex:tail.length - 1];
     if (tail.length) base = tail;
   }
+  if (savedBase.length) base = [savedBase hasSuffix:@"/chat/completions"] ? [savedBase substringToIndex:savedBase.length - @"/chat/completions".length] : savedBase;
+  if (savedModel.length) model = savedModel;
   if (!base.length) return nil;
   return @{@"base": base, @"model": model ?: @""};
 }
@@ -19287,6 +19299,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)aiAssistantApplyEndpointDefaults:(NSDictionary *)entry {
+  NSString *savedBase = entry[@"apiBase"] ?: @"";
+  NSString *savedModel = entry[@"model"] ?: @"";
+  if (savedBase.length) {
+    NSString *url = [savedBase hasSuffix:@"/chat/completions"] ? savedBase : [savedBase stringByAppendingString:@"/chat/completions"];
+    self.aiAssistantURLField.stringValue = url;
+  }
+  if (savedModel.length) self.aiAssistantModelField.stringValue = savedModel;
+  if (savedBase.length && savedModel.length) return;
   NSString *name = [entry[@"name"] ?: @"" lowercaseString];
   NSString *url = @"", *model = @"";
   if ([name containsString:@"deepseek"]) { url = @"https://api.deepseek.com/v1/chat/completions"; model = @"deepseek-chat"; }
@@ -19384,6 +19404,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *key = e[@"api"] ?: @"";
   if (!key.length) { self.aiAssistantStatus.stringValue=@"该服务没有 API Key"; return; }
   NSString *url = self.aiAssistantURLField.stringValue;
+  if (![url containsString:@"/chat/completions"]) {
+    while ([url hasSuffix:@"/"]) url = [url substringToIndex:url.length - 1];
+    url = [url stringByAppendingString:@"/chat/completions"];
+  }
+  NSString *base = url;
+  if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length - @"/chat/completions".length];
+  NSMutableDictionary *savedEntry = [e mutableCopy];
+  savedEntry[@"apiBase"] = base;
+  savedEntry[@"model"] = self.aiAssistantModelField.stringValue;
+  self.aiEntries[idx] = savedEntry;
+  [self saveAIEntries];
   NSString *model = self.aiAssistantModelField.stringValue;
   NSString *text = self.aiAssistantInput.string;
   if (!url.length || !model.length || !text.length) { self.aiAssistantStatus.stringValue=@"请填写 API 地址、模型和输入文本"; return; }
