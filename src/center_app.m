@@ -1418,7 +1418,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSComboBox *aiImageModelField, *aiVideoModelField;
 @property (strong) NSTextField *aiImageURLField, *aiImageStatus, *aiVideoURLField, *aiVideoStatus;
 @property (strong) NSImageView *aiImagePreview, *aiVideoPreview;
-@property (copy) NSString *aiImageResultPath, *aiVideoResultPath, *aiVideoTaskID, *aiVideoPollURL;
+@property (copy) NSString *aiImageResultPath, *aiVideoResultPath, *aiVideoTaskID, *aiVideoPollURL, *aiVideoFirstFramePath;
 @property NSInteger aiVideoPollCount;
 @property BOOL aiVideoSiliconFlow;
 @property (strong) NSTimer *aiVideoPollTimer;
@@ -21635,11 +21635,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,260,100,30)];
     open.title=@"打开视频"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openAIVideo:);
     [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    ColorHoverButton *firstFrame = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(240,260,110,30)];
+    firstFrame.title=@"首帧图片…"; firstFrame.hoverColor=[NSColor systemOrangeColor]; firstFrame.target=self; firstFrame.action=@selector(pickAIVideoFirstFrame:);
+    firstFrame.toolTip=@"I2V 模型需要一张首帧图片；T2V 模型不需要";
+    [firstFrame applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:firstFrame];
     ColorHoverButton *clearAll = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(244,20,110,28)];
     clearAll.title=@"清空全部"; clearAll.hoverColor=[NSColor systemRedColor]; clearAll.target=self; clearAll.action=@selector(clearAIVideoPanel:);
     [clearAll applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearAll];
     self.aiVideoStatus = [self label:@"输入提示词后点击生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    self.aiVideoStatus.frame=NSMakeRect(244,266,390,18); [cv addSubview:self.aiVideoStatus];
+    self.aiVideoStatus.frame=NSMakeRect(360,266,274,18); [cv addSubview:self.aiVideoStatus];
     self.aiVideoPreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,60,610,190)];
     self.aiVideoPreview.imageScaling=NSImageScaleProportionallyUpOrDown;
     self.aiVideoPreview.wantsLayer=YES; self.aiVideoPreview.layer.borderColor=[NSColor separatorColor].CGColor; self.aiVideoPreview.layer.borderWidth=1;
@@ -21649,6 +21653,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self reloadAIVideoServices];
   [NSApp activateIgnoringOtherApps:YES];
   [self.aiVideoWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)pickAIVideoFirstFrame:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = NO;
+  p.allowedFileTypes = @[@"png", @"jpg", @"jpeg", @"webp", @"heic", @"tiff"];
+  if ([p runModal] != NSModalResponseOK) return;
+  self.aiVideoFirstFramePath = p.URL.path;
+  self.aiVideoStatus.stringValue = [NSString stringWithFormat:@"已选择首帧：%@，请选择 I2V 模型", p.URL.lastPathComponent];
 }
 
 - (void)generateAIVideo:(id)sender {
@@ -21661,13 +21674,36 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *url=self.aiVideoURLField.stringValue;
   NSString *model=self.aiVideoModelField.stringValue;
   if (!key.length || !prompt.length || !url.length || !model.length) { self.aiVideoStatus.stringValue=@"请填写 API Key、提示词、地址和模型"; return; }
+  NSString *modelLower = model.lowercaseString;
+  if (self.aiVideoFirstFramePath.length && [modelLower containsString:@"t2v"]) {
+    self.aiVideoStatus.stringValue = @"当前模型是 T2V 文生视频，不能使用首帧图片；请选择 I2V 模型";
+    return;
+  }
+  if (!self.aiVideoFirstFramePath.length && [modelLower containsString:@"i2v"]) {
+    self.aiVideoStatus.stringValue = @"当前模型是 I2V 图生视频，请先选择首帧图片";
+    return;
+  }
   NSMutableDictionary *entry=[e mutableCopy]; entry[@"videoModel"]=model; entry[@"videoAPI"]=url; self.aiEntries[idx]=entry; [self saveAIEntries];
   BOOL ark = [url containsString:@"/contents/generations/tasks"];
   BOOL silicon = [url containsString:@"/video/submit"];
+  if (self.aiVideoFirstFramePath.length && !silicon) {
+    self.aiVideoStatus.stringValue = @"首帧图生视频目前先支持硅基流动接口";
+    return;
+  }
   self.aiVideoSiliconFlow = silicon;
   NSMutableDictionary *body;
   if (ark) body = [@{@"model":model,@"content":@[@{@"type":@"text",@"text":prompt}]} mutableCopy];
-  else if (silicon) body = [@{@"model":model,@"prompt":prompt,@"image_size":@"1280x720"} mutableCopy];
+  else if (silicon) {
+    body = [@{@"model":model,@"prompt":prompt,@"image_size":@"1280x720"} mutableCopy];
+    if (self.aiVideoFirstFramePath.length) {
+      NSData *imgData = [NSData dataWithContentsOfFile:self.aiVideoFirstFramePath];
+      if (!imgData.length) { self.aiVideoStatus.stringValue=@"首帧图片读取失败"; return; }
+      NSString *ext = self.aiVideoFirstFramePath.pathExtension.lowercaseString;
+      NSString *mime = [ext isEqualToString:@"jpg"] || [ext isEqualToString:@"jpeg"] ? @"image/jpeg" : ([ext isEqualToString:@"webp"] ? @"image/webp" : @"image/png");
+      NSString *dataURL = [NSString stringWithFormat:@"data:%@;base64,%@", mime, [imgData base64EncodedStringWithOptions:0]];
+      body[@"image"] = dataURL;
+    }
+  }
   else body = [@{@"model":model,@"prompt":prompt,@"duration":@([self.aiVideoDurationPopup.titleOfSelectedItem integerValue])} mutableCopy];
   NSString *reasonVid = [self reasoningEffortForPopup:self.aiVideoReasoningPopup];
   if (reasonVid.length) body[@"reasoning_effort"] = reasonVid;
@@ -21999,6 +22035,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.aiVideoResultPath = nil;
   self.aiVideoTaskID = nil;
   self.aiVideoPollURL = nil;
+  self.aiVideoFirstFramePath = nil;
   self.aiVideoStatus.stringValue = @"已清空";
 }
 - (void)clearAIEditPanel:(id)sender {
