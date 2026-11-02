@@ -14547,6 +14547,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"appshortcuts"]) [self showAppShortcutSettings:nil];
   else if ([action isEqualToString:@"globalshortcuts"]) [self openShortcutSettings:nil];
   else if ([action isEqualToString:@"disk"]) [self openDiskAnalysisFromMenu];
+  else if ([action isEqualToString:@"capture"]) [self showCaptureTool:nil];
+  else if ([action isEqualToString:@"shelf"]) [self openShelfWindow:nil];
+  else if ([action isEqualToString:@"aitext"]) [self openAIAssistant:nil];
+  else if ([action isEqualToString:@"aiimage"]) [self openAIImagePanel:nil];
+  else if ([action isEqualToString:@"aivideo"]) [self openAIVideoPanel:nil];
+  else if ([action isEqualToString:@"uninstall"]) { [self showWindow:nil]; [self showSection:4]; }
 }
 
 - (void)showDetachedPage:(NSView *)page title:(NSString *)title {
@@ -15635,6 +15641,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"全局快捷键", @"symbol": @"globe", @"action": @"globalshortcuts"},
         @{@"title": @"磁盘分析", @"symbol": @"internaldrive.fill", @"action": @"disk"},
         @{@"title": @"AI", @"symbol": @"sparkles", @"action": @"ai"}
+      ],
+      @[
+        @{@"title": @"截图/录屏", @"symbol": @"camera.viewfinder", @"action": @"capture"},
+        @{@"title": @"文件暂存架", @"symbol": @"tray.full.fill", @"action": @"shelf"},
+        @{@"title": @"AI 助手", @"symbol": @"sparkles", @"action": @"aitext"},
+        @{@"title": @"AI 图片", @"symbol": @"photo.badge.plus", @"action": @"aiimage"},
+        @{@"title": @"AI 视频", @"symbol": @"video.badge.plus", @"action": @"aivideo"},
+        @{@"title": @"应用卸载", @"symbol": @"trash.fill", @"action": @"uninstall"}
       ]
     ];
     NSInteger savedPage = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerRadialLastPage"];
