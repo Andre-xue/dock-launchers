@@ -1104,6 +1104,23 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 - (void)contentSharingPickerStartDidFailWithError:(NSError *)error { [self finishWithError:error]; }
 @end
 
+@interface DLPinnedImageView : NSImageView
+@property NSPoint dragMouse;
+@property NSPoint dragOrigin;
+@end
+@implementation DLPinnedImageView
+- (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
+- (void)mouseDown:(NSEvent *)event {
+  self.dragMouse = [NSEvent mouseLocation];
+  self.dragOrigin = self.window.frame.origin;
+}
+- (void)mouseDragged:(NSEvent *)event {
+  NSPoint p = [NSEvent mouseLocation];
+  NSPoint origin = NSMakePoint(self.dragOrigin.x + (p.x - self.dragMouse.x), self.dragOrigin.y + (p.y - self.dragMouse.y));
+  [self.window setFrameOrigin:origin];
+}
+@end
+
 @interface DLShelfDropView : NSView
 @property (copy) void (^onDrop)(NSArray<NSURL *> *urls);
 @end
@@ -19433,7 +19450,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   cv.wantsLayer = YES;
   cv.layer.borderWidth = 1;
   cv.layer.borderColor = [NSColor controlAccentColor].CGColor;
-  NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(0,0,size.width,size.height)];
+  DLPinnedImageView *iv = [[DLPinnedImageView alloc] initWithFrame:NSMakeRect(0,0,size.width,size.height)];
   iv.image = img;
   iv.imageScaling = NSImageScaleProportionallyUpOrDown;
   [cv addSubview:iv];
