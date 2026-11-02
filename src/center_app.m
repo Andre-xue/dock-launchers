@@ -16880,10 +16880,62 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     open.title=@"打开上次导出目录"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openConfigBackupFolder:);
     open.toolTip = @"没有导出记录时打开自动配置备份目录";
     [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    ColorHoverButton *rollback = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(216,40,180,30)];
+    rollback.title=@"一键回滚最近备份"; rollback.hoverColor=[NSColor systemRedColor]; rollback.target=self; rollback.action=@selector(rollbackLatestConfiguration:);
+    rollback.toolTip = @"恢复最近一次导入前自动备份的配置";
+    [rollback applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:rollback];
     [self.configBackupWindow center];
   }
   [NSApp activateIgnoringOtherApps:YES];
   [self.configBackupWindow makeKeyAndOrderFront:nil];
+}
+
+- (NSArray<NSString *> *)configBackupSnapshots {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSArray *items = [fm contentsOfDirectoryAtPath:[self configBackupDirectory] error:NULL] ?: @[];
+  NSMutableArray *dirs = [NSMutableArray array];
+  for (NSString *n in items) {
+    BOOL isDir = NO;
+    NSString *p = [[self configBackupDirectory] stringByAppendingPathComponent:n];
+    if ([fm fileExistsAtPath:p isDirectory:&isDir] && isDir) [dirs addObject:p];
+  }
+  [dirs sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) { return [b compare:a]; }];
+  return dirs;
+}
+
+- (void)rollbackLatestConfiguration:(id)sender {
+  NSArray *snapshots = [self configBackupSnapshots];
+  if (!snapshots.count) { [self showToast:@"没有可回滚的自动备份"]; return; }
+  NSString *latest = snapshots.firstObject;
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"一键回滚配置？";
+  a.informativeText = [NSString stringWithFormat:@"将恢复最近一次自动备份：\n%@\n\n当前配置会先自动备份，回滚后建议重启 DockLaunchers。", latest.lastPathComponent];
+  [a addButtonWithTitle:@"回滚"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *backupDir = [[self configBackupDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"pre-rollback-%lld", (long long)[[NSDate date] timeIntervalSince1970]]];
+  [fm createDirectoryAtPath:backupDir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *liveLists = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  if ([fm fileExistsAtPath:liveLists]) [fm copyItemAtPath:liveLists toPath:[backupDir stringByAppendingPathComponent:@"lists"] error:NULL];
+  NSDictionary *currentDomain = [[NSUserDefaults standardUserDefaults] persistentDomainForName:@"com.docklaunchers.center"] ?: @{};
+  [currentDomain writeToFile:[backupDir stringByAppendingPathComponent:@"settings.plist"] atomically:YES];
+  NSString *incomingLists = [latest stringByAppendingPathComponent:@"lists"];
+  if ([fm fileExistsAtPath:incomingLists]) {
+    [fm removeItemAtPath:liveLists error:NULL];
+    [fm copyItemAtPath:incomingLists toPath:liveLists error:NULL];
+  }
+  NSString *incomingSettings = [latest stringByAppendingPathComponent:@"settings.plist"];
+  if ([fm fileExistsAtPath:incomingSettings]) {
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/bin/defaults";
+    t.arguments = @[@"import", @"com.docklaunchers.center", incomingSettings];
+    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+  }
+  [self refreshGroups];
+  [self ensureGroupDockEntries];
+  [self killDock];
+  [self showToast:@"已回滚到最近的自动备份，请重启 DockLaunchers"];
 }
 
 - (void)openConfigBackupFolder:(id)sender {
