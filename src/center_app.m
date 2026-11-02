@@ -1243,6 +1243,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSString *capturePendingScreenPath;
 @property BOOL captureCameraWaiting;
 @property BOOL captureCameraComposing;
+@property BOOL suppressCaptureToolShow;
 @property (strong) NSWindow *captureCameraWindow, *captureCountdownWindow;
 @property (strong) NSTextField *captureCountdownLabel;
 @property (strong) NSTimer *captureCountdownTimer, *captureHUDTimer;
@@ -17510,9 +17511,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (NSMenuItem *mi in self.capturePiPPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedPiP ?: @"br-medium"]) [self.capturePiPPopup selectItem:mi];
   NSInteger micGain = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
   for (NSMenuItem *mi in self.captureMicGainPopup.itemArray) if ([mi.representedObject integerValue] == micGain) [self.captureMicGainPopup selectItem:mi];
-  [NSApp activateIgnoringOtherApps:YES];
-  [self.captureWindow makeKeyAndOrderFront:nil];
-  [self startMicLevelMeterIfNeeded];
+  if (self.suppressCaptureToolShow) {
+    [self.captureWindow orderOut:nil];
+  } else {
+    [NSApp activateIgnoringOtherApps:YES];
+    [self.captureWindow makeKeyAndOrderFront:nil];
+    [self startMicLevelMeterIfNeeded];
+  }
 }
 
 - (void)openCaptureFolder:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self captureDirectory]]]; }
@@ -18033,6 +18038,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)finishCaptureUI {
   self.captureRecording = NO;
   self.capturePaused = NO;
+  [self stopCaptureHUD];
   self.capturePauseButton.hidden = YES;
   self.captureRecordButton.title = @"开始录屏";
   self.captureRecordButton.hoverColor = [NSColor systemRedColor];
@@ -18212,8 +18218,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)startQuickRecording {
   if (self.captureRecording) return;
-  if (!self.captureWindow) [self showCaptureTool:nil];
-  if (self.captureWindow.isVisible) [self.captureWindow orderOut:nil];
+  self.suppressCaptureToolShow = YES;
+  [self showCaptureTool:nil];
+  self.suppressCaptureToolShow = NO;
+  [self.captureWindow orderOut:nil];
+  [self stopMicLevelMeter];
   __weak typeof(self) weakSelf = self;
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.15*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
     [weakSelf captureVideo:nil];
