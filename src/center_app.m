@@ -14178,6 +14178,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.layoutSearch.target = self; self.layoutSearch.action = @selector(layoutFilterChanged:);
     [self.layoutSearch setContinuous:YES];
     [cv addSubview:self.layoutSearch];
+    NSPopUpButton *presetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(300,426,92,26) pullsDown:NO];
+    [presetPopup addItemsWithTitles:@[@"快速布局", @"左右分屏", @"上下分屏", @"四宫格"]];
+    presetPopup.target = self; presetPopup.action = @selector(applyLayoutPresetFromPopup:);
+    [cv addSubview:presetPopup];
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 116, 568, 276)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.layoutTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
@@ -14268,6 +14272,61 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   } else if (r == NSAlertSecondButtonReturn) {
     [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:[[NSBundle mainBundle] bundlePath]]]];
   }
+}
+
+- (void)applyLayoutPresetFromPopup:(NSPopUpButton *)sender {
+  NSInteger idx = sender.indexOfSelectedItem;
+  [sender selectItemAtIndex:0];
+  if (idx == 1) [self arrangeFrontmostAppWindows:1];
+  else if (idx == 2) [self arrangeFrontmostAppWindows:2];
+  else if (idx == 3) [self arrangeFrontmostAppWindows:3];
+}
+
+- (void)applyLayoutPresetLeftRight:(id)sender { [self arrangeFrontmostAppWindows:1]; }
+- (void)applyLayoutPresetTopBottom:(id)sender { [self arrangeFrontmostAppWindows:2]; }
+- (void)applyLayoutPresetGrid:(id)sender { [self arrangeFrontmostAppWindows:3]; }
+
+- (void)arrangeFrontmostAppWindows:(NSInteger)preset {
+  if (![self ensureAccessibilityPermission]) return;
+  NSRunningApplication *front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+  if (!front || front.processIdentifier == [[NSProcessInfo processInfo] processIdentifier]) {
+    [self showToast:@"请先切换到要排列窗口的应用"];
+    return;
+  }
+  AXUIElementRef app = AXUIElementCreateApplication(front.processIdentifier);
+  CFTypeRef raw = NULL;
+  NSArray *wins = nil;
+  if (AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, &raw) == kAXErrorSuccess && raw) {
+    wins = CFBridgingRelease(raw);
+  }
+  CFRelease(app);
+  if (!wins.count) { [self showToast:@"当前应用没有可排列的窗口"]; return; }
+  NSScreen *screen = [NSScreen mainScreen];
+  NSRect vis = screen.visibleFrame;
+  CGFloat gap = 8;
+  CGFloat halfW = (vis.size.width - gap * 3) / 2.0;
+  CGFloat halfH = (vis.size.height - gap * 3) / 2.0;
+  CGFloat screenH = screen.frame.size.height;
+  NSInteger n = MIN((NSInteger)wins.count, preset == 3 ? 4 : 2);
+  for (NSInteger i = 0; i < n; i++) {
+    AXUIElementRef win = (__bridge AXUIElementRef)wins[i];
+    NSRect r = vis;
+    if (preset == 1) { r = NSMakeRect(i == 0 ? vis.origin.x + gap : vis.origin.x + gap * 2 + halfW, vis.origin.y + gap, halfW, vis.size.height - gap * 2); }
+    else if (preset == 2) { r = NSMakeRect(vis.origin.x + gap, i == 0 ? vis.origin.y + gap * 2 + halfH : vis.origin.y + gap, vis.size.width - gap * 2, halfH); }
+    else {
+      CGFloat x = vis.origin.x + gap + (i % 2) * (halfW + gap);
+      CGFloat y = vis.origin.y + gap + (i / 2) * (halfH + gap);
+      r = NSMakeRect(x, y, halfW, halfH);
+    }
+    CGPoint p = CGPointMake(r.origin.x, screenH - (r.origin.y + r.size.height));
+    CGSize sz = CGSizeMake(r.size.width, r.size.height);
+    AXValueRef posVal = AXValueCreate(kAXValueCGPointType, &p);
+    AXValueRef sizeVal = AXValueCreate(kAXValueCGSizeType, &sz);
+    AXUIElementSetAttributeValue(win, kAXMinimizedAttribute, kCFBooleanFalse);
+    if (posVal) { AXUIElementSetAttributeValue(win, kAXPositionAttribute, posVal); CFRelease(posVal); }
+    if (sizeVal) { AXUIElementSetAttributeValue(win, kAXSizeAttribute, sizeVal); CFRelease(sizeVal); }
+  }
+  [self showToast:preset == 1 ? @"已左右分屏" : (preset == 2 ? @"已上下分屏" : @"已四宫格排列")];
 }
 
 - (void)saveCurrentWindowLayout:(id)sender {
@@ -16667,6 +16726,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3051,@"cat":@1,@"title":@"检查更新",@"desc":@"查看 DockLaunchers 新版本",@"sel":@"checkForUpdates:"},
     @{@"id":@3052,@"cat":@3,@"title":@"开关分组动态角标",@"desc":@"菜单栏和分组面板显示运行数量",@"sel":@"toggleGroupBadges:"},
     @{@"id":@3053,@"cat":@1,@"title":@"添加文件到暂存架",@"desc":@"选择文件加入文件暂存架",@"sel":@"addFilesToShelfFromShortcut:"},
+    @{@"id":@3054,@"cat":@1,@"title":@"窗口左右分屏",@"desc":@"当前应用的窗口左右排列",@"sel":@"applyLayoutPresetLeftRight:"},
+    @{@"id":@3055,@"cat":@1,@"title":@"窗口上下分屏",@"desc":@"当前应用的窗口上下排列",@"sel":@"applyLayoutPresetTopBottom:"},
+    @{@"id":@3056,@"cat":@1,@"title":@"窗口四宫格",@"desc":@"当前应用的窗口四宫格排列",@"sel":@"applyLayoutPresetGrid:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
