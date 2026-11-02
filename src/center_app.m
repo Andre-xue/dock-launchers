@@ -1461,7 +1461,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTask *fileSearchTask;
 @property NSInteger fileSearchGeneration;
 @property (strong) NSView *colorSwatch;
-@property (strong) NSTextField *colorHexLabel;
+@property (strong) NSTextField *colorHexLabel, *colorNameLabel;
 @property (strong) NSColor *pickedColor;
 @property (strong) NSMutableArray<NSButton *> *colorHistoryButtons;
 @property (strong) NSTextField *clipboardSaveNameField, *clipboardSaveDirField;
@@ -23802,6 +23802,49 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   });
 }
 
+- (NSString *)chineseColorNameForColor:(NSColor *)color {
+  NSColor *c = [color colorUsingColorSpace:[NSColorSpace sRGBColorSpace]] ?: color;
+  CGFloat r = c.redComponent, g = c.greenComponent, b = c.blueComponent;
+  CGFloat mx = MAX(r, MAX(g, b)), mn = MIN(r, MIN(g, b));
+  CGFloat v = mx, s = mx > 0.0001 ? (mx - mn) / mx : 0;
+  if (s < 0.08) {
+    if (v < 0.08) return @"黑色";
+    if (v < 0.28) return @"深灰";
+    if (v < 0.55) return @"灰色";
+    if (v < 0.82) return @"浅灰";
+    return @"白色";
+  }
+  CGFloat h = 0;
+  CGFloat d = mx - mn;
+  if (d > 0.0001) {
+    if (mx == r) h = fmod((g - b) / d, 6.0);
+    else if (mx == g) h = ((b - r) / d) + 2.0;
+    else h = ((r - g) / d) + 4.0;
+    h *= 60.0;
+    if (h < 0) h += 360.0;
+  }
+  NSString *base = @"红";
+  if (h < 15 || h >= 345) base = @"红";
+  else if (h < 40) base = @"橙";
+  else if (h < 65) base = @"黄";
+  else if (h < 95) base = @"黄绿";
+  else if (h < 150) base = @"绿";
+  else if (h < 180) base = @"青绿";
+  else if (h < 200) base = @"青";
+  else if (h < 225) base = @"天蓝";
+  else if (h < 255) base = @"蓝";
+  else if (h < 280) base = @"靛蓝";
+  else if (h < 310) base = @"紫";
+  else if (h < 335) base = @"品红";
+  else base = @"玫红";
+  NSString *prefix = @"";
+  if (v < 0.35) prefix = @"深";
+  else if (v > 0.88 && s < 0.45) prefix = @"浅";
+  else if (s < 0.3) prefix = @"灰";
+  else if (s > 0.85 && v > 0.85) prefix = @"亮";
+  return [prefix stringByAppendingString:base];
+}
+
 - (void)showColorResult:(NSColor *)color {
   NSColor *c = [color colorUsingColorSpace:[NSColorSpace sRGBColorSpace]] ?: color;
   self.pickedColor = c;
@@ -23821,6 +23864,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [cv addSubview:self.colorSwatch];
     self.colorHexLabel = [self label:@"#000000" size:20 bold:YES color:[NSColor labelColor]];
     self.colorHexLabel.frame = NSMakeRect(176, 246, 160, 28); [cv addSubview:self.colorHexLabel];
+    self.colorNameLabel = [self label:@"白色" size:13 bold:YES color:[NSColor systemBlueColor]];
+    self.colorNameLabel.frame = NSMakeRect(176, 278, 160, 22); [cv addSubview:self.colorNameLabel];
     NSTextField *hint = [self label:@"取色完成后自动复制色值" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
     hint.frame = NSMakeRect(176, 224, 170, 18); [cv addSubview:hint];
     ColorHoverButton *again = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(176, 184, 110, 32)];
@@ -23856,6 +23901,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *hex = [NSString stringWithFormat:@"#%02lX%02lX%02lX", (long)r, (long)g, (long)b];
   self.colorSwatch.layer.backgroundColor = c.CGColor;
   self.colorHexLabel.stringValue = hex;
+  NSString *cnName = [self chineseColorNameForColor:c];
+  self.colorNameLabel.stringValue = cnName;
   NSMutableArray *history = [[[NSUserDefaults standardUserDefaults] arrayForKey:@"centerColorHistory"] mutableCopy] ?: [NSMutableArray array];
   [history removeObject:hex];
   [history insertObject:hex atIndex:0];
@@ -23867,7 +23914,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self refreshColorHistoryButtons];
   [NSApp activateIgnoringOtherApps:YES];
   [self.colorWindow makeKeyAndOrderFront:nil];
-  [self showToast:[NSString stringWithFormat:@"已复制 %@", hex]];
+  [self showToast:[NSString stringWithFormat:@"%@ %@，已复制", cnName, hex]];
 }
 
 - (NSColor *)colorFromHexString:(NSString *)hex {
@@ -23886,7 +23933,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       NSColor *c = [self colorFromHexString:history[i]];
       b.hidden = (c == nil);
       b.layer.backgroundColor = (c ?: [NSColor clearColor]).CGColor;
-      b.toolTip = history[i];
+      NSString *cn = c ? [self chineseColorNameForColor:c] : @"";
+      b.toolTip = [NSString stringWithFormat:@"%@ %@", cn, history[i]];
     } else {
       b.hidden = YES;
     }
@@ -23902,9 +23950,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.pickedColor = c;
   self.colorSwatch.layer.backgroundColor = c.CGColor;
   self.colorHexLabel.stringValue = hex;
+  NSString *cn = [self chineseColorNameForColor:c];
+  self.colorNameLabel.stringValue = cn;
   [[NSPasteboard generalPasteboard] clearContents];
   [[NSPasteboard generalPasteboard] setString:hex forType:NSPasteboardTypeString];
-  [self showToast:[NSString stringWithFormat:@"已复制 %@", hex]];
+  [self showToast:[NSString stringWithFormat:@"%@ %@，已复制", cn, hex]];
 }
 
 - (void)copyPickedColor:(id)sender {
