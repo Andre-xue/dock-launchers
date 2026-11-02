@@ -1435,7 +1435,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *videoPostFileLabel, *videoPostStart, *videoPostEnd, *videoPostStatus;
 @property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow, *aiTTSWindow;
 @property (strong) NSPopUpButton *aiTTSServicePopup;
-@property (strong) NSTextField *aiTTSModelField, *aiTTSVoiceField, *aiTTSURLField, *aiTTSStatus;
+@property (strong) NSTextField *aiTTSURLField, *aiTTSStatus;
+@property (strong) NSPopUpButton *aiTTSModelField, *aiTTSVoiceField;
 @property (strong) NSTextView *aiTTSText;
 @property (copy) NSString *aiTTSResultPath;
 @property (strong) NSPopUpButton *speechEnginePopup, *speechServicePopup;
@@ -23143,13 +23144,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     t.frame = NSMakeRect(24,556,300,28); [cv addSubview:t];
     NSTextField *h = [self label:@"文本转语音；支持硅基流动 CosyVoice/MOSS 和 OpenAI 兼容 /audio/speech" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame = NSMakeRect(24,534,600,18); [cv addSubview:h];
-    self.aiTTSServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,498,180,28) pullsDown:NO];
+    self.aiTTSServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,498,160,28) pullsDown:NO];
     self.aiTTSServicePopup.target = self; self.aiTTSServicePopup.action = @selector(aiTTSServiceChanged:);
     [cv addSubview:self.aiTTSServicePopup];
-    self.aiTTSModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(212,498,200,28)];
-    self.aiTTSModelField.placeholderString=@"TTS 模型"; [cv addSubview:self.aiTTSModelField];
-    self.aiTTSVoiceField = [[NSTextField alloc] initWithFrame:NSMakeRect(420,498,216,28)];
-    self.aiTTSVoiceField.placeholderString=@"音色，例如 model:alex"; [cv addSubview:self.aiTTSVoiceField];
+    self.aiTTSModelField = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(190,498,230,28) pullsDown:NO];
+    self.aiTTSModelField.font=[NSFont systemFontOfSize:11];
+    self.aiTTSModelField.target=self; self.aiTTSModelField.action=@selector(aiTTSModelChanged:);
+    self.aiTTSModelField.toolTip=@"TTS 模型，从下拉列表选择";
+    [cv addSubview:self.aiTTSModelField];
+    self.aiTTSVoiceField = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(426,498,224,28) pullsDown:NO];
+    self.aiTTSVoiceField.font=[NSFont systemFontOfSize:11];
+    self.aiTTSVoiceField.toolTip=@"音色，从下拉列表选择";
+    [cv addSubview:self.aiTTSVoiceField];
     self.aiTTSURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,464,612,28)];
     self.aiTTSURLField.placeholderString=@"/audio/speech 地址";
     self.aiTTSURLField.editable=NO; self.aiTTSURLField.selectable=YES;
@@ -23206,15 +23212,26 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length-1];
   if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length-@"/chat/completions".length];
   self.aiTTSURLField.stringValue = base.length ? [base stringByAppendingString:@"/audio/speech"] : @"";
+  [self.aiTTSModelField removeAllItems];
   if ([name containsString:@"siliconflow"] || [name containsString:@"硅基流动"]) {
-    self.aiTTSModelField.stringValue = @"FunAudioLLM/CosyVoice2-0.5B";
-    self.aiTTSVoiceField.stringValue = @"FunAudioLLM/CosyVoice2-0.5B:alex";
+    [self.aiTTSModelField addItemsWithTitles:@[@"FunAudioLLM/CosyVoice2-0.5B", @"fnlp/MOSS-TTSD-v0.5"]];
   } else if ([name containsString:@"openai"]) {
-    self.aiTTSModelField.stringValue = @"gpt-4o-mini-tts";
-    self.aiTTSVoiceField.stringValue = @"alloy";
+    [self.aiTTSModelField addItemsWithTitles:@[@"gpt-4o-mini-tts", @"tts-1"]];
   } else {
-    if (!self.aiTTSModelField.stringValue.length) self.aiTTSModelField.stringValue = @"tts-1";
-    if (!self.aiTTSVoiceField.stringValue.length) self.aiTTSVoiceField.stringValue = @"alloy";
+    [self.aiTTSModelField addItemsWithTitles:@[@"tts-1"]];
+  }
+  [self aiTTSModelChanged:nil];
+}
+
+- (void)aiTTSModelChanged:(id)sender {
+  NSString *model = self.aiTTSModelField.titleOfSelectedItem ?: @"";
+  [self.aiTTSVoiceField removeAllItems];
+  if ([model containsString:@"CosyVoice"]) {
+    [self.aiTTSVoiceField addItemsWithTitles:@[@"FunAudioLLM/CosyVoice2-0.5B:alex", @"FunAudioLLM/CosyVoice2-0.5B:anna", @"FunAudioLLM/CosyVoice2-0.5B:bella", @"FunAudioLLM/CosyVoice2-0.5B:benjamin", @"FunAudioLLM/CosyVoice2-0.5B:charles", @"FunAudioLLM/CosyVoice2-0.5B:claire"]];
+  } else if ([model containsString:@"MOSS"]) {
+    [self.aiTTSVoiceField addItemsWithTitles:@[@"fnlp/MOSS-TTSD-v0.5:alex", @"fnlp/MOSS-TTSD-v0.5:anna"]];
+  } else {
+    [self.aiTTSVoiceField addItemsWithTitles:@[@"alloy", @"echo", @"fable", @"onyx", @"nova", @"shimmer"]];
   }
 }
 
@@ -23225,8 +23242,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSDictionary *e = services[idx];
   NSString *key = e[@"api"] ?: @"";
   NSString *url = self.aiTTSURLField.stringValue;
-  NSString *model = self.aiTTSModelField.stringValue;
-  NSString *voice = self.aiTTSVoiceField.stringValue;
+  NSString *model = self.aiTTSModelField.titleOfSelectedItem ?: @"";
+  NSString *voice = self.aiTTSVoiceField.titleOfSelectedItem ?: @"";
   NSString *text = self.aiTTSText.string;
   if (!key.length || !url.length || !model.length || !voice.length || !text.length) { self.aiTTSStatus.stringValue=@"请填写服务、模型、音色和文本"; return; }
   NSDictionary *body = @{@"model":model,@"input":text,@"voice":voice,@"response_format":@"mp3"};
