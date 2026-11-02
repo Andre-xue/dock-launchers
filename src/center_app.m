@@ -22356,7 +22356,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.aiImageStatus.stringValue = @"正在获取图片模型…";
   __weak typeof(self) weakSelf = self;
   NSString *imageModelListURL = base.length ? base : defaultURL;
-  [self fetchModelsForPanel:self.aiImageModelField url:imageModelListURL key:key keywords:@[@"dall-e",@"gpt-image",@"image",@"flux",@"seedream",@"stable",@"sdxl",@"midjourney",@"imagen",@"qwen",@"z-image",@"kolors",@"wan"] knownDefault:defaultModel completion:^(NSArray *models) {
+  [self fetchModelsForPanel:self.aiImageModelField url:imageModelListURL key:key keywords:@[@"dall-e",@"gpt-image",@"image",@"flux",@"seedream",@"stable",@"sdxl",@"midjourney",@"imagen",@"kolors",@"z-image",@"qwen-image"] knownDefault:defaultModel completion:^(NSArray *models) {
     if (models.count) { weakSelf.aiImageStatus.stringValue = [NSString stringWithFormat:@"已获取 %ld 个图片模型", (long)models.count]; }
     else { weakSelf.aiImageModelField.stringValue = defaultModel; weakSelf.aiImageStatus.stringValue = @"未获取到图片模型，使用默认模型"; }
   }];
