@@ -16124,6 +16124,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *shortcuts = [support stringByAppendingPathComponent:@"app_shortcuts.json"];
   if ([fm fileExistsAtPath:shortcuts]) [fm copyItemAtPath:shortcuts toPath:[outDir stringByAppendingPathComponent:@"app_shortcuts.json"] error:NULL];
   [[NSString stringWithFormat:@"DockLaunchers 配置备份\n导出时间：%@\n包含：分组列表、快捷键、应用设置\n注意：settings.plist 可能包含 AI API Key，请妥善保管。\n", [NSDate date]] writeToFile:[outDir stringByAppendingPathComponent:@"README.txt"] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  [[NSUserDefaults standardUserDefaults] setObject:outDir forKey:@"centerLastConfigExportPath"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
   [self showToast:@"配置已导出到目录"];
   [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:outDir]]];
 }
@@ -16188,7 +16190,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.configBackupWindow.contentView;
     NSTextField *t = [self label:@"配置导出 / 导入" size:18 bold:YES color:nil];
     t.frame=NSMakeRect(24,216,300,24); [cv addSubview:t];
-    NSTextField *d = [self label:@"导出为目录，包含分组列表、快捷键和设置；导入支持目录或 ZIP。" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *d = [self label:@"导出为目录，包含分组列表、快捷键和设置；导入支持目录或 ZIP。「打开上次导出目录」定位最近一次导出。" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     d.frame=NSMakeRect(24,192,420,18); [cv addSubview:d];
     NSTextField *warn = [self label:@"注意：配置中可能包含 AI API Key，请妥善保管备份文件。" size:10 bold:NO color:[NSColor systemOrangeColor]];
     warn.frame=NSMakeRect(24,166,420,18); [cv addSubview:warn];
@@ -16199,7 +16201,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     imp.title=@"导入配置…"; imp.hoverColor=[NSColor systemOrangeColor]; imp.target=self; imp.action=@selector(importConfiguration:);
     [imp applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:imp];
     ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,40,180,30)];
-    open.title=@"打开备份目录"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openConfigBackupFolder:);
+    open.title=@"打开上次导出目录"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openConfigBackupFolder:);
+    open.toolTip = @"没有导出记录时打开自动配置备份目录";
     [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
     [self.configBackupWindow center];
   }
@@ -16208,6 +16211,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)openConfigBackupFolder:(id)sender {
+  NSString *last = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerLastConfigExportPath"];
+  if (last.length && [[NSFileManager defaultManager] fileExistsAtPath:last]) {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:last]];
+    return;
+  }
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self configBackupDirectory]]];
 }
 
