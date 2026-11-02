@@ -1215,6 +1215,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *diagnosticsWindow;
 @property (strong) NSWindow *shelfWindow;
 @property (strong) NSWindow *configBackupWindow;
+@property (strong) NSWindow *cloudSyncWindow;
+@property (strong) NSTextField *cloudSyncPathLabel, *cloudSyncStatus;
+@property (strong) NSButton *cloudAutoSyncCheck;
 @property (strong) NSTableView *shelfTable;
 @property (strong) NSMutableArray<NSString *> *shelfPaths;
 @property (strong) DLShelfDropView *shelfDropView;
@@ -16972,6 +16975,143 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self showToast:@"已回滚到最近的自动备份，请重启 DockLaunchers"];
 }
 
+- (NSString *)cloudSyncDirectory {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSString *dir = [ud stringForKey:@"centerCloudSyncDirectory"];
+  if (!dir.length) {
+    NSString *icloud = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Mobile Documents/com~apple~CloudDocs/DockLaunchers"];
+    dir = icloud;
+  }
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return dir;
+}
+
+- (void)writeCurrentConfigurationToDirectory:(NSString *)dir {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *lists = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  NSString *cloudLists = [dir stringByAppendingPathComponent:@"lists"];
+  [fm removeItemAtPath:cloudLists error:NULL];
+  if ([fm fileExistsAtPath:lists]) [fm copyItemAtPath:lists toPath:cloudLists error:NULL];
+  NSDictionary *domain = [[NSUserDefaults standardUserDefaults] persistentDomainForName:@"com.docklaunchers.center"] ?: @{};
+  [domain writeToFile:[dir stringByAppendingPathComponent:@"settings.plist"] atomically:YES];
+  NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  for (NSString *name in @[@"app_shortcuts.json", @"scenes.json", @"window_layouts.json"]) {
+    NSString *src = [support stringByAppendingPathComponent:name];
+    if ([fm fileExistsAtPath:src]) { [fm removeItemAtPath:[dir stringByAppendingPathComponent:name] error:NULL]; [fm copyItemAtPath:src toPath:[dir stringByAppendingPathComponent:name] error:NULL]; }
+  }
+  NSDictionary *manifest = @{@"version": [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.0", @"date": @([[NSDate date] timeIntervalSince1970]), @"host": [[NSProcessInfo processInfo] hostName] ?: @""};
+  [manifest writeToFile:[dir stringByAppendingPathComponent:@"manifest.plist"] atomically:YES];
+}
+
+- (void)uploadConfigurationToCloud:(id)sender {
+  NSString *dir = [self cloudSyncDirectory];
+  [self writeCurrentConfigurationToDirectory:dir];
+  [[NSUserDefaults standardUserDefaults] setObject:dir forKey:@"centerCloudSyncDirectory"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  self.cloudSyncPathLabel.stringValue = dir;
+  self.cloudSyncStatus.stringValue = [NSString stringWithFormat:@"已上传：%@", [NSDate date]];
+  [self showToast:@"配置已上传到云目录"];
+}
+
+- (void)restoreConfigurationFromCloud:(id)sender {
+  NSString *dir = [self cloudSyncDirectory];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  if (![fm fileExistsAtPath:[dir stringByAppendingPathComponent:@"settings.plist"]] && ![fm fileExistsAtPath:[dir stringByAppendingPathComponent:@"lists"]]) { [self showToast:@"云目录里没有配置"]; return; }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"从云端恢复配置？";
+  a.informativeText = @"会覆盖当前分组列表、设置、快捷键、场景和窗口布局；恢复前会先本地备份。";
+  [a addButtonWithTitle:@"恢复"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSString *backup = [[self configBackupDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"cloud-restore-%lld", (long long)[[NSDate date] timeIntervalSince1970]]];
+  [self writeCurrentConfigurationToDirectory:backup];
+  NSString *cloudLists = [dir stringByAppendingPathComponent:@"lists"];
+  NSString *liveLists = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  if ([fm fileExistsAtPath:cloudLists]) { [fm removeItemAtPath:liveLists error:NULL]; [fm copyItemAtPath:cloudLists toPath:liveLists error:NULL]; }
+  NSString *settings = [dir stringByAppendingPathComponent:@"settings.plist"];
+  if ([fm fileExistsAtPath:settings]) {
+    NSTask *t = [[NSTask alloc] init]; t.launchPath = @"/usr/bin/defaults"; t.arguments = @[@"import", @"com.docklaunchers.center", settings];
+    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+  }
+  NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  for (NSString *name in @[@"app_shortcuts.json", @"scenes.json", @"window_layouts.json"]) {
+    NSString *src = [dir stringByAppendingPathComponent:name];
+    if ([fm fileExistsAtPath:src]) { [fm removeItemAtPath:[support stringByAppendingPathComponent:name] error:NULL]; [fm copyItemAtPath:src toPath:[support stringByAppendingPathComponent:name] error:NULL]; }
+  }
+  [self refreshGroups];
+  [self ensureGroupDockEntries];
+  [self killDock];
+  self.scenes = nil;
+  self.savedLayouts = nil;
+  self.cloudSyncStatus.stringValue = @"已从云端恢复，请重启 DockLaunchers";
+  [self showToast:@"云端配置已恢复"];
+}
+
+- (void)chooseCloudSyncFolder:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseDirectories = YES; p.canChooseFiles = NO; p.canCreateDirectories = YES;
+  p.prompt = @"选择云同步目录";
+  if ([p runModal] != NSModalResponseOK) return;
+  [[NSUserDefaults standardUserDefaults] setObject:p.URL.path forKey:@"centerCloudSyncDirectory"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  self.cloudSyncPathLabel.stringValue = p.URL.path;
+  self.cloudSyncStatus.stringValue = @"云目录已更新";
+}
+
+- (void)cloudAutoSyncChanged:(NSButton *)sender {
+  [[NSUserDefaults standardUserDefaults] setBool:sender.state == NSControlStateValueOn forKey:@"centerCloudAutoSync"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (void)openCloudSyncWindow:(id)sender {
+  if (!self.cloudSyncWindow) {
+    self.cloudSyncWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,360) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.cloudSyncWindow.title = @"配置云同步";
+    self.cloudSyncWindow.releasedWhenClosed = NO;
+    NSView *cv = self.cloudSyncWindow.contentView;
+    NSTextField *t = [self label:@"配置云同步" size:18 bold:YES color:nil];
+    t.frame=NSMakeRect(24,316,300,24); [cv addSubview:t];
+    NSTextField *h = [self label:@"上传分组、设置、快捷键、场景和窗口布局到 iCloud 或自定义目录" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame=NSMakeRect(24,294,510,18); [cv addSubview:h];
+    self.cloudSyncPathLabel = [self label:@"" size:10 bold:NO color:[NSColor labelColor]];
+    self.cloudSyncPathLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;
+    self.cloudSyncPathLabel.frame=NSMakeRect(24,258,400,18); [cv addSubview:self.cloudSyncPathLabel];
+    ColorHoverButton *choose = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(430,250,110,28)];
+    choose.title=@"选择目录…"; choose.hoverColor=[NSColor systemTealColor]; choose.target=self; choose.action=@selector(chooseCloudSyncFolder:);
+    [choose applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:choose];
+    self.cloudAutoSyncCheck = [NSButton checkboxWithTitle:@"退出应用时自动上传配置" target:self action:@selector(cloudAutoSyncChanged:)];
+    self.cloudAutoSyncCheck.frame=NSMakeRect(24,214,300,22);
+    self.cloudAutoSyncCheck.state=[[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudAutoSync"]?NSControlStateValueOn:NSControlStateValueOff;
+    [cv addSubview:self.cloudAutoSyncCheck];
+    ColorHoverButton *upload = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,150,180,36)];
+    upload.title=@"上传到云端"; upload.hoverColor=[NSColor systemBlueColor]; upload.target=self; upload.action=@selector(uploadConfigurationToCloud:);
+    [upload applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:upload];
+    ColorHoverButton *restore = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(216,150,180,36)];
+    restore.title=@"从云端恢复"; restore.hoverColor=[NSColor systemOrangeColor]; restore.target=self; restore.action=@selector(restoreConfigurationFromCloud:);
+    [restore applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:restore];
+    self.cloudSyncStatus = [self label:@"iCloud 可用时默认使用 iCloud Drive/DockLaunchers" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    self.cloudSyncStatus.frame=NSMakeRect(24,100,510,18); [cv addSubview:self.cloudSyncStatus];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(436,40,100,30)];
+    close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeCloudSyncWindow:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.cloudSyncWindow center];
+  }
+  self.cloudSyncPathLabel.stringValue = [self cloudSyncDirectory];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.cloudSyncWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)closeCloudSyncWindow:(id)sender { [self.cloudSyncWindow orderOut:nil]; }
+
+- (void)applicationWillTerminate:(NSNotification *)notification {
+  if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudAutoSync"]) {
+    NSString *dir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCloudSyncDirectory"];
+    if (!dir.length) dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Mobile Documents/com~apple~CloudDocs/DockLaunchers"];
+    @try { [self writeCurrentConfigurationToDirectory:dir]; } @catch (NSException *e) {}
+  }
+}
+
 - (void)openConfigBackupFolder:(id)sender {
   NSString *last = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerLastConfigExportPath"];
   if (last.length && [[NSFileManager defaultManager] fileExistsAtPath:last]) {
@@ -17339,6 +17479,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3063,@"cat":@1,@"title":@"AI 视频生成",@"desc":@"用 AI 生成视频",@"sel":@"openAIVideoPanel:"},
     @{@"id":@3064,@"cat":@1,@"title":@"AI 图片问答",@"desc":@"截图/图片理解与 OCR",@"sel":@"openAIVisionPanel:"},
     @{@"id":@3065,@"cat":@1,@"title":@"AI 图片编辑",@"desc":@"按提示词编辑图片",@"sel":@"openAIEditPanel:"},
+    @{@"id":@3069,@"cat":@1,@"title":@"配置云同步",@"desc":@"上传/恢复云端配置",@"sel":@"openCloudSyncWindow:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -18299,6 +18440,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"权限与诊断", @"subtitle": @"检查录制、摄像头、麦克风权限", @"type": @"工具", @"tool": @"diagnostics", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"stethoscope" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"文件暂存架", @"subtitle": @"拖入文件，稍后统一处理", @"type": @"工具", @"tool": @"shelf", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"tray.full" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"配置导出 / 导入", @"subtitle": @"迁移分组、快捷键和设置", @"type": @"工具", @"tool": @"configbackup", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.up.arrow.down.square" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"配置云同步", @"subtitle": @"上传/恢复云端配置", @"type": @"工具", @"tool": @"cloudsync", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"icloud" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 图片生成", @"subtitle": @"用 AI 服务生成图片", @"type": @"工具", @"tool": @"aiimage", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"photo.badge.plus" accessibilityDescription:nil] ?: recIcon}];
@@ -18376,6 +18518,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSImage *ic = [NSImage imageWithSystemSymbolName:t[3] accessibilityDescription:nil];
     [out addObject:@{@"title": t[0], @"subtitle": t[1], @"type": @"工具", @"tool": t[2], @"category": t[4], @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
   }
+  NSArray *defs = [self allGlobalActionDefs];
+  for (NSDictionary *d in defs) {
+    NSImage *ic = [NSImage imageWithSystemSymbolName:@"command" accessibilityDescription:nil];
+    [out addObject:@{@"title": d[@"title"] ?: @"命令", @"subtitle": [NSString stringWithFormat:@"命令 · %@", d[@"desc"] ?: @""], @"type": @"命令", @"commandID": d[@"id"], @"category": @3, @"icon": ic ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+  }
   return out;
 }
 
@@ -18395,6 +18542,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"recordstop"]) [self captureVideo:nil];
     else if ([tool isEqualToString:@"recordpanel"]) [self showCaptureTool:nil];
     else if ([tool isEqualToString:@"recordrecent"]) [self openMostRecentRecording];
+  } else if ([type isEqualToString:@"命令"]) {
+    NSInteger cid = [item[@"commandID"] integerValue];
+    if (cid > 0) [self performAllGlobalActionID:cid];
   } else if ([type isEqualToString:@"工具"]) {
     NSString *tool = item[@"tool"] ?: @"";
     if ([tool isEqualToString:@"translate"]) [self showTranslationWindow:nil];
@@ -18423,6 +18573,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"diagnostics"]) [self openDiagnosticsWindow:nil];
     else if ([tool isEqualToString:@"shelf"]) [self openShelfWindow:nil];
     else if ([tool isEqualToString:@"configbackup"]) [self openConfigBackupWindow:nil];
+    else if ([tool isEqualToString:@"cloudsync"]) [self openCloudSyncWindow:nil];
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
     else if ([tool isEqualToString:@"aitext"]) [self openAIAssistant:nil];
@@ -22364,6 +22515,31 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
 }
 
+- (void)downloadUpdateAsset:(NSString *)urlString name:(NSString *)name {
+  if (!urlString.length) return;
+  NSString *safeName = name.length ? name : @"DockLaunchers-update.dmg";
+  NSString *dest = [NSHomeDirectory() stringByAppendingPathComponent:[@"Downloads" stringByAppendingPathComponent:safeName]];
+  [[NSFileManager defaultManager] removeItemAtPath:dest error:NULL];
+  [self showToast:@"正在下载更新…"];
+  NSURLSessionDownloadTask *task = [[NSURLSession sharedSession] downloadTaskWithURL:[NSURL URLWithString:urlString] completionHandler:^(NSURL *location, NSURLResponse *response, NSError *error) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (error || !location) {
+        NSAlert *a = [[NSAlert alloc] init]; a.messageText = @"下载更新失败"; a.informativeText = error.localizedDescription ?: @"请稍后重试"; [a addButtonWithTitle:@"好"]; [a runModal]; return;
+      }
+      NSError *moveErr = nil;
+      BOOL ok = [[NSFileManager defaultManager] moveItemAtURL:location toURL:[NSURL fileURLWithPath:dest] error:&moveErr];
+      if (!ok) { [self showToast:@"更新文件保存失败"]; return; }
+      NSAlert *a = [[NSAlert alloc] init];
+      a.messageText = @"更新已下载";
+      a.informativeText = [NSString stringWithFormat:@"已保存到：\n%@\n\n是否打开？", dest];
+      [a addButtonWithTitle:@"打开"];
+      [a addButtonWithTitle:@"稍后"];
+      if ([a runModal] == NSAlertFirstButtonReturn) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dest]];
+    });
+  }];
+  [task resume];
+}
+
 - (void)checkForUpdates:(id)sender {
   NSString *current = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"0";
   NSURL *url = [NSURL URLWithString:@"https://api.github.com/repos/Andre-xue/dock-launchers/releases/latest"];
@@ -22394,11 +22570,39 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       NSComparisonResult cmp = [latest compare:current options:NSNumericSearch];
       NSAlert *a = [[NSAlert alloc] init];
       if (cmp == NSOrderedDescending) {
+        NSDictionary *dmg = nil;
+        NSArray *assets = obj[@"assets"];
+        if ([assets isKindOfClass:[NSArray class]]) {
+          for (NSDictionary *asset in assets) {
+            NSString *an = asset[@"name"] ?: @"";
+            if ([an.lowercaseString hasSuffix:@".dmg"]) { dmg = asset; break; }
+          }
+        }
+        if (!dmg) {
+          a.messageText = [NSString stringWithFormat:@"发现新版本 %@", latest];
+          a.informativeText = [NSString stringWithFormat:@"当前版本：%@\n最新版本：%@\n\n这个版本没有 DMG，是否打开下载页面？", current, latest];
+          [a addButtonWithTitle:@"打开下载页"];
+          [a addButtonWithTitle:@"稍后"];
+          if ([a runModal] == NSAlertFirstButtonReturn) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:page]];
+          return;
+        }
+        NSString *assetURL = dmg[@"browser_download_url"] ?: @"";
+        NSString *assetName = dmg[@"name"] ?: [NSString stringWithFormat:@"DockLaunchers控制台-%@.dmg", latest];
+        BOOL autoDownload = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAutoDownloadUpdates"];
+        if (autoDownload && assetURL.length) { [self downloadUpdateAsset:assetURL name:assetName]; return; }
         a.messageText = [NSString stringWithFormat:@"发现新版本 %@", latest];
-        a.informativeText = [NSString stringWithFormat:@"当前版本：%@\n最新版本：%@\n\n是否打开下载页面？", current, latest];
-        [a addButtonWithTitle:@"打开下载页"];
+        a.informativeText = [NSString stringWithFormat:@"当前版本：%@\n最新版本：%@\n\n是否下载更新？", current, latest];
+        [a addButtonWithTitle:@"下载并打开"];
         [a addButtonWithTitle:@"稍后"];
-        if ([a runModal] == NSAlertFirstButtonReturn) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:page]];
+        NSButton *autoCheck = [NSButton checkboxWithTitle:@"以后自动下载更新" target:nil action:nil];
+        autoCheck.frame = NSMakeRect(0,0,260,22);
+        a.accessoryView = autoCheck;
+        NSModalResponse r = [a runModal];
+        if (autoCheck.state == NSControlStateValueOn) {
+          [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"centerAutoDownloadUpdates"];
+          [[NSUserDefaults standardUserDefaults] synchronize];
+        }
+        if (r == NSAlertFirstButtonReturn && assetURL.length) [self downloadUpdateAsset:assetURL name:assetName];
       } else {
         a.messageText = @"已是最新版本";
         a.informativeText = [NSString stringWithFormat:@"当前版本：%@\n最新版本：%@", current, latest];
