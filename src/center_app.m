@@ -19335,28 +19335,29 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiAssistantModelField.placeholderString=@"模型"; [cv addSubview:self.aiAssistantModelField];
     self.aiAssistantURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,444,600,28)];
     self.aiAssistantURLField.placeholderString=@"API 地址（/v1/chat/completions）"; [cv addSubview:self.aiAssistantURLField];
-    NSScrollView *inScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,240,610,190)];
+    NSScrollView *inScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,270,610,170)];
     inScroll.hasVerticalScroller=YES; inScroll.borderType=NSBezelBorder;
     self.aiAssistantInput = [[NSTextView alloc] initWithFrame:inScroll.contentView.bounds];
     self.aiAssistantInput.font=[NSFont systemFontOfSize:12];
     self.aiAssistantInput.string=@"";
     inScroll.documentView=self.aiAssistantInput; [cv addSubview:inScroll];
-    NSScrollView *outScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,74,610,150)];
+    NSScrollView *outScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,60,610,150)];
     outScroll.hasVerticalScroller=YES; outScroll.borderType=NSBezelBorder;
     self.aiAssistantOutput = [[NSTextView alloc] initWithFrame:outScroll.contentView.bounds];
     self.aiAssistantOutput.font=[NSFont systemFontOfSize:12];
     self.aiAssistantOutput.editable=NO; self.aiAssistantOutput.string=@"";
     outScroll.documentView=self.aiAssistantOutput; [cv addSubview:outScroll];
     self.aiAssistantStatus = [self label:@"就绪" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    self.aiAssistantStatus.frame=NSMakeRect(24,50,400,18); [cv addSubview:self.aiAssistantStatus];
-    ColorHoverButton *send = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(430,16,100,30)];
+    self.aiAssistantStatus.frame=NSMakeRect(24,30,400,18); [cv addSubview:self.aiAssistantStatus];
+    ColorHoverButton *send = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,230,100,28)];
     send.title=@"发送"; send.hoverColor=[NSColor systemBlueColor]; send.target=self; send.action=@selector(sendAIAssistant:);
     [send applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:send];
-    ColorHoverButton *paste = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(540,16,94,30)];
+    ColorHoverButton *paste = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,230,110,28)];
     paste.title=@"读取剪贴板"; paste.hoverColor=[NSColor systemTealColor]; paste.target=self; paste.action=@selector(aiAssistantPaste:);
     [paste applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:paste];
-    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(644,16,0,30)];
-    copy.hidden=YES;
+    ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250,230,90,28)];
+    clear.title=@"清空"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(clearAIAssistant:);
+    [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
     [self.aiAssistantWindow center];
   }
   [self reloadAIAssistantServices];
@@ -19367,6 +19368,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)aiAssistantPaste:(id)sender {
   NSString *s = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
   if (s.length) self.aiAssistantInput.string = s;
+}
+
+- (void)clearAIAssistant:(id)sender {
+  self.aiAssistantInput.string = @"";
+  self.aiAssistantOutput.string = @"";
+  self.aiAssistantStatus.stringValue = @"已清空输入和输出";
 }
 
 - (void)sendAIAssistant:(id)sender {
