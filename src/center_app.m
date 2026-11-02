@@ -20312,7 +20312,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)showCaptureTool:(id)sender {
   if (!self.captureWindow) {
-    self.captureWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,940,600) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.captureWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1040,600) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.captureWindow.title = @"截图 / 录屏";
     self.captureWindow.releasedWhenClosed = NO;
     self.captureWindow.level = NSNormalWindowLevel;
@@ -20469,7 +20469,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureMicLevelIndicator.toolTip = @"麦克风实时电平（录音前检测）";
     [cv addSubview:self.captureMicLevelIndicator];
     self.captureMicBoostCheck = [NSButton checkboxWithTitle:@"麦克风增强" target:self action:@selector(captureMicBoostChanged:)];
-    self.captureMicBoostCheck.frame = NSMakeRect(500, 286, 130, 22);
+    self.captureMicBoostCheck.frame = NSMakeRect(930, 314, 105, 22);
     id boostVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureMicBoost"];
     self.captureMicBoostCheck.state = (boostVal ? [boostVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
     self.captureMicBoostCheck.toolTip = @"录制时临时把系统麦克风输入音量调到 100%，结束后恢复";
@@ -20554,7 +20554,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     close.target = self; close.action = @selector(closeCaptureTool:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     // Compact the window: pull the content up and add two folder shortcuts.
-    [self.captureWindow setContentSize:NSMakeSize(940, 520)];
+    [self.captureWindow setContentSize:NSMakeSize(1040, 520)];
     for (NSView *v in cv.subviews) if (v.frame.origin.y > 30) v.frame = NSOffsetRect(v.frame, 0, -80);
     ColorHoverButton *imgFolderBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 58, 140, 32)];
     imgFolderBtn.title = @"打开截图文件夹"; imgFolderBtn.hoverColor = [NSColor systemBlueColor];
