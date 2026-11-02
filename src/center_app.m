@@ -15736,59 +15736,58 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!skipRadial) {
     self.radialPages = @[
       @[
-        @{@"title": @"翻译", @"symbol": @"character.bubble.fill", @"action": @"translate"},
-        @{@"title": @"压缩", @"symbol": @"archivebox.fill", @"action": @"compress"},
-        @{@"title": @"PDF", @"symbol": @"doc.richtext", @"action": @"pdf"},
-        @{@"title": @"图片", @"symbol": @"photo.on.rectangle.angled", @"action": @"image"},
-        @{@"title": @"重命名", @"symbol": @"square.and.pencil", @"action": @"rename"},
-        @{@"title": @"分组", @"symbol": @"square.grid.2x2.fill", @"action": @"groups"},
-        @{@"title": @"剪贴板", @"symbol": @"doc.on.clipboard.fill", @"action": @"clipboard"},
-        @{@"title": @"场景", @"symbol": @"rectangle.3.group.fill", @"action": @"scene"}
-      ],
-      @[
-        @{@"title": @"窗口布局", @"symbol": @"rectangle.split.2x2", @"action": @"layouts"},
-        @{@"title": @"大文件", @"symbol": @"externaldrive.fill", @"action": @"largefiles"},
-        @{@"title": @"重复文件", @"symbol": @"doc.on.doc.fill", @"action": @"duplicates"},
-        @{@"title": @"启动项", @"symbol": @"power", @"action": @"startup"},
-        @{@"title": @"进程", @"symbol": @"cpu", @"action": @"process"},
-        @{@"title": @"使用统计", @"symbol": @"chart.bar.fill", @"action": @"usage"},
-        @{@"title": @"应用搜索", @"symbol": @"magnifyingglass", @"action": @"appsearch"},
-        @{@"title": @"快速面板", @"symbol": @"command", @"action": @"quickpanel"}
-      ],
-      @[
-        @{@"title": @"提示词库", @"symbol": @"text.book.closed.fill", @"action": @"prompts"},
-        @{@"title": @"Dock 外观", @"symbol": @"paintbrush.fill", @"action": @"appearance"},
-        @{@"title": @"应用密码", @"symbol": @"lock.fill", @"action": @"password"},
-        @{@"title": @"应用快捷键", @"symbol": @"keyboard", @"action": @"appshortcuts"},
-        @{@"title": @"全局快捷键", @"symbol": @"globe", @"action": @"globalshortcuts"},
-        @{@"title": @"磁盘分析", @"symbol": @"internaldrive.fill", @"action": @"disk"},
-        @{@"title": @"AI", @"symbol": @"sparkles", @"action": @"ai"}
-      ],
-      @[
-        @{@"title": @"截图/录屏", @"symbol": @"camera.viewfinder", @"action": @"capture"},
-        @{@"title": @"文件暂存架", @"symbol": @"tray.full.fill", @"action": @"shelf"},
         @{@"title": @"AI 助手", @"symbol": @"sparkles", @"action": @"aitext"},
-        @{@"title": @"AI 图片", @"symbol": @"photo.badge.plus", @"action": @"aiimage"},
         @{@"title": @"AI 视频", @"symbol": @"video.badge.plus", @"action": @"aivideo"},
+        @{@"title": @"AI 图片", @"symbol": @"photo.badge.plus", @"action": @"aiimage"},
+        @{@"title": @"AI 管理", @"symbol": @"sparkles", @"action": @"ai"},
+        @{@"title": @"提示词库", @"symbol": @"text.book.closed.fill", @"action": @"prompts"},
         @{@"title": @"图片问答", @"symbol": @"text.viewfinder", @"action": @"aivision"},
-        @{@"title": @"图片编辑", @"symbol": @"wand.and.stars", @"action": @"aiedit"},
-        @{@"title": @"应用卸载", @"symbol": @"trash.fill", @"action": @"uninstall"}
+        @{@"title": @"图片编辑", @"symbol": @"wand.and.stars", @"action": @"aiedit"}
       ],
       @[
-        @{@"title": @"钉屏截图", @"symbol": @"pin.fill", @"action": @"pinshot"},
-        @{@"title": @"滚动长截图", @"symbol": @"arrow.down.to.line", @"action": @"scrollshot"},
+        @{@"title": @"图片", @"symbol": @"photo.on.rectangle.angled", @"action": @"image"},
+        @{@"title": @"剪贴板", @"symbol": @"doc.on.clipboard.fill", @"action": @"clipboard"},
+        @{@"title": @"PDF", @"symbol": @"doc.richtext", @"action": @"pdf"},
+        @{@"title": @"压缩", @"symbol": @"archivebox.fill", @"action": @"compress"},
+        @{@"title": @"翻译", @"symbol": @"character.bubble.fill", @"action": @"translate"},
+        @{@"title": @"屏幕取色器", @"symbol": @"eyedropper", @"action": @"colorsampler"}
+      ],
+      @[
+        @{@"title": @"截屏/录屏", @"symbol": @"camera.viewfinder", @"action": @"capture"},
         @{@"title": @"全屏截图", @"symbol": @"camera.fill", @"action": @"fullshot"},
-        @{@"title": @"截图/录屏", @"symbol": @"camera.viewfinder", @"action": @"capture"},
-        @{@"title": @"最近截图", @"symbol": @"photo.stack", @"action": @"capturehistory"},
-        @{@"title": @"开始/停止录屏", @"symbol": @"record.circle", @"action": @"recordtoggle"},
-        @{@"title": @"暂停/继续录屏", @"symbol": @"pause.circle", @"action": @"recordpause"},
+        @{@"title": @"滚动截屏", @"symbol": @"arrow.down.to.line", @"action": @"scrollshot"},
+        @{@"title": @"钉住截屏", @"symbol": @"pin.fill", @"action": @"pinshot"},
+        @{@"title": @"截图历史", @"symbol": @"photo.stack", @"action": @"capturehistory"}
+      ],
+      @[
+        @{@"title": @"开始/停止录像", @"symbol": @"record.circle", @"action": @"recordtoggle"},
+        @{@"title": @"暂停/继续录像", @"symbol": @"pause.circle", @"action": @"recordpause"},
         @{@"title": @"录屏后期", @"symbol": @"scissors", @"action": @"videopost"}
       ],
       @[
-        @{@"title": @"屏幕取色器", @"symbol": @"eyedropper", @"action": @"colorsampler"},
-        @{@"title": @"文件搜索", @"symbol": @"doc.text.magnifyingglass", @"action": @"filesearch"},
-        @{@"title": @"截图历史", @"symbol": @"photo.stack", @"action": @"capturehistory"},
-        @{@"title": @"打开最近录像", @"symbol": @"film", @"action": @"recordrecent"}
+        @{@"title": @"重命名", @"symbol": @"square.and.pencil", @"action": @"rename"},
+        @{@"title": @"重复文件", @"symbol": @"doc.on.doc.fill", @"action": @"duplicates"},
+        @{@"title": @"大文件", @"symbol": @"externaldrive.fill", @"action": @"largefiles"},
+        @{@"title": @"磁盘分析", @"symbol": @"internaldrive.fill", @"action": @"disk"},
+        @{@"title": @"文件暂存架", @"symbol": @"tray.full.fill", @"action": @"shelf"},
+        @{@"title": @"文件搜索", @"symbol": @"doc.text.magnifyingglass", @"action": @"filesearch"}
+      ],
+      @[
+        @{@"title": @"分组", @"symbol": @"square.grid.2x2.fill", @"action": @"groups"},
+        @{@"title": @"场景", @"symbol": @"rectangle.3.group.fill", @"action": @"scene"},
+        @{@"title": @"快速面板", @"symbol": @"command", @"action": @"quickpanel"},
+        @{@"title": @"窗口布局", @"symbol": @"rectangle.split.2x2", @"action": @"layouts"},
+        @{@"title": @"Dock 外观", @"symbol": @"paintbrush.fill", @"action": @"appearance"},
+        @{@"title": @"应用搜索", @"symbol": @"magnifyingglass", @"action": @"appsearch"}
+      ],
+      @[
+        @{@"title": @"使用统计", @"symbol": @"chart.bar.fill", @"action": @"usage"},
+        @{@"title": @"进程", @"symbol": @"cpu", @"action": @"process"},
+        @{@"title": @"启动项", @"symbol": @"power", @"action": @"startup"},
+        @{@"title": @"全局快捷键", @"symbol": @"globe", @"action": @"globalshortcuts"},
+        @{@"title": @"应用快捷键", @"symbol": @"keyboard", @"action": @"appshortcuts"},
+        @{@"title": @"应用密码", @"symbol": @"lock.fill", @"action": @"password"},
+        @{@"title": @"应用卸载", @"symbol": @"trash.fill", @"action": @"uninstall"}
       ]
     ];
     NSInteger savedPage = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerRadialLastPage"];
