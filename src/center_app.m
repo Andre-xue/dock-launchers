@@ -1582,6 +1582,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSComboBox *dialogAIName;
 @property (strong) NSTextField *dialogAIQuota, *dialogAIEndpoint, *dialogAIApi, *dialogAINote, *dialogAIBase, *dialogAIModel, *dialogAIStatus;
 @property (strong) NSComboBox *dialogAIModelCombo;
+@property (strong) NSPopUpButton *dialogAIModelCategoryPopup;
 @property BOOL dialogAIEditing;
 @property BOOL aiQuotaRefreshing;
 @property (strong) NSPopUpButton *diskVolumePopup;
@@ -7094,6 +7095,34 @@ static BOOL ValidGroupName(NSString *raw) {
   });
 }
 
+- (NSString *)aiModelCategoryKey:(NSDictionary *)e {
+  NSString *c = e[@"modelCategory"] ?: @"";
+  NSArray *valid = @[@"text", @"image", @"video", @"vision", @"edit", @"speech"];
+  if ([valid containsObject:c]) return c;
+  if ([e[@"imageModel"] length]) return @"image";
+  if ([e[@"videoModel"] length]) return @"video";
+  if ([e[@"editModel"] length]) return @"edit";
+  if ([e[@"visionModel"] length]) return @"vision";
+  return @"text";
+}
+
+- (NSString *)aiModelCategoryTitle:(NSString *)key {
+  if ([key isEqualToString:@"image"]) return @"图片";
+  if ([key isEqualToString:@"video"]) return @"视频";
+  if ([key isEqualToString:@"vision"]) return @"视觉";
+  if ([key isEqualToString:@"edit"]) return @"图片编辑";
+  if ([key isEqualToString:@"speech"]) return @"语音";
+  return @"文本";
+}
+
+- (NSArray<NSDictionary *> *)aiEntriesForModelCategory:(NSString *)category {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *e in self.aiEntries ?: @[]) {
+    if ([[self aiModelCategoryKey:e] isEqualToString:category]) [out addObject:e];
+  }
+  return out;
+}
+
 - (NSString *)aiCategoryForEntry:(NSDictionary *)e {
   NSString *hay = [NSString stringWithFormat:@"%@ %@ %@", e[@"name"] ?: @"", e[@"note"] ?: @"", e[@"endpoint"] ?: @""].lowercaseString;
   if ([hay containsString:@"视频"]) return @"视频";
@@ -8174,7 +8203,7 @@ static BOOL ValidGroupName(NSString *raw) {
   a.informativeText = @"输入 AI 名称即可自动识别并填写 API Key 获取地址；支持官方名和常用别名，例如千问 / Qwen / 通义千问。";
   [a addButtonWithTitle:@"保存"];
   [a addButtonWithTitle:@"取消"];
-  NSView *av = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 500, 330)];
+  NSView *av = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 500, 368)];
   NSArray *labels = @[@"名称", @"余量", @"Key 获取页", @"API Key", @"备注", @"API 基础地址", @"模型"];
   NSArray *keys = @[@"name", @"quota", @"endpoint", @"api", @"note", @"apiBase", @"model"];
   NSMutableArray *fields = [NSMutableArray array];
@@ -8208,6 +8237,17 @@ static BOOL ValidGroupName(NSString *raw) {
     tf.stringValue = old[keys[i]] ?: @"";
     [av addSubview:tf]; [fields addObject:tf];
   }
+  NSTextField *catLabel = [self label:@"模型分类" size:11.5 bold:NO color:[NSColor secondaryLabelColor]];
+  catLabel.frame = NSMakeRect(8, 34, 100, 18); [av addSubview:catLabel];
+  self.dialogAIModelCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(112, 28, 370, 26) pullsDown:NO];
+  NSArray *catKeys = @[@"text", @"image", @"video", @"vision", @"edit", @"speech"];
+  for (NSString *k in catKeys) {
+    [self.dialogAIModelCategoryPopup addItemWithTitle:[self aiModelCategoryTitle:k]];
+    self.dialogAIModelCategoryPopup.lastItem.representedObject = k;
+  }
+  NSString *oldCat = [self aiModelCategoryKey:old];
+  for (NSMenuItem *mi in self.dialogAIModelCategoryPopup.itemArray) if ([[mi representedObject] isEqualToString:oldCat]) [self.dialogAIModelCategoryPopup selectItem:mi];
+  [av addSubview:self.dialogAIModelCategoryPopup];
   self.dialogAIStatus = [self label:@"" size:10.5 bold:NO color:[NSColor systemGreenColor]];
   self.dialogAIStatus.frame = NSMakeRect(8, 4, 480, 16);
   [av addSubview:self.dialogAIStatus];
@@ -8216,8 +8256,9 @@ static BOOL ValidGroupName(NSString *raw) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self fetchAIModelsForDialog:nil]; });
   }
   if ([a runModal] != NSAlertFirstButtonReturn) return;
-  NSMutableDictionary *entry = [NSMutableDictionary dictionary];
+  NSMutableDictionary *entry = editing ? [old mutableCopy] : [NSMutableDictionary dictionary];
   for (NSInteger i = 0; i < keys.count; i++) entry[keys[i]] = ((NSTextField *)fields[i]).stringValue ?: @"";
+  entry[@"modelCategory"] = self.dialogAIModelCategoryPopup.selectedItem.representedObject ?: @"text";
   if (![entry[@"name"] length]) { [self showToast:@"名称不能为空"]; return; }
   if (![entry[@"endpoint"] length]) {
     NSDictionary *preset = [self aiPresetForName:entry[@"name"]];
@@ -10295,7 +10336,7 @@ static BOOL ValidGroupName(NSString *raw) {
       NSString *text = @"";
       if ([ident isEqualToString:@"ainame"]) text = e[@"name"] ?: @"";
       else if ([ident isEqualToString:@"endpoint"]) text = e[@"endpoint"] ?: @"";
-      else if ([ident isEqualToString:@"note"]) text = e[@"note"] ?: @"";
+      else if ([ident isEqualToString:@"note"]) text = [NSString stringWithFormat:@"[%@] %@", [self aiModelCategoryTitle:[self aiModelCategoryKey:e]], e[@"note"] ?: @""];
       NSTextField *l = [self label:text size:11 bold:([ident isEqualToString:@"ainame"]) color:nil];
       l.toolTip = text;
       l.lineBreakMode = NSLineBreakByTruncatingMiddle;
@@ -16677,9 +16718,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self loadAIEntries];
   [self.translationProviderPopup removeAllItems];
   NSMutableArray *valid = [NSMutableArray array];
-  for (NSDictionary *e in self.aiEntries) if ([e[@"api"] length]) [valid addObject:e];
+  for (NSDictionary *e in self.aiEntries) if ([e[@"api"] length] && [[self aiModelCategoryKey:e] isEqualToString:@"text"]) [valid addObject:e];
   if (!valid.count) {
-    [self.translationProviderPopup addItemWithTitle:@"请先在 AI 管理中添加服务"];
+    [self.translationProviderPopup addItemWithTitle:@"请先在 AI 管理设置文本模型"];
     self.translationProviderPopup.enabled = NO;
     self.translationStatus.stringValue = @"没有可用的 AI 服务，请先在 AI 管理中填写 API Key";
     return;
@@ -21364,10 +21405,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self hydrateAIKeys];
   for (NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++) {
     NSDictionary *e = self.aiEntries[i];
+    if (![[self aiModelCategoryKey:e] isEqualToString:@"text"]) continue;
     [self.aiAssistantServicePopup addItemWithTitle:e[@"name"] ?: @"未命名"];
     self.aiAssistantServicePopup.lastItem.representedObject = @(i);
   }
-  if (self.aiAssistantServicePopup.numberOfItems) { [self.aiAssistantServicePopup selectItemAtIndex:0]; [self aiAssistantServiceChanged:nil]; }
+  if (!self.aiAssistantServicePopup.numberOfItems) {
+    [self.aiAssistantServicePopup addItemWithTitle:@"请先在 AI 管理设置文本模型"];
+    self.aiAssistantServicePopup.enabled = NO;
+    self.aiAssistantStatus.stringValue = @"没有文本模型，请到 AI 管理把某个服务分类设为「文本」";
+  } else {
+    self.aiAssistantServicePopup.enabled = YES;
+    [self.aiAssistantServicePopup selectItemAtIndex:0]; [self aiAssistantServiceChanged:nil];
+  }
 }
 
 - (void)fetchAIModelsForAssistant:(id)sender {
@@ -21422,10 +21471,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.aiVideoServicePopup removeAllItems];
   for (NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++) {
     NSDictionary *e = self.aiEntries[i];
+    if (![[self aiModelCategoryKey:e] isEqualToString:@"video"]) continue;
     [self.aiVideoServicePopup addItemWithTitle:e[@"name"] ?: @"未命名"];
     self.aiVideoServicePopup.lastItem.representedObject = @(i);
   }
-  if (self.aiVideoServicePopup.numberOfItems) { [self.aiVideoServicePopup selectItemAtIndex:0]; [self aiVideoServiceChanged:nil]; }
+  if (!self.aiVideoServicePopup.numberOfItems) {
+    [self.aiVideoServicePopup addItemWithTitle:@"请先在 AI 管理设置视频模型"];
+    self.aiVideoServicePopup.enabled = NO;
+    self.aiVideoStatus.stringValue = @"没有视频模型，请把支持视频的服务分类设为「视频」";
+  } else {
+    self.aiVideoServicePopup.enabled = YES;
+    [self.aiVideoServicePopup selectItemAtIndex:0]; [self aiVideoServiceChanged:nil];
+  }
 }
 
 - (void)aiVideoServiceChanged:(id)sender {
@@ -21800,10 +21857,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.aiVisionServicePopup removeAllItems];
   for (NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++) {
     NSDictionary *e=self.aiEntries[i];
+    if (![[self aiModelCategoryKey:e] isEqualToString:@"vision"]) continue;
     [self.aiVisionServicePopup addItemWithTitle:e[@"name"] ?: @"未命名"];
     self.aiVisionServicePopup.lastItem.representedObject=@(i);
   }
-  if (self.aiVisionServicePopup.numberOfItems) { [self.aiVisionServicePopup selectItemAtIndex:0]; [self aiVisionServiceChanged:nil]; }
+  if (!self.aiVisionServicePopup.numberOfItems) {
+    [self.aiVisionServicePopup addItemWithTitle:@"请先在 AI 管理设置视觉模型"];
+    self.aiVisionServicePopup.enabled=NO;
+    self.aiVisionStatus.stringValue=@"没有视觉模型，请把多模态服务的分类设为「视觉」";
+  } else {
+    self.aiVisionServicePopup.enabled=YES;
+    [self.aiVisionServicePopup selectItemAtIndex:0]; [self aiVisionServiceChanged:nil];
+  }
 }
 
 - (void)aiVisionServiceChanged:(id)sender {
@@ -22037,10 +22102,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.aiImageServicePopup removeAllItems];
   for (NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++) {
     NSDictionary *e = self.aiEntries[i];
+    if (![[self aiModelCategoryKey:e] isEqualToString:@"image"]) continue;
     [self.aiImageServicePopup addItemWithTitle:e[@"name"] ?: @"未命名"];
     self.aiImageServicePopup.lastItem.representedObject = @(i);
   }
-  if (self.aiImageServicePopup.numberOfItems) { [self.aiImageServicePopup selectItemAtIndex:0]; [self aiImageServiceChanged:nil]; }
+  if (!self.aiImageServicePopup.numberOfItems) {
+    [self.aiImageServicePopup addItemWithTitle:@"请先在 AI 管理设置图片模型"];
+    self.aiImageServicePopup.enabled = NO;
+    self.aiImageStatus.stringValue = @"没有图片模型，请把服务分类设为「图片」";
+  } else {
+    self.aiImageServicePopup.enabled = YES;
+    [self.aiImageServicePopup selectItemAtIndex:0]; [self aiImageServiceChanged:nil];
+  }
 }
 
 - (BOOL)aiServiceName:(NSString *)name containsAny:(NSArray *)words {
@@ -22435,7 +22508,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!self.aiEntries) [self loadAIEntries];
   [self hydrateAIKeys];
   NSMutableArray *out = [NSMutableArray array];
-  for (NSDictionary *e in self.aiEntries) if ([e[@"api"] length]) [out addObject:e];
+  for (NSDictionary *e in self.aiEntries) if ([e[@"api"] length] && [[self aiModelCategoryKey:e] isEqualToString:@"speech"]) [out addObject:e];
   return out;
 }
 
@@ -22835,7 +22908,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!self.aiEntries) [self loadAIEntries];
   [self hydrateAIKeys];
   NSDictionary *entry = nil;
-  for (NSDictionary *e in self.aiEntries) if ([e[@"api"] length]) { entry = e; break; }
+  for (NSDictionary *e in self.aiEntries) if ([e[@"api"] length] && [[self aiModelCategoryKey:e] isEqualToString:@"text"]) { entry = e; break; }
   if (!entry) { self.meetingStatus.stringValue = @"请先在 AI 管理添加带 Key 的服务"; return; }
   NSString *base = entry[@"apiBase"] ?: @"";
   while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length-1];
