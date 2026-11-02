@@ -18728,6 +18728,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)captureCameraChanged:(id)sender {
   NSString *uid = self.captureCameraPopup.selectedItem.representedObject ?: @"";
   [[NSUserDefaults standardUserDefaults] setObject:uid forKey:@"centerCaptureCameraID"];
+  if (uid.length) [self startCameraPreviewIfNeeded];
+  else [self stopCameraPreview];
 }
 
 - (void)stopCameraPreview {
@@ -19321,6 +19323,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (NSMenuItem *mi in self.capturePiPPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedPiP ?: @"br-medium"]) [self.capturePiPPopup selectItem:mi];
   NSInteger micGain = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
   for (NSMenuItem *mi in self.captureMicGainPopup.itemArray) if ([mi.representedObject integerValue] == micGain) [self.captureMicGainPopup selectItem:mi];
+  if (!self.captureRecording) {
+    NSString *cam = self.captureCameraPopup.selectedItem.representedObject ?: @"";
+    if (cam.length) [self startCameraPreviewIfNeeded]; else [self stopCameraPreview];
+  }
   if (self.suppressCaptureToolShow) {
     [self.captureWindow orderOut:nil];
   } else {
@@ -19331,7 +19337,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)openCaptureFolder:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self captureDirectory]]]; }
-- (void)closeCaptureTool:(id)sender { [self stopMicLevelMeter]; [self.captureWindow orderOut:nil]; }
+- (void)closeCaptureTool:(id)sender { [self stopMicLevelMeter]; if (!self.captureRecording) [self stopCameraPreview]; [self.captureWindow orderOut:nil]; }
 
 - (void)runScreenshotArgs:(NSArray *)args path:(NSString *)path {
   NSTask *t = [[NSTask alloc] init];
