@@ -18079,12 +18079,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.translationSourceView.delegate = self;
     self.translationResultView = [self translationTextViewAtFrame:NSMakeRect(424, 140, 372, 276)];
 
-    NSArray *symbols = @[@"doc.badge.plus", @"doc.on.doc", @"square.and.arrow.down", @"keyboard", @"text.book.closed"];
-    NSArray *tips = @[@"选择文档", @"复制译文", @"保存译文", @"快捷键设置", @"术语表"];
-    NSArray *details = @[@"支持 txt / md / pdf / docx / 图片", @"复制右侧译文到剪贴板", @"保存译文为 txt 文件", @"设置截图、划词、翻译的快捷键", @"添加专有名词和固定译法，每行「原文=译文」"];
-    NSArray *tSels = @[@"translationChooseDocument:", @"translationCopy:", @"translationSave:", @"openShortcutSettings:", @"showTranslationGlossary:"];
-    CGFloat txs[5] = {560, 604, 648, 692, 734};
-    for (NSInteger i = 0; i < 5; i++) {
+    NSArray *symbols = @[@"doc.badge.plus", @"doc.on.doc", @"square.and.arrow.down", @"keyboard", @"text.book.closed", @"trash"];
+    NSArray *tips = @[@"选择文档", @"复制译文", @"保存译文", @"快捷键设置", @"术语表", @"清空原文"];
+    NSArray *details = @[@"支持 txt / md / pdf / docx / 图片", @"复制右侧译文到剪贴板", @"保存译文为 txt 文件", @"设置截图、划词、翻译的快捷键", @"添加专有名词和固定译法，每行「原文=译文」", @"清空左侧原文输入框"];
+    NSArray *tSels = @[@"translationChooseDocument:", @"translationCopy:", @"translationSave:", @"openShortcutSettings:", @"showTranslationGlossary:", @"clearTranslationInput:"];
+    CGFloat txs[6] = {560, 604, 648, 692, 734, 778};
+    for (NSInteger i = 0; i < 6; i++) {
       ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(txs[i], 512, 38, 34)];
       b.title = @"";
       b.image = [NSImage imageWithSystemSymbolName:symbols[i] accessibilityDescription:tips[i]];
@@ -18960,6 +18960,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [self confirmTranslateText:text origin:@"截图"];
     }];
   });
+}
+
+- (void)clearTranslationInput:(id)sender {
+  self.translationSourceView.string = @"";
+  [self.translationSourceView.window makeFirstResponder:self.translationSourceView];
 }
 
 - (void)translationChooseDocument:(id)sender {
