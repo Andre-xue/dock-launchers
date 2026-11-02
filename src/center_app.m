@@ -11462,6 +11462,21 @@ static BOOL ValidGroupName(NSString *raw) {
   [self promptApplySceneAtIndex:self.scenePopup.indexOfSelectedItem];
 }
 
+- (void)reloadScenePopups {
+  if (self.scenePopup) {
+    NSString *cur = self.scenePopup.titleOfSelectedItem;
+    [self.scenePopup removeAllItems];
+    for (NSDictionary *sc in self.scenes) [self.scenePopup addItemWithTitle:sc[@"name"] ?: @""];
+    if (cur.length) [self.scenePopup selectItemWithTitle:cur];
+  }
+  if (self.quickScenePopup) {
+    NSString *cur = self.quickScenePopup.titleOfSelectedItem;
+    [self.quickScenePopup removeAllItems];
+    for (NSDictionary *sc in self.scenes) [self.quickScenePopup addItemWithTitle:sc[@"name"] ?: @""];
+    if (cur.length) [self.quickScenePopup selectItemWithTitle:cur];
+  }
+}
+
 - (BOOL)promptApplySceneAtIndex:(NSInteger)idx {
   if (idx < 0 || idx >= (NSInteger)self.scenes.count) return NO;
   [self loadScenes];
@@ -11471,20 +11486,26 @@ static BOOL ValidGroupName(NSString *raw) {
   if (!installed.count) { [self showToast:@"没有已安装的分组"]; return NO; }
   NSMutableArray *checks = [NSMutableArray array];
   NSAlert *a = [[NSAlert alloc] init];
-  a.messageText = [NSString stringWithFormat:@"应用场景「%@」", scene[@"name"] ?: @""];
+  a.messageText = @"自定义场景并应用";
   NSDictionary *space = DLActiveSpaceInfo();
-  a.informativeText = [NSString stringWithFormat:@"当前桌面：%@\n勾选这个场景要显示的分组，确认后会应用到当前桌面并记住绑定。",
+  a.informativeText = [NSString stringWithFormat:@"当前桌面：%@\n输入场景名称、勾选要显示的分组；确认后会保存为独立场景并绑定到当前桌面。",
                        space ? [NSString stringWithFormat:@"桌面 %@", space[@"index"] ?: @""] : @"当前桌面"];
-  [a addButtonWithTitle:@"应用到此桌面"];
+  [a addButtonWithTitle:@"保存并应用"];
   [a addButtonWithTitle:@"取消"];
-  CGFloat boxH = MIN(300, installed.count * 32 + 16);
-  NSView *box = [[NSView alloc] initWithFrame:NSMakeRect(0,0,460,boxH)];
+  CGFloat contentH = installed.count * 32 + 50;
+  NSView *box = [[NSView alloc] initWithFrame:NSMakeRect(0,0,460,contentH)];
+  NSTextField *nameLabel = [self label:@"场景名称" size:11 bold:YES color:nil];
+  nameLabel.frame = NSMakeRect(10, contentH - 25, 60, 18); [box addSubview:nameLabel];
+  NSTextField *nameField = [[NSTextField alloc] initWithFrame:NSMakeRect(76, contentH - 31, 370, 26)];
+  nameField.placeholderString = @"例如：聊天、工作、游戏";
+  nameField.stringValue = scene[@"name"] ?: @"";
+  [box addSubview:nameField];
   BOOL all = [self sceneIsAll:scene];
   NSArray *selected = scene[@"groups"] ?: @[];
   for (NSInteger i = 0; i < (NSInteger)installed.count; i++) {
     NSString *name = installed[i];
     NSButton *cb = [NSButton checkboxWithTitle:name target:nil action:nil];
-    cb.frame = NSMakeRect(10, boxH - 32 - i*32, 430, 24);
+    cb.frame = NSMakeRect(10, contentH - 82 - i*32, 430, 24);
     cb.state = (all || [selected containsObject:name]) ? NSControlStateValueOn : NSControlStateValueOff;
     cb.tag = i;
     [box addSubview:cb];
@@ -11492,14 +11513,41 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   a.accessoryView = box;
   if ([a runModal] != NSAlertFirstButtonReturn) return NO;
+  NSString *newName = [nameField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!newName.length) {
+    [self showToast:@"场景名称不能为空"];
+    return NO;
+  }
   NSMutableArray *chosen = [NSMutableArray array];
   for (NSButton *cb in checks) if (cb.state == NSControlStateValueOn && cb.tag >= 0 && cb.tag < (NSInteger)installed.count) [chosen addObject:installed[cb.tag]];
   NSMutableDictionary *updated = [scene mutableCopy];
+  updated[@"name"] = newName;
   if (chosen.count == installed.count) { updated[@"all"] = @YES; updated[@"groups"] = @[]; }
   else { updated[@"all"] = @NO; updated[@"groups"] = chosen; }
-  self.scenes[idx] = updated;
+  NSInteger targetIdx = idx;
+  NSString *oldName = scene[@"name"] ?: @"";
+  if (![newName isEqualToString:oldName]) {
+    NSInteger existing = NSNotFound;
+    for (NSInteger i = 0; i < (NSInteger)self.scenes.count; i++) if ([self.scenes[i][@"name"] ?: @"" isEqualToString:newName]) { existing = i; break; }
+    if (existing != NSNotFound) targetIdx = existing;
+    else targetIdx = self.scenes.count;
+    // 清除旧场景的桌面绑定，避免同一个桌面残留两个场景
+    NSMutableDictionary *oldScene = [self.scenes[idx] mutableCopy];
+    [oldScene removeObjectForKey:@"spaceID"];
+    [oldScene removeObjectForKey:@"spaceIndex"];
+    [oldScene removeObjectForKey:@"spaceDisplay"];
+    self.scenes[idx] = oldScene;
+    if (existing != NSNotFound) self.scenes[targetIdx] = updated;
+    else [self.scenes addObject:updated];
+  } else {
+    self.scenes[idx] = updated;
+  }
   [self saveScenes];
-  [self applySceneAtIndex:idx];
+  [self reloadScenePopups];
+  if (self.scenePopup) [self.scenePopup selectItemAtIndex:targetIdx];
+  if (self.quickScenePopup) [self.quickScenePopup selectItemAtIndex:targetIdx];
+  [self applySceneAtIndex:targetIdx];
+  [self reloadSceneChecks];
   return YES;
 }
 
