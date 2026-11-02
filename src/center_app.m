@@ -1128,6 +1128,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) id allShortcutMonitor;
 @property NSInteger allShortcutRecordingID;
 @property (strong) NSWindow *shortcutSettingsWindow;
+@property (strong) NSWindow *diagnosticsWindow;
+@property (strong) NSMutableDictionary *diagnosticsLabels;
 @property (strong) NSWindow *groupShortcutWindow;
 @property (strong) NSMutableArray *groupShortcutButtons;
 @property (strong) id groupShortcutMonitor;
@@ -15653,6 +15655,92 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self applyPinLook:b pinned:pinned];
 }
 
+- (NSString *)diagnosticsStatusForKind:(NSString *)kind {
+  if ([kind isEqualToString:@"screen"]) return CGPreflightScreenCaptureAccess() ? @"已授权" : @"未授权 / 需重启应用";
+  if ([kind isEqualToString:@"mic"] || [kind isEqualToString:@"camera"]) {
+    AVAuthorizationStatus st = [AVCaptureDevice authorizationStatusForMediaType:[kind isEqualToString:@"mic"] ? AVMediaTypeAudio : AVMediaTypeVideo];
+    if (st == AVAuthorizationStatusAuthorized) return @"已授权";
+    if (st == AVAuthorizationStatusDenied) return @"已拒绝";
+    if (st == AVAuthorizationStatusRestricted) return @"受限制";
+    return @"未请求";
+  }
+  if ([kind isEqualToString:@"accessibility"]) return AXIsProcessTrusted() ? @"已授权" : @"未授权";
+  if ([kind isEqualToString:@"automation"]) return @"请在系统设置查看";
+  return @"—";
+}
+
+- (void)refreshDiagnostics {
+  if (!self.diagnosticsWindow) return;
+  NSArray *kinds = @[@"screen", @"mic", @"camera", @"accessibility", @"automation"];
+  for (NSString *kind in kinds) {
+    NSTextField *lab = self.diagnosticsLabels[kind];
+    if (!lab) continue;
+    NSString *st = [self diagnosticsStatusForKind:kind];
+    lab.stringValue = st;
+    lab.textColor = [st hasPrefix:@"已"] || [st containsString:@"允许"] ? [NSColor systemGreenColor] : ([st containsString:@"拒绝"] || [st containsString:@"未授权"] ? [NSColor systemRedColor] : [NSColor secondaryLabelColor]);
+  }
+  NSTextField *disk = self.diagnosticsLabels[@"disk"];
+  NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:NULL];
+  unsigned long long free = [attrs[NSFileSystemFreeSize] unsignedLongLongValue];
+  if (disk) disk.stringValue = free > 0 ? [NSString stringWithFormat:@"可用 %.1f GB", free / 1073741824.0] : @"—";
+}
+
+- (void)openPrivacyPaneFromDiagnostics:(NSButton *)sender {
+  NSArray *urls = @[@"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                    @"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+                    @"x-apple.systempreferences:com.apple.preference.security?Privacy_Camera",
+                    @"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+                    @"x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"];
+  NSInteger idx = sender.tag;
+  if (idx >= 0 && idx < (NSInteger)urls.count) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:urls[idx]]];
+}
+
+- (void)openDiagnosticsWindow:(id)sender {
+  if (!self.diagnosticsWindow) {
+    self.diagnosticsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,440) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.diagnosticsWindow.title = @"权限与诊断";
+    self.diagnosticsWindow.releasedWhenClosed = NO;
+    NSView *cv = self.diagnosticsWindow.contentView;
+    NSTextField *t = [self label:@"权限与诊断" size:18 bold:YES color:nil];
+    t.frame=NSMakeRect(24,396,260,24); [cv addSubview:t];
+    NSTextField *h = [self label:@"录制失败时先检查这里；修改权限后可能需要重启应用" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame=NSMakeRect(24,374,500,18); [cv addSubview:h];
+    self.diagnosticsLabels = [NSMutableDictionary dictionary];
+    NSArray *rows = @[
+      @{@"kind":@"screen",@"title":@"屏幕录制",@"desc":@"录屏和截图",@"url":@"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"},
+      @{@"kind":@"mic",@"title":@"麦克风",@"desc":@"录制系统/麦克风声音",@"url":@"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"},
+      @{@"kind":@"camera",@"title":@"摄像头",@"desc":@"摄像头画中画",@"url":@"x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"},
+      @{@"kind":@"accessibility",@"title":@"辅助功能",@"desc":@"窗口布局与自动化",@"url":@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"},
+      @{@"kind":@"automation",@"title":@"自动化",@"desc":@"控制其他应用",@"url":@"x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"}
+    ];
+    for (NSInteger i = 0; i < (NSInteger)rows.count; i++) {
+      NSDictionary *r = rows[i];
+      CGFloat y = 320 - i * 54;
+      NSTextField *name = [self label:r[@"title"] size:13 bold:YES color:nil];
+      name.frame=NSMakeRect(24,y+12,140,20); [cv addSubview:name];
+      NSTextField *desc = [self label:r[@"desc"] size:10 bold:NO color:[NSColor secondaryLabelColor]];
+      desc.frame=NSMakeRect(24,y-8,260,16); [cv addSubview:desc];
+      NSTextField *st = [self label:@"" size:12 bold:YES color:[NSColor secondaryLabelColor]];
+      st.frame=NSMakeRect(300,y+10,160,20); [cv addSubview:st];
+      self.diagnosticsLabels[r[@"kind"]] = st;
+      ColorHoverButton *btn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(440,y+4,92,30)];
+      btn.title=@"打开设置"; btn.hoverColor=[NSColor systemBlueColor]; btn.target=self;
+      btn.action=@selector(openPrivacyPaneFromDiagnostics:); btn.tag=i;
+      [btn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:btn];
+    }
+    NSTextField *disk = [self label:@"" size:11 bold:YES color:[NSColor labelColor]];
+    disk.frame=NSMakeRect(24,28,300,18); [cv addSubview:disk];
+    self.diagnosticsLabels[@"disk"] = disk;
+    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(360,22,90,30)];
+    refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemTealColor]; refresh.target=self; refresh.action=@selector(refreshDiagnostics);
+    [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    [self.diagnosticsWindow center];
+  }
+  [self refreshDiagnostics];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.diagnosticsWindow makeKeyAndOrderFront:nil];
+}
+
 - (void)showTranslationWindow:(id)sender {
   if (!self.aiEntries) [self loadAIEntries];
   [self hydrateAIKeys];
@@ -15991,6 +16079,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3025,@"cat":@1,@"title":@"应用内快捷键",@"desc":@"控制台内快捷键",@"sel":@"showAppShortcutSettings:"},
     @{@"id":@3026,@"cat":@1,@"title":@"文件搜索",@"desc":@"搜索文件和文件夹",@"sel":@"showFileSearch:"},
     @{@"id":@3027,@"cat":@1,@"title":@"颜色吸管",@"desc":@"拾取屏幕颜色",@"sel":@"showColorSampler:"},
+    @{@"id":@3028,@"cat":@1,@"title":@"权限与诊断",@"desc":@"检查录制相关权限",@"sel":@"openDiagnosticsWindow:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -16855,6 +16944,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   [out addObject:@{@"title": @"打开截图 / 录屏", @"subtitle": @"录制面板和更多设置", @"type": @"录制", @"tool": @"recordpanel", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"camera.viewfinder" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"打开最近录像", @"subtitle": @"显示最新录屏文件", @"type": @"录制", @"tool": @"recordrecent", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"film" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"权限与诊断", @"subtitle": @"检查录制、摄像头、麦克风权限", @"type": @"工具", @"tool": @"diagnostics", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"stethoscope" accessibilityDescription:nil] ?: recIcon}];
   NSArray *pages = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
   NSArray *pageIcons = @[@"chart.line.uptrend.xyaxis", @"square.grid.2x2", @"sparkles", @"externaldrive", @"trash", @"gearshape"];
   for (NSInteger i = 0; i < pages.count; i++) {
@@ -16969,6 +17059,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"color"]) [self showColorSampler:nil];
     else if ([tool isEqualToString:@"filesearch"]) [self showFileSearch:nil];
     else if ([tool isEqualToString:@"capture"]) [self showCaptureTool:nil];
+    else if ([tool isEqualToString:@"diagnostics"]) [self openDiagnosticsWindow:nil];
     else if ([tool isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
