@@ -19508,7 +19508,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     url = base.length ? [base stringByAppendingString:@"/videos/generations"] : @"";
     model = e[@"videoModel"] ?: @"";
   }
-  self.aiVideoURLField.stringValue = url;
+  self.aiVideoURLField.stringValue = e[@"videoAPI"] ?: url;
   self.aiVideoModelField.stringValue = model;
 }
 
@@ -19569,7 +19569,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *url=self.aiVideoURLField.stringValue;
   NSString *model=self.aiVideoModelField.stringValue;
   if (!key.length || !prompt.length || !url.length || !model.length) { self.aiVideoStatus.stringValue=@"请填写 API Key、提示词、地址和模型"; return; }
-  NSMutableDictionary *entry=[e mutableCopy]; entry[@"videoModel"]=model; self.aiEntries[idx]=entry; [self saveAIEntries];
+  NSMutableDictionary *entry=[e mutableCopy]; entry[@"videoModel"]=model; entry[@"videoAPI"]=url; self.aiEntries[idx]=entry; [self saveAIEntries];
   BOOL ark = [url containsString:@"/contents/generations/tasks"];
   NSDictionary *body = ark ? @{@"model":model,@"content":@[@{@"type":@"text",@"text":prompt}]} : @{@"model":model,@"prompt":prompt,@"duration":@([self.aiVideoDurationPopup.titleOfSelectedItem integerValue])};
   NSData *data=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
@@ -19686,7 +19686,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if ([name containsString:@"openai"] || [name containsString:@"chatgpt"]) model = @"gpt-image-1";
   else if ([name containsString:@"siliconflow"] || [name containsString:@"硅基流动"]) model = @"black-forest-labs/FLUX.1-schnell";
   else if ([name containsString:@"豆包"] || [name containsString:@"方舟"] || [name containsString:@"volcengine"] || [name containsString:@"doubao"]) model = @"doubao-seedream-3-0-t2i-250415";
-  self.aiImageURLField.stringValue = base.length ? [base stringByAppendingString:@"/images/generations"] : @"";
+  self.aiImageURLField.stringValue = e[@"imageAPI"] ?: (base.length ? [base stringByAppendingString:@"/images/generations"] : @"");
   self.aiImageModelField.stringValue = e[@"imageModel"] ?: model;
 }
 
@@ -19766,7 +19766,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *url=self.aiImageURLField.stringValue;
   NSString *model=self.aiImageModelField.stringValue;
   if (!key.length || !prompt.length || !url.length || !model.length) { self.aiImageStatus.stringValue=@"请填写 API Key、提示词、地址和模型"; return; }
-  NSMutableDictionary *entry=[e mutableCopy]; entry[@"imageModel"]=model; self.aiEntries[idx]=entry; [self saveAIEntries];
+  NSMutableDictionary *entry=[e mutableCopy]; entry[@"imageModel"]=model; entry[@"imageAPI"]=url; self.aiEntries[idx]=entry; [self saveAIEntries];
   NSDictionary *body=@{@"model":model,@"prompt":prompt,@"n":@1,@"size":self.aiImageSizePopup.titleOfSelectedItem ?: @"1024x1024",@"response_format":@"url"};
   NSData *data=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
   NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
