@@ -30,6 +30,7 @@ typedef void (*DLMRSendFn)(unsigned int command, NSDictionary *options);
 #import <AudioToolbox/AudioToolbox.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <Security/Security.h>
+#import <LocalAuthentication/LocalAuthentication.h>
 #import <CommonCrypto/CommonDigest.h>
 #include <notify.h>
 
@@ -1300,6 +1301,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSButton *pwLaunchLockCheck;
 @property (strong) NSTextField *pwCurrentField, *pwNewField, *pwConfirmField;
 @property (strong) NSTextField *pwStatusLabel;
+@property (strong) NSButton *pwTouchIDCheck;
 @property (strong) NSMutableArray *appShortcuts;
 @property (strong) NSWindow *appShortcutWindow;
 @property (strong) NSTableView *appShortcutTable;
@@ -4110,17 +4112,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 
 - (void)liveAIBalanceClicked:(NSButton *)b {
   NSInteger idx = b.tag;
-  if (![self hasAppPassword]) {
-    NSAlert *a = [[NSAlert alloc] init];
-    a.messageText = @"需要先设置应用密码";
-    a.informativeText = @"查询 AI 余量需要应用密码保护，不会使用系统钥匙串密码。";
-    [a addButtonWithTitle:@"去设置"];
-    [a addButtonWithTitle:@"取消"];
-    a.window.level = NSFloatingWindowLevel;
-    if ([a runModal] == NSAlertFirstButtonReturn) [self showPasswordSettings:nil];
-    return;
-  }
-  if (![self promptForAppPassword]) return;
+  if (![self requestAdminAuthentication]) return;
   if (!self.aiEntries) [self loadAIEntries];
   [self hydrateAIKeys];
   if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
@@ -7123,6 +7115,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (BOOL)promptForAppPassword {
+  if ([self touchIDEnabled] && [self biometricAuthAvailable] && [self authenticateWithBiometrics]) return YES;
   NSSecureTextField *field = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(0,0,260,26)];
   field.placeholderString = @"应用密码";
   NSAlert *a = [[NSAlert alloc] init];
@@ -7139,11 +7132,46 @@ static BOOL ValidGroupName(NSString *raw) {
   return NO;
 }
 
+- (BOOL)biometricAuthAvailable {
+  LAContext *ctx = [[LAContext alloc] init];
+  NSError *err = nil;
+  return [ctx canEvaluatePolicy:LAPolicyDeviceOwnerAuthenticationWithBiometrics error:&err];
+}
+
+- (BOOL)touchIDEnabled {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  id v = [ud objectForKey:@"centerUseTouchID"];
+  return v ? [v boolValue] : [self biometricAuthAvailable];
+}
+
+- (BOOL)authenticateWithBiometrics {
+  LAContext *ctx = [[LAContext alloc] init];
+  NSError *err = nil;
+  if (![ctx canEvaluatePolicy:LAPolicyDeviceOwnerAuthenticationWithBiometrics error:&err]) return NO;
+  __block BOOL done = NO, success = NO;
+  [ctx evaluatePolicy:LAPolicyDeviceOwnerAuthenticationWithBiometrics localizedReason:@"验证 DockLaunchers 敏感操作" reply:^(BOOL ok, NSError *error) {
+    success = ok;
+    done = YES;
+  }];
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:60];
+  while (!done && [deadline timeIntervalSinceNow] > 0) {
+    @autoreleasepool {
+      [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+  }
+  return success;
+}
+
 - (BOOL)requestAdminAuthentication {
-  if (![self hasAppPassword]) {
+  BOOL hasPassword = [self hasAppPassword];
+  if ([self touchIDEnabled] && [self biometricAuthAvailable]) {
+    if ([self authenticateWithBiometrics]) return YES;
+    if (!hasPassword) { [self showToast:@"指纹验证未通过，且尚未设置应用密码"]; return NO; }
+  }
+  if (!hasPassword) {
     NSAlert *a = [[NSAlert alloc] init];
-    a.messageText = @"尚未设置应用密码";
-    a.informativeText = @"敏感操作需要先在「设置 → 应用密码」中设置自定义密码；不会使用系统密码。";
+    a.messageText = @"尚未设置验证方式";
+    a.informativeText = @"敏感操作需要 Touch ID 或自定义应用密码；不会使用系统密码。";
     [a addButtonWithTitle:@"去设置"];
     [a addButtonWithTitle:@"取消"];
     a.window.level = NSFloatingWindowLevel;
@@ -7184,8 +7212,13 @@ static BOOL ValidGroupName(NSString *raw) {
     self.pwStatusLabel.frame = NSMakeRect(24, 100, 420, 18); [cv addSubview:self.pwStatusLabel];
     self.pwLaunchLockCheck = [NSButton checkboxWithTitle:@"启动 DockLaunchers 时要求输入应用密码" target:self action:@selector(launchLockChanged:)];
     self.pwLaunchLockCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerLaunchLock"] ? NSControlStateValueOn : NSControlStateValueOff;
-    self.pwLaunchLockCheck.frame = NSMakeRect(24, 72, 380, 20);
+    self.pwLaunchLockCheck.frame = NSMakeRect(24, 72, 250, 20);
     [cv addSubview:self.pwLaunchLockCheck];
+    self.pwTouchIDCheck = [NSButton checkboxWithTitle:@"Touch ID" target:self action:@selector(touchIDToggled:)];
+    self.pwTouchIDCheck.frame = NSMakeRect(280, 72, 160, 20);
+    self.pwTouchIDCheck.state = [self touchIDEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
+    if (![self biometricAuthAvailable]) { self.pwTouchIDCheck.enabled = NO; self.pwTouchIDCheck.toolTip = @"本机没有可用的 Touch ID"; }
+    [cv addSubview:self.pwTouchIDCheck];
     ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 30, 120, 32)];
     save.title = @"保存密码"; save.hoverColor = [NSColor systemGreenColor];
     save.target = self; save.action = @selector(saveAppPassword:);
@@ -7203,6 +7236,17 @@ static BOOL ValidGroupName(NSString *raw) {
   [NSApp activateIgnoringOtherApps:YES];
   [self.appPasswordWindow makeKeyAndOrderFront:nil];
   [self.appPasswordWindow orderFrontRegardless];
+}
+
+- (void)touchIDToggled:(NSButton *)sender {
+  if (sender.state == NSControlStateValueOn && ![self biometricAuthAvailable]) {
+    sender.state = NSControlStateValueOff;
+    [self showToast:@"本机没有可用的 Touch ID"];
+    return;
+  }
+  [[NSUserDefaults standardUserDefaults] setBool:sender.state == NSControlStateValueOn forKey:@"centerUseTouchID"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self showToast:sender.state == NSControlStateValueOn ? @"已启用 Touch ID 验证" : @"已关闭 Touch ID 验证"];
 }
 
 - (void)launchLockChanged:(NSButton *)sender {
@@ -15812,17 +15856,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)quickAIBalanceClicked:(NSButton *)b {
   NSInteger idx = b.tag;
-  if (![self hasAppPassword]) {
-    NSAlert *a = [[NSAlert alloc] init];
-    a.messageText = @"需要先设置应用密码";
-    a.informativeText = @"查询 AI 余量需要应用密码保护，不会使用系统钥匙串密码。";
-    [a addButtonWithTitle:@"去设置"];
-    [a addButtonWithTitle:@"取消"];
-    a.window.level = NSFloatingWindowLevel;
-    if ([a runModal] == NSAlertFirstButtonReturn) [self showPasswordSettings:nil];
-    return;
-  }
-  if (![self promptForAppPassword]) return;
+  if (![self requestAdminAuthentication]) return;
   if (!self.aiEntries) [self loadAIEntries];
   [self hydrateAIKeys];
   if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
