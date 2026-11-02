@@ -23249,14 +23249,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)updateStatusItemTitleCPU:(double)cpu memory:(double)mem gpu:(double)gpu netBps:(double)bps power:(NSString *)power {
-  self.statusItem.button.title = @"";
+  // 菜单栏图标标题由分组角标逻辑控制，不能被采样刷新清空
 }
 
 - (void)updateStatusMetricIcon {
   if (!self.statusItem.button) return;
   // 始终保留 DockLaunchers 原图标；指标选择只影响状态图标提示
-  NSImage *menuIcon = [NSImage imageWithSystemSymbolName:@"square.grid.2x2.fill" accessibilityDescription:@"DockLaunchers"];
-  menuIcon.template = YES;
+  NSImage *menuIcon = self.statusBaseImage ?: [self characterImage:20];
+  menuIcon.template = NO;
   self.statusItem.button.image = menuIcon;
   self.statusItem.button.imagePosition = NSImageLeft;
   self.statusItem.button.title = @"";
