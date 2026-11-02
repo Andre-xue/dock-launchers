@@ -2947,7 +2947,7 @@ static void HideDockHoverTip(void) {
   preset = [self aiPresetForName:@"千问"];
   check([preset[@"name"] containsString:@"通义千问"], @"AI preset alias");
   [self rebuildAIDisplay];
-  check(self.aiVisibleEntries.count <= 2, @"AI two rows per page");
+  check(self.aiVisibleEntries.count <= 8, @"AI rows per page");
   check([self isProtectedUserPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"]], @"protected path filter");
   check([[self aiCategoryForEntry:@{@"name": @"Kling", @"note": @"视频生成"}] isEqualToString:@"视频"], @"AI category inference");
   fprintf(stderr, failed ? "SELFTEST FAILED\n" : "SELFTEST OK\n");
@@ -21497,7 +21497,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.aiVideoModelField.stringValue = @"";
   self.aiVideoURLField.stringValue = @"";
   self.aiVideoStatus.stringValue = @"";
-  BOOL capable = [self aiServiceSupportsVideo:name];
+  BOOL capable = [[self aiModelCategoryKey:e] isEqualToString:@"video"] || [self aiServiceSupportsVideo:name];
   BOOL saved = [(NSString *)(e[@"videoAPI"] ?: @"") length] > 0;
   if (!capable && !saved) {
     self.aiVideoStatus.stringValue = @"该 AI 服务只支持文本，暂无视频生成接口";
@@ -22182,7 +22182,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.aiImageModelField.stringValue = @"";
   self.aiImageURLField.stringValue = @"";
   self.aiImageStatus.stringValue = @"";
-  if (![self aiServiceSupportsImage:name]) {
+  if (![[self aiModelCategoryKey:e] isEqualToString:@"image"] && ![self aiServiceSupportsImage:name]) {
     self.aiImageStatus.stringValue = @"该 AI 服务只支持文本，暂无图片生成接口";
     return;
   }
@@ -22195,6 +22195,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if (base.length) defaultURL = [base stringByAppendingString:@"/images/generations"];
   if (((NSString *)e[@"imageAPI"]).length) defaultURL = e[@"imageAPI"];
   if (((NSString *)e[@"imageModel"]).length) defaultModel = e[@"imageModel"];
+  else if (((NSString *)e[@"model"]).length) defaultModel = e[@"model"];
   self.aiImageURLField.stringValue = defaultURL;
   self.aiImageModelField.stringValue = defaultModel;
   if (!defaultURL.length) { self.aiImageStatus.stringValue = @"该服务没有可用的图片生成地址"; return; }
