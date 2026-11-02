@@ -17370,19 +17370,34 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self showAutomationRuleEditorWithRule:nil];
 }
 
+- (NSInteger)automationSelectedRow {
+  NSInteger row = self.automationTable.selectedRow;
+  if (row < 0) row = self.automationTable.clickedRow;
+  return row;
+}
+
 - (void)editAutomationRule:(id)sender {
-  NSInteger row = self.automationTable.clickedRow;
-  if (row < 0 || row >= (NSInteger)self.automationRules.count) return;
+  NSInteger row = [self automationSelectedRow];
+  if (row < 0 || row >= (NSInteger)self.automationRules.count) { [self showToast:@"请先选中一条规则"]; return; }
   self.automationEditingIndex = row;
   [self showAutomationRuleEditorWithRule:self.automationRules[row]];
 }
 
 - (void)deleteAutomationRule:(id)sender {
-  NSInteger row = self.automationTable.clickedRow;
-  if (row < 0 || row >= (NSInteger)self.automationRules.count) return;
+  NSInteger row = [self automationSelectedRow];
+  if (row < 0 || row >= (NSInteger)self.automationRules.count) { [self showToast:@"请先选中一条规则"]; return; }
+  NSDictionary *r = self.automationRules[row];
+  NSString *name = r[@"name"] ?: @"这条规则";
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"删除自动化规则";
+  a.informativeText = [NSString stringWithFormat:@"确定删除「%@」吗？", name];
+  [a addButtonWithTitle:@"删除"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
   [self.automationRules removeObjectAtIndex:row];
   [self saveAutomationRules];
   [self.automationTable reloadData];
+  [self showToast:@"规则已删除"];
 }
 
 - (void)addAutomationExamples:(id)sender {
