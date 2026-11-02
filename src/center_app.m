@@ -1070,6 +1070,33 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 - (void)contentSharingPickerStartDidFailWithError:(NSError *)error { [self finishWithError:error]; }
 @end
 
+@interface DLShelfDropView : NSView
+@property (copy) void (^onDrop)(NSArray<NSURL *> *urls);
+@end
+@implementation DLShelfDropView
+- (instancetype)initWithFrame:(NSRect)frameRect {
+  self = [super initWithFrame:frameRect];
+  if (self) {
+    [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    self.wantsLayer = YES;
+    self.layer.borderWidth = 1.5;
+    self.layer.borderColor = [NSColor controlAccentColor].CGColor;
+    self.layer.cornerRadius = 12;
+  }
+  return self;
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+  NSPasteboard *pb = sender.draggingPasteboard;
+  return [pb readObjectsForClasses:@[NSURL.class] options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}].count ? NSDragOperationCopy : NSDragOperationNone;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+  NSPasteboard *pb = sender.draggingPasteboard;
+  NSArray *urls = [pb readObjectsForClasses:@[NSURL.class] options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+  if (urls.count && self.onDrop) self.onDrop(urls);
+  return urls.count > 0;
+}
+@end
+
 @interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate, AVCaptureFileOutputRecordingDelegate>
 - (void)hideClipboardPreview;
 - (void)installClipboardHoverMonitor;
@@ -1129,6 +1156,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property NSInteger allShortcutRecordingID;
 @property (strong) NSWindow *shortcutSettingsWindow;
 @property (strong) NSWindow *diagnosticsWindow;
+@property (strong) NSWindow *shelfWindow;
+@property (strong) NSTableView *shelfTable;
+@property (strong) NSMutableArray<NSString *> *shelfPaths;
+@property (strong) DLShelfDropView *shelfDropView;
 @property (strong) NSMutableDictionary *diagnosticsLabels;
 @property (strong) NSWindow *groupShortcutWindow;
 @property (strong) NSMutableArray *groupShortcutButtons;
@@ -9209,6 +9240,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.shelfTable) return self.shelfPaths.count;
   if (tableView == self.dupTable) return self.dupItems.count;
   if (tableView == self.captureHistoryTable) return self.captureHistoryItems.count;
   if (tableView == self.groupPanelTable) return self.groupPanelItems.count;
@@ -9241,6 +9273,18 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.shelfTable) {
+    if (row < 0 || row >= (NSInteger)self.shelfPaths.count) return nil;
+    NSString *path = self.shelfPaths[row];
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
+    NSTextField *n = [self label:path.lastPathComponent size:11.5 bold:YES color:nil];
+    n.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    n.frame = NSMakeRect(6,17,col.width-12,18); [v addSubview:n];
+    NSTextField *d = [self label:path size:9 bold:NO color:[NSColor secondaryLabelColor]];
+    d.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    d.frame = NSMakeRect(6,3,col.width-12,14); [v addSubview:d];
+    return v;
+  }
   if (tableView == self.dupTable) {
     if (row < 0 || row >= (NSInteger)self.dupItems.count) return nil;
     NSDictionary *it = self.dupItems[row];
@@ -15741,6 +15785,129 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.diagnosticsWindow makeKeyAndOrderFront:nil];
 }
 
+- (void)loadShelfPaths {
+  NSArray *saved = [[NSUserDefaults standardUserDefaults] arrayForKey:@"centerShelfPaths"] ?: @[];
+  NSMutableArray *valid = [NSMutableArray array];
+  for (NSString *p in saved) if ([p isKindOfClass:NSString.class] && [[NSFileManager defaultManager] fileExistsAtPath:p] && ![valid containsObject:p]) [valid addObject:p];
+  self.shelfPaths = valid;
+}
+
+- (void)saveShelfPaths {
+  [[NSUserDefaults standardUserDefaults] setObject:self.shelfPaths ?: @[] forKey:@"centerShelfPaths"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (void)reloadShelfTable { [self.shelfTable reloadData]; }
+
+- (void)addShelfURLs:(NSArray<NSURL *> *)urls {
+  if (!self.shelfPaths) [self loadShelfPaths];
+  for (NSURL *u in urls) {
+    NSString *p = u.path;
+    if (p.length && ![self.shelfPaths containsObject:p]) [self.shelfPaths addObject:p];
+  }
+  [self saveShelfPaths];
+  [self reloadShelfTable];
+}
+
+- (NSArray<NSString *> *)selectedShelfPaths {
+  NSMutableArray *out = [NSMutableArray array];
+  NSIndexSet *rows = self.shelfTable.selectedRowIndexes;
+  [rows enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
+    if (idx < self.shelfPaths.count) [out addObject:self.shelfPaths[idx]];
+  }];
+  return out.count ? out : (self.shelfPaths.count ? @[self.shelfPaths.firstObject] : @[]);
+}
+
+- (void)addShelfFiles:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = YES; p.allowsMultipleSelection = YES;
+  if ([p runModal] == NSModalResponseOK) [self addShelfURLs:p.URLs];
+}
+
+- (void)openShelfFiles:(id)sender {
+  for (NSString *p in [self selectedShelfPaths]) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:p]];
+}
+
+- (void)revealShelfFiles:(id)sender {
+  NSArray *paths = [self selectedShelfPaths];
+  NSMutableArray *urls = [NSMutableArray array];
+  for (NSString *p in paths) [urls addObject:[NSURL fileURLWithPath:p]];
+  if (urls.count) [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:urls];
+}
+
+- (void)airdropShelfFiles:(id)sender {
+  NSArray *paths = [self selectedShelfPaths];
+  NSMutableArray *urls = [NSMutableArray array];
+  for (NSString *p in paths) if ([[NSFileManager defaultManager] fileExistsAtPath:p]) [urls addObject:[NSURL fileURLWithPath:p]];
+  if (!urls.count) return;
+  NSSharingService *svc = [NSSharingService sharingServiceNamed:NSSharingServiceNameSendViaAirDrop];
+  if ([svc canPerformWithItems:urls]) [svc performWithItems:urls];
+  else [self showToast:@"附近没有可用的 AirDrop 接收设备"];
+}
+
+- (void)removeShelfFiles:(id)sender {
+  NSIndexSet *rows = self.shelfTable.selectedRowIndexes;
+  if (!rows.count) return;
+  NSMutableArray *keep = [NSMutableArray array];
+  for (NSInteger i = 0; i < (NSInteger)self.shelfPaths.count; i++) if (![rows containsIndex:i]) [keep addObject:self.shelfPaths[i]];
+  self.shelfPaths = keep;
+  [self saveShelfPaths]; [self reloadShelfTable];
+}
+
+- (void)clearShelfFiles:(id)sender {
+  if (!self.shelfPaths.count) return;
+  self.shelfPaths = [NSMutableArray array];
+  [self saveShelfPaths]; [self reloadShelfTable];
+}
+
+- (void)openShelfFileRow:(id)sender {
+  NSInteger row = self.shelfTable.clickedRow;
+  if (row < 0) row = self.shelfTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.shelfPaths.count) return;
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.shelfPaths[row]]];
+}
+
+- (void)openShelfWindow:(id)sender {
+  if (!self.shelfWindow) {
+    self.shelfWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,520,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.shelfWindow.title = @"文件暂存架";
+    self.shelfWindow.releasedWhenClosed = NO;
+    NSView *cv = self.shelfWindow.contentView;
+    NSTextField *t = [self label:@"文件暂存架" size:18 bold:YES color:nil];
+    t.frame=NSMakeRect(24,518,300,24); [cv addSubview:t];
+    NSTextField *h = [self label:@"把文件拖到下方区域，或点「添加」；窗口关闭后仍然保留" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame=NSMakeRect(24,496,470,18); [cv addSubview:h];
+    self.shelfDropView = [[DLShelfDropView alloc] initWithFrame:NSMakeRect(20,384,480,100)];
+    __weak typeof(self) weakSelf = self;
+    self.shelfDropView.onDrop = ^(NSArray<NSURL *> *urls) { [weakSelf addShelfURLs:urls]; };
+    [cv addSubview:self.shelfDropView];
+    NSTextField *dropLabel = [self label:@"拖文件到这里" size:12 bold:YES color:[NSColor secondaryLabelColor]];
+    dropLabel.alignment=NSTextAlignmentCenter;
+    dropLabel.frame=NSMakeRect(20,424,480,20); [self.shelfDropView addSubview:dropLabel];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(20,80,480,292)];
+    sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.shelfTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"shelf"];
+    col.width=460; [self.shelfTable addTableColumn:col];
+    self.shelfTable.headerView=nil; self.shelfTable.rowHeight=34;
+    self.shelfTable.dataSource=self; self.shelfTable.delegate=self;
+    self.shelfTable.target=self; self.shelfTable.doubleAction=@selector(openShelfFileRow:);
+    sv.documentView=self.shelfTable; [cv addSubview:sv];
+    NSArray *titles = @[@"添加", @"打开", @"显示", @"AirDrop", @"移除", @"清空"];
+    NSArray *sels = @[@"addShelfFiles:", @"openShelfFiles:", @"revealShelfFiles:", @"airdropShelfFiles:", @"removeShelfFiles:", @"clearShelfFiles:"];
+    for (NSInteger i=0;i<6;i++) {
+      ColorHoverButton *b=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(20+i*80,30,72,32)];
+      b.title=titles[i]; b.hoverColor=i==5?[NSColor systemRedColor]:[NSColor systemBlueColor];
+      b.target=self; b.action=NSSelectorFromString(sels[i]);
+      [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:b];
+    }
+    [self.shelfWindow center];
+  }
+  [self loadShelfPaths]; [self reloadShelfTable];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.shelfWindow makeKeyAndOrderFront:nil];
+}
+
 - (void)showTranslationWindow:(id)sender {
   if (!self.aiEntries) [self loadAIEntries];
   [self hydrateAIKeys];
@@ -16080,6 +16247,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3026,@"cat":@1,@"title":@"文件搜索",@"desc":@"搜索文件和文件夹",@"sel":@"showFileSearch:"},
     @{@"id":@3027,@"cat":@1,@"title":@"颜色吸管",@"desc":@"拾取屏幕颜色",@"sel":@"showColorSampler:"},
     @{@"id":@3028,@"cat":@1,@"title":@"权限与诊断",@"desc":@"检查录制相关权限",@"sel":@"openDiagnosticsWindow:"},
+    @{@"id":@3029,@"cat":@1,@"title":@"文件暂存架",@"desc":@"拖入文件稍后处理",@"sel":@"openShelfWindow:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -16945,6 +17113,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"打开截图 / 录屏", @"subtitle": @"录制面板和更多设置", @"type": @"录制", @"tool": @"recordpanel", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"camera.viewfinder" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"打开最近录像", @"subtitle": @"显示最新录屏文件", @"type": @"录制", @"tool": @"recordrecent", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"film" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"权限与诊断", @"subtitle": @"检查录制、摄像头、麦克风权限", @"type": @"工具", @"tool": @"diagnostics", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"stethoscope" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"文件暂存架", @"subtitle": @"拖入文件，稍后统一处理", @"type": @"工具", @"tool": @"shelf", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"tray.full" accessibilityDescription:nil] ?: recIcon}];
   NSArray *pages = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
   NSArray *pageIcons = @[@"chart.line.uptrend.xyaxis", @"square.grid.2x2", @"sparkles", @"externaldrive", @"trash", @"gearshape"];
   for (NSInteger i = 0; i < pages.count; i++) {
@@ -17060,6 +17229,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"filesearch"]) [self showFileSearch:nil];
     else if ([tool isEqualToString:@"capture"]) [self showCaptureTool:nil];
     else if ([tool isEqualToString:@"diagnostics"]) [self openDiagnosticsWindow:nil];
+    else if ([tool isEqualToString:@"shelf"]) [self openShelfWindow:nil];
     else if ([tool isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
