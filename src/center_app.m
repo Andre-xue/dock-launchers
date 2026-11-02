@@ -1290,6 +1290,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSMutableSet *aiSelected;
 @property (strong) NSMutableSet *aiRevealedNames;
 @property (strong) NSMutableSet *aiRevealedQuotas;
+@property BOOL aiAuthSessionValid;
 @property (strong) NSWindow *playerChooserWindow;
 @property (strong) NSTableView *playerChooserTable;
 @property (strong) NSArray<NSURL *> *playerChooserApps;
@@ -3885,9 +3886,18 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   return [self hasAppPassword] || ([self touchIDEnabled] && [self biometricAuthAvailable]);
 }
 
+- (BOOL)ensureAISessionAuth {
+  if (self.aiAuthSessionValid) return YES;
+  if ([self requestAdminAuthentication]) {
+    self.aiAuthSessionValid = YES;
+    return YES;
+  }
+  return NO;
+}
+
 - (BOOL)ensureAIManagementAccess {
   if (![self aiManagementLockEnabled]) return YES;
-  if ([self hasAppPassword] || ([self touchIDEnabled] && [self biometricAuthAvailable])) return [self requestAdminAuthentication];
+  if ([self hasAppPassword] || ([self touchIDEnabled] && [self biometricAuthAvailable])) return [self ensureAISessionAuth];
   return YES;
 }
 
@@ -4210,7 +4220,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 
 - (void)liveAIBalanceClicked:(NSButton *)b {
   NSInteger idx = b.tag;
-  if (![self requestAdminAuthentication]) return;
+  if (![self ensureAISessionAuth]) return;
   if (!self.aiEntries) [self loadAIEntries];
   [self hydrateAIKeys];
   if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
@@ -7466,7 +7476,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *name = self.aiVisibleEntries[row][@"name"] ?: @"";
   if (!self.aiRevealedQuotas) self.aiRevealedQuotas = [NSMutableSet set];
   BOOL revealing = ![self.aiRevealedQuotas containsObject:name];
-  if (revealing && ![self requestAdminAuthentication]) return;
+  if (revealing && ![self ensureAISessionAuth]) return;
   if (!revealing) [self.aiRevealedQuotas removeObject:name];
   else [self.aiRevealedQuotas addObject:name];
   [self.aiTable reloadData];
@@ -16297,7 +16307,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)quickAIBalanceClicked:(NSButton *)b {
   NSInteger idx = b.tag;
-  if (![self requestAdminAuthentication]) return;
+  if (![self ensureAISessionAuth]) return;
   if (!self.aiEntries) [self loadAIEntries];
   [self hydrateAIKeys];
   if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
