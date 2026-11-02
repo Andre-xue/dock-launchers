@@ -14666,6 +14666,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
   else if ([action isEqualToString:@"colorsampler"]) [self showColorSampler:nil];
   else if ([action isEqualToString:@"filesearch"]) [self showFileSearch:nil];
+  else if ([action isEqualToString:@"recordrecent"]) [self openMostRecentRecording];
   else if ([action isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
   else if ([action isEqualToString:@"shelf"]) [self openShelfWindow:nil];
   else if ([action isEqualToString:@"aitext"]) [self openAIAssistant:nil];
@@ -15786,7 +15787,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       @[
         @{@"title": @"屏幕取色器", @"symbol": @"eyedropper", @"action": @"colorsampler"},
         @{@"title": @"文件搜索", @"symbol": @"doc.text.magnifyingglass", @"action": @"filesearch"},
-        @{@"title": @"截图历史", @"symbol": @"photo.stack", @"action": @"capturehistory"}
+        @{@"title": @"截图历史", @"symbol": @"photo.stack", @"action": @"capturehistory"},
+        @{@"title": @"打开最近录像", @"symbol": @"film", @"action": @"recordrecent"}
       ]
     ];
     NSInteger savedPage = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerRadialLastPage"];
