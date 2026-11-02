@@ -31,6 +31,7 @@ cat > "$OUT/Contents/Info.plist" <<'PL'
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>12.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>LSUIElement</key><true/>
 <key>NSAccessibilityUsageDescription</key><string>用于保存和恢复窗口布局。</string>
 <key>NSCameraUsageDescription</key>
   <string>录屏时显示前置摄像头画面。</string>

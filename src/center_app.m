@@ -1611,7 +1611,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSButton *menuBarCheck;
 @property (strong) NSPopUpButton *intervalPopup;
 @property (strong) NSPopUpButton *themePopup;
-@property (strong) NSButton *loginCheck;
+@property (strong) NSButton *loginCheck, *silentStartupCheck;
 // groups
 @property (strong) NSMutableArray<NSDictionary *> *groups;
 @property (strong) NSMutableSet<NSString *> *selectedGroups;
@@ -2948,6 +2948,17 @@ static void HideDockHoverTip(void) {
   return menu;
 }
 
+- (BOOL)silentStartupEnabled {
+  id v = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerSilentStartup"];
+  return v ? [v boolValue] : YES;
+}
+
+- (void)applicationWillFinishLaunching:(NSNotification *)note {
+  if (!getenv("DOCKLAUNCHERS_CENTER_SELFTEST")) {
+    [NSApp setActivationPolicy:[self silentStartupEnabled] ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular];
+  }
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
   // 单实例：避免重复 Dock 图标/菜单栏图标
   NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
@@ -3020,15 +3031,15 @@ static void HideDockHoverTip(void) {
     }
     return e;
   }];
-  // 确保控制台自己出现在 Dock，并刷新图标缓存（先删后加）
+  // 静默启动：不把控制台固定到 Dock，只维护分组图标
   if (!getenv("DOCKLAUNCHERS_CENTER_SKIP_DOCK")) {
     NSString *selfPath = [[NSBundle mainBundle] bundlePath];
     [self removeDockEntry:selfPath];
-    [self addDockEntry:selfPath label:@"DockLaunchers控制台"];
     [self ensureGroupDockEntries];
     [self repairGroupDockIconsIfNeeded];
     [self killDock];
   }
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")) {
     NSString *arg = [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")];
     NSMutableArray *names = [NSMutableArray array];
@@ -3306,7 +3317,8 @@ static void HideDockHoverTip(void) {
   BOOL autoSync = autoSyncVal ? [autoSyncVal boolValue] : YES;
   if (autoSync) [self startAutoSyncTimer];
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerFileActivity"]) [self startActivityRecorder];
-  [self showWindow:nil];
+  if ([self silentStartupEnabled]) [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+  else [self showWindow:nil];
   if (getenv("DOCKLAUNCHERS_CENTER_SECTION")) {
     [self showSection:atoi(getenv("DOCKLAUNCHERS_CENTER_SECTION"))];
   }
@@ -15220,9 +15232,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSView *tLogin = tileAt(0, 352);
   self.loginCheck = [NSButton checkboxWithTitle:@"开机自动启动" target:self action:@selector(toggleLoginItem:)];
   self.loginCheck.state = [[NSFileManager defaultManager] fileExistsAtPath:[self loginPlistPath]] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.loginCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
+  self.loginCheck.frame = NSMakeRect(12, 34, tileW - 24, 22);
   self.loginCheck.toolTip = @"登录 macOS 时自动启动控制台";
   [tLogin addSubview:self.loginCheck];
+  self.silentStartupCheck = [NSButton checkboxWithTitle:@"开机静默启动" target:self action:@selector(toggleSilentStartup:)];
+  self.silentStartupCheck.state = [self silentStartupEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.silentStartupCheck.frame = NSMakeRect(12, 8, tileW - 24, 22);
+  self.silentStartupCheck.toolTip = @"勾选后启动时不显示控制台窗口，也不显示 Dock 图标，只保留菜单栏";
+  [tLogin addSubview:self.silentStartupCheck];
 
   NSView *tAlert = tileAt(0, 278); tileLabel(tAlert, @"资源与余额提醒");
   ColorHoverButton *alertsBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
@@ -15466,6 +15483,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   t.launchPath = @"/bin/launchctl";
   t.arguments = @[@"unload", p];
   @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+}
+
+- (void)toggleSilentStartup:(NSButton *)sender {
+  BOOL on = sender.state == NSControlStateValueOn;
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerSilentStartup"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self showToast:on ? @"已开启开机静默启动（下次启动生效）" : @"已关闭开机静默启动"];
 }
 
 - (void)toggleLoginItem:(id)sender {
@@ -23276,7 +23300,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     [NSApplication sharedApplication];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     Method m1 = class_getInstanceMethod([NSAlert class], @selector(runModal));
     Method m2 = class_getInstanceMethod([NSAlert class], @selector(dl_runModalFront));
     if (m1 && m2) method_exchangeImplementations(m1, m2);
