@@ -14621,6 +14621,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self radialApplyPage];
 }
 
+- (void)openAIManagementFromMenu {
+  if (![self ensureAIManagementAccess]) return;
+  NSView *page = [self viewForSection:2];
+  if (page) [self showDetachedPage:page title:@"AI 管理"];
+}
+
 - (void)openUninstallFromMenu {
   if (!self.uninstallView) [self buildUninstallView];
   [self reloadUninstallData];
@@ -14643,6 +14649,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"groups"]) [self showGroupPanel:nil];
   else if ([action isEqualToString:@"scene"]) { [self rebuildQuickSceneTab]; [self showDetachedPage:self.quickScenePage title:@"场景模式"]; }
   else if ([action isEqualToString:@"ai"]) { if ([self ensureAIManagementAccess]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; } }
+  else if ([action isEqualToString:@"aimgmtpage"]) [self openAIManagementFromMenu];
   else if ([action isEqualToString:@"layouts"]) [self showWindowLayouts:nil];
   else if ([action isEqualToString:@"largefiles"]) [self showLargeFileCleaner:nil];
   else if ([action isEqualToString:@"duplicates"]) [self showDuplicateFinder:nil];
@@ -15739,6 +15746,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"AI 助手", @"symbol": @"sparkles", @"action": @"aitext"},
         @{@"title": @"AI 视频", @"symbol": @"video.badge.plus", @"action": @"aivideo"},
         @{@"title": @"AI 图片", @"symbol": @"photo.badge.plus", @"action": @"aiimage"},
+        @{@"title": @"Ai管理", @"symbol": @"sparkles", @"action": @"aimgmtpage"},
         @{@"title": @"Ai余量", @"symbol": @"sparkles", @"action": @"ai"},
         @{@"title": @"提示词库", @"symbol": @"text.book.closed.fill", @"action": @"prompts"},
         @{@"title": @"图片问答", @"symbol": @"text.viewfinder", @"action": @"aivision"},
@@ -17579,6 +17587,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3065,@"cat":@1,@"title":@"AI 图片编辑",@"desc":@"按提示词编辑图片",@"sel":@"openAIEditPanel:"},
     @{@"id":@3069,@"cat":@1,@"title":@"配置云同步",@"desc":@"上传/恢复云端配置",@"sel":@"openCloudSyncWindow:"},
     @{@"id":@3070,@"cat":@1,@"title":@"应用卸载",@"desc":@"独立窗口卸载应用",@"sel":@"openUninstallFromMenu"},
+    @{@"id":@3071,@"cat":@1,@"title":@"Ai管理页面",@"desc":@"打开控制台 AI 管理数据页",@"sel":@"openAIManagementFromMenu"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
