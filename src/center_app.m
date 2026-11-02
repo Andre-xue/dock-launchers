@@ -1157,6 +1157,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *shortcutSettingsWindow;
 @property (strong) NSWindow *diagnosticsWindow;
 @property (strong) NSWindow *shelfWindow;
+@property (strong) NSWindow *configBackupWindow;
 @property (strong) NSTableView *shelfTable;
 @property (strong) NSMutableArray<NSString *> *shelfPaths;
 @property (strong) DLShelfDropView *shelfDropView;
@@ -16085,6 +16086,123 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.shelfWindow makeKeyAndOrderFront:nil];
 }
 
+- (NSString *)configBackupDirectory {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/ConfigBackups"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return dir;
+}
+
+- (BOOL)runDitto:(NSArray *)args {
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/bin/ditto";
+  t.arguments = args;
+  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) { return NO; }
+  return t.terminationStatus == 0;
+}
+
+- (void)exportConfiguration:(id)sender {
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  sp.allowedFileTypes = @[@"zip"];
+  NSDateFormatter *df = [[NSDateFormatter alloc] init];
+  df.dateFormat = @"yyyyMMdd-HHmm";
+  sp.nameFieldStringValue = [NSString stringWithFormat:@"DockLaunchers配置-%@.zip", [df stringFromDate:[NSDate date]] ?: @"backup"];
+  if ([sp runModal] != NSModalResponseOK) return;
+  NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dl-config-%lld", (long long)[[NSDate date] timeIntervalSince1970]]];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  [fm removeItemAtPath:tmp error:NULL];
+  [fm createDirectoryAtPath:tmp withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *lists = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  if ([fm fileExistsAtPath:lists]) [fm copyItemAtPath:lists toPath:[tmp stringByAppendingPathComponent:@"lists"] error:NULL];
+  NSDictionary *domain = [[NSUserDefaults standardUserDefaults] persistentDomainForName:@"com.docklaunchers.center"] ?: @{};
+  [domain writeToFile:[tmp stringByAppendingPathComponent:@"settings.plist"] atomically:YES];
+  NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  NSString *shortcuts = [support stringByAppendingPathComponent:@"app_shortcuts.json"];
+  if ([fm fileExistsAtPath:shortcuts]) [fm copyItemAtPath:shortcuts toPath:[tmp stringByAppendingPathComponent:@"app_shortcuts.json"] error:NULL];
+  [[NSString stringWithFormat:@"DockLaunchers 配置备份\n导出时间：%@\n包含：分组列表、快捷键、应用设置\n注意：settings.plist 可能包含 AI API Key，请妥善保管。\n", [NSDate date]] writeToFile:[tmp stringByAppendingPathComponent:@"README.txt"] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  NSString *outPath = sp.URL.path;
+  [fm removeItemAtPath:outPath error:NULL];
+  BOOL ok = [self runDitto:@[@"-c", @"-k", @"--sequesterRsrc", @"--zlibCompressionLevel", @"9", tmp, outPath]];
+  [fm removeItemAtPath:tmp error:NULL];
+  [self showToast:ok ? @"配置已导出" : @"配置导出失败"];
+}
+
+- (void)importConfiguration:(id)sender {
+  NSOpenPanel *op = [NSOpenPanel openPanel];
+  op.canChooseFiles = YES; op.canChooseDirectories = NO; op.allowsMultipleSelection = NO;
+  op.allowedFileTypes = @[@"zip"];
+  if ([op runModal] != NSModalResponseOK) return;
+  NSAlert *confirm = [[NSAlert alloc] init];
+  confirm.messageText = @"导入配置？";
+  confirm.informativeText = @"将覆盖当前分组列表、快捷键和应用设置，导入前会自动备份当前配置。导入后建议重启 DockLaunchers。";
+  [confirm addButtonWithTitle:@"导入"];
+  [confirm addButtonWithTitle:@"取消"];
+  if ([confirm runModal] != NSAlertFirstButtonReturn) return;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dl-config-import-%lld", (long long)[[NSDate date] timeIntervalSince1970]]];
+  [fm removeItemAtPath:tmp error:NULL];
+  if (![self runDitto:@[@"-x", @"-k", op.URL.path, tmp]]) { [self showToast:@"配置解压失败"]; return; }
+  NSString *backupDir = [[self configBackupDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"auto-%lld", (long long)[[NSDate date] timeIntervalSince1970]]];
+  [fm createDirectoryAtPath:backupDir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *liveLists = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  if ([fm fileExistsAtPath:liveLists]) [fm copyItemAtPath:liveLists toPath:[backupDir stringByAppendingPathComponent:@"lists"] error:NULL];
+  NSDictionary *oldDomain = [[NSUserDefaults standardUserDefaults] persistentDomainForName:@"com.docklaunchers.center"] ?: @{};
+  [oldDomain writeToFile:[backupDir stringByAppendingPathComponent:@"settings.plist"] atomically:YES];
+  NSString *incomingLists = [tmp stringByAppendingPathComponent:@"lists"];
+  if ([fm fileExistsAtPath:incomingLists]) {
+    [fm removeItemAtPath:liveLists error:NULL];
+    [fm copyItemAtPath:incomingLists toPath:liveLists error:NULL];
+  }
+  NSString *incomingSettings = [tmp stringByAppendingPathComponent:@"settings.plist"];
+  if ([fm fileExistsAtPath:incomingSettings]) {
+    NSTask *t = [[NSTask alloc] init];
+    t.launchPath = @"/usr/bin/defaults";
+    t.arguments = @[@"import", @"com.docklaunchers.center", incomingSettings];
+    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+  }
+  NSString *incomingShortcuts = [tmp stringByAppendingPathComponent:@"app_shortcuts.json"];
+  if ([fm fileExistsAtPath:incomingShortcuts]) {
+    NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+    [fm createDirectoryAtPath:support withIntermediateDirectories:YES attributes:nil error:NULL];
+    [fm copyItemAtPath:incomingShortcuts toPath:[support stringByAppendingPathComponent:@"app_shortcuts.json"] error:NULL];
+  }
+  [fm removeItemAtPath:tmp error:NULL];
+  [self refreshGroups];
+  [self ensureGroupDockEntries];
+  [self killDock];
+  [self showToast:@"配置已导入，请重启 DockLaunchers"];
+}
+
+- (void)openConfigBackupWindow:(id)sender {
+  if (!self.configBackupWindow) {
+    self.configBackupWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,470,260) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.configBackupWindow.title = @"配置导出 / 导入";
+    self.configBackupWindow.releasedWhenClosed = NO;
+    NSView *cv = self.configBackupWindow.contentView;
+    NSTextField *t = [self label:@"配置导出 / 导入" size:18 bold:YES color:nil];
+    t.frame=NSMakeRect(24,216,300,24); [cv addSubview:t];
+    NSTextField *d = [self label:@"导出分组列表、快捷键和应用设置；导入前会自动备份当前配置。" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    d.frame=NSMakeRect(24,192,420,18); [cv addSubview:d];
+    NSTextField *warn = [self label:@"注意：配置中可能包含 AI API Key，请妥善保管备份文件。" size:10 bold:NO color:[NSColor systemOrangeColor]];
+    warn.frame=NSMakeRect(24,166,420,18); [cv addSubview:warn];
+    ColorHoverButton *exp = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,100,180,36)];
+    exp.title=@"导出配置…"; exp.hoverColor=[NSColor systemBlueColor]; exp.target=self; exp.action=@selector(exportConfiguration:);
+    [exp applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:exp];
+    ColorHoverButton *imp = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(216,100,180,36)];
+    imp.title=@"导入配置…"; imp.hoverColor=[NSColor systemOrangeColor]; imp.target=self; imp.action=@selector(importConfiguration:);
+    [imp applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:imp];
+    ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,40,180,30)];
+    open.title=@"打开备份目录"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openConfigBackupFolder:);
+    [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    [self.configBackupWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.configBackupWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)openConfigBackupFolder:(id)sender {
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self configBackupDirectory]]];
+}
+
 - (void)showTranslationWindow:(id)sender {
   if (!self.aiEntries) [self loadAIEntries];
   [self hydrateAIKeys];
@@ -16425,6 +16543,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3027,@"cat":@1,@"title":@"颜色吸管",@"desc":@"拾取屏幕颜色",@"sel":@"showColorSampler:"},
     @{@"id":@3028,@"cat":@1,@"title":@"权限与诊断",@"desc":@"检查录制相关权限",@"sel":@"openDiagnosticsWindow:"},
     @{@"id":@3029,@"cat":@1,@"title":@"文件暂存架",@"desc":@"拖入文件稍后处理",@"sel":@"openShelfWindow:"},
+    @{@"id":@3050,@"cat":@1,@"title":@"配置导出 / 导入",@"desc":@"迁移分组和设置",@"sel":@"openConfigBackupWindow:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -17291,6 +17410,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"打开最近录像", @"subtitle": @"显示最新录屏文件", @"type": @"录制", @"tool": @"recordrecent", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"film" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"权限与诊断", @"subtitle": @"检查录制、摄像头、麦克风权限", @"type": @"工具", @"tool": @"diagnostics", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"stethoscope" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"文件暂存架", @"subtitle": @"拖入文件，稍后统一处理", @"type": @"工具", @"tool": @"shelf", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"tray.full" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"配置导出 / 导入", @"subtitle": @"迁移分组、快捷键和设置", @"type": @"工具", @"tool": @"configbackup", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.up.arrow.down.square" accessibilityDescription:nil] ?: recIcon}];
   NSArray *pages = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
   NSArray *pageIcons = @[@"chart.line.uptrend.xyaxis", @"square.grid.2x2", @"sparkles", @"externaldrive", @"trash", @"gearshape"];
   for (NSInteger i = 0; i < pages.count; i++) {
@@ -17407,6 +17527,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"capture"]) [self showCaptureTool:nil];
     else if ([tool isEqualToString:@"diagnostics"]) [self openDiagnosticsWindow:nil];
     else if ([tool isEqualToString:@"shelf"]) [self openShelfWindow:nil];
+    else if ([tool isEqualToString:@"configbackup"]) [self openConfigBackupWindow:nil];
     else if ([tool isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
