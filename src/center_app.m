@@ -3833,7 +3833,21 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   return nil;
 }
 
+- (BOOL)aiManagementLockEnabled {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  id v = [ud objectForKey:@"centerLockAIManagement"];
+  if (v) return [v boolValue];
+  return [self hasAppPassword] || ([self touchIDEnabled] && [self biometricAuthAvailable]);
+}
+
+- (BOOL)ensureAIManagementAccess {
+  if (![self aiManagementLockEnabled]) return YES;
+  if ([self hasAppPassword] || ([self touchIDEnabled] && [self biometricAuthAvailable])) return [self requestAdminAuthentication];
+  return YES;
+}
+
 - (void)showSection:(NSInteger)idx {
+  if (idx == 2 && self.section != 2 && ![self ensureAIManagementAccess]) return;
   self.section = idx;
   if (idx == 2 && !self.aiEntries) [self loadAIEntries];
   for (NSView *v in self.content.subviews) [v removeFromSuperview];
@@ -14620,7 +14634,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"clipboard"]) [self showClipboardWindow:nil];
   else if ([action isEqualToString:@"groups"]) [self showGroupPanel:nil];
   else if ([action isEqualToString:@"scene"]) { [self rebuildQuickSceneTab]; [self showDetachedPage:self.quickScenePage title:@"场景模式"]; }
-  else if ([action isEqualToString:@"ai"]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; }
+  else if ([action isEqualToString:@"ai"]) { if ([self ensureAIManagementAccess]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; } }
   else if ([action isEqualToString:@"layouts"]) [self showWindowLayouts:nil];
   else if ([action isEqualToString:@"largefiles"]) [self showLargeFileCleaner:nil];
   else if ([action isEqualToString:@"duplicates"]) [self showDuplicateFinder:nil];
@@ -18600,7 +18614,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"globalshortcuts"]) [self openShortcutSettings:nil];
     else if ([tool isEqualToString:@"disk"]) [self openDiskAnalysisFromMenu];
     else if ([tool isEqualToString:@"appsearch"]) [self showAppSearch:nil];
-    else if ([tool isEqualToString:@"aimgmt"]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; }
+    else if ([tool isEqualToString:@"aimgmt"]) { if (![self ensureAIManagementAccess]) return; [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; }
     else if ([tool isEqualToString:@"color"]) [self showColorSampler:nil];
     else if ([tool isEqualToString:@"filesearch"]) [self showFileSearch:nil];
     else if ([tool isEqualToString:@"capture"]) [self showCaptureTool:nil];
