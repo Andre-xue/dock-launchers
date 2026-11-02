@@ -31,6 +31,7 @@ typedef void (*DLMRSendFn)(unsigned int command, NSDictionary *options);
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
+#include <notify.h>
 
 typedef int DL_CGSConnectionID;
 typedef uint64_t DL_CGSSpaceID;
@@ -4728,7 +4729,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   k1.launchPath = @"/usr/bin/killall";
   k1.arguments = @[@"iconservicesagent"];
   @try { [k1 launch]; } @catch (NSException *e) {}
-  [self killDock];
+  [self hardRestartDock];
   [self refreshGroups];
   if (self.popover.isShown) [self rebuildQuickGroups];
   NSAlert *a = [[NSAlert alloc] init];
@@ -5609,7 +5610,7 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   [ud setInteger:version forKey:@"centerGroupIconsRepairVersion"];
   [ud synchronize];
-  if (changed) [self killDock];
+  if (changed) [self hardRestartDock];
 }
 
 - (void)addDockEntry:(NSString *)path label:(NSString *)label {
@@ -5650,7 +5651,13 @@ static BOOL ValidGroupName(NSString *raw) {
   } @catch (NSException *e) {}
 }
 
-- (void)killDock {
+- (void)reloadDockPreferences {
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    notify_post("com.apple.dock.prefchanged");
+  });
+}
+
+- (void)hardRestartDock {
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     NSTask *t = [[NSTask alloc] init];
     t.launchPath = @"/usr/bin/killall";
@@ -5658,6 +5665,9 @@ static BOOL ValidGroupName(NSString *raw) {
     @try { [t launch]; } @catch (NSException *e) {}
   });
 }
+
+// 默认软刷新：只通知 Dock 重读偏好，不重启 Dock，不闪屏
+- (void)killDock { [self reloadDockPreferences]; }
 
 // ---------------- 应用卸载 ----------------
 - (NSArray<NSDictionary *> *)diskMountList {
@@ -13416,12 +13426,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   t2.launchPath = @"/usr/bin/defaults";
   t2.arguments = @[@"write", @"com.apple.dock", @"orientation", @"-string", pos[MAX(0, MIN(2, self.dockPositionPopup.indexOfSelectedItem))]];
   @try { [t2 launch]; [t2 waitUntilExit]; } @catch (NSException *e) {}
-  if (restart) {
-    NSTask *kill = [[NSTask alloc] init];
-    kill.launchPath = @"/usr/bin/killall";
-    kill.arguments = @[@"Dock"];
-    @try { [kill launch]; [kill waitUntilExit]; } @catch (NSException *e) {}
-  }
+  if (restart) [self reloadDockPreferences];
   self.dockLastSignature = [self dockValuesSignature];
 }
 
