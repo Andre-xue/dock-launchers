@@ -1162,6 +1162,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSStatusItem *statusItem;
 @property (strong) NSImage *statusBaseImage;
 @property (strong) NSDictionary<NSString *, NSDictionary *> *groupBadgeCounts;
+@property (copy) NSString *lastGroupDockBadgeSignature;
 @property (strong) NSTimer *groupBadgeTimer;
 @property (strong) NSTimer *shelfInboxTimer;
 @property (strong) ColorHoverButton *groupBadgeToggleButton;
@@ -1218,7 +1219,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *shelfWindow;
 @property (strong) NSWindow *configBackupWindow;
 @property (strong) NSWindow *cloudSyncWindow;
-@property (strong) NSWindow *automationWindow, *automationRuleWindow;
+@property (strong) NSWindow *automationWindow, *automationRuleWindow, *privacyWindow;
+@property (strong) NSWindow *radialCustomWindow;
+@property (strong) NSMutableArray<NSNumber *> *radialCustomOrder;
+@property (strong) NSMutableArray<NSButton *> *radialCustomChecks, *radialCustomUps, *radialCustomDowns;
 @property (strong) NSTableView *automationTable;
 @property (strong) NSMutableArray *automationRules;
 @property (strong) NSMutableDictionary *automationLastFired;
@@ -1228,7 +1232,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSPopUpButton *automationTriggerPopup, *automationActionPopup;
 @property (strong) NSButton *automationEnabledCheck;
 @property (strong) NSTextField *cloudSyncPathLabel, *cloudSyncStatus;
-@property (strong) NSButton *cloudAutoSyncCheck;
+@property (strong) NSButton *cloudAutoSyncCheck, *cloudAutoRestoreCheck;
 @property (strong) NSTableView *shelfTable;
 @property (strong) NSMutableArray<NSString *> *shelfPaths;
 @property (strong) DLShelfDropView *shelfDropView;
@@ -3038,6 +3042,7 @@ static void HideDockHoverTip(void) {
   [self startWindowSnapMonitor];
   [self startSceneAutoIfNeeded];
   [self startAutomationEngine];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self autoRestoreCloudConfigurationIfNewer]; });
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self applySceneForCurrentSpace]; });
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerLaunchLock"] && [self hasAppPassword] && !getenv("DOCKLAUNCHERS_CENTER_SKIP_LOCK")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -14486,6 +14491,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)closePDFTools:(id)sender { [self.pdfWindow orderOut:nil]; }
 
+- (void)showBatchRenamerForPaths:(NSArray<NSString *> *)paths {
+  [self showBatchRenamer:nil];
+  if (paths.count) {
+    self.batchRenamePaths = paths;
+    [self reloadBatchRenamePreview];
+  }
+}
+
 - (void)showBatchRenamer:(id)sender {
   if (!self.batchRenameWindow) {
     self.batchRenameWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -14755,6 +14768,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"ai"]) { if ([self ensureAIManagementAccess]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; } }
   else if ([action isEqualToString:@"aimgmtpage"]) [self openAIManagementFromMenu];
   else if ([action isEqualToString:@"automation"]) [self openAutomationRules:nil];
+  else if ([action isEqualToString:@"groupschedule"]) [self openGroupScheduleRules:nil];
   else if ([action isEqualToString:@"layouts"]) [self showWindowLayouts:nil];
   else if ([action isEqualToString:@"largefiles"]) [self showLargeFileCleaner:nil];
   else if ([action isEqualToString:@"duplicates"]) [self showDuplicateFinder:nil];
@@ -15603,6 +15617,128 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)quitApp:(id)sender { self.allowTerminate = YES; [self unloadLoginAgent]; [NSApp terminate:nil]; }
 
+- (void)applyRadialPagePreferences {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSArray *savedOrder = [ud arrayForKey:@"centerRadialPageOrder"];
+  NSArray *hidden = [ud arrayForKey:@"centerRadialHiddenPages"];
+  NSSet *hiddenSet = [NSSet setWithArray:hidden ?: @[]];
+  NSMutableArray *ordered = [NSMutableArray array];
+  NSMutableSet *seen = [NSMutableSet set];
+  if (savedOrder.count) {
+    for (NSNumber *n in savedOrder) {
+      NSInteger idx = [n integerValue];
+      if (idx >= 0 && idx < (NSInteger)self.radialPages.count && ![seen containsObject:@(idx)]) {
+        [seen addObject:@(idx)];
+        if (![hiddenSet containsObject:@(idx)]) [ordered addObject:self.radialPages[idx]];
+      }
+    }
+  }
+  for (NSInteger i = 0; i < (NSInteger)self.radialPages.count; i++) {
+    if ([seen containsObject:@(i)] || [hiddenSet containsObject:@(i)]) continue;
+    [ordered addObject:self.radialPages[i]];
+  }
+  if (ordered.count) self.radialPages = ordered;
+}
+
+- (void)openRadialPageCustomization:(id)sender {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSArray *savedOrder = [ud arrayForKey:@"centerRadialPageOrder"];
+  NSMutableArray *order = [NSMutableArray array];
+  for (NSNumber *n in savedOrder ?: @[]) if ([n integerValue] >= 0 && [n integerValue] < 7) [order addObject:n];
+  for (NSInteger i = 0; i < 7; i++) if (![order containsObject:@(i)]) [order addObject:@(i)];
+  self.radialCustomOrder = order;
+  NSArray *names = @[@"AI 工具", @"图片 / 文档", @"截图工具", @"录屏工具", @"文件工具", @"分组 / 场景", @"系统工具"];
+  NSArray *hidden = [ud arrayForKey:@"centerRadialHiddenPages"] ?: @[];
+  if (!self.radialCustomWindow) {
+    self.radialCustomWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,430,410) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.radialCustomWindow.title = @"菜单栏页面自定义";
+    self.radialCustomWindow.releasedWhenClosed = NO;
+    NSView *cv = self.radialCustomWindow.contentView;
+    NSTextField *t = [self label:@"菜单栏页面自定义" size:18 bold:YES color:nil];
+    t.frame = NSMakeRect(24, 370, 320, 24); [cv addSubview:t];
+    NSTextField *h = [self label:@"勾选显示页面；用 ↑↓ 调整顺序；至少保留一页" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24, 348, 380, 18); [cv addSubview:h];
+    self.radialCustomChecks = [NSMutableArray array];
+    self.radialCustomUps = [NSMutableArray array];
+    self.radialCustomDowns = [NSMutableArray array];
+    for (NSInteger i=0;i<7;i++) {
+      NSInteger idx = [self.radialCustomOrder[i] integerValue];
+      NSButton *check = [NSButton checkboxWithTitle:names[idx] target:self action:@selector(radialPageCheckChanged:)];
+      check.tag = i;
+      check.state = [hidden containsObject:@(idx)] ? NSControlStateValueOff : NSControlStateValueOn;
+      check.frame = NSMakeRect(24, 306 - i*36, 250, 24);
+      [cv addSubview:check];
+      [self.radialCustomChecks addObject:check];
+      ColorHoverButton *up = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(292, 304 - i*36, 38, 26)];
+      up.title = @"↑"; up.tag = i; up.hoverColor = [NSColor systemBlueColor]; up.target = self; up.action = @selector(radialPageMoveUp:);
+      [up applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:up];
+      [self.radialCustomUps addObject:up];
+      ColorHoverButton *down = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(336, 304 - i*36, 38, 26)];
+      down.title = @"↓"; down.tag = i; down.hoverColor = [NSColor systemTealColor]; down.target = self; down.action = @selector(radialPageMoveDown:);
+      [down applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:down];
+      [self.radialCustomDowns addObject:down];
+    }
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(236, 16, 80, 30)];
+    save.title = @"保存"; save.hoverColor = [NSColor systemGreenColor]; save.target = self; save.action = @selector(saveRadialPageCustomization:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(324, 16, 80, 30)];
+    cancel.title = @"取消"; cancel.hoverColor = [NSColor systemGrayColor]; cancel.target = self; cancel.action = @selector(closeRadialPageCustomization:);
+    [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
+    [self.radialCustomWindow center];
+  }
+  [self refreshRadialCustomChecks];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.radialCustomWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)radialPageCheckChanged:(id)sender { [self updateRadialCustomCheckStates]; }
+- (void)updateRadialCustomCheckStates {
+  NSMutableArray *hidden = [NSMutableArray array];
+  for (NSInteger i=0;i<self.radialCustomChecks.count;i++) {
+    if (self.radialCustomChecks[i].state != NSControlStateValueOn) [hidden addObject:self.radialCustomOrder[i]];
+  }
+  [[NSUserDefaults standardUserDefaults] setObject:hidden forKey:@"centerRadialHiddenPages"];
+}
+- (void)radialPageMoveUp:(NSButton *)sender {
+  NSInteger i = sender.tag;
+  if (i <= 0 || i >= (NSInteger)self.radialCustomOrder.count) return;
+  [self.radialCustomOrder exchangeObjectAtIndex:i withObjectAtIndex:i-1];
+  [self refreshRadialCustomChecks];
+}
+- (void)radialPageMoveDown:(NSButton *)sender {
+  NSInteger i = sender.tag;
+  if (i < 0 || i+1 >= (NSInteger)self.radialCustomOrder.count) return;
+  [self.radialCustomOrder exchangeObjectAtIndex:i withObjectAtIndex:i+1];
+  [self refreshRadialCustomChecks];
+}
+- (void)refreshRadialCustomChecks {
+  NSArray *names = @[@"AI 工具", @"图片 / 文档", @"截图工具", @"录屏工具", @"文件工具", @"分组 / 场景", @"系统工具"];
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSArray *hidden = [ud arrayForKey:@"centerRadialHiddenPages"] ?: @[];
+  for (NSInteger i=0;i<self.radialCustomChecks.count;i++) {
+    NSInteger idx = [self.radialCustomOrder[i] integerValue];
+    NSButton *b = self.radialCustomChecks[i];
+    b.tag = i; b.title = names[idx];
+    b.state = [hidden containsObject:@(idx)] ? NSControlStateValueOff : NSControlStateValueOn;
+    if (i < self.radialCustomUps.count) self.radialCustomUps[i].tag = i;
+    if (i < self.radialCustomDowns.count) self.radialCustomDowns[i].tag = i;
+  }
+}
+- (void)saveRadialPageCustomization:(id)sender {
+  NSMutableArray *shown = [NSMutableArray array];
+  for (NSInteger i=0;i<self.radialCustomChecks.count;i++) if (self.radialCustomChecks[i].state == NSControlStateValueOn) [shown addObject:@(i)];
+  if (!shown.count) { [self showToast:@"至少保留一页"]; return; }
+  [self updateRadialCustomCheckStates];
+  [[NSUserDefaults standardUserDefaults] setObject:self.radialCustomOrder forKey:@"centerRadialPageOrder"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self.radialCustomWindow orderOut:nil];
+  [self.popover performClose:nil];
+  self.popover = nil;
+  [self buildPopover];
+  [self showToast:@"菜单栏页面已更新"];
+}
+- (void)closeRadialPageCustomization:(id)sender { [self.radialCustomWindow orderOut:nil]; }
+
 - (void)buildPopover {
   NSPopover *pop = [[NSPopover alloc] init];
   pop.behavior = NSPopoverBehaviorTransient;
@@ -15911,7 +16047,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"快速面板", @"symbol": @"command", @"action": @"quickpanel"},
         @{@"title": @"窗口布局", @"symbol": @"rectangle.split.2x2", @"action": @"layouts"},
         @{@"title": @"Dock 外观", @"symbol": @"paintbrush.fill", @"action": @"appearance"},
-        @{@"title": @"应用搜索", @"symbol": @"magnifyingglass", @"action": @"appsearch"}
+        @{@"title": @"应用搜索", @"symbol": @"magnifyingglass", @"action": @"appsearch"},
+        @{@"title": @"分组定时", @"symbol": @"clock", @"action": @"groupschedule"}
       ],
       @[
         @{@"title": @"使用统计", @"symbol": @"chart.bar.fill", @"action": @"usage"},
@@ -15925,6 +16062,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       ]
     ];
     NSUserDefaults *radialUD = [NSUserDefaults standardUserDefaults];
+    [self applyRadialPagePreferences];
     if ([radialUD integerForKey:@"centerRadialPagesVersion"] != 7) {
       [radialUD setInteger:0 forKey:@"centerRadialLastPage"];
       [radialUD setInteger:7 forKey:@"centerRadialPagesVersion"];
@@ -16964,6 +17102,42 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self openShelfWindow:nil];
 }
 
+- (void)compressShelfSelection:(id)sender {
+  NSArray *paths = [self selectedShelfPaths];
+  if (!paths.count) { [self showToast:@"请先选择文件"]; return; }
+  [self showCompressWindow:nil];
+  [self.compressPaths addObjectsFromArray:paths];
+  self.compressListLabel.stringValue = [NSString stringWithFormat:@"已加入 %ld 个项目", (long)self.compressPaths.count];
+  self.compressStatus.stringValue = @"点压缩按钮生成压缩包";
+}
+
+- (void)renameShelfSelection:(id)sender {
+  NSArray *paths = [self selectedShelfPaths];
+  if (!paths.count) { [self showToast:@"请先选择文件"]; return; }
+  [self showBatchRenamerForPaths:paths];
+}
+
+- (void)trashShelfSelection:(id)sender {
+  NSArray *paths = [self selectedShelfPaths];
+  if (!paths.count) { [self showToast:@"请先选择文件"]; return; }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"移到废纸篓";
+  a.informativeText = [NSString stringWithFormat:@"确定把 %ld 个文件移到废纸篓吗？", (long)paths.count];
+  [a addButtonWithTitle:@"移到废纸篓"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  for (NSString *p in paths) [[NSWorkspace sharedWorkspace] recycleURLs:@[[NSURL fileURLWithPath:p]] completionHandler:nil];
+  [self removeShelfPaths:paths];
+}
+
+- (void)removeShelfPaths:(NSArray<NSString *> *)paths {
+  NSMutableArray *keep = [NSMutableArray array];
+  for (NSString *p in self.shelfPaths) if (![paths containsObject:p]) [keep addObject:p];
+  self.shelfPaths = keep;
+  [self saveShelfPaths];
+  [self reloadShelfTable];
+}
+
 - (void)openShelfWindow:(id)sender {
   if (!self.shelfWindow) {
     self.shelfWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,440,430) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -16992,6 +17166,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.shelfTable.dataSource = self; self.shelfTable.delegate = self;
     self.shelfTable.target = self; self.shelfTable.doubleAction = @selector(openShelfFileRow:);
     self.shelfScrollView.documentView = self.shelfTable;
+    NSMenu *shelfMenu = [[NSMenu alloc] initWithTitle:@"暂存架"];
+    [shelfMenu addItemWithTitle:@"压缩所选…" action:@selector(compressShelfSelection:) keyEquivalent:@""].target = self;
+    [shelfMenu addItemWithTitle:@"批量重命名所选…" action:@selector(renameShelfSelection:) keyEquivalent:@""].target = self;
+    [shelfMenu addItemWithTitle:@"AirDrop 所选" action:@selector(airdropShelfFiles:) keyEquivalent:@""].target = self;
+    [shelfMenu addItemWithTitle:@"移到废纸篓" action:@selector(trashShelfSelection:) keyEquivalent:@""].target = self;
+    self.shelfTable.menu = shelfMenu;
     [cv addSubview:self.shelfScrollView];
     NSArray *titles = @[@"添加", @"打开", @"显示", @"AirDrop", @"移除", @"清空"];
     NSArray *sels = @[@"addShelfFiles:", @"openShelfFiles:", @"revealShelfFiles:", @"airdropShelfFiles:", @"removeShelfFiles:", @"clearShelfFiles:"];
@@ -17249,11 +17429,65 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)uploadConfigurationToCloud:(id)sender {
   NSString *dir = [self cloudSyncDirectory];
   [self writeCurrentConfigurationToDirectory:dir];
+  [[NSUserDefaults standardUserDefaults] setDouble:[[NSDate date] timeIntervalSince1970] forKey:@"centerLastCloudSync"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
   [[NSUserDefaults standardUserDefaults] setObject:dir forKey:@"centerCloudSyncDirectory"];
   [[NSUserDefaults standardUserDefaults] synchronize];
   self.cloudSyncPathLabel.stringValue = dir;
   self.cloudSyncStatus.stringValue = [NSString stringWithFormat:@"已上传：%@", [NSDate date]];
   [self showToast:@"配置已上传到云目录"];
+}
+
+- (BOOL)applyCloudConfigurationFromDirectory:(NSString *)dir {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  if (![fm fileExistsAtPath:[dir stringByAppendingPathComponent:@"settings.plist"]] && ![fm fileExistsAtPath:[dir stringByAppendingPathComponent:@"lists"]]) return NO;
+  NSString *cloudLists = [dir stringByAppendingPathComponent:@"lists"];
+  NSString *liveLists = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  if ([fm fileExistsAtPath:cloudLists]) { [fm removeItemAtPath:liveLists error:NULL]; [fm copyItemAtPath:cloudLists toPath:liveLists error:NULL]; }
+  NSString *settings = [dir stringByAppendingPathComponent:@"settings.plist"];
+  if ([fm fileExistsAtPath:settings]) {
+    NSTask *t = [[NSTask alloc] init]; t.launchPath = @"/usr/bin/defaults"; t.arguments = @[@"import", @"com.docklaunchers.center", settings];
+    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+  }
+  NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  for (NSString *name in @[@"app_shortcuts.json", @"scenes.json", @"window_layouts.json"]) {
+    NSString *src = [dir stringByAppendingPathComponent:name];
+    if ([fm fileExistsAtPath:src]) { [fm removeItemAtPath:[support stringByAppendingPathComponent:name] error:NULL]; [fm copyItemAtPath:src toPath:[support stringByAppendingPathComponent:name] error:NULL]; }
+  }
+  [self refreshGroups];
+  [self ensureGroupDockEntries];
+  [self killDock];
+  self.scenes = nil;
+  self.savedLayouts = nil;
+  [[NSUserDefaults standardUserDefaults] setDouble:[[NSDate date] timeIntervalSince1970] forKey:@"centerLastCloudSync"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  return YES;
+}
+
+- (void)autoRestoreCloudConfigurationIfNewer {
+  if (![[NSUserDefaults standardUserDefaults] objectForKey:@"centerCloudAutoRestore"]) {
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"centerCloudAutoRestore"];
+  }
+  if (![[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudAutoRestore"]) return;
+  NSString *dir = [self cloudSyncDirectory];
+  NSString *manifestPath = [dir stringByAppendingPathComponent:@"manifest.plist"];
+  NSDictionary *manifest = [NSDictionary dictionaryWithContentsOfFile:manifestPath];
+  double cloudTime = [manifest[@"date"] doubleValue];
+  if (!cloudTime) cloudTime = [[[NSFileManager defaultManager] attributesOfItemAtPath:manifestPath error:NULL][NSFileModificationDate] timeIntervalSince1970];
+  if (![[NSUserDefaults standardUserDefaults] objectForKey:@"centerLastCloudSync"]) {
+    [[NSUserDefaults standardUserDefaults] setDouble:cloudTime forKey:@"centerLastCloudSync"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    return;
+  }
+  double last = [[NSUserDefaults standardUserDefaults] doubleForKey:@"centerLastCloudSync"];
+  if (cloudTime <= last + 1.0) return;
+  NSString *backup = [[self configBackupDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"cloud-auto-%lld", (long long)[[NSDate date] timeIntervalSince1970]]];
+  [self writeCurrentConfigurationToDirectory:backup];
+  if ([self applyCloudConfigurationFromDirectory:dir]) {
+    [[NSUserDefaults standardUserDefaults] setDouble:cloudTime forKey:@"centerLastCloudSync"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    [self showToast:@"已自动恢复云端配置"];
+  }
 }
 
 - (void)restoreConfigurationFromCloud:(id)sender {
@@ -17286,6 +17520,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self killDock];
   self.scenes = nil;
   self.savedLayouts = nil;
+  [[NSUserDefaults standardUserDefaults] setDouble:[[NSDate date] timeIntervalSince1970] forKey:@"centerLastCloudSync"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
   self.cloudSyncStatus.stringValue = @"已从云端恢复，请重启 DockLaunchers";
   [self showToast:@"云端配置已恢复"];
 }
@@ -17337,6 +17573,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if ([key isEqualToString:@"layout"]) return @"恢复窗口布局";
   if ([key isEqualToString:@"launch"]) return @"启动应用";
   if ([key isEqualToString:@"quit"]) return @"退出应用";
+  if ([key isEqualToString:@"show_group"]) return @"显示分组";
+  if ([key isEqualToString:@"hide_group"]) return @"隐藏分组";
   return key ?: @"";
 }
 
@@ -17345,6 +17583,71 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
           [self automationTriggerTitle:rule[@"trigger"] ?: @""], rule[@"triggerValue"] ?: @"",
           [self automationActionTitle:rule[@"action"] ?: @""], rule[@"actionValue"] ?: @""];
 }
+
+- (void)openGroupScheduleRules:(id)sender {
+  [self openAutomationRules:nil];
+  [self showToast:@"用「每天时间」触发 +「显示分组/隐藏分组」动作即可定时切换"];
+}
+
+- (NSString *)privacyStateText:(NSInteger)state {
+  if (state == 1) return @"已允许";
+  if (state == 2) return @"已拒绝";
+  if (state == 0) return @"未决定";
+  return @"未知";
+}
+
+- (void)openPrivacyDashboard:(id)sender {
+  if (!self.privacyWindow) {
+    self.privacyWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,510) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.privacyWindow.title = @"系统隐私仪表盘";
+    self.privacyWindow.releasedWhenClosed = NO;
+    NSView *cv = self.privacyWindow.contentView;
+    NSTextField *t = [self label:@"系统隐私仪表盘" size:20 bold:YES color:nil];
+    t.frame = NSMakeRect(24, 466, 320, 28); [cv addSubview:t];
+    NSTextField *h = [self label:@"查看 DockLaunchers 当前权限；状态为「未决定/已拒绝」时点右侧按钮去系统设置授权" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24, 444, 590, 18); [cv addSubview:h];
+
+    NSArray *names = @[@"屏幕录制", @"麦克风", @"摄像头", @"语音识别", @"辅助功能", @"输入监控", @"完全磁盘访问"];
+    NSArray *details = @[@"截图、滚动截图和录屏", @"录音、会议转写和录屏", @"摄像头画中画", @"会议助手语音转文字", @"窗口布局和自动操作", @"按键显示和全局快捷键", @"卸载时清理应用残留"];
+    NSArray *pane = @[@"Privacy_ScreenCapture", @"Privacy_Microphone", @"Privacy_Camera", @"Privacy_SpeechRecognition", @"Privacy_Accessibility", @"Privacy_ListenEvent", @"Privacy_AllFiles"];
+    for (NSInteger i=0;i<names.count;i++) {
+      CGFloat y = 396 - i*48;
+      NSTextField *n = [self label:names[i] size:12 bold:YES color:nil];
+      n.frame = NSMakeRect(24, y+16, 140, 18); [cv addSubview:n];
+      NSTextField *d = [self label:details[i] size:10 bold:NO color:[NSColor secondaryLabelColor]];
+      d.frame = NSMakeRect(170, y+16, 260, 18); [cv addSubview:d];
+      NSInteger state = 3;
+      if (i == 0) state = CGPreflightScreenCaptureAccess() ? 1 : 2;
+      else if (i == 1) state = (NSInteger)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+      else if (i == 2) state = (NSInteger)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+      else if (i == 3) state = (NSInteger)[SFSpeechRecognizer authorizationStatus];
+      else if (i == 4) state = AXIsProcessTrusted() ? 1 : 2;
+      else if (i == 5) state = CGPreflightListenEventAccess() ? 1 : 2;
+      else if (i == 6) state = [[NSFileManager defaultManager] isReadableFileAtPath:@"/Library/Application Support/com.apple.TCC/TCC.db"] ? 1 : 2;
+      NSTextField *st = [self label:[self privacyStateText:state] size:10.5 bold:YES color:(state == 1 ? [NSColor systemGreenColor] : [NSColor systemOrangeColor])];
+      st.frame = NSMakeRect(440, y+16, 76, 18); [cv addSubview:st];
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524, y+10, 92, 26)];
+      b.title = @"系统设置"; b.tag = i; b.hoverColor = [NSColor systemBlueColor];
+      b.target = self; b.action = @selector(openPrivacyPane:);
+      [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:b];
+      objc_setAssociatedObject(b, "PrivacyPane", pane[i], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524, 20, 92, 30)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor]; close.target = self; close.action = @selector(closePrivacyDashboard:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.privacyWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.privacyWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)openPrivacyPane:(NSButton *)sender {
+  NSString *pane = objc_getAssociatedObject(sender, "PrivacyPane");
+  if (!pane.length) return;
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:[NSString stringWithFormat:@"x-apple.systempreferences:com.apple.preference.security?%@", pane]]];
+}
+
+- (void)closePrivacyDashboard:(id)sender { [self.privacyWindow orderOut:nil]; }
 
 - (void)openAutomationRules:(id)sender {
   [self loadAutomationRules];
@@ -17488,7 +17791,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.automationActionPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(68, 270, 160, 28) pullsDown:NO];
     self.automationActionPopup.target = self; self.automationActionPopup.action = @selector(automationActionChanged:);
     [cv addSubview:self.automationActionPopup];
-    [self.automationActionPopup addItemsWithTitles:@[@"应用场景", @"恢复窗口布局", @"启动应用", @"退出应用"]];
+    [self.automationActionPopup addItemsWithTitles:@[@"应用场景", @"恢复窗口布局", @"启动应用", @"退出应用", @"显示分组", @"隐藏分组"]];
     self.automationActionValueField = [[NSTextField alloc] initWithFrame:NSMakeRect(242, 270, 268, 28)];
     self.automationActionValueField.placeholderString = @"场景名称";
     [cv addSubview:self.automationActionValueField];
@@ -17511,7 +17814,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.automationTriggerValueField.stringValue = r[@"triggerValue"] ?: @"";
   self.automationActionValueField.stringValue = r[@"actionValue"] ?: @"";
   NSArray *triggerKeys = @[@"app_launch", @"app_quit", @"time", @"space"];
-  NSArray *actionKeys = @[@"scene", @"layout", @"launch", @"quit"];
+  NSArray *actionKeys = @[@"scene", @"layout", @"launch", @"quit", @"show_group", @"hide_group"];
   NSInteger ti = [triggerKeys indexOfObject:r[@"trigger"] ?: @"app_launch"];
   NSInteger ai = [actionKeys indexOfObject:r[@"action"] ?: @"scene"];
   [self.automationTriggerPopup selectItemAtIndex:(ti == NSNotFound ? 0 : ti)];
@@ -17530,7 +17833,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)automationActionChanged:(id)sender {
   NSInteger idx = self.automationActionPopup.indexOfSelectedItem;
-  self.automationActionValueField.placeholderString = idx == 0 ? @"场景名称，例如 工作" : (idx == 1 ? @"窗口布局名称" : @"应用路径或 Bundle ID");
+  self.automationActionValueField.placeholderString = idx == 0 ? @"场景名称，例如 工作" : (idx == 1 ? @"窗口布局名称" : (idx >= 4 ? @"分组名称，例如 工作" : @"应用路径或 Bundle ID"));
 }
 
 - (void)closeAutomationRuleEditor:(id)sender { [self.automationRuleWindow orderOut:nil]; }
@@ -17541,7 +17844,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *av = [self.automationActionValueField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
   if (!tv.length || !av.length) { [self showToast:@"触发值和执行值都不能为空"]; return; }
   NSArray *triggerKeys = @[@"app_launch", @"app_quit", @"time", @"space"];
-  NSArray *actionKeys = @[@"scene", @"layout", @"launch", @"quit"];
+  NSArray *actionKeys = @[@"scene", @"layout", @"launch", @"quit", @"show_group", @"hide_group"];
   NSInteger ti = self.automationTriggerPopup.indexOfSelectedItem;
   NSInteger ai = self.automationActionPopup.indexOfSelectedItem;
   if ([triggerKeys[ti] isEqualToString:@"time"] && tv.length != 5) { [self showToast:@"时间格式应为 HH:mm，例如 09:00"]; return; }
@@ -17631,6 +17934,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   } else if ([action isEqualToString:@"layout"]) {
     [self loadWindowLayouts];
     if (self.savedLayouts[value]) [self restoreWindowLayoutNamed:value autoLaunch:YES];
+  } else if ([action isEqualToString:@"show_group"] || [action isEqualToString:@"hide_group"]) {
+    NSString *path = [[GroupDir() stringByAppendingPathComponent:value] stringByAppendingPathExtension:@"app"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) { [self showToast:@"没有找到该分组"]; return; }
+    if ([action isEqualToString:@"show_group"]) {
+      [self addDockEntry:path label:value];
+      [self reloadDockPreferences];
+      [self showToast:[NSString stringWithFormat:@"已显示分组：%@", value]];
+    } else {
+      [self removeDockEntry:path];
+      [self reloadDockPreferences];
+      [self showToast:[NSString stringWithFormat:@"已隐藏分组：%@", value]];
+    }
   } else if ([action isEqualToString:@"launch"] || [action isEqualToString:@"quit"]) {
     NSArray<NSRunningApplication *> *apps = [[NSWorkspace sharedWorkspace] runningApplications];
     BOOL matched = NO;
@@ -17669,6 +17984,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.cloudAutoSyncCheck.frame=NSMakeRect(24,214,300,22);
     self.cloudAutoSyncCheck.state=[[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudAutoSync"]?NSControlStateValueOn:NSControlStateValueOff;
     [cv addSubview:self.cloudAutoSyncCheck];
+    self.cloudAutoRestoreCheck = [NSButton checkboxWithTitle:@"启动时自动恢复较新的云端配置" target:self action:@selector(cloudAutoRestoreChanged:)];
+    self.cloudAutoRestoreCheck.frame=NSMakeRect(24,182,340,22);
+    id car = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCloudAutoRestore"];
+    self.cloudAutoRestoreCheck.state=(car ? [car boolValue] : YES)?NSControlStateValueOn:NSControlStateValueOff;
+    [cv addSubview:self.cloudAutoRestoreCheck];
     ColorHoverButton *upload = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,150,180,36)];
     upload.title=@"上传到云端"; upload.hoverColor=[NSColor systemBlueColor]; upload.target=self; upload.action=@selector(uploadConfigurationToCloud:);
     [upload applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:upload];
@@ -17688,6 +18008,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)closeCloudSyncWindow:(id)sender { [self.cloudSyncWindow orderOut:nil]; }
+
+- (void)cloudAutoRestoreChanged:(NSButton *)sender {
+  [[NSUserDefaults standardUserDefaults] setBool:(sender.state == NSControlStateValueOn) forKey:@"centerCloudAutoRestore"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+}
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudAutoSync"]) {
@@ -18071,6 +18396,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3073,@"cat":@1,@"title":@"录屏会议助手",@"desc":@"录屏转写并生成 AI 会议纪要",@"sel":@"openMeetingAssistant:"},
     @{@"id":@3074,@"cat":@1,@"title":@"AI 语音转文字",@"desc":@"把音频或录屏转写为文字",@"sel":@"openVoiceTextWindow:"},
     @{@"id":@3075,@"cat":@1,@"title":@"截图 OCR",@"desc":@"识别最近截图中的文字",@"sel":@"ocrLatestScreenshot:"},
+    @{@"id":@3076,@"cat":@1,@"title":@"分组定时规则",@"desc":@"定时显示/隐藏 Dock 分组",@"sel":@"openGroupScheduleRules:"},
+    @{@"id":@3077,@"cat":@1,@"title":@"系统隐私仪表盘",@"desc":@"查看并打开各项隐私权限",@"sel":@"openPrivacyDashboard:"},
+    @{@"id":@3078,@"cat":@1,@"title":@"菜单栏页面自定义",@"desc":@"显示/隐藏和排序扇形页面",@"sel":@"openRadialPageCustomization:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -18318,6 +18646,44 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   if (self.groupPanelWindow.isVisible) [self.groupPanelTable reloadData];
   [self updateConsoleGroupRunLabels];
+  if (enabled) [self applyGroupDockBadges];
+}
+
+- (void)applyGroupDockBadges {
+  NSArray *groups = [self installedGroupNames];
+  NSMutableString *sig = [NSMutableString string];
+  for (NSString *name in groups) {
+    NSDictionary *d = self.groupBadgeCounts[name] ?: @{};
+    [sig appendFormat:@"%@:%@;", name, d[@"running"] ?: @0];
+  }
+  if (sig.length && [self.lastGroupDockBadgeSignature isEqualToString:sig]) return;
+  self.lastGroupDockBadgeSignature = sig;
+  for (NSString *name in groups) {
+    NSString *path = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) continue;
+    NSInteger running = [self.groupBadgeCounts[name][@"running"] integerValue];
+    NSImage *base = [[NSImage alloc] initWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"]];
+    if (!base) base = [[NSWorkspace sharedWorkspace] iconForFile:path];
+    if (!base) continue;
+    NSImage *icon = [[NSImage alloc] initWithSize:NSMakeSize(512,512)];
+    [icon lockFocus];
+    [base drawInRect:NSMakeRect(0,0,512,512) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
+    if (running > 0) {
+      NSString *num = running > 99 ? @"99+" : [NSString stringWithFormat:@"%ld", (long)running];
+      NSRect br = NSMakeRect(330, 330, 162, 162);
+      [[NSColor systemRedColor] setFill];
+      [[NSBezierPath bezierPathWithOvalInRect:br] fill];
+      [[NSColor whiteColor] setStroke];
+      NSBezierPath *border = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(br, 6, 6)];
+      border.lineWidth = 10; [border stroke];
+      NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init]; ps.alignment = NSTextAlignmentCenter;
+      NSDictionary *attrs = @{NSFontAttributeName: [NSFont systemFontOfSize:(running > 9 ? 64 : 82) weight:NSFontWeightBold], NSForegroundColorAttributeName: [NSColor whiteColor], NSParagraphStyleAttributeName: ps};
+      [num drawInRect:NSMakeRect(br.origin.x, br.origin.y + 40, br.size.width, 90) withAttributes:attrs];
+    }
+    [icon unlockFocus];
+    [[NSWorkspace sharedWorkspace] setIcon:icon forFile:path options:0];
+  }
+  [self reloadDockPreferences];
 }
 
 - (void)updateConsoleGroupRunLabels {
@@ -19035,6 +19401,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"自动化规则", @"subtitle": @"应用/时间/桌面自动执行动作", @"type": @"工具", @"tool": @"automation", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"gearshape.2" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏会议助手", @"subtitle": @"转写 + AI 会议纪要", @"type": @"工具", @"tool": @"meeting", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"person.2.wave.2" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 语音转文字", @"subtitle": @"音频/录屏转文字", @"type": @"工具", @"tool": @"voicetext", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"waveform.badge.mic" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"分组定时规则", @"subtitle": @"定时显示/隐藏 Dock 分组", @"type": @"工具", @"tool": @"groupschedule", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"clock" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"系统隐私仪表盘", @"subtitle": @"查看并打开各项隐私权限", @"type": @"工具", @"tool": @"privacy", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"lock.shield" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"菜单栏页面自定义", @"subtitle": @"显示/隐藏和排序扇形页面", @"type": @"工具", @"tool": @"radialcustom", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"slider.horizontal.3" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 图片生成", @"subtitle": @"用 AI 服务生成图片", @"type": @"工具", @"tool": @"aiimage", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"photo.badge.plus" accessibilityDescription:nil] ?: recIcon}];
@@ -19173,6 +19542,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"automation"]) [self openAutomationRules:nil];
     else if ([tool isEqualToString:@"meeting"]) [self openMeetingAssistant:nil];
     else if ([tool isEqualToString:@"voicetext"]) [self openVoiceTextWindow:nil];
+    else if ([tool isEqualToString:@"groupschedule"]) [self openGroupScheduleRules:nil];
+    else if ([tool isEqualToString:@"privacy"]) [self openPrivacyDashboard:nil];
+    else if ([tool isEqualToString:@"radialcustom"]) [self openRadialPageCustomization:nil];
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
     else if ([tool isEqualToString:@"aitext"]) [self openAIAssistant:nil];
@@ -23461,6 +23833,29 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
 }
 
+- (void)installUpdateDMG:(NSString *)dmgPath {
+  if (!dmgPath.length || ![[NSFileManager defaultManager] fileExistsAtPath:dmgPath]) { [self showToast:@"更新文件不存在"]; return; }
+  NSString *appPath = [[NSBundle mainBundle] bundlePath];
+  NSString *script = [NSString stringWithFormat:
+    @"sleep 1; MNT=$(mktemp -d /tmp/dl-update.XXXXXX); hdiutil attach \\\"%@\\\" -nobrowse -quiet -mountpoint \\\"$MNT\\\" || exit 1; "
+    @"APP=$(find \\\"$MNT\\\" -maxdepth 2 -name '*.app' -print -quit); "
+    @"[ -z \\\"$APP\\\" ] && { hdiutil detach \\\"$MNT\\\" -quiet; exit 2; }; "
+    @"rm -rf \\\"%@\\\"; ditto \\\"$APP\\\" \\\"%@\\\"; hdiutil detach \\\"$MNT\\\" -quiet; open -a \\\"%@\\\"",
+    [dmgPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""],
+    [appPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""],
+    [appPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""],
+    [appPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""]];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/bin/sh";
+  t.arguments = @[@"-c", [NSString stringWithFormat:@"( %@ ) >/tmp/dl-update.log 2>&1 &", script]];
+  @try { [t launch]; } @catch (NSException *e) { [self showToast:@"启动安装失败"]; return; }
+  [self showToast:@"正在安装更新，应用会自动重启"];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    self.allowTerminate = YES;
+    [NSApp terminate:nil];
+  });
+}
+
 - (void)downloadUpdateAsset:(NSString *)urlString name:(NSString *)name {
   if (!urlString.length) return;
   NSString *safeName = name.length ? name : @"DockLaunchers-update.dmg";
@@ -23475,12 +23870,26 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       NSError *moveErr = nil;
       BOOL ok = [[NSFileManager defaultManager] moveItemAtURL:location toURL:[NSURL fileURLWithPath:dest] error:&moveErr];
       if (!ok) { [self showToast:@"更新文件保存失败"]; return; }
+      if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerAutoInstallUpdates"]) {
+        [self installUpdateDMG:dest];
+        return;
+      }
       NSAlert *a = [[NSAlert alloc] init];
       a.messageText = @"更新已下载";
-      a.informativeText = [NSString stringWithFormat:@"已保存到：\n%@\n\n是否打开？", dest];
-      [a addButtonWithTitle:@"打开"];
+      a.informativeText = [NSString stringWithFormat:@"已保存到：\n%@\n\n可以直接安装，或手动打开 DMG。", dest];
+      [a addButtonWithTitle:@"立即安装"];
+      [a addButtonWithTitle:@"打开 DMG"];
       [a addButtonWithTitle:@"稍后"];
-      if ([a runModal] == NSAlertFirstButtonReturn) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dest]];
+      NSButton *autoInstall = [NSButton checkboxWithTitle:@"下载后自动安装" target:nil action:nil];
+      autoInstall.frame = NSMakeRect(0,0,240,22);
+      a.accessoryView = autoInstall;
+      NSModalResponse r = [a runModal];
+      if (autoInstall.state == NSControlStateValueOn) {
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"centerAutoInstallUpdates"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+      }
+      if (r == NSAlertFirstButtonReturn) [self installUpdateDMG:dest];
+      else if (r == NSAlertSecondButtonReturn) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dest]];
     });
   }];
   [task resume];
