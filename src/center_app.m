@@ -14658,6 +14658,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"globalshortcuts"]) [self openShortcutSettings:nil];
   else if ([action isEqualToString:@"disk"]) [self openDiskAnalysisFromMenu];
   else if ([action isEqualToString:@"capture"]) [self showCaptureTool:nil];
+  else if ([action isEqualToString:@"pinshot"]) [self pinScreenshotInteractive:nil];
+  else if ([action isEqualToString:@"scrollshot"]) [self startScrollCapture:nil];
+  else if ([action isEqualToString:@"fullshot"]) [self captureFullScreen:nil];
+  else if ([action isEqualToString:@"recordtoggle"]) [self captureVideo:nil];
+  else if ([action isEqualToString:@"recordpause"]) [self pauseCapture:nil];
+  else if ([action isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
+  else if ([action isEqualToString:@"colorsampler"]) [self showColorSampler:nil];
+  else if ([action isEqualToString:@"filesearch"]) [self showFileSearch:nil];
+  else if ([action isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
   else if ([action isEqualToString:@"shelf"]) [self openShelfWindow:nil];
   else if ([action isEqualToString:@"aitext"]) [self openAIAssistant:nil];
   else if ([action isEqualToString:@"aiimage"]) [self openAIImagePanel:nil];
@@ -15763,6 +15772,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"图片问答", @"symbol": @"text.viewfinder", @"action": @"aivision"},
         @{@"title": @"图片编辑", @"symbol": @"wand.and.stars", @"action": @"aiedit"},
         @{@"title": @"应用卸载", @"symbol": @"trash.fill", @"action": @"uninstall"}
+      ],
+      @[
+        @{@"title": @"钉屏截图", @"symbol": @"pin.fill", @"action": @"pinshot"},
+        @{@"title": @"滚动长截图", @"symbol": @"arrow.down.to.line", @"action": @"scrollshot"},
+        @{@"title": @"全屏截图", @"symbol": @"camera.fill", @"action": @"fullshot"},
+        @{@"title": @"截图/录屏", @"symbol": @"camera.viewfinder", @"action": @"capture"},
+        @{@"title": @"最近截图", @"symbol": @"photo.stack", @"action": @"capturehistory"},
+        @{@"title": @"开始/停止录屏", @"symbol": @"record.circle", @"action": @"recordtoggle"},
+        @{@"title": @"暂停/继续录屏", @"symbol": @"pause.circle", @"action": @"recordpause"},
+        @{@"title": @"录屏后期", @"symbol": @"scissors", @"action": @"videopost"}
+      ],
+      @[
+        @{@"title": @"屏幕取色器", @"symbol": @"eyedropper", @"action": @"colorsampler"},
+        @{@"title": @"文件搜索", @"symbol": @"doc.text.magnifyingglass", @"action": @"filesearch"},
+        @{@"title": @"截图历史", @"symbol": @"photo.stack", @"action": @"capturehistory"}
       ]
     ];
     NSInteger savedPage = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerRadialLastPage"];
