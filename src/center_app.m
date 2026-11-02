@@ -22716,15 +22716,31 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         }
         id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
         NSString *text = nil;
+        BOOL hasTextKey = NO;
         if ([obj isKindOfClass:[NSDictionary class]]) {
-          text = obj[@"text"];
-          if (!text.length) text = obj[@"error"][@"message"];
+          id raw = obj[@"text"];
+          if ([raw isKindOfClass:[NSString class]]) { hasTextKey = YES; text = raw; }
+          if (!text.length) {
+            NSString *apiErr = obj[@"error"][@"message"] ?: obj[@"message"];
+            if (apiErr.length) {
+              update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:13 userInfo:@{NSLocalizedDescriptionKey: apiErr}]);
+              return;
+            }
+          }
         } else if ([obj isKindOfClass:[NSString class]]) {
           text = obj;
         }
-        if (!text.length) text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        if (hasTextKey && !text.length) {
+          update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:14 userInfo:@{NSLocalizedDescriptionKey: @"没有识别到语音：请确认录屏包含麦克风人声，或录音不是静音"}]);
+          return;
+        }
+        if (!text.length) {
+          // 非 JSON 的纯文本响应才当作转写结果，避免把 JSON 元数据显示到界面
+          NSString *plain = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+          if (plain.length && ![plain hasPrefix:@"{"]) text = plain;
+        }
         if (text.length) update(text, YES, nil);
-        else update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:14 userInfo:@{NSLocalizedDescriptionKey: @"第三方接口没有返回文字，请确认模型支持 /audio/transcriptions"}]);
+        else update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:15 userInfo:@{NSLocalizedDescriptionKey: @"第三方接口没有返回文字，请确认模型支持 /audio/transcriptions"}]);
       });
     }] resume];
   }];
