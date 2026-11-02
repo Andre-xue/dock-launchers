@@ -15739,7 +15739,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"AI 助手", @"symbol": @"sparkles", @"action": @"aitext"},
         @{@"title": @"AI 视频", @"symbol": @"video.badge.plus", @"action": @"aivideo"},
         @{@"title": @"AI 图片", @"symbol": @"photo.badge.plus", @"action": @"aiimage"},
-        @{@"title": @"AI 管理", @"symbol": @"sparkles", @"action": @"ai"},
+        @{@"title": @"Ai余量", @"symbol": @"sparkles", @"action": @"ai"},
         @{@"title": @"提示词库", @"symbol": @"text.book.closed.fill", @"action": @"prompts"},
         @{@"title": @"图片问答", @"symbol": @"text.viewfinder", @"action": @"aivision"},
         @{@"title": @"图片编辑", @"symbol": @"wand.and.stars", @"action": @"aiedit"}
