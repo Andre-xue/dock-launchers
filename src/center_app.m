@@ -1111,6 +1111,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSDictionary<NSString *, NSDictionary *> *groupBadgeCounts;
 @property (strong) NSTimer *groupBadgeTimer;
 @property (strong) ColorHoverButton *groupBadgeToggleButton;
+@property (strong) ColorHoverButton *consoleGroupBadgeButton;
 
 @property (strong) NSWindow *window;
 @property (strong) NSTextField *centerTitleLabel;
@@ -4531,6 +4532,14 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   self.groupsNextButton.target = self; self.groupsNextButton.action = @selector(groupsNextPage:);
   [self.groupsNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:self.groupsNextButton];
+  self.consoleGroupBadgeButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 24, 120, 28)];
+  BOOL badgesOn = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerGroupBadgesEnabled"] ? [[NSUserDefaults standardUserDefaults] boolForKey:@"centerGroupBadgesEnabled"] : YES;
+  self.consoleGroupBadgeButton.title = badgesOn ? @"角标：开" : @"角标：关";
+  self.consoleGroupBadgeButton.hoverColor = [NSColor systemOrangeColor];
+  self.consoleGroupBadgeButton.target = self;
+  self.consoleGroupBadgeButton.action = @selector(toggleGroupBadges:);
+  [self.consoleGroupBadgeButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:self.consoleGroupBadgeButton];
   self.groupsView = v;
 }
 
@@ -4742,6 +4751,13 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
     nm.frame = NSMakeRect(94, rowH / 2.0 + 3, 130, 20); [row addSubview:nm];
     NSTextField *pt = [self label:g[@"path"] size:10 bold:NO color:[NSColor secondaryLabelColor]];
     pt.frame = NSMakeRect(94, rowH / 2.0 - 19, 130, 16); [row addSubview:pt];
+    NSDictionary *badgeInfo = self.groupBadgeCounts[g[@"name"] ?: @""] ?: @{};
+    NSInteger runCount = [badgeInfo[@"running"] integerValue];
+    NSTextField *run = [self label:runCount > 0 ? [NSString stringWithFormat:@"● %ld", (long)runCount] : @"" size:10 bold:YES color:[NSColor systemRedColor]];
+    run.frame = NSMakeRect(178, rowH / 2.0 + 3, 52, 18);
+    run.tag = 301;
+    run.toolTip = @"该分组正在运行的应用数量";
+    [row addSubview:run];
     NSArray *rowDefs = @[
       @[@"打开", @"打开该分组的启动器窗口", @(236), [NSColor systemGreenColor], @"openGroupRow:"],
       @[@"编辑", @"修改该分组的名称、图标和应用列表", @(352), [NSColor systemYellowColor], @"editGroupRow:"],
@@ -16828,6 +16844,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [NSApp dockTile].badgeLabel = nil;
   }
   if (self.groupPanelWindow.isVisible) [self.groupPanelTable reloadData];
+  [self updateConsoleGroupRunLabels];
+}
+
+- (void)updateConsoleGroupRunLabels {
+  if (!self.groupsList) return;
+  for (NSView *row in self.groupsList.subviews) {
+    NSString *name = objc_getAssociatedObject(row, "GroupRowName");
+    if (!name.length) continue;
+    NSDictionary *d = self.groupBadgeCounts[name] ?: @{};
+    NSInteger running = [d[@"running"] integerValue];
+    for (NSView *sub in row.subviews) {
+      if (sub.tag == 301 && [sub isKindOfClass:[NSTextField class]]) {
+        ((NSTextField *)sub).stringValue = running > 0 ? [NSString stringWithFormat:@"● %ld", (long)running] : @"";
+      }
+    }
+  }
 }
 
 - (void)toggleGroupBadges:(id)sender {
@@ -16837,6 +16869,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[NSUserDefaults standardUserDefaults] synchronize];
   [self updateGroupBadges];
   if (self.groupBadgeToggleButton) self.groupBadgeToggleButton.title = enabled ? @"角标：开" : @"角标：关";
+  if (self.consoleGroupBadgeButton) self.consoleGroupBadgeButton.title = enabled ? @"角标：开" : @"角标：关";
   [self showToast:enabled ? @"已开启分组动态角标" : @"已关闭分组动态角标"];
 }
 
