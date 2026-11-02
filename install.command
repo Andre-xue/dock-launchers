@@ -152,7 +152,7 @@ if [ -d "$ROOT/build/DockLaunchers控制台.app" ]; then
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>com.docklaunchers.center</string>
-<key>ProgramArguments</key><array><string>$HOME/Applications/DockLaunchers控制台.app/Contents/MacOS/DockLaunchers</string></array>
+<key>ProgramArguments</key><array><string>/usr/bin/open</string><string>-g</string><string>-a</string><string>$HOME/Applications/DockLaunchers控制台.app</string></array>
 <key>RunAtLoad</key><true/>
 <key>KeepAlive</key><false/>
 </dict></plist>

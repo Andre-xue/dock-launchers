@@ -15500,9 +15500,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *path = [self loginPlistPath];
   if (self.loginCheck.state == NSControlStateValueOn) {
     [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:NULL];
-    NSString *exe = [[NSBundle mainBundle] executablePath];
+    NSString *appPath = [[NSBundle mainBundle] bundlePath];
     NSDictionary *pl = @{@"Label": @"com.docklaunchers.center",
-                         @"ProgramArguments": @[exe],
+                         @"ProgramArguments": @[@"/usr/bin/open", @"-g", @"-a", appPath],
                          @"RunAtLoad": @YES,
                          @"KeepAlive": @NO};
     [pl writeToFile:path atomically:YES];
