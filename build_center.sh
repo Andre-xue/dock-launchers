@@ -38,7 +38,7 @@ cat > "$OUT/Contents/Info.plist" <<'PL'
 <key>NSServices</key>
 <array>
   <dict>
-    <key>NSMenuItem</key><dict><key>default</key><string>添加到文件暂存架</string></dict>
+    <key>NSMenuItem</key><dict><key>default</key><string>DockLaunchers：添加到文件暂存架</string></dict>
     <key>NSMessage</key><string>addToShelfService</string>
     <key>NSPortName</key><string>DockLaunchers控制台</string>
     <key>NSSendTypes</key><array><string>NSFilenamesPboardType</string><string>public.file-url</string></array>
