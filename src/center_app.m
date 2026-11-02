@@ -1110,6 +1110,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSImage *statusBaseImage;
 @property (strong) NSDictionary<NSString *, NSDictionary *> *groupBadgeCounts;
 @property (strong) NSTimer *groupBadgeTimer;
+@property (strong) NSTimer *shelfInboxTimer;
 @property (strong) ColorHoverButton *groupBadgeToggleButton;
 @property (strong) ColorHoverButton *consoleGroupBadgeButton;
 
@@ -2898,6 +2899,8 @@ static void HideDockHoverTip(void) {
   [self buildPopover];
   [self applyThemeFromDefaults];
   [self startGroupBadgeTimer];
+  [self installShelfServiceWorkflowIfNeeded];
+  [self startShelfInboxTimer];
   [self startSceneAutoIfNeeded];
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerLaunchLock"] && [self hasAppPassword] && !getenv("DOCKLAUNCHERS_CENTER_SKIP_LOCK")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -16043,6 +16046,49 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   CGFloat bw = (w - 32 - gap * (self.shelfButtons.count - 1)) / MAX(1, self.shelfButtons.count);
   for (NSInteger i = 0; i < (NSInteger)self.shelfButtons.count; i++) {
     self.shelfButtons[i].frame = NSMakeRect(16 + i * (bw + gap), buttonY, bw, 30);
+  }
+}
+
+- (void)installShelfServiceWorkflowIfNeeded {
+  NSString *name = @"DockLaunchers 添加到文件暂存架.workflow";
+  NSString *src = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:[@"Services" stringByAppendingPathComponent:name]];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:src]) return;
+  NSString *destDir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Services"];
+  NSString *dest = [destDir stringByAppendingPathComponent:name];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  [fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:NULL];
+  [fm removeItemAtPath:dest error:NULL];
+  [fm copyItemAtPath:src toPath:dest error:NULL];
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/System/Library/CoreServices/pbs";
+  t.arguments = @[@"-update"];
+  @try { [t launch]; } @catch (NSException *e) {}
+}
+
+- (void)startShelfInboxTimer {
+  [self.shelfInboxTimer invalidate];
+  __weak typeof(self) weakSelf = self;
+  self.shelfInboxTimer = [NSTimer scheduledTimerWithTimeInterval:1.5 repeats:YES block:^(NSTimer *timer) {
+    [weakSelf consumeShelfInbox];
+  }];
+  [self consumeShelfInbox];
+}
+
+- (void)consumeShelfInbox {
+  NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  NSString *inbox = [support stringByAppendingPathComponent:@"shelf-inbox.txt"];
+  NSString *content = [NSString stringWithContentsOfFile:inbox encoding:NSUTF8StringEncoding error:NULL];
+  if (!content.length) return;
+  [[NSFileManager defaultManager] removeItemAtPath:inbox error:NULL];
+  NSMutableArray *urls = [NSMutableArray array];
+  for (NSString *line in [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+    NSString *p = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (p.length && [[NSFileManager defaultManager] fileExistsAtPath:p]) [urls addObject:[NSURL fileURLWithPath:p]];
+  }
+  if (urls.count) {
+    [self addShelfURLs:urls];
+    [self openShelfWindow:nil];
+    [self showToast:@"已从访达添加到文件暂存架"];
   }
 }
 

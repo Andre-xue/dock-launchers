@@ -7,6 +7,8 @@ rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp /tmp/docklaunchers_center_ui "$OUT/Contents/MacOS/DockLaunchers"
 cp "$ROOT/resources/icons/控制台.icns" "$OUT/Contents/Resources/AppIcon2.icns"
+mkdir -p "$OUT/Contents/Resources/Services"
+cp -R "$ROOT/resources/services/"*.workflow "$OUT/Contents/Resources/Services/" 2>/dev/null || true
 mkdir -p "$OUT/Contents/Resources/GroupIcons"
 for ic in 工作组 聊天组 外网组 影音组 Ai组 Docker组 工具组; do
   cp "$ROOT/resources/icons/$ic.icns" "$OUT/Contents/Resources/GroupIcons/$ic.icns"
@@ -42,6 +44,7 @@ cat > "$OUT/Contents/Info.plist" <<'PL'
     <key>NSMessage</key><string>addToShelfService</string>
     <key>NSPortName</key><string>DockLaunchers控制台</string>
     <key>NSSendTypes</key><array><string>NSFilenamesPboardType</string><string>public.file-url</string></array>
+    <key>NSSendFileTypes</key><array><string>public.item</string><string>public.folder</string><string>public.data</string></array>
   </dict>
 </array>
 </dict></plist>
