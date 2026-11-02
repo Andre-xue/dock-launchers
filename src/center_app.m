@@ -22235,7 +22235,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *low = [name lowercaseString];
   if ([low containsString:@"openai"] || [low containsString:@"chatgpt"]) { defaultURL = @"https://api.openai.com/v1/images/generations"; defaultModel = @"gpt-image-1"; }
   else if ([low containsString:@"豆包"] || [low containsString:@"方舟"] || [low containsString:@"volcengine"] || [low containsString:@"doubao"]) { defaultURL = @"https://ark.cn-beijing.volces.com/api/v3/images/generations"; defaultModel = @"doubao-seedream-3-0-t2i-250415"; }
-  else if ([low containsString:@"siliconflow"] || [low containsString:@"硅基流动"]) { defaultURL = @"https://api.siliconflow.cn/v1/images/generations"; defaultModel = @"black-forest-labs/FLUX.1-schnell"; }
+  else if ([low containsString:@"siliconflow"] || [low containsString:@"硅基流动"]) { defaultURL = @"https://api.siliconflow.cn/v1/images/generations"; defaultModel = @"Qwen/Qwen-Image"; }
   else if (base.length) defaultURL = [base stringByAppendingString:@"/images/generations"];
   if (((NSString *)e[@"imageAPI"]).length) defaultURL = e[@"imageAPI"];
   if (((NSString *)e[@"imageModel"]).length) defaultModel = e[@"imageModel"];
@@ -22246,7 +22246,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!key.length) { self.aiImageStatus.stringValue = @"缺少 API Key，无法自动获取图片模型"; return; }
   self.aiImageStatus.stringValue = @"正在获取图片模型…";
   __weak typeof(self) weakSelf = self;
-  [self fetchModelsForPanel:self.aiImageModelField url:defaultURL key:key keywords:@[@"dall-e",@"gpt-image",@"image",@"flux",@"seedream",@"stable",@"sdxl",@"midjourney",@"imagen"] knownDefault:defaultModel completion:^(NSArray *models) {
+  NSString *imageModelListURL = base.length ? base : defaultURL;
+  [self fetchModelsForPanel:self.aiImageModelField url:imageModelListURL key:key keywords:@[@"dall-e",@"gpt-image",@"image",@"flux",@"seedream",@"stable",@"sdxl",@"midjourney",@"imagen",@"qwen",@"z-image",@"kolors",@"wan"] knownDefault:defaultModel completion:^(NSArray *models) {
     if (models.count) { weakSelf.aiImageStatus.stringValue = [NSString stringWithFormat:@"已获取 %ld 个图片模型", (long)models.count]; }
     else { weakSelf.aiImageModelField.stringValue = defaultModel; weakSelf.aiImageStatus.stringValue = @"未获取到图片模型，使用默认模型"; }
   }];
@@ -22283,7 +22284,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     gen.title=@"生成"; gen.hoverColor=[NSColor systemBlueColor]; gen.target=self; gen.action=@selector(generateAIImage:);
     [gen applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gen];
     self.aiImageURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,486,610,28)];
-    self.aiImageURLField.placeholderString=@"图片生成 API 地址"; [cv addSubview:self.aiImageURLField];
+    self.aiImageURLField.placeholderString=@"图片生成 API 地址";
+    self.aiImageURLField.editable=NO; self.aiImageURLField.selectable=YES;
+    self.aiImageURLField.toolTip=@"根据所选 AI 服务自动填写";
+    [cv addSubview:self.aiImageURLField];
     NSScrollView *inScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,300,610,170)];
     inScroll.hasVerticalScroller=YES; inScroll.borderType=NSBezelBorder;
     self.aiImagePrompt = [[NSTextView alloc] initWithFrame:inScroll.contentView.bounds];
@@ -22338,7 +22342,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *model=self.aiImageModelField.stringValue;
   if (!key.length || !prompt.length || !url.length || !model.length) { self.aiImageStatus.stringValue=@"请填写 API Key、提示词、地址和模型"; return; }
   NSMutableDictionary *entry=[e mutableCopy]; entry[@"imageModel"]=model; entry[@"imageAPI"]=url; self.aiEntries[idx]=entry; [self saveAIEntries];
-  NSMutableDictionary *body=[@{@"model":model,@"prompt":prompt,@"n":@1,@"size":self.aiImageSizePopup.titleOfSelectedItem ?: @"1024x1024",@"response_format":@"url"} mutableCopy];
+  NSString *imageServiceName = [e[@"name"] ?: @"" lowercaseString];
+  BOOL siliconImage = [url containsString:@"siliconflow"] || [imageServiceName containsString:@"siliconflow"] || [imageServiceName containsString:@"硅基流动"];
+  NSString *imageSize = self.aiImageSizePopup.titleOfSelectedItem ?: @"1024x1024";
+  NSMutableDictionary *body;
+  if (siliconImage) body=[@{@"model":model,@"prompt":prompt,@"image_size":imageSize} mutableCopy];
+  else body=[@{@"model":model,@"prompt":prompt,@"n":@1,@"size":imageSize,@"response_format":@"url"} mutableCopy];
   NSString *reasonImg = [self reasoningEffortForPopup:self.aiImageReasoningPopup];
   if (reasonImg.length) body[@"reasoning_effort"] = reasonImg;
   NSData *data=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
