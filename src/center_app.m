@@ -2861,6 +2861,7 @@ static void HideDockHoverTip(void) {
     return;
   }
   [self pruneStaleDockEntries];
+  NSApp.servicesProvider = self;
   NSUserDefaults *ud0 = [NSUserDefaults standardUserDefaults];
   if (![ud0 boolForKey:@"centerMenuTextInit"]) {
     [ud0 setBool:YES forKey:@"centerMenuText"];
@@ -16045,6 +16046,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
 }
 
+- (void)addFilesToShelfFromShortcut:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = YES; p.allowsMultipleSelection = YES;
+  p.prompt = @"添加到暂存架";
+  if ([p runModal] == NSModalResponseOK) {
+    [self addShelfURLs:p.URLs];
+    [self openShelfWindow:nil];
+    [self showToast:@"已添加到文件暂存架"];
+  }
+}
+
+- (void)addToShelfService:(NSPasteboard *)pboard userData:(NSString *)userData error:(NSString **)error {
+  NSArray *urls = [pboard readObjectsForClasses:@[NSURL.class] options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+  if (!urls.count) {
+    if (error) *error = @"没有可添加的文件";
+    return;
+  }
+  [self addShelfURLs:urls];
+  [self openShelfWindow:nil];
+}
+
 - (void)openShelfWindow:(id)sender {
   if (!self.shelfWindow) {
     self.shelfWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,440,430) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -16598,6 +16620,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3050,@"cat":@1,@"title":@"配置导出 / 导入",@"desc":@"迁移分组和设置",@"sel":@"openConfigBackupWindow:"},
     @{@"id":@3051,@"cat":@1,@"title":@"检查更新",@"desc":@"查看 DockLaunchers 新版本",@"sel":@"checkForUpdates:"},
     @{@"id":@3052,@"cat":@3,@"title":@"开关分组动态角标",@"desc":@"菜单栏和分组面板显示运行数量",@"sel":@"toggleGroupBadges:"},
+    @{@"id":@3053,@"cat":@1,@"title":@"添加文件到暂存架",@"desc":@"选择文件加入文件暂存架",@"sel":@"addFilesToShelfFromShortcut:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},

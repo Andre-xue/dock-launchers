@@ -35,6 +35,15 @@ cat > "$OUT/Contents/Info.plist" <<'PL'
   <key>NSMicrophoneUsageDescription</key>
   <string>录制屏幕时按需采集麦克风声音。</string>
 <key>NSPhotoLibraryUsageDescription</key><string>用于读取照片图库中的照片和视频，仅在本机「文件管理」中展示，不上传、不修改。</string>
+<key>NSServices</key>
+<array>
+  <dict>
+    <key>NSMenuItem</key><dict><key>default</key><string>添加到文件暂存架</string></dict>
+    <key>NSMessage</key><string>addToShelfService</string>
+    <key>NSPortName</key><string>DockLaunchers控制台</string>
+    <key>NSSendTypes</key><array><string>NSFilenamesPboardType</string><string>public.file-url</string></array>
+  </dict>
+</array>
 </dict></plist>
 PL
 sed -i '' "s|<string>0.1</string>|<string>${PLVER}</string>|" "$OUT/Contents/Info.plist"
