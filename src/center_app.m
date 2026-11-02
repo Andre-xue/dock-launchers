@@ -1217,6 +1217,15 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *shelfWindow;
 @property (strong) NSWindow *configBackupWindow;
 @property (strong) NSWindow *cloudSyncWindow;
+@property (strong) NSWindow *automationWindow, *automationRuleWindow;
+@property (strong) NSTableView *automationTable;
+@property (strong) NSMutableArray *automationRules;
+@property (strong) NSMutableDictionary *automationLastFired;
+@property (strong) NSTimer *automationTimer;
+@property NSInteger automationEditingIndex;
+@property (strong) NSTextField *automationNameField, *automationTriggerValueField, *automationActionValueField;
+@property (strong) NSPopUpButton *automationTriggerPopup, *automationActionPopup;
+@property (strong) NSButton *automationEnabledCheck;
 @property (strong) NSTextField *cloudSyncPathLabel, *cloudSyncStatus;
 @property (strong) NSButton *cloudAutoSyncCheck;
 @property (strong) NSTableView *shelfTable;
@@ -3019,6 +3028,7 @@ static void HideDockHoverTip(void) {
   [self startShelfInboxTimer];
   [self startWindowSnapMonitor];
   [self startSceneAutoIfNeeded];
+  [self startAutomationEngine];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self applySceneForCurrentSpace]; });
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerLaunchLock"] && [self hasAppPassword] && !getenv("DOCKLAUNCHERS_CENTER_SKIP_LOCK")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -9654,6 +9664,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
+  if (tableView == self.automationTable) return self.automationRules.count;
   if (tableView == self.shelfTable) return self.shelfVisiblePaths.count;
   if (tableView == self.dupTable) return self.dupItems.count;
   if (tableView == self.captureHistoryTable) return self.captureHistoryItems.count;
@@ -9705,6 +9716,33 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
+  if (tableView == self.automationTable) {
+    if (row < 0 || row >= (NSInteger)self.automationRules.count) return nil;
+    NSDictionary *r = self.automationRules[row];
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,40)];
+    if ([col.identifier isEqualToString:@"aenabled"]) {
+      NSButton *b = [NSButton checkboxWithTitle:@"" target:self action:@selector(automationToggleEnabled:)];
+      b.tag = row;
+      b.state = [r[@"enabled"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+      b.frame = NSMakeRect(14, 9, 22, 22);
+      [v addSubview:b];
+    } else if ([col.identifier isEqualToString:@"aname"]) {
+      NSTextField *l = [self label:r[@"name"] ?: @"未命名" size:11.5 bold:YES color:nil];
+      l.lineBreakMode = NSLineBreakByTruncatingTail;
+      l.frame = NSMakeRect(4, 10, col.width - 8, 20); [v addSubview:l];
+    } else if ([col.identifier isEqualToString:@"atrigger"]) {
+      NSString *t = [NSString stringWithFormat:@"%@ · %@", [self automationTriggerTitle:r[@"trigger"] ?: @""], r[@"triggerValue"] ?: @""];
+      NSTextField *l = [self label:t size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.frame = NSMakeRect(4, 10, col.width - 8, 18); [v addSubview:l];
+    } else {
+      NSString *t = [NSString stringWithFormat:@"%@ · %@", [self automationActionTitle:r[@"action"] ?: @""], r[@"actionValue"] ?: @""];
+      NSTextField *l = [self label:t size:10.5 bold:NO color:[NSColor controlAccentColor]];
+      l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+      l.frame = NSMakeRect(4, 10, col.width - 8, 18); [v addSubview:l];
+    }
+    return v;
+  }
   if (tableView == self.shelfTable) {
     if (row < 0 || row >= (NSInteger)self.shelfVisiblePaths.count) return nil;
     NSString *path = self.shelfVisiblePaths[row];
@@ -11556,6 +11594,8 @@ static BOOL ValidGroupName(NSString *raw) {
     NSDictionary *now = DLActiveSpaceInfo();
     if (key.length && ![[now[@"id"] description] isEqualToString:key]) return;
     [self applySceneForCurrentSpace];
+    NSDictionary *sp = DLActiveSpaceInfo();
+    [self evaluateAutomationTrigger:@"space" value:[sp[@"index"] description] ?: @""];
   });
 }
 
@@ -14674,6 +14714,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"scene"]) { [self rebuildQuickSceneTab]; [self showDetachedPage:self.quickScenePage title:@"场景模式"]; }
   else if ([action isEqualToString:@"ai"]) { if ([self ensureAIManagementAccess]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; } }
   else if ([action isEqualToString:@"aimgmtpage"]) [self openAIManagementFromMenu];
+  else if ([action isEqualToString:@"automation"]) [self openAutomationRules:nil];
   else if ([action isEqualToString:@"layouts"]) [self showWindowLayouts:nil];
   else if ([action isEqualToString:@"largefiles"]) [self showLargeFileCleaner:nil];
   else if ([action isEqualToString:@"duplicates"]) [self showDuplicateFinder:nil];
@@ -15833,7 +15874,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"全局快捷键", @"symbol": @"globe", @"action": @"globalshortcuts"},
         @{@"title": @"应用快捷键", @"symbol": @"keyboard", @"action": @"appshortcuts"},
         @{@"title": @"应用密码", @"symbol": @"lock.fill", @"action": @"password"},
-        @{@"title": @"应用卸载", @"symbol": @"trash.fill", @"action": @"uninstall"}
+        @{@"title": @"应用卸载", @"symbol": @"trash.fill", @"action": @"uninstall"},
+        @{@"title": @"自动化规则", @"symbol": @"gearshape.2", @"action": @"automation"}
       ]
     ];
     NSUserDefaults *radialUD = [NSUserDefaults standardUserDefaults];
@@ -17218,6 +17260,334 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
+- (NSString *)automationRulesPath {
+  NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:@"automation_rules.json"];
+}
+
+- (void)loadAutomationRules {
+  if (self.automationRules) return;
+  NSData *d = [NSData dataWithContentsOfFile:[self automationRulesPath]];
+  id obj = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL] : nil;
+  self.automationRules = [obj isKindOfClass:[NSArray class]] ? [obj mutableCopy] : [NSMutableArray array];
+}
+
+- (void)saveAutomationRules {
+  NSData *d = [NSJSONSerialization dataWithJSONObject:self.automationRules ?: @[] options:NSJSONWritingPrettyPrinted error:NULL];
+  [d writeToFile:[self automationRulesPath] atomically:YES];
+}
+
+- (NSString *)automationTriggerTitle:(NSString *)key {
+  if ([key isEqualToString:@"app_launch"]) return @"应用启动";
+  if ([key isEqualToString:@"app_quit"]) return @"应用退出";
+  if ([key isEqualToString:@"time"]) return @"每天时间";
+  if ([key isEqualToString:@"space"]) return @"切换到桌面";
+  return key ?: @"";
+}
+
+- (NSString *)automationActionTitle:(NSString *)key {
+  if ([key isEqualToString:@"scene"]) return @"应用场景";
+  if ([key isEqualToString:@"layout"]) return @"恢复窗口布局";
+  if ([key isEqualToString:@"launch"]) return @"启动应用";
+  if ([key isEqualToString:@"quit"]) return @"退出应用";
+  return key ?: @"";
+}
+
+- (NSString *)automationRuleSummary:(NSDictionary *)rule {
+  return [NSString stringWithFormat:@"%@ · %@ → %@ · %@",
+          [self automationTriggerTitle:rule[@"trigger"] ?: @""], rule[@"triggerValue"] ?: @"",
+          [self automationActionTitle:rule[@"action"] ?: @""], rule[@"actionValue"] ?: @""];
+}
+
+- (void)openAutomationRules:(id)sender {
+  [self loadAutomationRules];
+  if (!self.automationWindow) {
+    self.automationWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,560)
+                                                          styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable)
+                                                            backing:NSBackingStoreBuffered defer:NO];
+    self.automationWindow.title = @"自动化规则";
+    self.automationWindow.releasedWhenClosed = NO;
+    NSView *cv = self.automationWindow.contentView;
+    NSTextField *title = [self label:@"自动化规则" size:20 bold:YES color:nil];
+    title.frame = NSMakeRect(24, 510, 260, 28); [cv addSubview:title];
+    NSTextField *sub = [self label:@"应用启动/退出、每天时间或切换桌面时，自动执行场景、布局和应用操作" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    sub.frame = NSMakeRect(24, 488, 660, 18); [cv addSubview:sub];
+
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, 92, 712, 380)];
+    sv.hasVerticalScroller = YES; sv.drawsBackground = NO;
+    self.automationTable = [[NSTableView alloc] initWithFrame:NSMakeRect(0,0,712,380)];
+    self.automationTable.rowHeight = 40;
+    self.automationTable.delegate = self; self.automationTable.dataSource = self;
+    self.automationTable.doubleAction = @selector(editAutomationRule:);
+    self.automationTable.target = self;
+    NSArray *cols = @[@[@"aenabled", @"启用", @(54)], @[@"aname", @"规则名称", @(150)],
+                      @[@"atrigger", @"触发", @(210)], @[@"aaction", @"执行", @(290)]];
+    for (NSArray *c in cols) {
+      NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
+      col.title = c[1]; col.width = [c[2] doubleValue];
+      [self.automationTable addTableColumn:col];
+    }
+    sv.documentView = self.automationTable; [cv addSubview:sv];
+
+    NSArray *titles = @[@"新增规则…", @"编辑…", @"删除", @"恢复默认示例"];
+    NSArray *sels = @[@"addAutomationRule:", @"editAutomationRule:", @"deleteAutomationRule:", @"addAutomationExamples:"];
+    NSArray *colors = @[[NSColor systemGreenColor], [NSColor systemBlueColor], [NSColor systemRedColor], [NSColor systemPurpleColor]];
+    CGFloat xs[4] = {24, 142, 240, 330};
+    CGFloat ws[4] = {108, 88, 78, 130};
+    for (NSInteger i=0;i<4;i++) {
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(xs[i], 38, ws[i], 32)];
+      b.title = titles[i]; b.hoverColor = colors[i];
+      b.target = self; b.action = NSSelectorFromString(sels[i]);
+      [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      [cv addSubview:b];
+    }
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(624, 38, 112, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
+    close.target = self; close.action = @selector(closeAutomationRules:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:close];
+    [self.automationWindow center];
+  }
+  [self.automationTable reloadData];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.automationWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)closeAutomationRules:(id)sender { [self.automationWindow orderOut:nil]; }
+
+- (void)automationToggleEnabled:(NSButton *)b {
+  NSInteger row = b.tag;
+  if (row < 0 || row >= (NSInteger)self.automationRules.count) return;
+  NSMutableDictionary *r = [self.automationRules[row] mutableCopy];
+  r[@"enabled"] = @(b.state == NSControlStateValueOn);
+  self.automationRules[row] = r;
+  [self saveAutomationRules];
+}
+
+- (void)addAutomationRule:(id)sender {
+  self.automationEditingIndex = -1;
+  [self showAutomationRuleEditorWithRule:nil];
+}
+
+- (void)editAutomationRule:(id)sender {
+  NSInteger row = self.automationTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.automationRules.count) return;
+  self.automationEditingIndex = row;
+  [self showAutomationRuleEditorWithRule:self.automationRules[row]];
+}
+
+- (void)deleteAutomationRule:(id)sender {
+  NSInteger row = self.automationTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.automationRules.count) return;
+  [self.automationRules removeObjectAtIndex:row];
+  [self saveAutomationRules];
+  [self.automationTable reloadData];
+}
+
+- (void)addAutomationExamples:(id)sender {
+  [self loadAutomationRules];
+  NSArray *examples = @[
+    @{@"id": [[NSUUID UUID] UUIDString], @"name": @"打开工作应用 → 工作场景", @"enabled": @YES, @"trigger": @"app_launch", @"triggerValue": @"com.apple.dt.Xcode", @"action": @"scene", @"actionValue": @"工作"},
+    @{@"id": [[NSUUID UUID] UUIDString], @"name": @"每天 09:00 → 工作场景", @"enabled": @NO, @"trigger": @"time", @"triggerValue": @"09:00", @"action": @"scene", @"actionValue": @"工作"},
+    @{@"id": [[NSUUID UUID] UUIDString], @"name": @"切换到桌面 1 → 工作场景", @"enabled": @NO, @"trigger": @"space", @"triggerValue": @"1", @"action": @"scene", @"actionValue": @"工作"},
+  ];
+  for (NSDictionary *e in examples) [self.automationRules addObject:e];
+  [self saveAutomationRules];
+  [self.automationTable reloadData];
+  [self showToast:@"已加入示例规则，请按需修改名称和值"];
+}
+
+- (void)showAutomationRuleEditorWithRule:(NSDictionary *)rule {
+  if (!self.automationRuleWindow) {
+    self.automationRuleWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,540,430)
+                                                               styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
+                                                                 backing:NSBackingStoreBuffered defer:NO];
+    self.automationRuleWindow.title = @"编辑自动化规则";
+    self.automationRuleWindow.releasedWhenClosed = NO;
+    NSView *cv = self.automationRuleWindow.contentView;
+    NSTextField *nameLabel = [self label:@"规则名称" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    nameLabel.frame = NSMakeRect(24, 370, 80, 18); [cv addSubview:nameLabel];
+    self.automationNameField = [[NSTextField alloc] initWithFrame:NSMakeRect(110, 364, 400, 26)];
+    self.automationNameField.placeholderString = @"例如：打开 Xcode 自动切工作场景";
+    [cv addSubview:self.automationNameField];
+
+    NSTextField *tl = [self label:@"当" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    tl.frame = NSMakeRect(24, 326, 30, 18); [cv addSubview:tl];
+    self.automationTriggerPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(60, 320, 160, 28) pullsDown:NO];
+    self.automationTriggerPopup.target = self; self.automationTriggerPopup.action = @selector(automationTriggerChanged:);
+    [cv addSubview:self.automationTriggerPopup];
+    [self.automationTriggerPopup addItemsWithTitles:@[@"应用启动", @"应用退出", @"每天时间", @"切换到桌面"]];
+    self.automationTriggerValueField = [[NSTextField alloc] initWithFrame:NSMakeRect(234, 320, 276, 28)];
+    self.automationTriggerValueField.placeholderString = @"Bundle ID 或应用路径";
+    [cv addSubview:self.automationTriggerValueField];
+
+    NSTextField *al = [self label:@"执行" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    al.frame = NSMakeRect(24, 276, 36, 18); [cv addSubview:al];
+    self.automationActionPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(68, 270, 160, 28) pullsDown:NO];
+    self.automationActionPopup.target = self; self.automationActionPopup.action = @selector(automationActionChanged:);
+    [cv addSubview:self.automationActionPopup];
+    [self.automationActionPopup addItemsWithTitles:@[@"应用场景", @"恢复窗口布局", @"启动应用", @"退出应用"]];
+    self.automationActionValueField = [[NSTextField alloc] initWithFrame:NSMakeRect(242, 270, 268, 28)];
+    self.automationActionValueField.placeholderString = @"场景名称";
+    [cv addSubview:self.automationActionValueField];
+
+    NSTextField *hint = [self label:@"触发值：应用触发填 Bundle ID 或 /Applications/xxx.app；时间填 HH:mm（24小时）；桌面填序号 1、2…\n执行值：场景/布局填名称；应用触发填应用路径或 Bundle ID。" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    hint.frame = NSMakeRect(24, 206, 490, 44); hint.maximumNumberOfLines = 3; [cv addSubview:hint];
+    self.automationEnabledCheck = [NSButton checkboxWithTitle:@"启用此规则" target:nil action:nil];
+    self.automationEnabledCheck.frame = NSMakeRect(24, 170, 180, 22); [cv addSubview:self.automationEnabledCheck];
+
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(340, 116, 100, 34)];
+    save.title = @"保存"; save.hoverColor = [NSColor systemGreenColor]; save.target = self; save.action = @selector(saveAutomationRule:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(450, 116, 80, 34)];
+    cancel.title = @"取消"; cancel.hoverColor = [NSColor systemGrayColor]; cancel.target = self; cancel.action = @selector(closeAutomationRuleEditor:);
+    [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
+    [self.automationRuleWindow center];
+  }
+  NSDictionary *r = rule ?: @{@"enabled": @YES, @"trigger": @"app_launch", @"action": @"scene"};
+  self.automationNameField.stringValue = r[@"name"] ?: @"";
+  self.automationTriggerValueField.stringValue = r[@"triggerValue"] ?: @"";
+  self.automationActionValueField.stringValue = r[@"actionValue"] ?: @"";
+  NSArray *triggerKeys = @[@"app_launch", @"app_quit", @"time", @"space"];
+  NSArray *actionKeys = @[@"scene", @"layout", @"launch", @"quit"];
+  NSInteger ti = [triggerKeys indexOfObject:r[@"trigger"] ?: @"app_launch"];
+  NSInteger ai = [actionKeys indexOfObject:r[@"action"] ?: @"scene"];
+  [self.automationTriggerPopup selectItemAtIndex:(ti == NSNotFound ? 0 : ti)];
+  [self.automationActionPopup selectItemAtIndex:(ai == NSNotFound ? 0 : ai)];
+  self.automationEnabledCheck.state = [r[@"enabled"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+  [self automationTriggerChanged:nil];
+  [self automationActionChanged:nil];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.automationRuleWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)automationTriggerChanged:(id)sender {
+  NSInteger idx = self.automationTriggerPopup.indexOfSelectedItem;
+  self.automationTriggerValueField.placeholderString = idx == 0 || idx == 1 ? @"Bundle ID 或 /Applications/xxx.app" : (idx == 2 ? @"HH:mm，例如 09:00" : @"桌面序号，例如 1");
+}
+
+- (void)automationActionChanged:(id)sender {
+  NSInteger idx = self.automationActionPopup.indexOfSelectedItem;
+  self.automationActionValueField.placeholderString = idx == 0 ? @"场景名称，例如 工作" : (idx == 1 ? @"窗口布局名称" : @"应用路径或 Bundle ID");
+}
+
+- (void)closeAutomationRuleEditor:(id)sender { [self.automationRuleWindow orderOut:nil]; }
+
+- (void)saveAutomationRule:(id)sender {
+  NSString *name = self.automationNameField.stringValue.length ? self.automationNameField.stringValue : @"未命名规则";
+  NSString *tv = [self.automationTriggerValueField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  NSString *av = [self.automationActionValueField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!tv.length || !av.length) { [self showToast:@"触发值和执行值都不能为空"]; return; }
+  NSArray *triggerKeys = @[@"app_launch", @"app_quit", @"time", @"space"];
+  NSArray *actionKeys = @[@"scene", @"layout", @"launch", @"quit"];
+  NSInteger ti = self.automationTriggerPopup.indexOfSelectedItem;
+  NSInteger ai = self.automationActionPopup.indexOfSelectedItem;
+  if ([triggerKeys[ti] isEqualToString:@"time"] && tv.length != 5) { [self showToast:@"时间格式应为 HH:mm，例如 09:00"]; return; }
+  NSMutableDictionary *r = [@{@"name": name, @"trigger": triggerKeys[ti], @"triggerValue": tv,
+                              @"action": actionKeys[ai], @"actionValue": av,
+                              @"enabled": @(self.automationEnabledCheck.state == NSControlStateValueOn),
+                              @"id": [[NSUUID UUID] UUIDString]} mutableCopy];
+  if (self.automationEditingIndex >= 0 && self.automationEditingIndex < (NSInteger)self.automationRules.count) {
+    NSDictionary *old = self.automationRules[self.automationEditingIndex];
+    if (old[@"id"]) r[@"id"] = old[@"id"];
+    self.automationRules[self.automationEditingIndex] = r;
+  } else {
+    [self.automationRules addObject:r];
+  }
+  [self saveAutomationRules];
+  [self.automationTable reloadData];
+  [self.automationRuleWindow orderOut:nil];
+  [self showToast:@"自动化规则已保存"];
+}
+
+- (void)startAutomationEngine {
+  [self loadAutomationRules];
+  if (self.automationTimer) return;
+  NSNotificationCenter *wsnc = [[NSWorkspace sharedWorkspace] notificationCenter];
+  [wsnc addObserver:self selector:@selector(automationAppLaunched:) name:NSWorkspaceDidLaunchApplicationNotification object:nil];
+  [wsnc addObserver:self selector:@selector(automationAppTerminated:) name:NSWorkspaceDidTerminateApplicationNotification object:nil];
+  self.automationTimer = [NSTimer scheduledTimerWithTimeInterval:20 target:self selector:@selector(automationTimeTick:) userInfo:nil repeats:YES];
+}
+
+- (void)automationTimeTick:(NSTimer *)timer {
+  NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"HH:mm";
+  [self evaluateAutomationTrigger:@"time" value:[df stringFromDate:[NSDate date]]];
+}
+
+- (void)automationAppLaunched:(NSNotification *)note {
+  NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
+  if (!app) return;
+  [self evaluateAutomationTrigger:@"app_launch" value:app.bundleIdentifier ?: app.executableURL.path ?: @""];
+}
+
+- (void)automationAppTerminated:(NSNotification *)note {
+  NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
+  if (!app) return;
+  [self evaluateAutomationTrigger:@"app_quit" value:app.bundleIdentifier ?: app.executableURL.path ?: @""];
+}
+
+- (BOOL)automationValue:(NSString *)value matchesApp:(NSString *)ident {
+  if (!value.length || !ident.length) return NO;
+  if ([value caseInsensitiveCompare:ident] == NSOrderedSame) return YES;
+  if ([ident.lastPathComponent caseInsensitiveCompare:value.lastPathComponent] == NSOrderedSame) return YES;
+  if ([value containsString:@"/"] && [ident caseInsensitiveCompare:value] == NSOrderedSame) return YES;
+  return NO;
+}
+
+- (BOOL)automationRule:(NSDictionary *)rule matchesTrigger:(NSString *)trigger value:(NSString *)value {
+  if (![rule[@"enabled"] boolValue]) return NO;
+  if (![rule[@"trigger"] isEqualToString:trigger]) return NO;
+  NSString *tv = [rule[@"triggerValue"] ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!tv.length) return NO;
+  if ([trigger isEqualToString:@"time"]) return [tv isEqualToString:value];
+  if ([trigger isEqualToString:@"space"]) return [tv isEqualToString:value];
+  return [self automationValue:tv matchesApp:value];
+}
+
+- (void)evaluateAutomationTrigger:(NSString *)trigger value:(NSString *)value {
+  [self loadAutomationRules];
+  if (!self.automationRules.count) return;
+  NSDate *now = [NSDate date];
+  for (NSDictionary *rule in [self.automationRules copy]) {
+    @try {
+      if (![self automationRule:rule matchesTrigger:trigger value:value]) continue;
+      NSString *key = rule[@"id"] ?: [self automationRuleSummary:rule];
+      NSDate *last = self.automationLastFired[key];
+      if (last && [now timeIntervalSinceDate:last] < 2.0) continue;
+      if (!self.automationLastFired) self.automationLastFired = [NSMutableDictionary dictionary];
+      self.automationLastFired[key] = now;
+      [self performAutomationAction:rule[@"action"] ?: @"" value:rule[@"actionValue"] ?: @""];
+    } @catch (NSException *e) {}
+  }
+}
+
+- (void)performAutomationAction:(NSString *)action value:(NSString *)value {
+  if (!value.length) return;
+  if ([action isEqualToString:@"scene"]) {
+    [self loadScenes];
+    [self applySceneNamed:value silent:YES];
+  } else if ([action isEqualToString:@"layout"]) {
+    [self loadWindowLayouts];
+    if (self.savedLayouts[value]) [self restoreWindowLayoutNamed:value autoLaunch:YES];
+  } else if ([action isEqualToString:@"launch"] || [action isEqualToString:@"quit"]) {
+    NSArray<NSRunningApplication *> *apps = [[NSWorkspace sharedWorkspace] runningApplications];
+    BOOL matched = NO;
+    for (NSRunningApplication *app in apps) {
+      NSString *bid = app.bundleIdentifier ?: @"";
+      NSString *path = app.bundleURL.path ?: @"";
+      if (![self automationValue:value matchesApp:bid] && ![self automationValue:value matchesApp:path]) continue;
+      matched = YES;
+      if ([action isEqualToString:@"launch"]) [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+      else [app terminate];
+    }
+    if ([action isEqualToString:@"launch"] && !matched) {
+      NSURL *u = [value containsString:@"/"] ? [NSURL fileURLWithPath:value] : [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:value];
+      if (u) [[NSWorkspace sharedWorkspace] openURL:u];
+    }
+  }
+}
+
 - (void)openCloudSyncWindow:(id)sender {
   if (!self.cloudSyncWindow) {
     self.cloudSyncWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,360) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
@@ -17636,6 +18006,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3069,@"cat":@1,@"title":@"配置云同步",@"desc":@"上传/恢复云端配置",@"sel":@"openCloudSyncWindow:"},
     @{@"id":@3070,@"cat":@1,@"title":@"应用卸载",@"desc":@"独立窗口卸载应用",@"sel":@"openUninstallFromMenu"},
     @{@"id":@3071,@"cat":@1,@"title":@"Ai管理页面",@"desc":@"打开控制台 AI 管理数据页",@"sel":@"openAIManagementFromMenu"},
+    @{@"id":@3072,@"cat":@1,@"title":@"自动化规则",@"desc":@"应用/时间/桌面自动执行动作",@"sel":@"openAutomationRules:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -18597,6 +18968,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"文件暂存架", @"subtitle": @"拖入文件，稍后统一处理", @"type": @"工具", @"tool": @"shelf", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"tray.full" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"配置导出 / 导入", @"subtitle": @"迁移分组、快捷键和设置", @"type": @"工具", @"tool": @"configbackup", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.up.arrow.down.square" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"配置云同步", @"subtitle": @"上传/恢复云端配置", @"type": @"工具", @"tool": @"cloudsync", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"icloud" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"自动化规则", @"subtitle": @"应用/时间/桌面自动执行动作", @"type": @"工具", @"tool": @"automation", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"gearshape.2" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 图片生成", @"subtitle": @"用 AI 服务生成图片", @"type": @"工具", @"tool": @"aiimage", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"photo.badge.plus" accessibilityDescription:nil] ?: recIcon}];
@@ -18732,6 +19104,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"shelf"]) [self openShelfWindow:nil];
     else if ([tool isEqualToString:@"configbackup"]) [self openConfigBackupWindow:nil];
     else if ([tool isEqualToString:@"cloudsync"]) [self openCloudSyncWindow:nil];
+    else if ([tool isEqualToString:@"automation"]) [self openAutomationRules:nil];
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
     else if ([tool isEqualToString:@"aitext"]) [self openAIAssistant:nil];
