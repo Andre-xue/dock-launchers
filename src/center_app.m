@@ -1424,7 +1424,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiAssistantURLField, *aiAssistantStatus;
 @property BOOL aiAssistantBusy;
 @property (strong) NSTextField *videoPostFileLabel, *videoPostStart, *videoPostEnd, *videoPostStatus;
-@property (strong) NSWindow *voiceTextWindow, *meetingWindow;
+@property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow;
+@property (strong) NSPopUpButton *speechEnginePopup, *speechServicePopup;
+@property (strong) NSTextField *speechModelField;
 @property (strong) NSTextView *voiceTextOutput, *meetingTranscript, *meetingSummary;
 @property (strong) NSTextField *voiceTextStatus, *meetingStatus, *meetingPathLabel;
 @property (copy) NSString *voiceTextPath, *meetingPath;
@@ -18396,6 +18398,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3076,@"cat":@1,@"title":@"分组定时规则",@"desc":@"定时显示/隐藏 Dock 分组",@"sel":@"openGroupScheduleRules:"},
     @{@"id":@3077,@"cat":@1,@"title":@"系统隐私仪表盘",@"desc":@"查看并打开各项隐私权限",@"sel":@"openPrivacyDashboard:"},
     @{@"id":@3078,@"cat":@1,@"title":@"菜单栏页面自定义",@"desc":@"显示/隐藏和排序扇形页面",@"sel":@"openRadialPageCustomization:"},
+    @{@"id":@3079,@"cat":@1,@"title":@"语音转写设置",@"desc":@"切换本机识别和第三方 Whisper",@"sel":@"openSpeechSettings:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -19401,6 +19404,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"分组定时规则", @"subtitle": @"定时显示/隐藏 Dock 分组", @"type": @"工具", @"tool": @"groupschedule", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"clock" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"系统隐私仪表盘", @"subtitle": @"查看并打开各项隐私权限", @"type": @"工具", @"tool": @"privacy", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"lock.shield" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"菜单栏页面自定义", @"subtitle": @"显示/隐藏和排序扇形页面", @"type": @"工具", @"tool": @"radialcustom", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"slider.horizontal.3" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"语音转写设置", @"subtitle": @"本机识别 / 第三方 Whisper", @"type": @"工具", @"tool": @"speechsettings", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"mic.badge.plus" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 图片生成", @"subtitle": @"用 AI 服务生成图片", @"type": @"工具", @"tool": @"aiimage", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"photo.badge.plus" accessibilityDescription:nil] ?: recIcon}];
@@ -19542,6 +19546,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"groupschedule"]) [self openGroupScheduleRules:nil];
     else if ([tool isEqualToString:@"privacy"]) [self openPrivacyDashboard:nil];
     else if ([tool isEqualToString:@"radialcustom"]) [self openRadialPageCustomization:nil];
+    else if ([tool isEqualToString:@"speechsettings"]) [self openSpeechSettings:nil];
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
     else if ([tool isEqualToString:@"aitext"]) [self openAIAssistant:nil];
@@ -22305,6 +22310,180 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }];
 }
 
+- (NSArray<NSDictionary *> *)sttServices {
+  if (!self.aiEntries) [self loadAIEntries];
+  [self hydrateAIKeys];
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *e in self.aiEntries) if ([e[@"api"] length]) [out addObject:e];
+  return out;
+}
+
+- (NSInteger)sttSelectedServiceIndex {
+  NSArray *services = [self sttServices];
+  NSInteger saved = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerSTTServiceIndex"];
+  if (saved >= 0 && saved < (NSInteger)services.count) return saved;
+  return services.count ? 0 : -1;
+}
+
+- (NSString *)sttModelName {
+  NSString *m = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerSTTModel"];
+  return m.length ? m : @"whisper-1";
+}
+
+- (BOOL)sttUseThirdParty {
+  return [[NSUserDefaults standardUserDefaults] integerForKey:@"centerSTTEngine"] == 1;
+}
+
+- (NSString *)chatCompletionsBaseForEntry:(NSDictionary *)entry {
+  NSString *base = entry[@"apiBase"] ?: @"";
+  while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
+  if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length - @"/chat/completions".length];
+  return base;
+}
+
+- (void)transcribeThirdPartyMediaAtPath:(NSString *)path serviceIndex:(NSInteger)index model:(NSString *)model update:(void (^)(NSString *text, BOOL final, NSError *error))update {
+  NSArray *services = [self sttServices];
+  if (index < 0 || index >= (NSInteger)services.count) {
+    update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:10 userInfo:@{NSLocalizedDescriptionKey: @"没有可用的第三方 AI 服务，请先在 AI 管理添加带 Key 的服务"}]);
+    return;
+  }
+  NSDictionary *entry = services[index];
+  NSString *base = [self chatCompletionsBaseForEntry:entry];
+  if (!base.length) { update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:11 userInfo:@{NSLocalizedDescriptionKey: @"该 AI 服务没有 API 地址"}]); return; }
+  NSString *url = [base stringByAppendingString:@"/audio/transcriptions"];
+  [self extractAudioFromMediaAtPath:path completion:^(NSString *audio, NSError *err) {
+    if (!audio.length) { update(nil, YES, err); return; }
+    NSData *fileData = [NSData dataWithContentsOfFile:audio];
+    if (!fileData.length) { update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:12 userInfo:@{NSLocalizedDescriptionKey: @"读取音频失败"}]); return; }
+    NSString *boundary = [NSString stringWithFormat:@"DLBoundary%@", [[NSUUID UUID] UUIDString]];
+    NSMutableData *body = [NSMutableData data];
+    void (^field)(NSString *, NSString *) = ^(NSString *name, NSString *value) {
+      [body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"%@\"\r\n\r\n%@\r\n", boundary, name, value] dataUsingEncoding:NSUTF8StringEncoding]];
+    };
+    field(@"model", model ?: @"whisper-1");
+    field(@"language", @"zh");
+    field(@"response_format", @"json");
+    [body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:fileData];
+    [body appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+    req.HTTPMethod = @"POST";
+    req.timeoutInterval = 180;
+    [req setValue:[@"multipart/form-data; boundary=" stringByAppendingString:boundary] forHTTPHeaderField:@"Content-Type"];
+    [req setValue:[@"Bearer " stringByAppendingString:entry[@"api"] ?: @""] forHTTPHeaderField:@"Authorization"];
+    req.HTTPBody = body;
+    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (error || !data.length) {
+          NSString *msg = error.localizedDescription ?: @"第三方转写请求失败";
+          update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:13 userInfo:@{NSLocalizedDescriptionKey: msg}]);
+          return;
+        }
+        id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+        NSString *text = nil;
+        if ([obj isKindOfClass:[NSDictionary class]]) {
+          text = obj[@"text"];
+          if (!text.length) text = obj[@"error"][@"message"];
+        } else if ([obj isKindOfClass:[NSString class]]) {
+          text = obj;
+        }
+        if (!text.length) text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        if (text.length) update(text, YES, nil);
+        else update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:14 userInfo:@{NSLocalizedDescriptionKey: @"第三方接口没有返回文字，请确认模型支持 /audio/transcriptions"}]);
+      });
+    }] resume];
+  }];
+}
+
+- (void)transcribeMediaSmartAtPath:(NSString *)path update:(void (^)(NSString *text, BOOL final, NSError *error))update {
+  if (![self sttUseThirdParty]) { [self transcribeMediaAtPath:path update:update]; return; }
+  NSInteger idx = [self sttSelectedServiceIndex];
+  NSString *model = [self sttModelName];
+  __weak typeof(self) weakSelf = self;
+  [self transcribeThirdPartyMediaAtPath:path serviceIndex:idx model:model update:^(NSString *text, BOOL final, NSError *error) {
+    if (text.length) { update(text, final, error); return; }
+    // 第三方失败时回退到本机识别
+    [weakSelf transcribeMediaAtPath:path update:update];
+  }];
+}
+
+- (void)openSpeechSettings:(id)sender {
+  if (!self.speechSettingsWindow) {
+    self.speechSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,500,330) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.speechSettingsWindow.title = @"语音转文字设置";
+    self.speechSettingsWindow.releasedWhenClosed = NO;
+    NSView *cv = self.speechSettingsWindow.contentView;
+    NSTextField *t = [self label:@"语音转文字设置" size:18 bold:YES color:nil];
+    t.frame = NSMakeRect(24, 286, 300, 24); [cv addSubview:t];
+    NSTextField *h = [self label:@"本机使用 Apple Speech；第三方使用 OpenAI 兼容 /audio/transcriptions 接口" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24, 264, 450, 18); [cv addSubview:h];
+    self.speechEnginePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(150, 218, 320, 28) pullsDown:NO];
+    [self.speechEnginePopup addItemsWithTitles:@[@"本机 Apple Speech（离线）", @"第三方 Whisper / 兼容 API"]];
+    self.speechEnginePopup.target = self; self.speechEnginePopup.action = @selector(speechSettingChanged:);
+    [cv addSubview:self.speechEnginePopup];
+    NSTextField *el = [self label:@"转写引擎" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    el.frame = NSMakeRect(24, 224, 110, 18); [cv addSubview:el];
+    self.speechServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(150, 176, 320, 28) pullsDown:NO];
+    self.speechServicePopup.target = self; self.speechServicePopup.action = @selector(speechSettingChanged:);
+    [cv addSubview:self.speechServicePopup];
+    NSTextField *sl = [self label:@"AI 服务" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    sl.frame = NSMakeRect(24, 182, 110, 18); [cv addSubview:sl];
+    self.speechModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(150, 134, 320, 26)];
+    self.speechModelField.placeholderString = @"whisper-1"; [cv addSubview:self.speechModelField];
+    NSTextField *ml = [self label:@"转写模型" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    ml.frame = NSMakeRect(24, 140, 110, 18); [cv addSubview:ml];
+    NSTextField *hint = [self label:@"例：OpenAI whisper-1、gpt-4o-transcribe；硅基流动 SenseVoice 等支持该接口的模型" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+    hint.frame = NSMakeRect(24, 108, 440, 16); [cv addSubview:hint];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(286, 58, 90, 32)];
+    save.title = @"保存"; save.hoverColor = [NSColor systemGreenColor]; save.target = self; save.action = @selector(saveSpeechSettings:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(384, 58, 90, 32)];
+    cancel.title = @"取消"; cancel.hoverColor = [NSColor systemGrayColor]; cancel.target = self; cancel.action = @selector(closeSpeechSettings:);
+    [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
+    [self.speechSettingsWindow center];
+  }
+  [self speechEngineChanged:nil];
+  [self forceWindowToFront:self.speechSettingsWindow];
+}
+
+- (void)speechEngineChanged:(id)sender {
+  [self.speechServicePopup removeAllItems];
+  NSArray *services = [self sttServices];
+  for (NSInteger i=0;i<(NSInteger)services.count;i++) {
+    NSString *name = services[i][@"name"] ?: [NSString stringWithFormat:@"服务 %ld", (long)(i+1)];
+    [self.speechServicePopup addItemWithTitle:name];
+    self.speechServicePopup.lastItem.representedObject = @(i);
+  }
+  if (!services.count) [self.speechServicePopup addItemWithTitle:@"未配置带 Key 的 AI 服务"];
+  NSInteger saved = [self sttSelectedServiceIndex];
+  if (saved >= 0 && saved < (NSInteger)self.speechServicePopup.numberOfItems) [self.speechServicePopup selectItemAtIndex:saved];
+  NSInteger engine = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerSTTEngine"];
+  [self.speechEnginePopup selectItemAtIndex:(engine == 1 ? 1 : 0)];
+  self.speechModelField.stringValue = [self sttModelName];
+  BOOL api = engine == 1;
+  self.speechServicePopup.enabled = api;
+  self.speechModelField.enabled = api;
+  [self speechSettingChanged:nil];
+}
+
+- (void)speechSettingChanged:(id)sender {
+  BOOL api = self.speechEnginePopup.indexOfSelectedItem == 1;
+  self.speechServicePopup.enabled = api;
+  self.speechModelField.enabled = api;
+}
+
+- (void)saveSpeechSettings:(id)sender {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  [ud setInteger:(self.speechEnginePopup.indexOfSelectedItem == 1 ? 1 : 0) forKey:@"centerSTTEngine"];
+  if (self.speechServicePopup.selectedItem.representedObject) [ud setInteger:[self.speechServicePopup.selectedItem.representedObject integerValue] forKey:@"centerSTTServiceIndex"];
+  [ud setObject:(self.speechModelField.stringValue.length ? self.speechModelField.stringValue : @"whisper-1") forKey:@"centerSTTModel"];
+  [ud synchronize];
+  [self.speechSettingsWindow orderOut:nil];
+  [self showToast:(self.speechEnginePopup.indexOfSelectedItem == 1 ? @"已切换到第三方语音转写" : @"已切换到本机语音识别")];
+}
+
+- (void)closeSpeechSettings:(id)sender { [self.speechSettingsWindow orderOut:nil]; }
+
 - (void)transcribeMediaAtPath:(NSString *)path update:(void (^)(NSString *text, BOOL final, NSError *error))update {
   if (!path.length) { update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:3 userInfo:@{NSLocalizedDescriptionKey: @"没有选择文件"}]); return; }
   [self extractAudioFromMediaAtPath:path completion:^(NSString *audio, NSError *err) {
@@ -22371,6 +22550,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(378, 430, 90, 32)];
     save.title = @"保存…"; save.hoverColor = [NSColor systemOrangeColor]; save.target = self; save.action = @selector(saveVoiceText:);
     [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *sttSettings = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(476, 430, 140, 32)];
+    sttSettings.title = @"转写设置…"; sttSettings.hoverColor = [NSColor systemPurpleColor]; sttSettings.target = self; sttSettings.action = @selector(openSpeechSettings:);
+    [sttSettings applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:sttSettings];
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, 76, 592, 340)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.voiceTextOutput = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
@@ -22403,7 +22585,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!self.voiceTextPath.length) { self.voiceTextStatus.stringValue = @"请先选择音频或录屏文件"; return; }
   self.voiceTextOutput.string = @"";
   self.voiceTextStatus.stringValue = @"正在识别…";
-  [self transcribeMediaAtPath:self.voiceTextPath update:^(NSString *text, BOOL final, NSError *error) {
+  [self transcribeMediaSmartAtPath:self.voiceTextPath update:^(NSString *text, BOOL final, NSError *error) {
     if (text.length) { self.voiceTextOutput.string = text; self.voiceTextStatus.stringValue = final ? @"转写完成" : @"正在识别…"; }
     if (final) {
       if (error) self.voiceTextStatus.stringValue = error.localizedDescription ?: @"转写失败";
@@ -22452,7 +22634,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [sum applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:sum];
     self.meetingPathLabel = [self label:@"未选择录屏" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.meetingPathLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
-    self.meetingPathLabel.frame = NSMakeRect(420, 572, 450, 18); [cv addSubview:self.meetingPathLabel];
+    ColorHoverButton *sttBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(420, 566, 116, 32)];
+    sttBtn.title = @"转写设置…"; sttBtn.hoverColor = [NSColor systemPurpleColor]; sttBtn.target = self; sttBtn.action = @selector(openSpeechSettings:);
+    [sttBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:sttBtn];
+    self.meetingPathLabel.frame = NSMakeRect(544, 572, 326, 18); [cv addSubview:self.meetingPathLabel];
     NSTextField *tl = [self label:@"会议转写" size:12 bold:YES color:nil];
     tl.frame = NSMakeRect(24, 528, 200, 18); [cv addSubview:tl];
     NSTextField *sl = [self label:@"AI 会议纪要" size:12 bold:YES color:nil];
@@ -22501,7 +22686,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.meetingTranscript.string = @"";
   self.meetingSummary.string = @"";
   self.meetingStatus.stringValue = @"正在识别语音…";
-  [self transcribeMediaAtPath:self.meetingPath update:^(NSString *text, BOOL final, NSError *error) {
+  [self transcribeMediaSmartAtPath:self.meetingPath update:^(NSString *text, BOOL final, NSError *error) {
     if (text.length) self.meetingTranscript.string = text;
     if (final) {
       if (error) self.meetingStatus.stringValue = error.localizedDescription ?: @"转写失败";
