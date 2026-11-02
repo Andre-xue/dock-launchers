@@ -1117,6 +1117,16 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property UInt32 shotKeyCode, shotModifiers, selectionKeyCode, selectionModifiers, translateKeyCode, translateModifiers, appSearchKeyCode, appSearchModifiers, quickPanelKeyCode, quickPanelModifiers, clipboardKeyCode, clipboardModifiers, consoleKeyCode, consoleModifiers, screenshotKeyCode, screenshotModifiers, recordKeyCode, recordModifiers;
 @property (strong) NSString *shotShortcutDisplay, *selectionShortcutDisplay, *translateShortcutDisplay, *appSearchShortcutDisplay, *quickPanelShortcutDisplay, *clipboardShortcutDisplay, *consoleShortcutDisplay, *screenshotShortcutDisplay, *recordShortcutDisplay;
 @property (strong) NSMutableArray *shortcutButtons;
+@property (strong) NSWindow *allShortcutWindow;
+@property (strong) NSView *allShortcutContainer;
+@property (strong) NSPopUpButton *allShortcutCategoryPopup;
+@property (strong) NSTextField *allShortcutPageLabel;
+@property (strong) ColorHoverButton *allShortcutPrevButton, *allShortcutNextButton;
+@property (strong) NSArray *allShortcutDefs;
+@property NSInteger allShortcutCategory, allShortcutPage;
+@property (strong) NSMutableDictionary *allHotKeyRefs;
+@property (strong) id allShortcutMonitor;
+@property NSInteger allShortcutRecordingID;
 @property (strong) NSWindow *shortcutSettingsWindow;
 @property (strong) NSWindow *groupShortcutWindow;
 @property (strong) NSMutableArray *groupShortcutButtons;
@@ -2826,6 +2836,7 @@ static void HideDockHoverTip(void) {
   [self applyThemeFromDefaults];
   [self setupMainMenu];
   [self installTranslationHotKey];
+  [self installAllGlobalHotkeys];
   [self installGroupHotkeys];
   [self startClipboardMonitor];
   [self loadAppShortcuts];
@@ -3361,6 +3372,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   else if (hk.id == 7) { [c showWindow:nil]; [c showSection:0]; }
   else if (hk.id == 8) [c quickScreenshot:nil];
   else if (hk.id == 9) [c quickRecord:nil];
+  else if (hk.id >= 3000) [c performAllGlobalActionID:hk.id];
   else if (hk.id >= 100) [c openGroupByHotkeyID:hk.id];
   return noErr;
 }
@@ -15928,7 +15940,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [self.shortcutButtons addObject:b];
     }
     self.shortcutStatusLabel = [self label:@"点击右侧快捷键开始录制；Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    self.shortcutStatusLabel.frame = NSMakeRect(24, 18, 260, 18); [cv addSubview:self.shortcutStatusLabel];
+    self.shortcutStatusLabel.frame = NSMakeRect(24, 50, 430, 18); [cv addSubview:self.shortcutStatusLabel];
+    ColorHoverButton *allShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(140, 16, 150, 32)];
+    allShortcutBtn.title = @"全部功能快捷键…";
+    allShortcutBtn.hoverColor = [NSColor systemTealColor];
+    allShortcutBtn.target = self;
+    allShortcutBtn.action = @selector(openAllShortcutSettings:);
+    [allShortcutBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:allShortcutBtn];
     ColorHoverButton *groupShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(300, 16, 150, 32)];
     groupShortcutBtn.title = @"分组快捷键…";
     groupShortcutBtn.hoverColor = [NSColor systemPurpleColor];
@@ -15944,6 +15963,215 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.shortcutSettingsWindow makeKeyAndOrderFront:nil];
   [self.shortcutSettingsWindow orderFrontRegardless];
 }
+
+- (NSArray<NSDictionary *> *)allGlobalActionDefs {
+  return @[
+    @{@"id":@3000,@"cat":@0,@"title":@"打开截图 / 录屏面板",@"desc":@"截图与录屏设置",@"sel":@"showCaptureTool:"},
+    @{@"id":@3001,@"cat":@0,@"title":@"全屏截图",@"desc":@"立即截取整个屏幕",@"sel":@"quickScreenshot:"},
+    @{@"id":@3002,@"cat":@0,@"title":@"开始 / 停止录屏",@"desc":@"使用上次录制设置",@"sel":@"captureVideo:"},
+    @{@"id":@3003,@"cat":@0,@"title":@"暂停 / 继续录屏",@"desc":@"录制中切换暂停",@"sel":@"pauseCapture:"},
+    @{@"id":@3004,@"cat":@0,@"title":@"打开最近截图 / 录屏",@"desc":@"查看历史截图和录屏",@"sel":@"showCaptureHistory:"},
+    @{@"id":@3005,@"cat":@0,@"title":@"打开最近录像",@"desc":@"打开最新录屏文件",@"sel":@"openMostRecentRecording"},
+
+    @{@"id":@3010,@"cat":@1,@"title":@"翻译",@"desc":@"文档与文本翻译",@"sel":@"showTranslationWindow:"},
+    @{@"id":@3011,@"cat":@1,@"title":@"压缩",@"desc":@"压缩文件与文件夹",@"sel":@"showCompressWindow:"},
+    @{@"id":@3012,@"cat":@1,@"title":@"PDF 工具",@"desc":@"PDF 合并、拆分、提取",@"sel":@"showPDFTools:"},
+    @{@"id":@3013,@"cat":@1,@"title":@"图片工具",@"desc":@"图片转换与处理",@"sel":@"showImageTools:"},
+    @{@"id":@3014,@"cat":@1,@"title":@"批量重命名",@"desc":@"文件批量改名",@"sel":@"showBatchRenamer:"},
+    @{@"id":@3015,@"cat":@1,@"title":@"剪贴板",@"desc":@"剪贴板历史",@"sel":@"showClipboardWindow:"},
+    @{@"id":@3016,@"cat":@1,@"title":@"窗口布局",@"desc":@"保存和恢复窗口位置",@"sel":@"showWindowLayouts:"},
+    @{@"id":@3017,@"cat":@1,@"title":@"大文件",@"desc":@"查找大文件",@"sel":@"showLargeFileCleaner:"},
+    @{@"id":@3018,@"cat":@1,@"title":@"重复文件",@"desc":@"查找重复文件",@"sel":@"showDuplicateFinder:"},
+    @{@"id":@3019,@"cat":@1,@"title":@"进程",@"desc":@"进程管理",@"sel":@"showProcessManager:"},
+    @{@"id":@3020,@"cat":@1,@"title":@"使用统计",@"desc":@"应用使用统计",@"sel":@"showUsageStats:"},
+    @{@"id":@3021,@"cat":@1,@"title":@"启动项",@"desc":@"登录启动项管理",@"sel":@"showStartupItems:"},
+    @{@"id":@3022,@"cat":@1,@"title":@"提示词库",@"desc":@"AI 提示词管理",@"sel":@"showPromptLibrary:"},
+    @{@"id":@3023,@"cat":@1,@"title":@"Dock 外观",@"desc":@"Dock 大小、位置、自动隐藏",@"sel":@"showDockAppearance:"},
+    @{@"id":@3024,@"cat":@1,@"title":@"应用密码",@"desc":@"敏感操作密码",@"sel":@"showPasswordSettings:"},
+    @{@"id":@3025,@"cat":@1,@"title":@"应用内快捷键",@"desc":@"控制台内快捷键",@"sel":@"showAppShortcutSettings:"},
+    @{@"id":@3026,@"cat":@1,@"title":@"文件搜索",@"desc":@"搜索文件和文件夹",@"sel":@"showFileSearch:"},
+    @{@"id":@3027,@"cat":@1,@"title":@"颜色吸管",@"desc":@"拾取屏幕颜色",@"sel":@"showColorSampler:"},
+
+    @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
+    @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
+    @{@"id":@3032,@"cat":@2,@"title":@"应用搜索",@"desc":@"搜索已安装应用",@"sel":@"showAppSearch:"},
+    @{@"id":@3033,@"cat":@2,@"title":@"磁盘分析",@"desc":@"打开磁盘分析",@"sel":@"openDiskAnalysisFromMenu"},
+    @{@"id":@3034,@"cat":@2,@"title":@"全部快捷键设置",@"desc":@"打开本窗口",@"sel":@"openAllShortcutSettings:"},
+
+    @{@"id":@3040,@"cat":@3,@"title":@"Dock 分组",@"desc":@"打开分组面板",@"sel":@"showGroupPanel:"},
+    @{@"id":@3041,@"cat":@3,@"title":@"场景模式",@"desc":@"应用场景设置",@"sel":@"showSceneSettings:"},
+    @{@"id":@3042,@"cat":@3,@"title":@"全局快捷键",@"desc":@"基础快捷键设置",@"sel":@"openShortcutSettings:"},
+    @{@"id":@3043,@"cat":@3,@"title":@"分组快捷键",@"desc":@"分组启动快捷键",@"sel":@"openGroupShortcutSettings:"}
+  ];
+}
+
+- (NSString *)allGlobalShortcutDisplayForID:(NSInteger)aid {
+  return [[NSUserDefaults standardUserDefaults] stringForKey:[NSString stringWithFormat:@"centerGA%ldDisplay", (long)aid]] ?: @"未设置";
+}
+
+- (NSDictionary *)allGlobalActionForID:(NSInteger)aid {
+  for (NSDictionary *d in self.allShortcutDefs ?: [self allGlobalActionDefs]) if ([d[@"id"] integerValue] == aid) return d;
+  return nil;
+}
+
+- (void)performAllGlobalActionID:(NSInteger)aid {
+  NSDictionary *d = [self allGlobalActionForID:aid];
+  NSString *sel = d[@"sel"] ?: @"";
+  if (!sel.length) return;
+  SEL s = NSSelectorFromString(sel);
+  if (![self respondsToSelector:s]) return;
+  if ([sel isEqualToString:@"showQuickPanel"]) [self showQuickPanel];
+  else [self performSelector:s withObject:nil];
+}
+
+- (BOOL)registerAllGlobalHotKeyID:(NSInteger)aid code:(UInt32)code modifiers:(UInt32)mods display:(NSString *)display {
+  if (!self.allHotKeyRefs) self.allHotKeyRefs = [NSMutableDictionary dictionary];
+  NSValue *oldVal = self.allHotKeyRefs[@(aid)];
+  if (oldVal) { EventHotKeyRef old = (EventHotKeyRef)oldVal.pointerValue; if (old) UnregisterEventHotKey(old); [self.allHotKeyRefs removeObjectForKey:@(aid)]; }
+  EventHotKeyID hid = {'DLGA', (UInt32)aid};
+  EventHotKeyRef ref = NULL;
+  OSStatus st = RegisterEventHotKey(code, mods, hid, GetApplicationEventTarget(), 0, &ref);
+  if (st != noErr) return NO;
+  self.allHotKeyRefs[@(aid)] = [NSValue valueWithPointer:ref];
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  [ud setInteger:code forKey:[NSString stringWithFormat:@"centerGA%ldCode", (long)aid]];
+  [ud setInteger:mods forKey:[NSString stringWithFormat:@"centerGA%ldMods", (long)aid]];
+  [ud setObject:display ?: @"" forKey:[NSString stringWithFormat:@"centerGA%ldDisplay", (long)aid]];
+  return YES;
+}
+
+- (void)installAllGlobalHotkeys {
+  self.allShortcutDefs = [self allGlobalActionDefs];
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  for (NSDictionary *d in self.allShortcutDefs) {
+    NSInteger aid = [d[@"id"] integerValue];
+    NSString *disp = [ud stringForKey:[NSString stringWithFormat:@"centerGA%ldDisplay", (long)aid]];
+    if (!disp.length) continue;
+    UInt32 code = (UInt32)[ud integerForKey:[NSString stringWithFormat:@"centerGA%ldCode", (long)aid]];
+    UInt32 mods = (UInt32)[ud integerForKey:[NSString stringWithFormat:@"centerGA%ldMods", (long)aid]];
+    [self registerAllGlobalHotKeyID:aid code:code modifiers:mods display:disp];
+  }
+}
+
+- (void)stopAllShortcutRecording {
+  if (self.allShortcutMonitor) { [NSEvent removeMonitor:self.allShortcutMonitor]; self.allShortcutMonitor = nil; }
+  self.allShortcutRecordingID = 0;
+}
+
+- (void)recordAllShortcut:(ColorHoverButton *)sender {
+  [self stopAllShortcutRecording];
+  self.allShortcutRecordingID = sender.tag;
+  sender.title = @"请按新组合键…";
+  __weak typeof(self) weakSelf = self;
+  self.allShortcutMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    NSInteger aid = weakSelf.allShortcutRecordingID;
+    if (!aid) return e;
+    if (e.keyCode == 53) { [weakSelf stopAllShortcutRecording]; [weakSelf rebuildAllShortcutPage]; return nil; }
+    NSEventModifierFlags f = e.modifierFlags & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift);
+    if (!(f & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption))) return nil;
+    UInt32 mods = 0;
+    if (f & NSEventModifierFlagControl) mods |= controlKey;
+    if (f & NSEventModifierFlagOption) mods |= optionKey;
+    if (f & NSEventModifierFlagShift) mods |= shiftKey;
+    if (f & NSEventModifierFlagCommand) mods |= cmdKey;
+    NSString *key = e.charactersIgnoringModifiers.uppercaseString;
+    if (!key.length) key = [NSString stringWithFormat:@"Key%u", (unsigned)e.keyCode];
+    if (e.keyCode == kVK_Return) key = @"↩";
+    else if (e.keyCode == kVK_Space) key = @"Space";
+    else if (e.keyCode == kVK_Tab) key = @"⇥";
+    NSMutableString *disp = [NSMutableString string];
+    if (mods & controlKey) [disp appendString:@"⌃"];
+    if (mods & optionKey) [disp appendString:@"⌥"];
+    if (mods & shiftKey) [disp appendString:@"⇧"];
+    if (mods & cmdKey) [disp appendString:@"⌘"];
+    [disp appendString:key];
+    if (![weakSelf registerAllGlobalHotKeyID:aid code:(UInt32)e.keyCode modifiers:mods display:disp]) {
+      [weakSelf showToast:@"该快捷键被占用，请换一个"];
+      return nil;
+    }
+    [weakSelf stopAllShortcutRecording];
+    [weakSelf rebuildAllShortcutPage];
+    return nil;
+  }];
+}
+
+- (void)openAllShortcutSettings:(id)sender {
+  if (!self.allShortcutWindow) {
+    self.allShortcutWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,640) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.allShortcutWindow.title = @"全部功能快捷键";
+    self.allShortcutWindow.releasedWhenClosed = NO;
+    NSView *cv = self.allShortcutWindow.contentView;
+    [self label:@"全部功能快捷键" size:18 bold:YES color:nil].frame = NSMakeRect(24,594,300,24);
+    NSTextField *t = [self label:@"全部功能快捷键" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,594,300,24); [cv addSubview:t];
+    NSTextField *h = [self label:@"按功能分类；点击快捷键后录制新的组合键，Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame=NSMakeRect(24,570,560,18); [cv addSubview:h];
+    self.allShortcutCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,530,180,28) pullsDown:NO];
+    [self.allShortcutCategoryPopup addItemsWithTitles:@[@"截图 / 录制", @"文件与工具", @"启动与搜索", @"系统与分组"]];
+    self.allShortcutCategoryPopup.target=self; self.allShortcutCategoryPopup.action=@selector(allShortcutCategoryChanged:);
+    [cv addSubview:self.allShortcutCategoryPopup];
+    self.allShortcutContainer = [[NSView alloc] initWithFrame:NSMakeRect(0,70,620,450)];
+    [cv addSubview:self.allShortcutContainer];
+    self.allShortcutPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(210,20,40,28)];
+    self.allShortcutPrevButton.title=@"‹"; self.allShortcutPrevButton.target=self; self.allShortcutPrevButton.action=@selector(allShortcutPrev:);
+    [self.allShortcutPrevButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.allShortcutPrevButton];
+    self.allShortcutNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(370,20,40,28)];
+    self.allShortcutNextButton.title=@"›"; self.allShortcutNextButton.target=self; self.allShortcutNextButton.action=@selector(allShortcutNext:);
+    [self.allShortcutNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.allShortcutNextButton];
+    self.allShortcutPageLabel = [self label:@"1 / 1" size:10 bold:YES color:[NSColor secondaryLabelColor]];
+    self.allShortcutPageLabel.alignment=NSTextAlignmentCenter; self.allShortcutPageLabel.frame=NSMakeRect(260,24,100,18); [cv addSubview:self.allShortcutPageLabel];
+    [self.allShortcutWindow center];
+  }
+  self.allShortcutDefs = [self allGlobalActionDefs];
+  self.allShortcutCategory = 0; self.allShortcutPage = 0;
+  [self.allShortcutCategoryPopup selectItemAtIndex:0];
+  [self rebuildAllShortcutPage];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.allShortcutWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)allShortcutCategoryChanged:(id)sender {
+  self.allShortcutCategory = self.allShortcutCategoryPopup.indexOfSelectedItem;
+  self.allShortcutPage = 0;
+  [self rebuildAllShortcutPage];
+}
+
+- (NSArray *)allShortcutFilteredDefs {
+  NSMutableArray *a = [NSMutableArray array];
+  for (NSDictionary *d in self.allShortcutDefs) if ([d[@"cat"] integerValue] == self.allShortcutCategory) [a addObject:d];
+  return a;
+}
+
+- (void)rebuildAllShortcutPage {
+  if (!self.allShortcutContainer) return;
+  for (NSView *v in self.allShortcutContainer.subviews.copy) [v removeFromSuperview];
+  NSArray *defs = [self allShortcutFilteredDefs];
+  NSInteger perPage = 7;
+  NSInteger pages = MAX(1, (NSInteger)((defs.count + perPage - 1) / perPage));
+  if (self.allShortcutPage >= pages) self.allShortcutPage = pages - 1;
+  if (self.allShortcutPage < 0) self.allShortcutPage = 0;
+  NSInteger start = self.allShortcutPage * perPage;
+  for (NSInteger i = 0; i < perPage && start + i < (NSInteger)defs.count; i++) {
+    NSDictionary *d = defs[start + i];
+    CGFloat y = 390 - i * 56;
+    NSTextField *title = [self label:d[@"title"] ?: @"" size:13 bold:YES color:nil];
+    title.frame = NSMakeRect(24,y+12,240,20); [self.allShortcutContainer addSubview:title];
+    NSTextField *desc = [self label:d[@"desc"] ?: @"" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    desc.frame = NSMakeRect(24,y-8,300,16); [self.allShortcutContainer addSubview:desc];
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(390,y+2,190,32)];
+    NSInteger aid = [d[@"id"] integerValue];
+    b.tag = aid; b.title = [self allGlobalShortcutDisplayForID:aid];
+    b.hoverColor = [NSColor systemTealColor];
+    b.target = self; b.action = @selector(recordAllShortcut:);
+    [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [self.allShortcutContainer addSubview:b];
+  }
+  self.allShortcutPageLabel.stringValue = [NSString stringWithFormat:@"%ld / %ld", (long)(self.allShortcutPage + 1), (long)pages];
+  BOOL canPrev = self.allShortcutPage > 0, canNext = self.allShortcutPage + 1 < pages;
+  self.allShortcutPrevButton.enabled = canPrev; self.allShortcutNextButton.enabled = canNext;
+}
+
+- (void)allShortcutPrev:(id)sender { if (self.allShortcutPage > 0) { self.allShortcutPage--; [self rebuildAllShortcutPage]; } }
+- (void)allShortcutNext:(id)sender { self.allShortcutPage++; [self rebuildAllShortcutPage]; }
 
 - (void)installGroupHotkeys {
   if (!self.groupHotKeyRefs) self.groupHotKeyRefs = [NSMutableDictionary dictionary];
