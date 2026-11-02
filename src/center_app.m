@@ -2988,7 +2988,11 @@ static void HideDockHoverTip(void) {
   [self applyWindowChrome:self.window];
   self.sampleSeconds = 2;
   self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
-  NSImage *menuIcon = [self characterImage:20];
+  NSImage *menuIcon = nil;
+  NSString *menuBarPath = [[NSBundle mainBundle] pathForResource:@"menubar" ofType:@"png"];
+  if (menuBarPath.length) menuIcon = [[NSImage alloc] initWithContentsOfFile:menuBarPath];
+  if (!menuIcon) menuIcon = [self characterImage:20];
+  menuIcon.size = NSMakeSize(20, 20);
   menuIcon.template = NO;
   self.statusBaseImage = menuIcon;
   self.statusItem.button.image = menuIcon;
