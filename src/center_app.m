@@ -11184,7 +11184,7 @@ static BOOL ValidGroupName(NSString *raw) {
   self.sceneWindow.title = @"场景模式";
   self.sceneWindow.releasedWhenClosed = NO;
   self.sceneWindow.level = NSNormalWindowLevel;
-  self.sceneWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorMoveToActiveSpace;
+  self.sceneWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces;
   NSView *cv = self.sceneWindow.contentView;
   NSTextField *title = [self label:@"场景模式" size:20 bold:YES color:nil];
   title.frame = NSMakeRect(20, 510, 300, 28); [cv addSubview:title];
@@ -11530,7 +11530,7 @@ static BOOL ValidGroupName(NSString *raw) {
   a.accessoryView = box;
   self.scenePromptOpen = YES;
   if (a.window) {
-    a.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary;
+    a.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
   }
   NSModalResponse promptResult = [a runModal];
   self.scenePromptOpen = NO;
