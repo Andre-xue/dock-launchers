@@ -23172,7 +23172,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(142,106,100,32)];
     open.title=@"打开语音"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openAITTSResult:);
     [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
-    ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250,106,100,32)];
+    ColorHoverButton *audition = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250,106,100,32)];
+    audition.title=@"试听音色"; audition.hoverColor=[NSColor systemOrangeColor]; audition.target=self; audition.action=@selector(auditionAITTSVoice:);
+    audition.toolTip=@"用当前模型和音色朗读一句短文本";
+    [audition applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:audition];
+    ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(358,106,100,32)];
     clear.title=@"清空全部"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(clearAITTSPanel:);
     [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
     self.aiTTSStatus = [self label:@"选择服务后输入文本" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
@@ -23242,6 +23246,37 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiTTSVoiceField.lastItem.representedObject = ids[i];
     self.aiTTSVoiceField.lastItem.toolTip = ids[i];
   }
+}
+
+- (void)auditionAITTSVoice:(id)sender {
+  NSArray *services = [self ttsServices];
+  NSInteger idx = [self.aiTTSServicePopup.selectedItem.representedObject integerValue];
+  if (idx < 0 || idx >= (NSInteger)services.count) { self.aiTTSStatus.stringValue=@"请先选择语音服务"; return; }
+  NSDictionary *e = services[idx];
+  NSString *key = e[@"api"] ?: @"";
+  NSString *url = self.aiTTSURLField.stringValue;
+  NSString *model = self.aiTTSModelField.titleOfSelectedItem ?: @"";
+  NSString *voice = self.aiTTSVoiceField.selectedItem.representedObject ?: self.aiTTSVoiceField.titleOfSelectedItem ?: @"";
+  if (!key.length || !url.length || !model.length || !voice.length) { self.aiTTSStatus.stringValue=@"请先配置服务、模型和音色"; return; }
+  NSDictionary *body = @{@"model":model,@"input":@"你好，这是 DockLaunchers 的音色试听。",@"voice":voice,@"response_format":@"mp3"};
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  req.HTTPMethod=@"POST"; req.timeoutInterval=60;
+  [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  req.HTTPBody=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+  self.aiTTSStatus.stringValue=@"正在试听…";
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (err || !data.length) { weakSelf.aiTTSStatus.stringValue=err.localizedDescription ?: @"试听失败"; return; }
+      NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-tts-preview.mp3"];
+      [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
+      if (![data writeToFile:path atomically:YES]) { weakSelf.aiTTSStatus.stringValue=@"试听文件写入失败"; return; }
+      NSSound *sound = [[NSSound alloc] initWithContentsOfFile:path byReference:YES];
+      [sound play];
+      weakSelf.aiTTSStatus.stringValue = [NSString stringWithFormat:@"试听：%@", weakSelf.aiTTSVoiceField.titleOfSelectedItem ?: @""];
+    });
+  }] resume];
 }
 
 - (void)generateAITTS:(id)sender {
