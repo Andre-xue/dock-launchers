@@ -1228,6 +1228,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) id clickGlobalMonitor, clickLocalMonitor;
 @property (strong) NSMutableArray *clickRingWindows;
 @property (strong) NSButton *captureCursorCheck, *captureClickCheck;
+@property (strong) NSButton *capturePiPShapeCheck;
+@property BOOL captureUsePreviewOverlay;
 @property (strong) NSPopUpButton *captureNoisePopup;
 @property (strong) NSButton *captureSystemAudioCheck, *captureMicCheck;
 @property (strong) NSLevelIndicator *captureMicLevelIndicator;
@@ -3314,6 +3316,10 @@ static void HideDockHoverTip(void) {
 }
 
 - (void)windowDidMove:(NSNotification *)notification {
+  if (notification.object == self.captureCameraWindow) {
+    [[NSUserDefaults standardUserDefaults] setObject:NSStringFromPoint(self.captureCameraWindow.frame.origin) forKey:@"centerCaptureCameraOrigin"];
+    return;
+  }
   NSWindow *w = self.window;
   if (!w || w.isZoomed) return;
   NSRect vis = w.screen.visibleFrame;
@@ -16987,6 +16993,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"截图保存到：%@", dir];
 }
 
+- (void)capturePiPShapeChanged:(id)sender {
+  BOOL round = self.capturePiPShapeCheck.state == NSControlStateValueOn;
+  [[NSUserDefaults standardUserDefaults] setBool:round forKey:@"centerCapturePiPShape"];
+  if (self.captureCameraWindow.contentView) {
+    CGFloat r = round ? self.captureCameraWindow.frame.size.width / 2.0 : 12.0;
+    self.captureCameraWindow.contentView.layer.cornerRadius = r;
+  }
+}
+
 - (void)captureCameraChanged:(id)sender {
   NSString *uid = self.captureCameraPopup.selectedItem.representedObject ?: @"";
   [[NSUserDefaults standardUserDefaults] setObject:uid forKey:@"centerCaptureCameraID"];
@@ -17017,12 +17032,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       if (!input || ![session canAddInput:input]) { [weakSelf showToast:@"无法启动摄像头"]; return; }
       [session addInput:input];
       NSRect vis = [NSScreen mainScreen].visibleFrame;
-      NSRect frame = NSMakeRect(NSMaxX(vis) - 260, NSMinY(vis) + 24, 236, 176);
+      CGFloat camSize = 220;
+      NSRect frame = NSMakeRect(NSMaxX(vis) - camSize - 24, NSMinY(vis) + 24, camSize, camSize);
+      NSString *savedOrigin = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCaptureCameraOrigin"];
+      if (savedOrigin.length) {
+        NSPoint p = NSPointFromString(savedOrigin);
+        if (p.x > NSMinX(vis) - 20 && p.x < NSMaxX(vis) - 40 && p.y > NSMinY(vis) - 20 && p.y < NSMaxY(vis) - 40) {
+          frame.origin = p;
+          frame = NSMakeRect(p.x, p.y, camSize, camSize);
+        }
+      }
       NSWindow *w = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
-      w.opaque = YES;
-      w.backgroundColor = [NSColor blackColor];
+      w.opaque = NO;
+      w.backgroundColor = [NSColor clearColor];
       w.level = NSFloatingWindowLevel;
-      w.sharingType = NSWindowSharingNone;
+      w.delegate = self;
+      w.sharingType = self.captureUsePreviewOverlay ? NSWindowSharingReadOnly : NSWindowSharingNone;
       w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
       w.movableByWindowBackground = YES;
       w.hasShadow = YES;
@@ -17034,7 +17059,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [view.layer addSublayer:layer];
       view.layer.borderWidth = 2;
       view.layer.borderColor = [NSColor colorWithCalibratedRed:1 green:0.35 blue:0.25 alpha:0.9].CGColor;
-      view.layer.cornerRadius = 10;
+      id shapeObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCapturePiPShape"];
+      BOOL roundShape = !shapeObj || [shapeObj boolValue];
+      view.layer.cornerRadius = roundShape ? camSize / 2.0 : 12.0;
       view.layer.masksToBounds = YES;
       w.contentView = view;
       weakSelf.captureCameraSession = session;
@@ -17050,6 +17077,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)startCameraMovieIfNeeded {
+  if (self.captureUsePreviewOverlay) return;
   if (!self.captureRecording || !self.captureCameraSession.isRunning) return;
   if (self.captureCameraMovieOutput.isRecording) return;
   if (!self.captureCameraMovieOutput) {
@@ -17431,8 +17459,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureCursorCheck.frame = NSMakeRect(650, 266, 96, 22);
     [cv addSubview:self.captureCursorCheck];
     self.captureClickCheck = [NSButton checkboxWithTitle:@"点击高亮" target:self action:@selector(capturePointerChanged:)];
-    self.captureClickCheck.frame = NSMakeRect(754, 266, 110, 22);
+    self.captureClickCheck.frame = NSMakeRect(754, 266, 100, 22);
     [cv addSubview:self.captureClickCheck];
+    self.capturePiPShapeCheck = [NSButton checkboxWithTitle:@"圆形" target:self action:@selector(capturePiPShapeChanged:)];
+    self.capturePiPShapeCheck.frame = NSMakeRect(862, 266, 62, 22);
+    id shapeObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCapturePiPShape"];
+    self.capturePiPShapeCheck.state = (!shapeObj || [shapeObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
+    self.capturePiPShapeCheck.toolTip = @"勾选圆形画中画，取消为方形；可直接拖动摄像头窗口调整位置";
+    [cv addSubview:self.capturePiPShapeCheck];
 
     // Row 6: save paths, aligned.
     NSTextField *imgLabel = [self label:@"截图保存" size:10 bold:NO color:[NSColor secondaryLabelColor]];
@@ -18062,6 +18096,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureCameraPauseStopping = NO;
   self.captureCameraWaiting = NO;
   self.capturePendingScreenPath = nil;
+  NSString *camUID = self.captureCameraPopup.selectedItem.representedObject ?: @"";
+  self.captureUsePreviewOverlay = (scene == DLRecordSceneFull || scene == DLRecordSceneRegion) && camUID.length > 0;
   [self startCameraPreviewIfNeeded];
   [self startCaptureHUD];
   self.captureRecordButton.title = @"停止录屏";
