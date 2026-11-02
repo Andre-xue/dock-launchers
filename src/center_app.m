@@ -21570,6 +21570,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (((NSString *)e[@"videoModel"]).length) defaultModel = e[@"videoModel"];
   else if (((NSString *)e[@"model"]).length) defaultModel = e[@"model"];
   self.aiVideoURLField.stringValue = defaultURL;
+  [self.aiVideoModelField removeAllItems];
+  if (defaultModel.length) [self.aiVideoModelField addItemWithObjectValue:defaultModel];
   self.aiVideoModelField.stringValue = defaultModel;
   if (!defaultURL.length) { self.aiVideoStatus.stringValue = @"该服务没有可用的视频生成地址"; return; }
   NSString *key = e[@"api"] ?: @"";
@@ -21594,19 +21596,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     t.frame=NSMakeRect(24,578,300,28); [cv addSubview:t];
     NSTextField *h = [self label:@"异步任务：提交后自动轮询，完成后可预览/保存" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame=NSMakeRect(24,556,560,18); [cv addSubview:h];
-    self.aiVideoServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,170,28) pullsDown:NO];
+    self.aiVideoServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,160,28) pullsDown:NO];
     self.aiVideoServicePopup.target=self; self.aiVideoServicePopup.action=@selector(aiVideoServiceChanged:);
     [cv addSubview:self.aiVideoServicePopup];
     self.aiVideoModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(190,520,230,28)];
     self.aiVideoModelField.placeholderString=@"视频模型";
     self.aiVideoModelField.font=[NSFont systemFontOfSize:11];
-    self.aiVideoModelField.editable=YES; self.aiVideoModelField.completes=YES;
-    self.aiVideoModelField.toolTip=@"下拉显示完整模型 ID；列表宽度已加宽";
+    self.aiVideoModelField.editable=NO;
+    self.aiVideoModelField.toolTip=@"从下拉列表选择可用视频模型";
     [cv addSubview:self.aiVideoModelField];
-    self.aiVideoDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(352,520,90,28) pullsDown:NO];
+    self.aiVideoDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(426,520,84,28) pullsDown:NO];
     [self.aiVideoDurationPopup addItemsWithTitles:@[@"5 秒", @"10 秒"]];
     [cv addSubview:self.aiVideoDurationPopup];
-    self.aiVideoReasoningPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(448,520,105,28) pullsDown:NO];
+    self.aiVideoReasoningPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(516,520,84,28) pullsDown:NO];
     [self.aiVideoReasoningPopup addItemsWithTitles:@[@"推理：默认", @"推理：低", @"推理：中", @"推理：高"]];
     self.aiVideoReasoningPopup.target=self; self.aiVideoReasoningPopup.action=@selector(aiReasoningChanged:);
     NSInteger rV = [[NSUserDefaults standardUserDefaults] integerForKey:@"aiVideoReasoning"];
@@ -22353,6 +22355,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (((NSString *)e[@"imageModel"]).length) defaultModel = e[@"imageModel"];
   else if (((NSString *)e[@"model"]).length) defaultModel = e[@"model"];
   self.aiImageURLField.stringValue = defaultURL;
+  [self.aiImageModelField removeAllItems];
+  if (defaultModel.length) [self.aiImageModelField addItemWithObjectValue:defaultModel];
   self.aiImageModelField.stringValue = defaultModel;
   if (!defaultURL.length) { self.aiImageStatus.stringValue = @"该服务没有可用的图片生成地址"; return; }
   if (!key.length) { self.aiImageStatus.stringValue = @"缺少 API Key，无法自动获取图片模型"; return; }
@@ -22361,7 +22365,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *imageModelListURL = base.length ? base : defaultURL;
   [self fetchModelsForPanel:self.aiImageModelField url:imageModelListURL key:key keywords:@[@"dall-e",@"gpt-image",@"image",@"flux",@"seedream",@"stable",@"sdxl",@"midjourney",@"imagen",@"kolors",@"z-image",@"qwen-image"] knownDefault:defaultModel completion:^(NSArray *models) {
     if (models.count) { weakSelf.aiImageStatus.stringValue = [NSString stringWithFormat:@"已获取 %ld 个图片模型", (long)models.count]; }
-    else { weakSelf.aiImageModelField.stringValue = defaultModel; weakSelf.aiImageStatus.stringValue = @"未获取到图片模型，使用默认模型"; }
+    else { [weakSelf.aiImageModelField removeAllItems]; if (defaultModel.length) [weakSelf.aiImageModelField addItemWithObjectValue:defaultModel]; weakSelf.aiImageModelField.stringValue = defaultModel; weakSelf.aiImageStatus.stringValue = @"未获取到图片模型，使用默认模型"; }
   }];
 }
 
@@ -22376,19 +22380,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     t.frame=NSMakeRect(24,578,300,28); [cv addSubview:t];
     NSTextField *h = [self label:@"使用 AI 管理中的服务和 Key；默认调用 /images/generations" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame=NSMakeRect(24,556,560,18); [cv addSubview:h];
-    self.aiImageServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,170,28) pullsDown:NO];
+    self.aiImageServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,160,28) pullsDown:NO];
     self.aiImageServicePopup.target=self; self.aiImageServicePopup.action=@selector(aiImageServiceChanged:);
     [cv addSubview:self.aiImageServicePopup];
     self.aiImageModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(190,520,230,28)];
     self.aiImageModelField.placeholderString=@"图片模型";
     self.aiImageModelField.font=[NSFont systemFontOfSize:11];
-    self.aiImageModelField.editable=YES; self.aiImageModelField.completes=YES;
-    self.aiImageModelField.toolTip=@"下拉显示完整模型 ID；列表宽度已加宽";
+    self.aiImageModelField.editable=NO;
+    self.aiImageModelField.toolTip=@"从下拉列表选择可用图片模型";
     [cv addSubview:self.aiImageModelField];
-    self.aiImageSizePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(352,520,100,28) pullsDown:NO];
+    self.aiImageSizePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(426,520,84,28) pullsDown:NO];
     [self.aiImageSizePopup addItemsWithTitles:@[@"1024x1024", @"1792x1024", @"1024x1792", @"512x512"]];
     [cv addSubview:self.aiImageSizePopup];
-    self.aiImageReasoningPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(458,520,105,28) pullsDown:NO];
+    self.aiImageReasoningPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(516,520,84,28) pullsDown:NO];
     [self.aiImageReasoningPopup addItemsWithTitles:@[@"推理：默认", @"推理：低", @"推理：中", @"推理：高"]];
     self.aiImageReasoningPopup.target=self; self.aiImageReasoningPopup.action=@selector(aiReasoningChanged:);
     NSInteger rI = [[NSUserDefaults standardUserDefaults] integerForKey:@"aiImageReasoning"];
