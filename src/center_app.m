@@ -1407,6 +1407,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSPopUpButton *aiVisionServicePopup, *aiEditServicePopup, *aiEditSizePopup;
 @property (strong) NSTextField *aiVisionModelField, *aiVisionURLField, *aiVisionStatus, *aiEditModelField, *aiEditURLField, *aiEditStatus;
 @property (strong) NSTextView *aiVisionPrompt, *aiVisionOutput, *aiEditPrompt;
+@property (strong) NSPopUpButton *aiVisionPromptPresetPopup;
 @property (strong) NSImageView *aiVisionPreview, *aiEditPreview, *aiEditResultPreview;
 @property (copy) NSString *aiVisionImagePath, *aiEditImagePath, *aiEditResultPath;
 @property BOOL aiVisionBusy, aiEditBusy;
@@ -18191,6 +18192,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)textDidChange:(NSNotification *)notification {
   if (notification.object == self.translationSourceView) [self scheduleAutoTranslate];
+  if (notification.object == self.aiVisionPrompt) {
+    [[NSUserDefaults standardUserDefaults] setObject:self.aiVisionPrompt.string ?: @"" forKey:@"centerAIVisionPrompt"];
+  }
 }
 
 - (NSString *)selectedTextFromFocusedApplication {
@@ -21723,8 +21727,24 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ps.hasVerticalScroller=YES; ps.borderType=NSBezelBorder;
     self.aiVisionPrompt=[[NSTextView alloc] initWithFrame:ps.contentView.bounds];
     self.aiVisionPrompt.font=[NSFont systemFontOfSize:12];
-    self.aiVisionPrompt.string=@"请识别图片内容并用中文总结要点。";
+    self.aiVisionPrompt.delegate=self;
+    NSString *savedPrompt = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerAIVisionPrompt"];
+    self.aiVisionPrompt.string = savedPrompt.length ? savedPrompt : @"请识别图片内容并用中文总结要点。";
     ps.documentView=self.aiVisionPrompt; [cv addSubview:ps];
+    self.aiVisionPromptPresetPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(424,502,120,28) pullsDown:NO];
+    [self.aiVisionPromptPresetPopup addItemWithTitle:@"常用提示词"];
+    for (NSString *t in @[@"总结图片", @"只 OCR 文字", @"翻译成中文", @"表格转 Markdown", @"描述界面"]) [self.aiVisionPromptPresetPopup addItemWithTitle:t];
+    self.aiVisionPromptPresetPopup.font=[NSFont systemFontOfSize:10.5];
+    self.aiVisionPromptPresetPopup.target=self; self.aiVisionPromptPresetPopup.action=@selector(aiVisionPromptPresetChanged:);
+    [cv addSubview:self.aiVisionPromptPresetPopup];
+    ColorHoverButton *resetPrompt=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(548,502,28,28)];
+    resetPrompt.title=@"↺"; resetPrompt.toolTip=@"恢复默认提示词"; resetPrompt.hoverColor=[NSColor systemOrangeColor];
+    resetPrompt.target=self; resetPrompt.action=@selector(resetAIVisionPrompt:);
+    [resetPrompt applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:resetPrompt];
+    ColorHoverButton *clearPrompt=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(580,502,28,28)];
+    clearPrompt.title=@"×"; clearPrompt.toolTip=@"清空提示词"; clearPrompt.hoverColor=[NSColor systemRedColor];
+    clearPrompt.target=self; clearPrompt.action=@selector(clearAIVisionPrompt:);
+    [clearPrompt applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearPrompt];
     NSScrollView *os=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,84,592,200)];
     os.hasVerticalScroller=YES; os.borderType=NSBezelBorder;
     self.aiVisionOutput=[[NSTextView alloc] initWithFrame:os.contentView.bounds];
@@ -21741,6 +21761,25 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self reloadAIVisionServices];
   [NSApp activateIgnoringOtherApps:YES];
   [self.aiVisionWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)aiVisionPromptPresetChanged:(NSPopUpButton *)popup {
+  NSInteger idx = popup.indexOfSelectedItem;
+  NSArray *prompts = @[@"", @"请识别图片内容并用中文总结要点。", @"只提取图片中的所有文字，按原顺序输出，不要总结。", @"请把图片中的文字翻译成简体中文，只输出译文。", @"请把图片中的表格转换成 Markdown 表格。", @"请描述这张 App 界面的布局和功能。"];
+  if (idx <= 0 || idx >= (NSInteger)prompts.count) return;
+  self.aiVisionPrompt.string = prompts[idx];
+  [[NSUserDefaults standardUserDefaults] setObject:self.aiVisionPrompt.string forKey:@"centerAIVisionPrompt"];
+}
+
+- (void)resetAIVisionPrompt:(id)sender {
+  self.aiVisionPrompt.string = @"请识别图片内容并用中文总结要点。";
+  [[NSUserDefaults standardUserDefaults] setObject:self.aiVisionPrompt.string forKey:@"centerAIVisionPrompt"];
+  [self showToast:@"已恢复默认提示词"];
+}
+
+- (void)clearAIVisionPrompt:(id)sender {
+  self.aiVisionPrompt.string = @"";
+  [[NSUserDefaults standardUserDefaults] setObject:@"" forKey:@"centerAIVisionPrompt"];
 }
 
 - (void)reloadAIVisionServices {
@@ -21785,6 +21824,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSDictionary *e=self.aiEntries[idx];
   NSString *key=e[@"api"]?:@""; NSString *url=self.aiVisionURLField.stringValue; NSString *model=self.aiVisionModelField.stringValue;
   NSString *prompt=self.aiVisionPrompt.string;
+  [[NSUserDefaults standardUserDefaults] setObject:prompt ?: @"" forKey:@"centerAIVisionPrompt"];
   if(!key.length||!url.length||!model.length){self.aiVisionStatus.stringValue=@"请填写 Key、地址和视觉模型";return;}
   NSData *png=[self pngDataForImagePath:self.aiVisionImagePath];
   if(!png.length){self.aiVisionStatus.stringValue=@"图片读取失败";return;}
