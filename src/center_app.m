@@ -15790,7 +15790,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"应用卸载", @"symbol": @"trash.fill", @"action": @"uninstall"}
       ]
     ];
-    NSInteger savedPage = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerRadialLastPage"];
+    NSUserDefaults *radialUD = [NSUserDefaults standardUserDefaults];
+    if ([radialUD integerForKey:@"centerRadialPagesVersion"] != 7) {
+      [radialUD setInteger:0 forKey:@"centerRadialLastPage"];
+      [radialUD setInteger:7 forKey:@"centerRadialPagesVersion"];
+      [radialUD synchronize];
+    }
+    NSInteger savedPage = [radialUD integerForKey:@"centerRadialLastPage"];
     self.radialPage = MAX(0, MIN(savedPage, (NSInteger)self.radialPages.count - 1));
     self.radialMenu = [[DLCircularMenuView alloc] initWithFrame:NSMakeRect(0,0,340,360)];
     __weak typeof(self) weakSelf = self;
