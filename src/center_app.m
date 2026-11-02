@@ -1419,6 +1419,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSImageView *aiImagePreview, *aiVideoPreview;
 @property (copy) NSString *aiImageResultPath, *aiVideoResultPath, *aiVideoTaskID, *aiVideoPollURL;
 @property NSInteger aiVideoPollCount;
+@property BOOL aiVideoSiliconFlow;
 @property (strong) NSTimer *aiVideoPollTimer;
 @property BOOL aiImageBusy, aiVideoBusy;
 @property (strong) NSTextView *aiAssistantInput, *aiAssistantOutput;
@@ -7016,6 +7017,7 @@ static BOOL ValidGroupName(NSString *raw) {
   self.aiQuotaRefreshing = YES;
   self.lastAIQuotaRefresh = [NSDate date];
   NSMutableDictionary *quotaMap = [NSMutableDictionary dictionary];
+  NSMutableSet *deprecatedProviders = [NSMutableSet set];
   dispatch_group_t group = dispatch_group_create();
   for (NSArray *pair in targets) {
     NSInteger idx = [pair[0] integerValue];
@@ -7034,8 +7036,12 @@ static BOOL ValidGroupName(NSString *raw) {
     [req setValue:@"application/json" forHTTPHeaderField:@"Accept"];
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
       NSString *quota = nil;
+      NSInteger httpStatus = [(NSHTTPURLResponse *)resp statusCode];
+      id obj = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+      if (httpStatus == 410 || ([obj isKindOfClass:[NSDictionary class]] && [obj[@"code"] integerValue] == 20092)) {
+        @synchronized (deprecatedProviders) { [deprecatedProviders addObject:provider]; }
+      }
       if (data.length && !err) {
-        id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
         if ([provider isEqualToString:@"deepseek"] && [obj isKindOfClass:[NSDictionary class]]) {
           NSArray *infos = obj[@"balance_infos"];
           if ([infos isKindOfClass:[NSArray class]] && infos.count) {
@@ -7078,7 +7084,7 @@ static BOOL ValidGroupName(NSString *raw) {
       NSMutableDictionary *m = [self.aiEntries[i] mutableCopy];
       NSString *old = m[@"quota"] ?: @"";
       NSString *provider = [self quotaProviderKeyForEntry:self.aiEntries[i]];
-      if ([provider isEqualToString:@"zhipu"]) {
+      if ([provider isEqualToString:@"zhipu"] || [deprecatedProviders containsObject:provider]) {
         if (!old.length || [old isEqualToString:@"未填写"] || [old isEqualToString:@"查询失败"]) m[@"quota"] = @"暂不支持自动查询";
       } else if (!old.length || [old isEqualToString:@"未填写"]) {
         m[@"quota"] = @"查询失败";
@@ -21521,11 +21527,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if (!base.length) base = @"https://ark.cn-beijing.volces.com/api/v3";
     defaultURL = [base stringByAppendingString:@"/contents/generations/tasks"];
     defaultModel = @"doubao-seedance-1-0-pro-250528";
+  } else if ([self aiServiceName:name containsAny:@[@"siliconflow",@"硅基流动"]] || [base containsString:@"siliconflow"]) {
+    defaultURL = [base stringByAppendingString:@"/video/submit"];
+    defaultModel = @"Wan-AI/Wan2.2-T2V-A14B";
   } else if (base.length) {
     defaultURL = [base stringByAppendingString:@"/videos/generations"];
   }
   if (((NSString *)e[@"videoAPI"]).length) defaultURL = e[@"videoAPI"];
   if (((NSString *)e[@"videoModel"]).length) defaultModel = e[@"videoModel"];
+  else if (((NSString *)e[@"model"]).length) defaultModel = e[@"model"];
   self.aiVideoURLField.stringValue = defaultURL;
   self.aiVideoModelField.stringValue = defaultModel;
   if (!defaultURL.length) { self.aiVideoStatus.stringValue = @"该服务没有可用的视频生成地址"; return; }
@@ -21533,7 +21543,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!key.length) { self.aiVideoStatus.stringValue = @"缺少 API Key，无法自动获取视频模型"; return; }
   self.aiVideoStatus.stringValue = @"正在获取视频模型…";
   __weak typeof(self) weakSelf = self;
-  [self fetchModelsForPanel:self.aiVideoModelField url:defaultURL key:key keywords:@[@"sora",@"seedance",@"veo",@"kling",@"runway",@"luma",@"video",@"minimax",@"hailuo"] knownDefault:defaultModel completion:^(NSArray *models) {
+  NSString *modelListURL = ([self aiServiceName:name containsAny:@[@"siliconflow",@"硅基流动"]] || [base containsString:@"siliconflow"]) ? base : defaultURL;
+  [self fetchModelsForPanel:self.aiVideoModelField url:modelListURL key:key keywords:@[@"sora",@"seedance",@"veo",@"kling",@"runway",@"luma",@"video",@"minimax",@"hailuo",@"wan"] knownDefault:defaultModel completion:^(NSArray *models) {
     if (models.count) { weakSelf.aiVideoStatus.stringValue = [NSString stringWithFormat:@"已获取 %ld 个视频模型", (long)models.count]; }
     else { weakSelf.aiVideoStatus.stringValue = defaultModel.length ? @"未获取到视频模型，使用默认模型" : @"未获取到视频模型，请手动填写"; }
   }];
@@ -21570,7 +21581,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     gen.title=@"生成"; gen.hoverColor=[NSColor systemBlueColor]; gen.target=self; gen.action=@selector(generateAIVideo:);
     [gen applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gen];
     self.aiVideoURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,486,610,28)];
-    self.aiVideoURLField.placeholderString=@"视频生成/任务 API 地址"; [cv addSubview:self.aiVideoURLField];
+    self.aiVideoURLField.placeholderString=@"视频生成/任务 API 地址";
+    self.aiVideoURLField.editable=NO; self.aiVideoURLField.selectable=YES;
+    self.aiVideoURLField.toolTip=@"根据所选 AI 服务自动填写；不会跟随手动输入改变";
+    [cv addSubview:self.aiVideoURLField];
     NSScrollView *inScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,300,610,170)];
     inScroll.hasVerticalScroller=YES; inScroll.borderType=NSBezelBorder;
     self.aiVideoPrompt = [[NSTextView alloc] initWithFrame:inScroll.contentView.bounds];
@@ -21607,7 +21621,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!key.length || !prompt.length || !url.length || !model.length) { self.aiVideoStatus.stringValue=@"请填写 API Key、提示词、地址和模型"; return; }
   NSMutableDictionary *entry=[e mutableCopy]; entry[@"videoModel"]=model; entry[@"videoAPI"]=url; self.aiEntries[idx]=entry; [self saveAIEntries];
   BOOL ark = [url containsString:@"/contents/generations/tasks"];
-  NSMutableDictionary *body = [(ark ? @{@"model":model,@"content":@[@{@"type":@"text",@"text":prompt}]} : @{@"model":model,@"prompt":prompt,@"duration":@([self.aiVideoDurationPopup.titleOfSelectedItem integerValue])}) mutableCopy];
+  BOOL silicon = [url containsString:@"/video/submit"];
+  self.aiVideoSiliconFlow = silicon;
+  NSMutableDictionary *body;
+  if (ark) body = [@{@"model":model,@"content":@[@{@"type":@"text",@"text":prompt}]} mutableCopy];
+  else if (silicon) body = [@{@"model":model,@"prompt":prompt,@"image_size":@"1280x720"} mutableCopy];
+  else body = [@{@"model":model,@"prompt":prompt,@"duration":@([self.aiVideoDurationPopup.titleOfSelectedItem integerValue])} mutableCopy];
   NSString *reasonVid = [self reasoningEffortForPopup:self.aiVideoReasoningPopup];
   if (reasonVid.length) body[@"reasoning_effort"] = reasonVid;
   NSData *data=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
@@ -21625,13 +21644,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       NSString *videoURL=[weakSelf firstURLStringInJSONObject:obj];
       NSString *taskID=nil;
       if ([obj isKindOfClass:[NSDictionary class]]) {
-        taskID=obj[@"id"] ?: obj[@"task_id"];
-        if (!taskID) { id d=obj[@"data"]; if ([d isKindOfClass:[NSDictionary class]]) taskID=d[@"id"] ?: d[@"task_id"]; }
+        taskID=obj[@"id"] ?: obj[@"task_id"] ?: obj[@"requestId"];
+        if (!taskID) { id d=obj[@"data"]; if ([d isKindOfClass:[NSDictionary class]]) taskID=d[@"id"] ?: d[@"task_id"] ?: d[@"requestId"]; }
       }
       if (videoURL.length) { [weakSelf downloadAIVideoURL:videoURL]; return; }
       if (!taskID.length) { weakSelf.aiVideoBusy=NO; weakSelf.aiVideoStatus.stringValue=[[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding] ?: @"没有解析到任务"; return; }
       weakSelf.aiVideoTaskID=taskID;
-      weakSelf.aiVideoPollURL=[url stringByAppendingFormat:@"/%@", taskID];
+      if (silicon) weakSelf.aiVideoPollURL=[url stringByReplacingOccurrencesOfString:@"/video/submit" withString:@"/video/status"];
+      else weakSelf.aiVideoPollURL=[url stringByAppendingFormat:@"/%@", taskID];
       weakSelf.aiVideoStatus.stringValue=[NSString stringWithFormat:@"任务已提交：%@，等待生成…", taskID];
       [weakSelf.aiVideoPollTimer invalidate];
       weakSelf.aiVideoPollTimer=[NSTimer scheduledTimerWithTimeInterval:5.0 repeats:YES block:^(NSTimer *timer) { [weakSelf pollAIVideoTask]; }];
@@ -21647,12 +21667,23 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *key = (idx>=0 && idx<(NSInteger)self.aiEntries.count) ? (self.aiEntries[idx][@"api"] ?: @"") : @"";
   NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:self.aiVideoPollURL]];
   [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  if (self.aiVideoSiliconFlow) {
+    req.HTTPMethod=@"POST";
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    req.HTTPBody=[NSJSONSerialization dataWithJSONObject:@{@"requestId":self.aiVideoTaskID ?: @""} options:0 error:NULL];
+  }
   req.timeoutInterval=30;
   __weak typeof(self) weakSelf=self;
   [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
     dispatch_async(dispatch_get_main_queue(), ^{
       if (err || !data.length) return;
       id obj=[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+      NSString *status = ([obj isKindOfClass:[NSDictionary class]] ? obj[@"status"] : nil);
+      if ([status isKindOfClass:[NSString class]] && ([status isEqualToString:@"Failed"] || [status isEqualToString:@"failed"] || [status isEqualToString:@"Error"])) {
+        [weakSelf.aiVideoPollTimer invalidate]; weakSelf.aiVideoBusy=NO;
+        NSString *reason = ([obj isKindOfClass:[NSDictionary class]] ? obj[@"reason"] : nil) ?: @"视频生成失败";
+        weakSelf.aiVideoStatus.stringValue=reason; return;
+      }
       NSString *videoURL=[weakSelf firstURLStringInJSONObject:obj];
       if (videoURL.length) { [weakSelf.aiVideoPollTimer invalidate]; [weakSelf downloadAIVideoURL:videoURL]; return; }
       weakSelf.aiVideoStatus.stringValue=[NSString stringWithFormat:@"生成中…（第 %ld 次检查）", (long)weakSelf.aiVideoPollCount];
