@@ -20469,7 +20469,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureMicLevelIndicator.toolTip = @"麦克风实时电平（录音前检测）";
     [cv addSubview:self.captureMicLevelIndicator];
     self.captureMicBoostCheck = [NSButton checkboxWithTitle:@"麦克风增强" target:self action:@selector(captureMicBoostChanged:)];
-    self.captureMicBoostCheck.frame = NSMakeRect(380, 316, 120, 22);
+    self.captureMicBoostCheck.frame = NSMakeRect(500, 286, 130, 22);
     id boostVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureMicBoost"];
     self.captureMicBoostCheck.state = (boostVal ? [boostVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
     self.captureMicBoostCheck.toolTip = @"录制时临时把系统麦克风输入音量调到 100%，结束后恢复";
