@@ -22374,6 +22374,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     sv.documentView = self.voiceTextOutput; [cv addSubview:sv];
     self.voiceTextStatus = [self label:@"请选择文件" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.voiceTextStatus.frame = NSMakeRect(24, 40, 580, 18); [cv addSubview:self.voiceTextStatus];
+    self.voiceTextWindow.level = NSFloatingWindowLevel;
     [self.voiceTextWindow center];
   }
   if (!self.voiceTextPath.length) {
@@ -22466,6 +22467,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(760, 14, 116, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor]; close.target = self; close.action = @selector(closeMeetingAssistant:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    self.meetingWindow.level = NSFloatingWindowLevel;
     [self.meetingWindow center];
   }
   if (!self.meetingPath.length) {
@@ -23213,6 +23215,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *latest = nil; NSDate *latestDate = nil;
   for (NSString *f in files) {
     if (![[f.pathExtension lowercaseString] isEqualToString:@"mp4"]) continue;
+    if ([f containsString:@"-part"]) continue;
     NSString *p = [dir stringByAppendingPathComponent:f];
     NSDate *d = [[NSFileManager defaultManager] attributesOfItemAtPath:p error:NULL][NSFileModificationDate];
     if (!latestDate || [d compare:latestDate] == NSOrderedDescending) { latest = p; latestDate = d; }
@@ -23668,10 +23671,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)forceWindowToFront:(NSWindow *)w {
   if (!w) return;
   [self restoreDockIcon];
+  [[NSRunningApplication currentApplication] activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
   [NSApp activateIgnoringOtherApps:YES];
   [w makeKeyAndOrderFront:nil];
   [w orderFrontRegardless];
-  [NSApp activateIgnoringOtherApps:YES];
+  __weak typeof(self) weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    [weakSelf restoreDockIcon];
+    [[NSRunningApplication currentApplication] activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
+    [NSApp activateIgnoringOtherApps:YES];
+    [w makeKeyAndOrderFront:nil];
+    [w orderFrontRegardless];
+  });
 }
 
 - (NSString *)latestRecordingFilePath {
