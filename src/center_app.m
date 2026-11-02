@@ -21607,10 +21607,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [cv addSubview:self.aiVideoModelField];
     self.aiVideoDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(426,520,84,28) pullsDown:NO];
     [self.aiVideoDurationPopup addItemsWithTitles:@[@"5 秒", @"10 秒"]];
+    self.aiVideoDurationPopup.font=[NSFont systemFontOfSize:11];
     [cv addSubview:self.aiVideoDurationPopup];
     self.aiVideoReasoningPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(516,520,84,28) pullsDown:NO];
     [self.aiVideoReasoningPopup addItemsWithTitles:@[@"推理：默认", @"推理：低", @"推理：中", @"推理：高"]];
     self.aiVideoReasoningPopup.target=self; self.aiVideoReasoningPopup.action=@selector(aiReasoningChanged:);
+    self.aiVideoReasoningPopup.font=[NSFont systemFontOfSize:11];
     NSInteger rV = [[NSUserDefaults standardUserDefaults] integerForKey:@"aiVideoReasoning"];
     if (rV >= 0 && rV < 4) [self.aiVideoReasoningPopup selectItemAtIndex:rV];
     [cv addSubview:self.aiVideoReasoningPopup];
@@ -22391,10 +22393,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [cv addSubview:self.aiImageModelField];
     self.aiImageSizePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(426,520,84,28) pullsDown:NO];
     [self.aiImageSizePopup addItemsWithTitles:@[@"1024x1024", @"1792x1024", @"1024x1792", @"512x512"]];
+    self.aiImageSizePopup.font=[NSFont systemFontOfSize:11];
     [cv addSubview:self.aiImageSizePopup];
     self.aiImageReasoningPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(516,520,84,28) pullsDown:NO];
     [self.aiImageReasoningPopup addItemsWithTitles:@[@"推理：默认", @"推理：低", @"推理：中", @"推理：高"]];
     self.aiImageReasoningPopup.target=self; self.aiImageReasoningPopup.action=@selector(aiReasoningChanged:);
+    self.aiImageReasoningPopup.font=[NSFont systemFontOfSize:11];
     NSInteger rI = [[NSUserDefaults standardUserDefaults] integerForKey:@"aiImageReasoning"];
     if (rI >= 0 && rI < 4) [self.aiImageReasoningPopup selectItemAtIndex:rI];
     [cv addSubview:self.aiImageReasoningPopup];
