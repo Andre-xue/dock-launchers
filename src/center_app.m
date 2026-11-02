@@ -3887,15 +3887,23 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 }
 
 - (void)showWindow:(id)sender {
+  [self restoreDockIcon];
   [self.window makeKeyAndOrderFront:nil];
   [NSApp activateIgnoringOtherApps:YES];
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
   if (self.allowTerminate) return NSTerminateNow;
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
   [self.window orderOut:nil];
-  [self showToast:@"DockLaunchers 仍在菜单栏运行；需要退出请用「退出 DockLaunchers」"];
+  [self showToast:@"已隐藏 Dock 图标，菜单栏继续运行"];
   return NSTerminateCancel;
+}
+
+- (void)restoreDockIcon {
+  if ([NSApp activationPolicy] != NSApplicationActivationPolicyRegular) {
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+  }
 }
 
 - (void)workspaceWillPowerOff:(NSNotification *)note {
@@ -15845,8 +15853,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     closeBtn.imageScaling = NSImageScaleProportionallyDown;
     closeBtn.contentTintColor = [NSColor systemRedColor];
     closeBtn.target = self;
-    closeBtn.action = @selector(quitApp:);
-    closeBtn.toolTip = @"完全退出 DockLaunchers";
+    closeBtn.action = @selector(closePopover:);
+    closeBtn.toolTip = @"关闭菜单";
     [root addSubview:closeBtn];
     NSButton *quickPanelBtn = [[NSButton alloc] initWithFrame:NSMakeRect(306, 326, 28, 28)];
     quickPanelBtn.bordered = NO;
@@ -22464,6 +22472,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)openConsoleFromPopover:(id)sender {
   [self.popover performClose:nil];
+  [self restoreDockIcon];
   [self showWindow:nil];
 }
 
