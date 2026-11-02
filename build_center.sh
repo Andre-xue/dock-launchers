@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUT="$ROOT/build/DockLaunchers控制台.app"
-xcrun clang -O2 -fobjc-arc -framework Cocoa -framework IOKit -framework Quartz -framework CoreServices -framework QuickLookThumbnailing -framework Photos -framework Vision -framework PDFKit -framework NaturalLanguage -framework Carbon -framework LocalAuthentication -framework Security -framework AVFoundation -framework CoreMedia -framework AudioToolbox -framework ScreenCaptureKit -arch arm64 -arch x86_64 -o /tmp/docklaunchers_center_ui "$ROOT/src/center_app.m"
+xcrun clang -O2 -fobjc-arc -framework Cocoa -framework IOKit -framework Quartz -framework CoreServices -framework QuickLookThumbnailing -framework Photos -framework Vision -framework PDFKit -framework NaturalLanguage -framework Carbon -framework LocalAuthentication -framework Security -framework Speech -framework AVFoundation -framework CoreMedia -framework AudioToolbox -framework ScreenCaptureKit -arch arm64 -arch x86_64 -o /tmp/docklaunchers_center_ui "$ROOT/src/center_app.m"
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp /tmp/docklaunchers_center_ui "$OUT/Contents/MacOS/DockLaunchers"
@@ -32,9 +32,11 @@ cat > "$OUT/Contents/Info.plist" <<'PL'
 <key>LSMinimumSystemVersion</key><string>12.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSUIElement</key><true/>
+  <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>com.docklaunchers.center</string><key>CFBundleURLSchemes</key><array><string>docklaunchers</string></array></dict></array>
 <key>NSAccessibilityUsageDescription</key><string>用于保存和恢复窗口布局。</string>
 <key>NSCameraUsageDescription</key>
   <string>录屏时显示前置摄像头画面。</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>把录音和录屏转写为文字。</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>录制屏幕时按需采集麦克风声音。</string>
 <key>NSPhotoLibraryUsageDescription</key><string>用于读取照片图库中的照片和视频，仅在本机「文件管理」中展示，不上传、不修改。</string>

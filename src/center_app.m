@@ -17,6 +17,7 @@
 #import <QuickLookThumbnailing/QuickLookThumbnailing.h>
 #import <Photos/Photos.h>
 #import <AVFoundation/AVFoundation.h>
+#import <Speech/Speech.h>
 typedef void (*DLMRInfoFn)(dispatch_queue_t, void (^)(CFDictionaryRef info));
 typedef void (*DLMRPlayFn)(dispatch_queue_t, void (^)(Boolean playing));
 typedef void (*DLMRPIDFn)(dispatch_queue_t, void (^)(int pid));
@@ -1343,7 +1344,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *fileSearchWindow;
 @property (strong) NSWindow *groupPanelWindow;
 @property (strong) NSWindow *captureWindow;
-@property (strong) NSWindow *captureHistoryWindow, *annotateWindow;
+@property (strong) NSWindow *captureHistoryWindow, *annotateWindow, *ocrWindow;
+@property (strong) NSTextView *ocrTextView;
+@property (strong) NSTextField *ocrStatus;
 @property (strong) DLAnnotateView *annotateView;
 @property (strong) NSSegmentedControl *annotateToolControl;
 @property (strong) NSColorWell *annotateColorWell;
@@ -1417,6 +1420,12 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiAssistantURLField, *aiAssistantStatus;
 @property BOOL aiAssistantBusy;
 @property (strong) NSTextField *videoPostFileLabel, *videoPostStart, *videoPostEnd, *videoPostStatus;
+@property (strong) NSWindow *voiceTextWindow, *meetingWindow;
+@property (strong) NSTextView *voiceTextOutput, *meetingTranscript, *meetingSummary;
+@property (strong) NSTextField *voiceTextStatus, *meetingStatus, *meetingPathLabel;
+@property (copy) NSString *voiceTextPath, *meetingPath;
+@property (strong) SFSpeechRecognitionTask *voiceRecognitionTask, *meetingRecognitionTask, *activeSpeechTask;
+@property (strong) SFSpeechRecognizer *speechRecognizer;
 @property (strong) NSPopUpButton *videoPostQualityPopup;
 @property (copy) NSString *videoPostPath;
 @property (strong) id windowSnapMonitor;
@@ -3931,6 +3940,37 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 
 - (void)workspaceWillPowerOff:(NSNotification *)note {
   self.allowTerminate = YES;
+}
+
+- (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)urls {
+  for (NSURL *u in urls) {
+    if (![u.scheme.lowercaseString isEqualToString:@"docklaunchers"]) continue;
+    NSString *action = u.host.length ? u.host.lowercaseString : u.path.lowercaseString;
+    NSURLComponents *comp = [NSURLComponents componentsWithURL:u resolvingAgainstBaseURL:NO];
+    NSMutableDictionary *q = [NSMutableDictionary dictionary];
+    for (NSURLQueryItem *item in comp.queryItems ?: @[]) if (item.name && item.value) q[item.name] = item.value;
+    if ([action isEqualToString:@"capture"] || [action isEqualToString:@"screenshot"]) {
+      if ([q[@"mode"] isEqualToString:@"full"]) [self captureFullScreen:nil];
+      else [self showCaptureTool:nil];
+    } else if ([action isEqualToString:@"record"]) [self captureVideo:nil];
+    else if ([action isEqualToString:@"quickpanel"]) [self showQuickPanel];
+    else if ([action isEqualToString:@"console"]) [self showWindow:nil];
+    else if ([action isEqualToString:@"scene"]) {
+      NSString *name = q[@"name"] ?: q[@"id"] ?: @"";
+      if (name.length) { [self loadScenes]; [self applySceneNamed:name silent:NO]; }
+    } else if ([action isEqualToString:@"group"]) {
+      NSString *name = q[@"name"] ?: @"";
+      NSString *path = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
+      if (name.length && [[NSFileManager defaultManager] fileExistsAtPath:path]) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+      else [self showToast:@"没有找到该分组"];
+    } else if ([action isEqualToString:@"ai"]) [self openAIAssistant:nil];
+    else if ([action isEqualToString:@"transcribe"]) [self openVoiceTextWindow:nil];
+    else if ([action isEqualToString:@"meeting"]) [self openMeetingAssistant:nil];
+    else if ([action isEqualToString:@"open"]) {
+      NSString *target = q[@"url"] ?: q[@"path"] ?: @"";
+      if (target.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:target] ?: [NSURL fileURLWithPath:target]];
+    }
+  }
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
@@ -14739,7 +14779,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"colorsampler"]) [self showColorSampler:nil];
   else if ([action isEqualToString:@"filesearch"]) [self showFileSearch:nil];
   else if ([action isEqualToString:@"recordrecent"]) [self openMostRecentRecording];
+  else if ([action isEqualToString:@"meeting"]) [self openMeetingAssistant:nil];
+  else if ([action isEqualToString:@"voicetext"]) [self openVoiceTextWindow:nil];
   else if ([action isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
+  else if ([action isEqualToString:@"ocr"]) [self ocrLatestScreenshot:nil];
   else if ([action isEqualToString:@"shelf"]) [self openShelfWindow:nil];
   else if ([action isEqualToString:@"aitext"]) [self openAIAssistant:nil];
   else if ([action isEqualToString:@"aiimage"]) [self openAIImagePanel:nil];
@@ -15842,14 +15885,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"全屏截图", @"symbol": @"camera.fill", @"action": @"fullshot"},
         @{@"title": @"滚动截屏", @"symbol": @"arrow.down.to.line", @"action": @"scrollshot"},
         @{@"title": @"钉住截屏", @"symbol": @"pin.fill", @"action": @"pinshot"},
-        @{@"title": @"截图历史", @"symbol": @"photo.stack", @"action": @"capturehistory"}
+        @{@"title": @"截图历史", @"symbol": @"photo.stack", @"action": @"capturehistory"},
+        @{@"title": @"截图 OCR", @"symbol": @"text.viewfinder", @"action": @"ocr"}
       ],
       @[
         @{@"title": @"开始/停止录像", @"symbol": @"record.circle", @"action": @"recordtoggle"},
         @{@"title": @"暂停/继续录像", @"symbol": @"pause.circle", @"action": @"recordpause"},
         @{@"title": @"录屏后期", @"symbol": @"scissors", @"action": @"videopost"},
         @{@"title": @"打开最近录像", @"symbol": @"film", @"action": @"recordrecent"},
-        @{@"title": @"截屏/录屏", @"symbol": @"camera.viewfinder", @"action": @"capture"}
+        @{@"title": @"截屏/录屏", @"symbol": @"camera.viewfinder", @"action": @"capture"},
+        @{@"title": @"会议助手", @"symbol": @"person.2.wave.2", @"action": @"meeting"},
+        @{@"title": @"语音转文字", @"symbol": @"waveform.badge.mic", @"action": @"voicetext"}
       ],
       @[
         @{@"title": @"重命名", @"symbol": @"square.and.pencil", @"action": @"rename"},
@@ -18022,6 +18068,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3070,@"cat":@1,@"title":@"应用卸载",@"desc":@"独立窗口卸载应用",@"sel":@"openUninstallFromMenu"},
     @{@"id":@3071,@"cat":@1,@"title":@"Ai管理页面",@"desc":@"打开控制台 AI 管理数据页",@"sel":@"openAIManagementFromMenu"},
     @{@"id":@3072,@"cat":@1,@"title":@"自动化规则",@"desc":@"应用/时间/桌面自动执行动作",@"sel":@"openAutomationRules:"},
+    @{@"id":@3073,@"cat":@1,@"title":@"录屏会议助手",@"desc":@"录屏转写并生成 AI 会议纪要",@"sel":@"openMeetingAssistant:"},
+    @{@"id":@3074,@"cat":@1,@"title":@"AI 语音转文字",@"desc":@"把音频或录屏转写为文字",@"sel":@"openVoiceTextWindow:"},
+    @{@"id":@3075,@"cat":@1,@"title":@"截图 OCR",@"desc":@"识别最近截图中的文字",@"sel":@"ocrLatestScreenshot:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -18984,6 +19033,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"配置导出 / 导入", @"subtitle": @"迁移分组、快捷键和设置", @"type": @"工具", @"tool": @"configbackup", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.up.arrow.down.square" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"配置云同步", @"subtitle": @"上传/恢复云端配置", @"type": @"工具", @"tool": @"cloudsync", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"icloud" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"自动化规则", @"subtitle": @"应用/时间/桌面自动执行动作", @"type": @"工具", @"tool": @"automation", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"gearshape.2" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"录屏会议助手", @"subtitle": @"转写 + AI 会议纪要", @"type": @"工具", @"tool": @"meeting", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"person.2.wave.2" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"AI 语音转文字", @"subtitle": @"音频/录屏转文字", @"type": @"工具", @"tool": @"voicetext", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"waveform.badge.mic" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 图片生成", @"subtitle": @"用 AI 服务生成图片", @"type": @"工具", @"tool": @"aiimage", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"photo.badge.plus" accessibilityDescription:nil] ?: recIcon}];
@@ -19120,6 +19171,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"configbackup"]) [self openConfigBackupWindow:nil];
     else if ([tool isEqualToString:@"cloudsync"]) [self openCloudSyncWindow:nil];
     else if ([tool isEqualToString:@"automation"]) [self openAutomationRules:nil];
+    else if ([tool isEqualToString:@"meeting"]) [self openMeetingAssistant:nil];
+    else if ([tool isEqualToString:@"voicetext"]) [self openVoiceTextWindow:nil];
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
     else if ([tool isEqualToString:@"aitext"]) [self openAIAssistant:nil];
@@ -19230,6 +19283,103 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 - (void)closeAnnotation:(id)sender { [self.annotateWindow orderOut:nil]; }
 
+- (void)ocrImageAtPath:(NSString *)path completion:(void (^)(NSString *text, NSError *error))completion {
+  NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+  if (!img) { completion(nil, [NSError errorWithDomain:@"DockLaunchers" code:1 userInfo:@{NSLocalizedDescriptionKey: @"无法读取图片"}]); return; }
+  CGImageRef cg = [img CGImageForProposedRect:NULL context:nil hints:nil];
+  if (!cg) { completion(nil, [NSError errorWithDomain:@"DockLaunchers" code:2 userInfo:@{NSLocalizedDescriptionKey: @"无法转换图片"}]); return; }
+  VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *request, NSError *error) {
+    NSMutableArray *lines = [NSMutableArray array];
+    for (VNRecognizedTextObservation *obs in request.results) {
+      VNRecognizedText *top = [obs topCandidates:1].firstObject;
+      if (top.string.length) [lines addObject:top.string];
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (error) completion(nil, error);
+      else completion([lines componentsJoinedByString:@"\n"], nil);
+    });
+  }];
+  req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
+  req.usesLanguageCorrection = YES;
+  req.recognitionLanguages = @[@"zh-Hans", @"zh-Hant", @"en-US"];
+  VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:cg options:@{}];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSError *err = nil;
+    [handler performRequests:@[req] error:&err];
+    if (err) dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, err); });
+  });
+}
+
+- (void)showOCRResult:(NSString *)text source:(NSString *)source {
+  if (!self.ocrWindow) {
+    self.ocrWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.ocrWindow.title = @"截图 OCR";
+    self.ocrWindow.releasedWhenClosed = NO;
+    NSView *cv = self.ocrWindow.contentView;
+    NSTextField *t = [self label:@"截图 OCR" size:20 bold:YES color:nil];
+    t.frame = NSMakeRect(24, 476, 300, 28); [cv addSubview:t];
+    self.ocrStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.ocrStatus.frame = NSMakeRect(24, 454, 560, 18); [cv addSubview:self.ocrStatus];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, 92, 572, 350)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.ocrTextView = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+    self.ocrTextView.font = [NSFont systemFontOfSize:12]; self.ocrTextView.editable = YES;
+    sv.documentView = self.ocrTextView; [cv addSubview:sv];
+    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 44, 110, 32)];
+    copy.title = @"复制全部"; copy.hoverColor = [NSColor systemTealColor]; copy.target = self; copy.action = @selector(copyOCRText:);
+    [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(500, 44, 96, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor]; close.target = self; close.action = @selector(closeOCRWindow:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.ocrWindow center];
+  }
+  self.ocrTextView.string = text ?: @"";
+  self.ocrStatus.stringValue = source.length ? [NSString stringWithFormat:@"识别自：%@", source.lastPathComponent] : @"识别完成";
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.ocrWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)copyOCRText:(id)sender {
+  NSString *s = self.ocrTextView.string;
+  if (!s.length) return;
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:s forType:NSPasteboardTypeString];
+  self.ocrStatus.stringValue = @"文字已复制";
+}
+
+- (void)closeOCRWindow:(id)sender { [self.ocrWindow orderOut:nil]; }
+
+- (void)ocrCaptureHistoryRow:(id)sender {
+  NSInteger row = self.captureHistoryTable.selectedRow;
+  if (row < 0) row = self.captureHistoryTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.captureHistoryItems.count) { [self showToast:@"请先选择一张截图"]; return; }
+  NSDictionary *it = self.captureHistoryItems[row];
+  if (![it[@"type"] isEqualToString:@"截图"]) { [self showToast:@"OCR 只支持截图"]; return; }
+  [self showToast:@"正在识别文字…"];
+  [self ocrImageAtPath:it[@"path"] completion:^(NSString *text, NSError *error) {
+    if (error) { [self showToast:error.localizedDescription ?: @"OCR 失败"]; return; }
+    [self showOCRResult:text source:it[@"path"]];
+  }];
+}
+
+- (void)ocrLatestScreenshot:(id)sender {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSArray *files = [fm contentsOfDirectoryAtPath:[self captureImageDirectory] error:NULL] ?: @[];
+  NSString *latest = nil; NSDate *latestDate = nil;
+  for (NSString *f in files) {
+    if (![@[@"png",@"jpg",@"jpeg",@"heic"] containsObject:f.pathExtension.lowercaseString]) continue;
+    NSString *p = [[self captureImageDirectory] stringByAppendingPathComponent:f];
+    NSDate *d = [fm attributesOfItemAtPath:p error:NULL][NSFileModificationDate];
+    if (!latestDate || [d compare:latestDate] == NSOrderedDescending) { latest = p; latestDate = d; }
+  }
+  if (!latest.length) { [self showToast:@"还没有截图"]; return; }
+  [self showToast:@"正在识别最近截图…"];
+  [self ocrImageAtPath:latest completion:^(NSString *text, NSError *error) {
+    if (error) { [self showToast:error.localizedDescription ?: @"OCR 失败"]; return; }
+    [self showOCRResult:text source:latest];
+  }];
+}
+
 - (void)showCaptureHistory:(id)sender {
   if (!self.captureHistoryWindow) {
     self.captureHistoryWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,700,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -19257,6 +19407,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"文件"];
     [menu addItemWithTitle:@"打开" action:@selector(openCaptureHistoryRow:) keyEquivalent:@""].target = self;
     [menu addItemWithTitle:@"标注截图" action:@selector(annotateCaptureHistoryRow:) keyEquivalent:@""].target = self;
+    [menu addItemWithTitle:@"OCR 识别文字" action:@selector(ocrCaptureHistoryRow:) keyEquivalent:@""].target = self;
     [menu addItemWithTitle:@"剪辑录屏" action:@selector(editCaptureHistoryVideo:) keyEquivalent:@""].target = self;
     [menu addItemWithTitle:@"在 Finder 中显示" action:@selector(revealCaptureHistoryRow:) keyEquivalent:@""].target = self;
     self.captureHistoryTable.menu = menu;
@@ -21765,6 +21916,242 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [task resume];
 }
 
+- (void)extractAudioFromMediaAtPath:(NSString *)path completion:(void (^)(NSString *audioPath, NSError *error))completion {
+  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
+  if ([asset tracksWithMediaType:AVMediaTypeAudio].count == 0) {
+    completion(nil, [NSError errorWithDomain:@"DockLaunchers" code:1 userInfo:@{NSLocalizedDescriptionKey: @"文件里没有音频轨道"}]);
+    return;
+  }
+  if ([asset tracksWithMediaType:AVMediaTypeVideo].count == 0) { completion(path, nil); return; }
+  NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dl-audio-%@.m4a", [[NSUUID UUID] UUIDString]]];
+  AVAssetExportSession *ex = [AVAssetExportSession exportSessionWithAsset:asset presetName:AVAssetExportPresetAppleM4A];
+  ex.outputURL = [NSURL fileURLWithPath:tmp];
+  ex.outputFileType = AVFileTypeAppleM4A;
+  [ex exportAsynchronouslyWithCompletionHandler:^{
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (ex.status == AVAssetExportSessionStatusCompleted) completion(tmp, nil);
+      else completion(nil, ex.error ?: [NSError errorWithDomain:@"DockLaunchers" code:2 userInfo:@{NSLocalizedDescriptionKey: @"提取音频失败"}]);
+    });
+  }];
+}
+
+- (void)transcribeMediaAtPath:(NSString *)path update:(void (^)(NSString *text, BOOL final, NSError *error))update {
+  if (!path.length) { update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:3 userInfo:@{NSLocalizedDescriptionKey: @"没有选择文件"}]); return; }
+  [self extractAudioFromMediaAtPath:path completion:^(NSString *audio, NSError *err) {
+    if (!audio.length) { update(nil, YES, err); return; }
+    [SFSpeechRecognizer requestAuthorization:^(SFSpeechRecognizerAuthorizationStatus status) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (status != SFSpeechRecognizerAuthorizationStatusAuthorized) {
+          update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:4 userInfo:@{NSLocalizedDescriptionKey: @"语音识别权限未授权，请在系统设置中允许"}]);
+          return;
+        }
+        SFSpeechRecognizer *rec = [[SFSpeechRecognizer alloc] initWithLocale:[NSLocale localeWithLocaleIdentifier:@"zh-CN"]];
+        if (!rec || !rec.isAvailable) { update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:5 userInfo:@{NSLocalizedDescriptionKey: @"中文语音识别当前不可用"}]); return; }
+        self.speechRecognizer = rec;
+        SFSpeechURLRecognitionRequest *req = [[SFSpeechURLRecognitionRequest alloc] initWithURL:[NSURL fileURLWithPath:audio]];
+        req.shouldReportPartialResults = YES;
+        if ([rec supportsOnDeviceRecognition]) req.requiresOnDeviceRecognition = NO;
+        SFSpeechRecognitionTask *task = [rec recognitionTaskWithRequest:req resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
+          dispatch_async(dispatch_get_main_queue(), ^{
+            if (result) {
+              NSString *text = result.bestTranscription.formattedString ?: @"";
+              update(text, result.isFinal, nil);
+            } else if (error) {
+              update(nil, YES, error);
+            }
+          });
+        }];
+        self.activeSpeechTask = task;
+      });
+    }];
+  }];
+}
+
+- (void)chooseMediaForTranscription:(void (^)(NSString *path))done {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = NO;
+  p.allowedFileTypes = @[@"mp4", @"mov", @"m4v", @"m4a", @"mp3", @"wav", @"aiff", @"caf"];
+  if ([p runModal] == NSModalResponseOK && p.URL.path.length) done(p.URL.path);
+}
+
+- (void)openVoiceTextWindow:(id)sender {
+  if (!self.voiceTextWindow) {
+    self.voiceTextWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.voiceTextWindow.title = @"AI 语音转文字";
+    self.voiceTextWindow.releasedWhenClosed = NO;
+    NSView *cv = self.voiceTextWindow.contentView;
+    NSTextField *t = [self label:@"AI 语音转文字" size:20 bold:YES color:nil];
+    t.frame = NSMakeRect(24, 496, 320, 28); [cv addSubview:t];
+    NSTextField *h = [self label:@"选择录音、音频或录屏文件，使用系统中文语音识别转写（本机优先，不上传文件）" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24, 474, 600, 18); [cv addSubview:h];
+    ColorHoverButton *pick = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 430, 120, 32)];
+    pick.title = @"选择文件…"; pick.hoverColor = [NSColor systemBlueColor]; pick.target = self; pick.action = @selector(pickVoiceTextFile:);
+    [pick applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:pick];
+    ColorHoverButton *run = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(152, 430, 120, 32)];
+    run.title = @"开始转写"; run.hoverColor = [NSColor systemGreenColor]; run.target = self; run.action = @selector(startVoiceText:);
+    [run applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:run];
+    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(280, 430, 90, 32)];
+    copy.title = @"复制"; copy.hoverColor = [NSColor systemTealColor]; copy.target = self; copy.action = @selector(copyVoiceText:);
+    [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(378, 430, 90, 32)];
+    save.title = @"保存…"; save.hoverColor = [NSColor systemOrangeColor]; save.target = self; save.action = @selector(saveVoiceText:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, 76, 592, 340)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.voiceTextOutput = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+    self.voiceTextOutput.font = [NSFont systemFontOfSize:12];
+    self.voiceTextOutput.editable = NO;
+    sv.documentView = self.voiceTextOutput; [cv addSubview:sv];
+    self.voiceTextStatus = [self label:@"请选择文件" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.voiceTextStatus.frame = NSMakeRect(24, 40, 580, 18); [cv addSubview:self.voiceTextStatus];
+    [self.voiceTextWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.voiceTextWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)pickVoiceTextFile:(id)sender {
+  [self chooseMediaForTranscription:^(NSString *path) {
+    self.voiceTextPath = path;
+    self.voiceTextStatus.stringValue = [NSString stringWithFormat:@"已选择：%@", path.lastPathComponent];
+  }];
+}
+
+- (void)startVoiceText:(id)sender {
+  if (!self.voiceTextPath.length) { self.voiceTextStatus.stringValue = @"请先选择音频或录屏文件"; return; }
+  self.voiceTextOutput.string = @"";
+  self.voiceTextStatus.stringValue = @"正在识别…";
+  [self transcribeMediaAtPath:self.voiceTextPath update:^(NSString *text, BOOL final, NSError *error) {
+    if (text.length) { self.voiceTextOutput.string = text; self.voiceTextStatus.stringValue = final ? @"转写完成" : @"正在识别…"; }
+    if (final) {
+      if (error) self.voiceTextStatus.stringValue = error.localizedDescription ?: @"转写失败";
+      else self.voiceTextStatus.stringValue = @"转写完成";
+    }
+  }];
+}
+
+- (void)copyVoiceText:(id)sender {
+  NSString *s = self.voiceTextOutput.string;
+  if (!s.length) return;
+  [[NSPasteboard generalPasteboard] clearContents];
+  [[NSPasteboard generalPasteboard] setString:s forType:NSPasteboardTypeString];
+  self.voiceTextStatus.stringValue = @"文字已复制";
+}
+
+- (void)saveVoiceText:(id)sender {
+  NSString *s = self.voiceTextOutput.string;
+  if (!s.length) return;
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  sp.allowedFileTypes = @[@"txt"]; sp.nameFieldStringValue = @"语音转文字.txt";
+  if ([sp runModal] != NSModalResponseOK) return;
+  [s writeToFile:sp.URL.path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  self.voiceTextStatus.stringValue = @"已保存";
+}
+
+- (void)openMeetingAssistant:(id)sender {
+  if (!self.meetingWindow) {
+    self.meetingWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,900,680) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.meetingWindow.title = @"录屏会议助手";
+    self.meetingWindow.releasedWhenClosed = NO;
+    NSView *cv = self.meetingWindow.contentView;
+    NSTextField *t = [self label:@"录屏会议助手" size:20 bold:YES color:nil];
+    t.frame = NSMakeRect(24, 632, 320, 28); [cv addSubview:t];
+    NSTextField *h = [self label:@"选择录屏 → 转写文字 → AI 生成会议纪要；转写使用本机语音识别" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24, 610, 700, 18); [cv addSubview:h];
+    ColorHoverButton *pick = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 566, 120, 32)];
+    pick.title = @"选择录屏…"; pick.hoverColor = [NSColor systemBlueColor]; pick.target = self; pick.action = @selector(pickMeetingFile:);
+    [pick applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:pick];
+    ColorHoverButton *run = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(152, 566, 120, 32)];
+    run.title = @"开始转写"; run.hoverColor = [NSColor systemGreenColor]; run.target = self; run.action = @selector(startMeetingTranscript:);
+    [run applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:run];
+    ColorHoverButton *sum = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(280, 566, 130, 32)];
+    sum.title = @"AI 生成纪要"; sum.hoverColor = [NSColor systemPurpleColor]; sum.target = self; sum.action = @selector(summarizeMeeting:);
+    [sum applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:sum];
+    self.meetingPathLabel = [self label:@"未选择录屏" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.meetingPathLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    self.meetingPathLabel.frame = NSMakeRect(420, 572, 450, 18); [cv addSubview:self.meetingPathLabel];
+    NSTextField *tl = [self label:@"会议转写" size:12 bold:YES color:nil];
+    tl.frame = NSMakeRect(24, 528, 200, 18); [cv addSubview:tl];
+    NSTextField *sl = [self label:@"AI 会议纪要" size:12 bold:YES color:nil];
+    sl.frame = NSMakeRect(464, 528, 200, 18); [cv addSubview:sl];
+    NSScrollView *tv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, 96, 420, 420)];
+    tv.hasVerticalScroller = YES; tv.borderType = NSBezelBorder;
+    self.meetingTranscript = [[NSTextView alloc] initWithFrame:tv.contentView.bounds];
+    self.meetingTranscript.font = [NSFont systemFontOfSize:12]; self.meetingTranscript.editable = NO;
+    tv.documentView = self.meetingTranscript; [cv addSubview:tv];
+    NSScrollView *sv2 = [[NSScrollView alloc] initWithFrame:NSMakeRect(464, 96, 412, 420)];
+    sv2.hasVerticalScroller = YES; sv2.borderType = NSBezelBorder;
+    self.meetingSummary = [[NSTextView alloc] initWithFrame:sv2.contentView.bounds];
+    self.meetingSummary.font = [NSFont systemFontOfSize:12]; self.meetingSummary.editable = NO;
+    sv2.documentView = self.meetingSummary; [cv addSubview:sv2];
+    self.meetingStatus = [self label:@"请选择录屏文件" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.meetingStatus.frame = NSMakeRect(24, 54, 820, 18); [cv addSubview:self.meetingStatus];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(760, 14, 116, 32)];
+    close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor]; close.target = self; close.action = @selector(closeMeetingAssistant:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.meetingWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.meetingWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)closeMeetingAssistant:(id)sender { [self.meetingWindow orderOut:nil]; }
+
+- (void)pickMeetingFile:(id)sender {
+  [self chooseMediaForTranscription:^(NSString *path) {
+    self.meetingPath = path;
+    self.meetingPathLabel.stringValue = path.lastPathComponent;
+    self.meetingStatus.stringValue = @"已选择录屏，点击开始转写";
+  }];
+}
+
+- (void)startMeetingTranscript:(id)sender {
+  if (!self.meetingPath.length) { self.meetingStatus.stringValue = @"请先选择录屏文件"; return; }
+  self.meetingTranscript.string = @"";
+  self.meetingSummary.string = @"";
+  self.meetingStatus.stringValue = @"正在识别语音…";
+  [self transcribeMediaAtPath:self.meetingPath update:^(NSString *text, BOOL final, NSError *error) {
+    if (text.length) self.meetingTranscript.string = text;
+    if (final) self.meetingStatus.stringValue = error ? (error.localizedDescription ?: @"转写失败") : @"转写完成，可生成 AI 纪要";
+  }];
+}
+
+- (void)summarizeMeeting:(id)sender {
+  NSString *text = self.meetingTranscript.string;
+  if (text.length < 10) { self.meetingStatus.stringValue = @"请先完成转写"; return; }
+  if (!self.aiEntries) [self loadAIEntries];
+  [self hydrateAIKeys];
+  NSDictionary *entry = nil;
+  for (NSDictionary *e in self.aiEntries) if ([e[@"api"] length]) { entry = e; break; }
+  if (!entry) { self.meetingStatus.stringValue = @"请先在 AI 管理添加带 Key 的服务"; return; }
+  NSString *base = entry[@"apiBase"] ?: @"";
+  while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length-1];
+  NSString *url = [base containsString:@"/chat/completions"] ? base : [base stringByAppendingString:@"/chat/completions"];
+  NSString *model = entry[@"model"] ?: @"deepseek-chat";
+  NSString *sys = @"你是会议纪要助手。根据转写内容输出：1. 会议主题 2. 关键结论 3. 行动项（负责人/时间，如有） 4. 待确认问题。使用中文，简洁分点。";
+  NSDictionary *body = @{@"model": model, @"messages": @[@{@"role":@"system",@"content":sys}, @{@"role":@"user",@"content":text}], @"temperature": @0.2};
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  req.HTTPMethod = @"POST"; req.timeoutInterval = 120;
+  [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  [req setValue:[@"Bearer " stringByAppendingString:entry[@"api"] ?: @""] forHTTPHeaderField:@"Authorization"];
+  req.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+  self.meetingStatus.stringValue = @"AI 正在生成会议纪要…";
+  __weak typeof(self) weakSelf = self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      NSString *out = nil;
+      id obj = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+      if ([obj isKindOfClass:[NSDictionary class]]) {
+        NSArray *choices = obj[@"choices"];
+        if ([choices isKindOfClass:[NSArray class]] && choices.count) out = choices[0][@"message"][@"content"];
+        if (!out.length) out = obj[@"error"][@"message"];
+      }
+      if (out.length) { weakSelf.meetingSummary.string = out; weakSelf.meetingStatus.stringValue = @"会议纪要已生成"; }
+      else weakSelf.meetingStatus.stringValue = err.localizedDescription ?: @"生成失败";
+    });
+  }] resume];
+}
+
 - (void)openVideoPostWindow:(id)sender {
   if (!self.videoPostWindow) {
     self.videoPostWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,460) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
@@ -21805,6 +22192,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.videoPostStatus = [self label:@"请选择录屏文件" size:11 bold:NO color:[NSColor secondaryLabelColor]];
     self.videoPostStatus.lineBreakMode=NSLineBreakByTruncatingMiddle;
     self.videoPostStatus.frame=NSMakeRect(24,140,560,18); [cv addSubview:self.videoPostStatus];
+    ColorHoverButton *meetingBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,92,150,32)];
+    meetingBtn.title=@"会议助手…"; meetingBtn.hoverColor=[NSColor systemPurpleColor]; meetingBtn.target=self; meetingBtn.action=@selector(openMeetingAssistant:);
+    [meetingBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:meetingBtn];
+    ColorHoverButton *voiceBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(182,92,150,32)];
+    voiceBtn.title=@"语音转文字…"; voiceBtn.hoverColor=[NSColor systemTealColor]; voiceBtn.target=self; voiceBtn.action=@selector(openVoiceTextWindow:);
+    [voiceBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:voiceBtn];
     [self.videoPostWindow center];
   }
   [NSApp activateIgnoringOtherApps:YES];
