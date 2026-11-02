@@ -15782,7 +15782,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"开始/停止录像", @"symbol": @"record.circle", @"action": @"recordtoggle"},
         @{@"title": @"暂停/继续录像", @"symbol": @"pause.circle", @"action": @"recordpause"},
         @{@"title": @"录屏后期", @"symbol": @"scissors", @"action": @"videopost"},
-        @{@"title": @"打开最近录像", @"symbol": @"film", @"action": @"recordrecent"}
+        @{@"title": @"打开最近录像", @"symbol": @"film", @"action": @"recordrecent"},
+        @{@"title": @"截屏/录屏", @"symbol": @"camera.viewfinder", @"action": @"capture"}
       ],
       @[
         @{@"title": @"重命名", @"symbol": @"square.and.pencil", @"action": @"rename"},
