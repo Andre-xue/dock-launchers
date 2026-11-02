@@ -20266,7 +20266,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (self.micBoostActive) return;
   if (!self.captureMicCheck || self.captureMicCheck.state != NSControlStateValueOn) return;
   NSInteger gain = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
-  if (gain <= 0) return;
+  BOOL highlight = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicBoost"];
+  if (!highlight && gain <= 0) return;
   NSInteger old = [self systemInputVolume];
   if (old < 0) return;
   self.micBoostOldVolume = old;
@@ -20282,7 +20283,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)captureMicGainChanged:(id)sender {
   NSInteger g = [self.captureMicGainPopup.selectedItem.representedObject integerValue];
-  [[NSUserDefaults standardUserDefaults] setInteger:g forKey:@"centerCaptureMicGain"];
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  if (g < 0) {
+    [ud setBool:YES forKey:@"centerCaptureMicBoost"];
+    [ud setInteger:6 forKey:@"centerCaptureMicGain"];
+    [self showToast:@"语音凸显：录制时会提升麦克风输入音量"];
+  } else {
+    [ud setBool:NO forKey:@"centerCaptureMicBoost"];
+    [ud setInteger:g forKey:@"centerCaptureMicGain"];
+  }
+  [ud synchronize];
 }
 
 - (void)captureNoiseChanged:(id)sender {
@@ -20459,6 +20469,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureMicGainPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(838, 312, 86, 26) pullsDown:NO];
     NSArray *gains = @[@0, @6, @12];
     for (NSNumber *g in gains) { [self.captureMicGainPopup addItemWithTitle:[NSString stringWithFormat:@"%@%ld dB", [g integerValue] > 0 ? @"+" : @"", (long)[g integerValue]]]; self.captureMicGainPopup.lastItem.representedObject = g; }
+    [self.captureMicGainPopup addItemWithTitle:@"语音凸显"];
+    self.captureMicGainPopup.lastItem.representedObject = @(-1);
     self.captureMicGainPopup.target = self; self.captureMicGainPopup.action = @selector(captureMicGainChanged:);
     self.captureMicGainPopup.toolTip = @"选择 +6/+12 dB 时，录制期间会同时把系统麦克风输入音量提升到 100%";
     [cv addSubview:self.captureMicGainPopup];
@@ -20596,7 +20608,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *savedPiP = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCapturePiPPreset"];
   for (NSMenuItem *mi in self.capturePiPPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:savedPiP ?: @"br-medium"]) [self.capturePiPPopup selectItem:mi];
   NSInteger micGain = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
-  for (NSMenuItem *mi in self.captureMicGainPopup.itemArray) if ([mi.representedObject integerValue] == micGain) [self.captureMicGainPopup selectItem:mi];
+  BOOL micHighlight = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicBoost"];
+  if (micHighlight) [self.captureMicGainPopup selectItemAtIndex:3];
+  else for (NSMenuItem *mi in self.captureMicGainPopup.itemArray) if ([mi.representedObject integerValue] == micGain) [self.captureMicGainPopup selectItem:mi];
   if (!self.captureRecording) {
     NSString *cam = self.captureCameraPopup.selectedItem.representedObject ?: @"";
     if (cam.length) [self startCameraPreviewIfNeeded]; else [self stopCameraPreview];
