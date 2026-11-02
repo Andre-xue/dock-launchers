@@ -14989,8 +14989,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     closeBtn.imageScaling = NSImageScaleProportionallyDown;
     closeBtn.contentTintColor = [NSColor systemRedColor];
     closeBtn.target = self;
-    closeBtn.action = @selector(closePopover:);
-    closeBtn.toolTip = @"关闭";
+    closeBtn.action = @selector(quitApp:);
+    closeBtn.toolTip = @"完全退出 DockLaunchers";
     [root addSubview:closeBtn];
     [self radialApplyPage];
     pop.contentSize = NSMakeSize(340, 360);
