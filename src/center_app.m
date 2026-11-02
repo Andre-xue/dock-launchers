@@ -11459,7 +11459,48 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)applyCurrentScene:(id)sender {
-  [self applySceneAtIndex:self.scenePopup.indexOfSelectedItem];
+  [self promptApplySceneAtIndex:self.scenePopup.indexOfSelectedItem];
+}
+
+- (BOOL)promptApplySceneAtIndex:(NSInteger)idx {
+  if (idx < 0 || idx >= (NSInteger)self.scenes.count) return NO;
+  [self loadScenes];
+  if (idx >= (NSInteger)self.scenes.count) return NO;
+  NSDictionary *scene = self.scenes[idx];
+  NSArray *installed = [self installedGroupNames];
+  if (!installed.count) { [self showToast:@"没有已安装的分组"]; return NO; }
+  NSMutableArray *checks = [NSMutableArray array];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = [NSString stringWithFormat:@"应用场景「%@」", scene[@"name"] ?: @""];
+  NSDictionary *space = DLActiveSpaceInfo();
+  a.informativeText = [NSString stringWithFormat:@"当前桌面：%@\n勾选这个场景要显示的分组，确认后会应用到当前桌面并记住绑定。",
+                       space ? [NSString stringWithFormat:@"桌面 %@", space[@"index"] ?: @""] : @"当前桌面"];
+  [a addButtonWithTitle:@"应用到此桌面"];
+  [a addButtonWithTitle:@"取消"];
+  CGFloat boxH = MIN(300, installed.count * 32 + 16);
+  NSView *box = [[NSView alloc] initWithFrame:NSMakeRect(0,0,460,boxH)];
+  BOOL all = [self sceneIsAll:scene];
+  NSArray *selected = scene[@"groups"] ?: @[];
+  for (NSInteger i = 0; i < (NSInteger)installed.count; i++) {
+    NSString *name = installed[i];
+    NSButton *cb = [NSButton checkboxWithTitle:name target:nil action:nil];
+    cb.frame = NSMakeRect(10, boxH - 32 - i*32, 430, 24);
+    cb.state = (all || [selected containsObject:name]) ? NSControlStateValueOn : NSControlStateValueOff;
+    cb.tag = i;
+    [box addSubview:cb];
+    [checks addObject:cb];
+  }
+  a.accessoryView = box;
+  if ([a runModal] != NSAlertFirstButtonReturn) return NO;
+  NSMutableArray *chosen = [NSMutableArray array];
+  for (NSButton *cb in checks) if (cb.state == NSControlStateValueOn && cb.tag >= 0 && cb.tag < (NSInteger)installed.count) [chosen addObject:installed[cb.tag]];
+  NSMutableDictionary *updated = [scene mutableCopy];
+  if (chosen.count == installed.count) { updated[@"all"] = @YES; updated[@"groups"] = @[]; }
+  else { updated[@"all"] = @NO; updated[@"groups"] = chosen; }
+  self.scenes[idx] = updated;
+  [self saveScenes];
+  [self applySceneAtIndex:idx];
+  return YES;
 }
 
 - (void)applySceneAtIndex:(NSInteger)idx {
@@ -15876,8 +15917,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)quickSceneApply:(id)sender {
   NSInteger idx = self.quickScenePopup.indexOfSelectedItem;
   if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
-  [self applySceneAtIndex:idx];
-  [self.popover performClose:nil];
+  if ([self promptApplySceneAtIndex:idx]) [self.popover performClose:nil];
 }
 
 - (void)popoverDidClose:(NSNotification *)notification {
