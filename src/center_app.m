@@ -1321,6 +1321,15 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTimer *captureResultTimer;
 @property (strong) NSWindow *videoPostWindow;
 @property (strong) NSWindow *aiAssistantWindow;
+@property (strong) NSWindow *aiImageWindow, *aiVideoWindow;
+@property (strong) NSPopUpButton *aiImageServicePopup, *aiVideoServicePopup, *aiImageSizePopup, *aiVideoDurationPopup;
+@property (strong) NSTextView *aiImagePrompt, *aiVideoPrompt;
+@property (strong) NSTextField *aiImageModelField, *aiImageURLField, *aiImageStatus, *aiVideoModelField, *aiVideoURLField, *aiVideoStatus;
+@property (strong) NSImageView *aiImagePreview, *aiVideoPreview;
+@property (copy) NSString *aiImageResultPath, *aiVideoResultPath, *aiVideoTaskID, *aiVideoPollURL;
+@property NSInteger aiVideoPollCount;
+@property (strong) NSTimer *aiVideoPollTimer;
+@property BOOL aiImageBusy, aiVideoBusy;
 @property (strong) NSTextView *aiAssistantInput, *aiAssistantOutput;
 @property (strong) NSPopUpButton *aiAssistantServicePopup, *aiAssistantModePopup;
 @property (strong) NSComboBox *aiAssistantModelField;
@@ -16938,6 +16947,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3059,@"cat":@1,@"title":@"录屏后期工具箱",@"desc":@"裁剪、压缩、GIF、提取音频",@"sel":@"openVideoPostWindow:"},
     @{@"id":@3060,@"cat":@1,@"title":@"开关窗口拖拽吸附",@"desc":@"拖到屏幕边缘自动分屏",@"sel":@"toggleWindowSnap:"},
     @{@"id":@3061,@"cat":@1,@"title":@"AI 助手",@"desc":@"总结、润色、翻译文本",@"sel":@"openAIAssistant:"},
+    @{@"id":@3062,@"cat":@1,@"title":@"AI 图片生成",@"desc":@"用 AI 生成图片",@"sel":@"openAIImagePanel:"},
+    @{@"id":@3063,@"cat":@1,@"title":@"AI 视频生成",@"desc":@"用 AI 生成视频",@"sel":@"openAIVideoPanel:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -17900,6 +17911,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"配置导出 / 导入", @"subtitle": @"迁移分组、快捷键和设置", @"type": @"工具", @"tool": @"configbackup", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.up.arrow.down.square" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"AI 图片生成", @"subtitle": @"用 AI 服务生成图片", @"type": @"工具", @"tool": @"aiimage", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"photo.badge.plus" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"AI 视频生成", @"subtitle": @"用 AI 服务生成视频", @"type": @"工具", @"tool": @"aivideo", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"video.badge.plus" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"检查更新", @"subtitle": @"查看是否有新版本", @"type": @"工具", @"tool": @"updatecheck", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.triangle.2.circlepath" accessibilityDescription:nil] ?: recIcon}];
   NSArray *pages = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
   NSArray *pageIcons = @[@"chart.line.uptrend.xyaxis", @"square.grid.2x2", @"sparkles", @"externaldrive", @"trash", @"gearshape"];
@@ -18021,6 +18034,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
     else if ([tool isEqualToString:@"aitext"]) [self openAIAssistant:nil];
+    else if ([tool isEqualToString:@"aiimage"]) [self openAIImagePanel:nil];
+    else if ([tool isEqualToString:@"aivideo"]) [self openAIVideoPanel:nil];
     else if ([tool isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
@@ -19462,6 +19477,348 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self aiAssistantApplyEndpointDefaults:self.aiEntries[idx]];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self fetchAIModelsForAssistant:nil]; });
 }
+
+- (void)reloadAIVideoServices {
+  if (!self.aiEntries) [self loadAIEntries];
+  [self hydrateAIKeys];
+  [self.aiVideoServicePopup removeAllItems];
+  for (NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++) {
+    NSDictionary *e = self.aiEntries[i];
+    [self.aiVideoServicePopup addItemWithTitle:e[@"name"] ?: @"未命名"];
+    self.aiVideoServicePopup.lastItem.representedObject = @(i);
+  }
+  if (self.aiVideoServicePopup.numberOfItems) { [self.aiVideoServicePopup selectItemAtIndex:0]; [self aiVideoServiceChanged:nil]; }
+}
+
+- (void)aiVideoServiceChanged:(id)sender {
+  NSInteger idx = [self.aiVideoServicePopup.selectedItem.representedObject integerValue];
+  if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
+  NSDictionary *e = self.aiEntries[idx];
+  NSString *name = [e[@"name"] ?: @"" lowercaseString];
+  NSString *base = e[@"apiBase"] ?: @"";
+  if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length - @"/chat/completions".length];
+  while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
+  NSString *url = @"", *model = @"";
+  if ([name containsString:@"豆包"] || [name containsString:@"方舟"] || [name containsString:@"volcengine"] || [name containsString:@"doubao"]) {
+    if (!base.length) base = @"https://ark.cn-beijing.volces.com/api/v3";
+    url = [base stringByAppendingString:@"/contents/generations/tasks"];
+    model = e[@"videoModel"] ?: @"doubao-seedance-1-0-pro-250528";
+  } else {
+    if (!base.length) base = @"";
+    url = base.length ? [base stringByAppendingString:@"/videos/generations"] : @"";
+    model = e[@"videoModel"] ?: @"";
+  }
+  self.aiVideoURLField.stringValue = url;
+  self.aiVideoModelField.stringValue = model;
+}
+
+- (void)openAIVideoPanel:(id)sender {
+  if (!self.aiVideoWindow) {
+    self.aiVideoWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,660,620) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiVideoWindow.title = @"AI 视频生成";
+    self.aiVideoWindow.releasedWhenClosed = NO;
+    NSView *cv = self.aiVideoWindow.contentView;
+    NSTextField *t = [self label:@"AI 视频生成" size:20 bold:YES color:nil];
+    t.frame=NSMakeRect(24,578,300,28); [cv addSubview:t];
+    NSTextField *h = [self label:@"异步任务：提交后自动轮询，完成后可预览/保存" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame=NSMakeRect(24,556,560,18); [cv addSubview:h];
+    self.aiVideoServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,200,28) pullsDown:NO];
+    self.aiVideoServicePopup.target=self; self.aiVideoServicePopup.action=@selector(aiVideoServiceChanged:);
+    [cv addSubview:self.aiVideoServicePopup];
+    self.aiVideoModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(232,520,180,28)];
+    self.aiVideoModelField.placeholderString=@"视频模型"; [cv addSubview:self.aiVideoModelField];
+    self.aiVideoDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(420,520,120,28) pullsDown:NO];
+    [self.aiVideoDurationPopup addItemsWithTitles:@[@"5 秒", @"10 秒"]];
+    [cv addSubview:self.aiVideoDurationPopup];
+    ColorHoverButton *gen = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(548,520,88,28)];
+    gen.title=@"生成"; gen.hoverColor=[NSColor systemBlueColor]; gen.target=self; gen.action=@selector(generateAIVideo:);
+    [gen applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gen];
+    self.aiVideoURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,486,610,28)];
+    self.aiVideoURLField.placeholderString=@"视频生成/任务 API 地址"; [cv addSubview:self.aiVideoURLField];
+    NSScrollView *inScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,300,610,170)];
+    inScroll.hasVerticalScroller=YES; inScroll.borderType=NSBezelBorder;
+    self.aiVideoPrompt = [[NSTextView alloc] initWithFrame:inScroll.contentView.bounds];
+    self.aiVideoPrompt.font=[NSFont systemFontOfSize:12];
+    inScroll.documentView=self.aiVideoPrompt; [cv addSubview:inScroll];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,260,100,30)];
+    save.title=@"保存视频…"; save.hoverColor=[NSColor systemGreenColor]; save.target=self; save.action=@selector(saveAIVideo:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,260,100,30)];
+    open.title=@"打开视频"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openAIVideo:);
+    [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    self.aiVideoStatus = [self label:@"输入提示词后点击生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.aiVideoStatus.frame=NSMakeRect(244,266,390,18); [cv addSubview:self.aiVideoStatus];
+    self.aiVideoPreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,60,610,190)];
+    self.aiVideoPreview.imageScaling=NSImageScaleProportionallyUpOrDown;
+    self.aiVideoPreview.wantsLayer=YES; self.aiVideoPreview.layer.borderColor=[NSColor separatorColor].CGColor; self.aiVideoPreview.layer.borderWidth=1;
+    [cv addSubview:self.aiVideoPreview];
+    [self.aiVideoWindow center];
+  }
+  [self reloadAIVideoServices];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.aiVideoWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)generateAIVideo:(id)sender {
+  if (self.aiVideoBusy) return;
+  NSInteger idx=[self.aiVideoServicePopup.selectedItem.representedObject integerValue];
+  if (idx<0 || idx>=(NSInteger)self.aiEntries.count) { self.aiVideoStatus.stringValue=@"请先在 AI 管理添加服务"; return; }
+  NSDictionary *e=self.aiEntries[idx];
+  NSString *key=e[@"api"] ?: @"";
+  NSString *prompt=self.aiVideoPrompt.string;
+  NSString *url=self.aiVideoURLField.stringValue;
+  NSString *model=self.aiVideoModelField.stringValue;
+  if (!key.length || !prompt.length || !url.length || !model.length) { self.aiVideoStatus.stringValue=@"请填写 API Key、提示词、地址和模型"; return; }
+  NSMutableDictionary *entry=[e mutableCopy]; entry[@"videoModel"]=model; self.aiEntries[idx]=entry; [self saveAIEntries];
+  BOOL ark = [url containsString:@"/contents/generations/tasks"];
+  NSDictionary *body = ark ? @{@"model":model,@"content":@[@{@"type":@"text",@"text":prompt}]} : @{@"model":model,@"prompt":prompt,@"duration":@([self.aiVideoDurationPopup.titleOfSelectedItem integerValue])};
+  NSData *data=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  req.HTTPBody=data; req.timeoutInterval=60;
+  self.aiVideoBusy=YES; self.aiVideoStatus.stringValue=@"正在提交视频任务…"; self.aiVideoPollCount=0;
+  self.aiVideoTaskID=nil; self.aiVideoPollURL=nil;
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *respData, NSURLResponse *resp, NSError *err) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (err || !respData.length) { weakSelf.aiVideoBusy=NO; weakSelf.aiVideoStatus.stringValue=err.localizedDescription ?: @"提交失败"; return; }
+      id obj=[NSJSONSerialization JSONObjectWithData:respData options:0 error:NULL];
+      NSString *videoURL=[weakSelf firstURLStringInJSONObject:obj];
+      NSString *taskID=nil;
+      if ([obj isKindOfClass:[NSDictionary class]]) {
+        taskID=obj[@"id"] ?: obj[@"task_id"];
+        if (!taskID) { id d=obj[@"data"]; if ([d isKindOfClass:[NSDictionary class]]) taskID=d[@"id"] ?: d[@"task_id"]; }
+      }
+      if (videoURL.length) { [weakSelf downloadAIVideoURL:videoURL]; return; }
+      if (!taskID.length) { weakSelf.aiVideoBusy=NO; weakSelf.aiVideoStatus.stringValue=[[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding] ?: @"没有解析到任务"; return; }
+      weakSelf.aiVideoTaskID=taskID;
+      weakSelf.aiVideoPollURL=[url stringByAppendingFormat:@"/%@", taskID];
+      weakSelf.aiVideoStatus.stringValue=[NSString stringWithFormat:@"任务已提交：%@，等待生成…", taskID];
+      [weakSelf.aiVideoPollTimer invalidate];
+      weakSelf.aiVideoPollTimer=[NSTimer scheduledTimerWithTimeInterval:5.0 repeats:YES block:^(NSTimer *timer) { [weakSelf pollAIVideoTask]; }];
+    });
+  }] resume];
+}
+
+- (void)pollAIVideoTask {
+  if (!self.aiVideoPollURL.length) return;
+  self.aiVideoPollCount++;
+  if (self.aiVideoPollCount > 120) { [self.aiVideoPollTimer invalidate]; self.aiVideoBusy=NO; self.aiVideoStatus.stringValue=@"视频任务超时"; return; }
+  NSInteger idx=[self.aiVideoServicePopup.selectedItem.representedObject integerValue];
+  NSString *key = (idx>=0 && idx<(NSInteger)self.aiEntries.count) ? (self.aiEntries[idx][@"api"] ?: @"") : @"";
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:self.aiVideoPollURL]];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  req.timeoutInterval=30;
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (err || !data.length) return;
+      id obj=[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+      NSString *videoURL=[weakSelf firstURLStringInJSONObject:obj];
+      if (videoURL.length) { [weakSelf.aiVideoPollTimer invalidate]; [weakSelf downloadAIVideoURL:videoURL]; return; }
+      weakSelf.aiVideoStatus.stringValue=[NSString stringWithFormat:@"生成中…（第 %ld 次检查）", (long)weakSelf.aiVideoPollCount];
+    });
+  }] resume];
+}
+
+- (void)downloadAIVideoURL:(NSString *)url {
+  self.aiVideoStatus.stringValue=@"正在下载视频…";
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:url] completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (err || !data.length) { weakSelf.aiVideoBusy=NO; weakSelf.aiVideoStatus.stringValue=err.localizedDescription ?: @"视频下载失败"; return; }
+      NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AIGenerated"];
+      [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+      NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
+      NSString *path=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"AI视频-%@.mp4",[df stringFromDate:[NSDate date]]]];
+      [data writeToFile:path atomically:YES];
+      weakSelf.aiVideoResultPath=path; weakSelf.aiVideoBusy=NO;
+      weakSelf.aiVideoStatus.stringValue=[NSString stringWithFormat:@"已生成：%@",path.lastPathComponent];
+      AVAsset *asset=[AVAsset assetWithURL:[NSURL fileURLWithPath:path]];
+      AVAssetImageGenerator *gen=[AVAssetImageGenerator assetImageGeneratorWithAsset:asset];
+      gen.appliesPreferredTrackTransform=YES; gen.maximumSize=CGSizeMake(600,400);
+      CGImageRef img=[gen copyCGImageAtTime:CMTimeMake(0,1) actualTime:NULL error:NULL];
+      if (img) { weakSelf.aiVideoPreview.image=[[NSImage alloc] initWithCGImage:img size:NSZeroSize]; CGImageRelease(img); }
+    });
+  }] resume];
+}
+
+- (void)saveAIVideo:(id)sender {
+  if (!self.aiVideoResultPath.length) { [self showToast:@"还没有生成视频"]; return; }
+  NSSavePanel *sp=[NSSavePanel savePanel]; sp.allowedFileTypes=@[@"mp4"];
+  sp.nameFieldStringValue=self.aiVideoResultPath.lastPathComponent;
+  if ([sp runModal]==NSModalResponseOK) {
+    [[NSFileManager defaultManager] removeItemAtPath:sp.URL.path error:NULL];
+    if ([[NSFileManager defaultManager] copyItemAtPath:self.aiVideoResultPath toPath:sp.URL.path error:NULL]) [self showToast:@"视频已保存"];
+  }
+}
+- (void)openAIVideo:(id)sender { if (self.aiVideoResultPath.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.aiVideoResultPath]]; }
+
+- (void)reloadAIImageServices {
+  if (!self.aiEntries) [self loadAIEntries];
+  [self hydrateAIKeys];
+  [self.aiImageServicePopup removeAllItems];
+  for (NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++) {
+    NSDictionary *e = self.aiEntries[i];
+    [self.aiImageServicePopup addItemWithTitle:e[@"name"] ?: @"未命名"];
+    self.aiImageServicePopup.lastItem.representedObject = @(i);
+  }
+  if (self.aiImageServicePopup.numberOfItems) { [self.aiImageServicePopup selectItemAtIndex:0]; [self aiImageServiceChanged:nil]; }
+}
+
+- (void)aiImageServiceChanged:(id)sender {
+  NSInteger idx = [self.aiImageServicePopup.selectedItem.representedObject integerValue];
+  if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
+  NSDictionary *e = self.aiEntries[idx];
+  NSString *name = [e[@"name"] ?: @"" lowercaseString];
+  NSString *base = e[@"apiBase"] ?: @"";
+  NSString *model = @"";
+  if (base.length) {
+    if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length - @"/chat/completions".length];
+    while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
+  }
+  if (!base.length) {
+    if ([name containsString:@"openai"] || [name containsString:@"chatgpt"]) base = @"https://api.openai.com/v1";
+    else if ([name containsString:@"豆包"] || [name containsString:@"方舟"] || [name containsString:@"volcengine"] || [name containsString:@"doubao"]) base = @"https://ark.cn-beijing.volces.com/api/v3";
+    else if ([name containsString:@"siliconflow"] || [name containsString:@"硅基流动"]) base = @"https://api.siliconflow.cn/v1";
+  }
+  if ([name containsString:@"openai"] || [name containsString:@"chatgpt"]) model = @"gpt-image-1";
+  else if ([name containsString:@"siliconflow"] || [name containsString:@"硅基流动"]) model = @"black-forest-labs/FLUX.1-schnell";
+  else if ([name containsString:@"豆包"] || [name containsString:@"方舟"] || [name containsString:@"volcengine"] || [name containsString:@"doubao"]) model = @"doubao-seedream-3-0-t2i-250415";
+  self.aiImageURLField.stringValue = base.length ? [base stringByAppendingString:@"/images/generations"] : @"";
+  self.aiImageModelField.stringValue = e[@"imageModel"] ?: model;
+}
+
+- (void)openAIImagePanel:(id)sender {
+  if (!self.aiImageWindow) {
+    self.aiImageWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,660,620) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiImageWindow.title = @"AI 图片生成";
+    self.aiImageWindow.releasedWhenClosed = NO;
+    NSView *cv = self.aiImageWindow.contentView;
+    NSTextField *t = [self label:@"AI 图片生成" size:20 bold:YES color:nil];
+    t.frame=NSMakeRect(24,578,300,28); [cv addSubview:t];
+    NSTextField *h = [self label:@"使用 AI 管理中的服务和 Key；默认调用 /images/generations" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame=NSMakeRect(24,556,560,18); [cv addSubview:h];
+    self.aiImageServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,200,28) pullsDown:NO];
+    self.aiImageServicePopup.target=self; self.aiImageServicePopup.action=@selector(aiImageServiceChanged:);
+    [cv addSubview:self.aiImageServicePopup];
+    self.aiImageModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(232,520,180,28)];
+    self.aiImageModelField.placeholderString=@"图片模型"; [cv addSubview:self.aiImageModelField];
+    self.aiImageSizePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(420,520,120,28) pullsDown:NO];
+    [self.aiImageSizePopup addItemsWithTitles:@[@"1024x1024", @"1792x1024", @"1024x1792", @"512x512"]];
+    [cv addSubview:self.aiImageSizePopup];
+    ColorHoverButton *gen = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(548,520,88,28)];
+    gen.title=@"生成"; gen.hoverColor=[NSColor systemBlueColor]; gen.target=self; gen.action=@selector(generateAIImage:);
+    [gen applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gen];
+    self.aiImageURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,486,610,28)];
+    self.aiImageURLField.placeholderString=@"图片生成 API 地址"; [cv addSubview:self.aiImageURLField];
+    NSScrollView *inScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,300,610,170)];
+    inScroll.hasVerticalScroller=YES; inScroll.borderType=NSBezelBorder;
+    self.aiImagePrompt = [[NSTextView alloc] initWithFrame:inScroll.contentView.bounds];
+    self.aiImagePrompt.font=[NSFont systemFontOfSize:12];
+    inScroll.documentView=self.aiImagePrompt; [cv addSubview:inScroll];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,260,100,30)];
+    save.title=@"保存图片…"; save.hoverColor=[NSColor systemGreenColor]; save.target=self; save.action=@selector(saveAIImage:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,260,100,30)];
+    open.title=@"打开图片"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openAIImage:);
+    [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    self.aiImageStatus = [self label:@"输入提示词后点击生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.aiImageStatus.frame=NSMakeRect(244,266,390,18); [cv addSubview:self.aiImageStatus];
+    self.aiImagePreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,60,610,190)];
+    self.aiImagePreview.imageScaling=NSImageScaleProportionallyUpOrDown;
+    self.aiImagePreview.wantsLayer=YES; self.aiImagePreview.layer.borderColor=[NSColor separatorColor].CGColor; self.aiImagePreview.layer.borderWidth=1;
+    [cv addSubview:self.aiImagePreview];
+    [self.aiImageWindow center];
+  }
+  [self reloadAIImageServices];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.aiImageWindow makeKeyAndOrderFront:nil];
+}
+
+- (NSString *)firstURLStringInJSONObject:(id)obj {
+  if ([obj isKindOfClass:[NSString class]]) {
+    NSString *s=obj;
+    if ([s hasPrefix:@"http://"] || [s hasPrefix:@"https://"]) return s;
+    return nil;
+  }
+  if ([obj isKindOfClass:[NSArray class]]) {
+    for (id x in obj) { NSString *u=[self firstURLStringInJSONObject:x]; if (u) return u; }
+    return nil;
+  }
+  if ([obj isKindOfClass:[NSDictionary class]]) {
+    for (NSString *k in @[@"url",@"video_url",@"image_url",@"output_url"]) {
+      id v=obj[k]; if ([v isKindOfClass:[NSString class]] && ([v hasPrefix:@"http://"] || [v hasPrefix:@"https://"])) return v;
+    }
+    for (id x in [(NSDictionary *)obj allValues]) { NSString *u=[self firstURLStringInJSONObject:x]; if (u) return u; }
+  }
+  return nil;
+}
+
+- (void)generateAIImage:(id)sender {
+  if (self.aiImageBusy) return;
+  NSInteger idx=[self.aiImageServicePopup.selectedItem.representedObject integerValue];
+  if (idx<0 || idx>=(NSInteger)self.aiEntries.count) { self.aiImageStatus.stringValue=@"请先在 AI 管理添加服务"; return; }
+  NSDictionary *e=self.aiEntries[idx];
+  NSString *key=e[@"api"] ?: @"";
+  NSString *prompt=self.aiImagePrompt.string;
+  NSString *url=self.aiImageURLField.stringValue;
+  NSString *model=self.aiImageModelField.stringValue;
+  if (!key.length || !prompt.length || !url.length || !model.length) { self.aiImageStatus.stringValue=@"请填写 API Key、提示词、地址和模型"; return; }
+  NSMutableDictionary *entry=[e mutableCopy]; entry[@"imageModel"]=model; self.aiEntries[idx]=entry; [self saveAIEntries];
+  NSDictionary *body=@{@"model":model,@"prompt":prompt,@"n":@1,@"size":self.aiImageSizePopup.titleOfSelectedItem ?: @"1024x1024",@"response_format":@"url"};
+  NSData *data=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  req.HTTPBody=data; req.timeoutInterval=120;
+  self.aiImageBusy=YES; self.aiImageStatus.stringValue=@"正在生成图片…";
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *respData, NSURLResponse *resp, NSError *err) {
+    if (err || !respData.length) { dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.aiImageBusy=NO; weakSelf.aiImageStatus.stringValue=err.localizedDescription ?: @"生成失败"; }); return; }
+    id obj=[NSJSONSerialization JSONObjectWithData:respData options:0 error:NULL];
+    NSString *imageURL=[weakSelf firstURLStringInJSONObject:obj];
+    NSData *imageData=nil;
+    if (!imageURL && [obj isKindOfClass:[NSDictionary class]]) {
+      id d=obj[@"data"]; if ([d isKindOfClass:[NSArray class]] && [d count]) {
+        id b64=d[0][@"b64_json"];
+        if ([b64 isKindOfClass:[NSString class]]) imageData=[[NSData alloc] initWithBase64EncodedString:b64 options:0];
+      }
+    }
+    if (!imageURL && !imageData.length) {
+      dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.aiImageBusy=NO; weakSelf.aiImageStatus.stringValue=[[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding] ?: @"没有解析到图片"; });
+      return;
+    }
+    void (^finish)(NSData *imgData)=^(NSData *imgData){
+      if (!imgData.length) { dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.aiImageBusy=NO; weakSelf.aiImageStatus.stringValue=@"图片下载失败"; }); return; }
+      NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AIGenerated"];
+      [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+      NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
+      NSString *path=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"AI图片-%@.png",[df stringFromDate:[NSDate date]]]];
+      [imgData writeToFile:path atomically:YES];
+      NSImage *img=[[NSImage alloc] initWithData:imgData];
+      dispatch_async(dispatch_get_main_queue(), ^{
+        weakSelf.aiImageBusy=NO; weakSelf.aiImageResultPath=path;
+        weakSelf.aiImagePreview.image=img; weakSelf.aiImageStatus.stringValue=[NSString stringWithFormat:@"已生成：%@",path.lastPathComponent];
+      });
+    };
+    if (imageData.length) { finish(imageData); return; }
+    NSURL *imgURL=[NSURL URLWithString:imageURL];
+    [[[NSURLSession sharedSession] dataTaskWithURL:imgURL completionHandler:^(NSData *d, NSURLResponse *r, NSError *er) { finish(d); }] resume];
+  }] resume];
+}
+
+- (void)saveAIImage:(id)sender {
+  if (!self.aiImageResultPath.length) { [self showToast:@"还没有生成图片"]; return; }
+  NSSavePanel *sp=[NSSavePanel savePanel]; sp.allowedFileTypes=@[@"png"];
+  sp.nameFieldStringValue=self.aiImageResultPath.lastPathComponent;
+  if ([sp runModal]==NSModalResponseOK) {
+    [[NSFileManager defaultManager] removeItemAtPath:sp.URL.path error:NULL];
+    if ([[NSFileManager defaultManager] copyItemAtPath:self.aiImageResultPath toPath:sp.URL.path error:NULL]) [self showToast:@"图片已保存"];
+  }
+}
+- (void)openAIImage:(id)sender { if (self.aiImageResultPath.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.aiImageResultPath]]; }
 
 - (void)openAIAssistant:(id)sender {
   if (!self.aiAssistantWindow) {
