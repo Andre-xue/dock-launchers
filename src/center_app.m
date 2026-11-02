@@ -1322,7 +1322,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *videoPostWindow;
 @property (strong) NSWindow *aiAssistantWindow;
 @property (strong) NSWindow *aiImageWindow, *aiVideoWindow;
-@property (strong) NSPopUpButton *aiImageServicePopup, *aiVideoServicePopup, *aiImageSizePopup, *aiVideoDurationPopup;
+@property (strong) NSPopUpButton *aiImageServicePopup, *aiVideoServicePopup, *aiImageSizePopup, *aiVideoDurationPopup, *aiImageReasoningPopup, *aiVideoReasoningPopup;
 @property (strong) NSTextView *aiImagePrompt, *aiVideoPrompt;
 @property (strong) NSComboBox *aiImageModelField, *aiVideoModelField;
 @property (strong) NSTextField *aiImageURLField, *aiImageStatus, *aiVideoURLField, *aiVideoStatus;
@@ -1332,7 +1332,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTimer *aiVideoPollTimer;
 @property BOOL aiImageBusy, aiVideoBusy;
 @property (strong) NSTextView *aiAssistantInput, *aiAssistantOutput;
-@property (strong) NSPopUpButton *aiAssistantServicePopup, *aiAssistantModePopup;
+@property (strong) NSPopUpButton *aiAssistantServicePopup, *aiAssistantModePopup, *aiAssistantReasoningPopup;
 @property (strong) NSComboBox *aiAssistantModelField;
 @property (strong) NSTextField *aiAssistantURLField, *aiAssistantStatus;
 @property BOOL aiAssistantBusy;
@@ -19543,17 +19543,23 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     t.frame=NSMakeRect(24,578,300,28); [cv addSubview:t];
     NSTextField *h = [self label:@"异步任务：提交后自动轮询，完成后可预览/保存" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame=NSMakeRect(24,556,560,18); [cv addSubview:h];
-    self.aiVideoServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,200,28) pullsDown:NO];
+    self.aiVideoServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,170,28) pullsDown:NO];
     self.aiVideoServicePopup.target=self; self.aiVideoServicePopup.action=@selector(aiVideoServiceChanged:);
     [cv addSubview:self.aiVideoServicePopup];
-    self.aiVideoModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(232,520,180,28)];
+    self.aiVideoModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(200,520,145,28)];
     self.aiVideoModelField.placeholderString=@"视频模型";
     self.aiVideoModelField.editable=YES; self.aiVideoModelField.completes=YES;
     [cv addSubview:self.aiVideoModelField];
-    self.aiVideoDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(420,520,120,28) pullsDown:NO];
+    self.aiVideoDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(352,520,90,28) pullsDown:NO];
     [self.aiVideoDurationPopup addItemsWithTitles:@[@"5 秒", @"10 秒"]];
     [cv addSubview:self.aiVideoDurationPopup];
-    ColorHoverButton *gen = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(548,520,88,28)];
+    self.aiVideoReasoningPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(448,520,105,28) pullsDown:NO];
+    [self.aiVideoReasoningPopup addItemsWithTitles:@[@"推理：默认", @"推理：低", @"推理：中", @"推理：高"]];
+    self.aiVideoReasoningPopup.target=self; self.aiVideoReasoningPopup.action=@selector(aiReasoningChanged:);
+    NSInteger rV = [[NSUserDefaults standardUserDefaults] integerForKey:@"aiVideoReasoning"];
+    if (rV >= 0 && rV < 4) [self.aiVideoReasoningPopup selectItemAtIndex:rV];
+    [cv addSubview:self.aiVideoReasoningPopup];
+    ColorHoverButton *gen = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(560,520,78,28)];
     gen.title=@"生成"; gen.hoverColor=[NSColor systemBlueColor]; gen.target=self; gen.action=@selector(generateAIVideo:);
     [gen applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gen];
     self.aiVideoURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,486,610,28)];
@@ -19594,7 +19600,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!key.length || !prompt.length || !url.length || !model.length) { self.aiVideoStatus.stringValue=@"请填写 API Key、提示词、地址和模型"; return; }
   NSMutableDictionary *entry=[e mutableCopy]; entry[@"videoModel"]=model; entry[@"videoAPI"]=url; self.aiEntries[idx]=entry; [self saveAIEntries];
   BOOL ark = [url containsString:@"/contents/generations/tasks"];
-  NSDictionary *body = ark ? @{@"model":model,@"content":@[@{@"type":@"text",@"text":prompt}]} : @{@"model":model,@"prompt":prompt,@"duration":@([self.aiVideoDurationPopup.titleOfSelectedItem integerValue])};
+  NSMutableDictionary *body = [(ark ? @{@"model":model,@"content":@[@{@"type":@"text",@"text":prompt}]} : @{@"model":model,@"prompt":prompt,@"duration":@([self.aiVideoDurationPopup.titleOfSelectedItem integerValue])}) mutableCopy];
+  NSString *reasonVid = [self reasoningEffortForPopup:self.aiVideoReasoningPopup];
+  if (reasonVid.length) body[@"reasoning_effort"] = reasonVid;
   NSData *data=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
   NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
   req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
@@ -19677,6 +19685,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
 }
 - (void)openAIVideo:(id)sender { if (self.aiVideoResultPath.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.aiVideoResultPath]]; }
+
+- (NSString *)reasoningEffortForPopup:(NSPopUpButton *)popup {
+  NSInteger idx = popup.indexOfSelectedItem;
+  if (idx == 1) return @"low";
+  if (idx == 2) return @"medium";
+  if (idx == 3) return @"high";
+  return nil;
+}
+
+- (void)aiReasoningChanged:(id)sender {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  if (sender == self.aiAssistantReasoningPopup) [ud setInteger:self.aiAssistantReasoningPopup.indexOfSelectedItem forKey:@"aiAssistantReasoning"];
+  else if (sender == self.aiImageReasoningPopup) [ud setInteger:self.aiImageReasoningPopup.indexOfSelectedItem forKey:@"aiImageReasoning"];
+  else if (sender == self.aiVideoReasoningPopup) [ud setInteger:self.aiVideoReasoningPopup.indexOfSelectedItem forKey:@"aiVideoReasoning"];
+  [ud synchronize];
+}
 
 - (void)reloadAIImageServices {
   if (!self.aiEntries) [self loadAIEntries];
@@ -19792,17 +19816,23 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     t.frame=NSMakeRect(24,578,300,28); [cv addSubview:t];
     NSTextField *h = [self label:@"使用 AI 管理中的服务和 Key；默认调用 /images/generations" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame=NSMakeRect(24,556,560,18); [cv addSubview:h];
-    self.aiImageServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,200,28) pullsDown:NO];
+    self.aiImageServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,170,28) pullsDown:NO];
     self.aiImageServicePopup.target=self; self.aiImageServicePopup.action=@selector(aiImageServiceChanged:);
     [cv addSubview:self.aiImageServicePopup];
-    self.aiImageModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(232,520,180,28)];
+    self.aiImageModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(200,520,145,28)];
     self.aiImageModelField.placeholderString=@"图片模型";
     self.aiImageModelField.editable=YES; self.aiImageModelField.completes=YES;
     [cv addSubview:self.aiImageModelField];
-    self.aiImageSizePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(420,520,120,28) pullsDown:NO];
+    self.aiImageSizePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(352,520,100,28) pullsDown:NO];
     [self.aiImageSizePopup addItemsWithTitles:@[@"1024x1024", @"1792x1024", @"1024x1792", @"512x512"]];
     [cv addSubview:self.aiImageSizePopup];
-    ColorHoverButton *gen = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(548,520,88,28)];
+    self.aiImageReasoningPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(458,520,105,28) pullsDown:NO];
+    [self.aiImageReasoningPopup addItemsWithTitles:@[@"推理：默认", @"推理：低", @"推理：中", @"推理：高"]];
+    self.aiImageReasoningPopup.target=self; self.aiImageReasoningPopup.action=@selector(aiReasoningChanged:);
+    NSInteger rI = [[NSUserDefaults standardUserDefaults] integerForKey:@"aiImageReasoning"];
+    if (rI >= 0 && rI < 4) [self.aiImageReasoningPopup selectItemAtIndex:rI];
+    [cv addSubview:self.aiImageReasoningPopup];
+    ColorHoverButton *gen = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(570,520,68,28)];
     gen.title=@"生成"; gen.hoverColor=[NSColor systemBlueColor]; gen.target=self; gen.action=@selector(generateAIImage:);
     [gen applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gen];
     self.aiImageURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,486,610,28)];
@@ -19861,7 +19891,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *model=self.aiImageModelField.stringValue;
   if (!key.length || !prompt.length || !url.length || !model.length) { self.aiImageStatus.stringValue=@"请填写 API Key、提示词、地址和模型"; return; }
   NSMutableDictionary *entry=[e mutableCopy]; entry[@"imageModel"]=model; entry[@"imageAPI"]=url; self.aiEntries[idx]=entry; [self saveAIEntries];
-  NSDictionary *body=@{@"model":model,@"prompt":prompt,@"n":@1,@"size":self.aiImageSizePopup.titleOfSelectedItem ?: @"1024x1024",@"response_format":@"url"};
+  NSMutableDictionary *body=[@{@"model":model,@"prompt":prompt,@"n":@1,@"size":self.aiImageSizePopup.titleOfSelectedItem ?: @"1024x1024",@"response_format":@"url"} mutableCopy];
+  NSString *reasonImg = [self reasoningEffortForPopup:self.aiImageReasoningPopup];
+  if (reasonImg.length) body[@"reasoning_effort"] = reasonImg;
   NSData *data=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
   NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
   req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
@@ -19924,17 +19956,23 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     t.frame=NSMakeRect(24,536,300,28); [cv addSubview:t];
     NSTextField *h = [self label:@"使用 AI 管理里配置的服务；支持总结、润色、翻译" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame=NSMakeRect(24,514,500,18); [cv addSubview:h];
-    self.aiAssistantServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,478,200,28) pullsDown:NO];
+    self.aiAssistantServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,478,170,28) pullsDown:NO];
     self.aiAssistantServicePopup.target=self; self.aiAssistantServicePopup.action=@selector(aiAssistantServiceChanged:);
     [cv addSubview:self.aiAssistantServicePopup];
-    self.aiAssistantModePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(236,478,140,28) pullsDown:NO];
+    self.aiAssistantModePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(202,478,108,28) pullsDown:NO];
     [self.aiAssistantModePopup addItemsWithTitles:@[@"总结", @"润色", @"翻译成中文", @"自定义"]];
     [cv addSubview:self.aiAssistantModePopup];
-    self.aiAssistantModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(388,478,150,28)];
+    self.aiAssistantReasoningPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(318,478,108,28) pullsDown:NO];
+    [self.aiAssistantReasoningPopup addItemsWithTitles:@[@"推理：默认", @"推理：低", @"推理：中", @"推理：高"]];
+    self.aiAssistantReasoningPopup.target=self; self.aiAssistantReasoningPopup.action=@selector(aiReasoningChanged:);
+    NSInteger rA = [[NSUserDefaults standardUserDefaults] integerForKey:@"aiAssistantReasoning"];
+    if (rA >= 0 && rA < 4) [self.aiAssistantReasoningPopup selectItemAtIndex:rA];
+    [cv addSubview:self.aiAssistantReasoningPopup];
+    self.aiAssistantModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(434,478,140,28)];
     self.aiAssistantModelField.placeholderString=@"模型";
     self.aiAssistantModelField.editable=YES; self.aiAssistantModelField.completes=YES;
     [cv addSubview:self.aiAssistantModelField];
-    ColorHoverButton *refreshModels = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(544,478,30,28)];
+    ColorHoverButton *refreshModels = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(582,478,30,28)];
     refreshModels.title=@"↻"; refreshModels.toolTip=@"刷新模型列表";
     refreshModels.hoverColor=[NSColor systemTealColor]; refreshModels.target=self;
     refreshModels.action=@selector(fetchAIModelsForAssistant:);
@@ -20011,7 +20049,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if (mode == 1) sys = @"请润色用户内容，保持原意，使表达更自然、专业。";
   else if (mode == 2) sys = @"请把用户内容翻译成简体中文，只输出译文。";
   else sys = @"请按用户的要求处理内容。";
-  NSDictionary *body = @{@"model": model, @"messages": @[@{@"role":@"system",@"content":sys},@{@"role":@"user",@"content":text}], @"temperature": @0.3};
+  NSMutableDictionary *body = [@{@"model": model, @"messages": @[@{@"role":@"system",@"content":sys},@{@"role":@"user",@"content":text}], @"temperature": @0.3} mutableCopy];
+  NSString *reasonEffort = [self reasoningEffortForPopup:self.aiAssistantReasoningPopup];
+  if (reasonEffort.length) body[@"reasoning_effort"] = reasonEffort;
   NSData *data = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
   NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
   req.HTTPMethod = @"POST";
