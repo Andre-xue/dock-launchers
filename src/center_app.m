@@ -23226,12 +23226,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)aiTTSModelChanged:(id)sender {
   NSString *model = self.aiTTSModelField.titleOfSelectedItem ?: @"";
   [self.aiTTSVoiceField removeAllItems];
+  NSArray *titles = nil, *ids = nil;
   if ([model containsString:@"CosyVoice"]) {
-    [self.aiTTSVoiceField addItemsWithTitles:@[@"FunAudioLLM/CosyVoice2-0.5B:alex", @"FunAudioLLM/CosyVoice2-0.5B:anna", @"FunAudioLLM/CosyVoice2-0.5B:bella", @"FunAudioLLM/CosyVoice2-0.5B:benjamin", @"FunAudioLLM/CosyVoice2-0.5B:charles", @"FunAudioLLM/CosyVoice2-0.5B:claire"]];
+    titles = @[@"亚历克斯（Alex）", @"安娜（Anna）", @"贝拉（Bella）", @"本杰明（Benjamin）", @"查尔斯（Charles）", @"克莱尔（Claire）"];
+    ids = @[@"FunAudioLLM/CosyVoice2-0.5B:alex", @"FunAudioLLM/CosyVoice2-0.5B:anna", @"FunAudioLLM/CosyVoice2-0.5B:bella", @"FunAudioLLM/CosyVoice2-0.5B:benjamin", @"FunAudioLLM/CosyVoice2-0.5B:charles", @"FunAudioLLM/CosyVoice2-0.5B:claire"];
   } else if ([model containsString:@"MOSS"]) {
-    [self.aiTTSVoiceField addItemsWithTitles:@[@"fnlp/MOSS-TTSD-v0.5:alex", @"fnlp/MOSS-TTSD-v0.5:anna"]];
+    titles = @[@"亚历克斯（Alex）", @"安娜（Anna）"];
+    ids = @[@"fnlp/MOSS-TTSD-v0.5:alex", @"fnlp/MOSS-TTSD-v0.5:anna"];
   } else {
-    [self.aiTTSVoiceField addItemsWithTitles:@[@"alloy", @"echo", @"fable", @"onyx", @"nova", @"shimmer"]];
+    titles = @[@"合金（Alloy）", @"回声（Echo）", @"寓言（Fable）", @"玛瑙（Onyx）", @"新星（Nova）", @"微光（Shimmer）"];
+    ids = @[@"alloy", @"echo", @"fable", @"onyx", @"nova", @"shimmer"];
+  }
+  for (NSInteger i = 0; i < (NSInteger)titles.count; i++) {
+    [self.aiTTSVoiceField addItemWithTitle:titles[i]];
+    self.aiTTSVoiceField.lastItem.representedObject = ids[i];
+    self.aiTTSVoiceField.lastItem.toolTip = ids[i];
   }
 }
 
@@ -23243,7 +23252,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *key = e[@"api"] ?: @"";
   NSString *url = self.aiTTSURLField.stringValue;
   NSString *model = self.aiTTSModelField.titleOfSelectedItem ?: @"";
-  NSString *voice = self.aiTTSVoiceField.titleOfSelectedItem ?: @"";
+  NSString *voice = self.aiTTSVoiceField.selectedItem.representedObject ?: self.aiTTSVoiceField.titleOfSelectedItem ?: @"";
   NSString *text = self.aiTTSText.string;
   if (!key.length || !url.length || !model.length || !voice.length || !text.length) { self.aiTTSStatus.stringValue=@"请填写服务、模型、音色和文本"; return; }
   NSDictionary *body = @{@"model":model,@"input":text,@"voice":voice,@"response_format":@"mp3"};
