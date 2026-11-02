@@ -14623,8 +14623,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)openAIManagementFromMenu {
   if (![self ensureAIManagementAccess]) return;
+  [self loadAIEntries];
+  [self hydrateAIKeys];
   NSView *page = [self viewForSection:2];
   if (page) [self showDetachedPage:page title:@"AI 管理"];
+  [self rebuildAIDisplay];
 }
 
 - (void)openUninstallFromMenu {
