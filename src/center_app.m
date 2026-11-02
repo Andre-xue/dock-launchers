@@ -1230,6 +1230,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSButton *captureCursorCheck, *captureClickCheck;
 @property (strong) NSPopUpButton *captureNoisePopup;
 @property (strong) NSButton *captureSystemAudioCheck, *captureMicCheck;
+@property (strong) NSLevelIndicator *captureMicLevelIndicator;
+@property (strong) AVAudioEngine *captureMicMeterEngine;
 @property (strong) DLScreenRecorder *captureRecorder;
 @property (strong) NSWindow *captureRegionWindow;
 @property (strong) NSPopUpButton *captureCameraPopup;
@@ -17216,6 +17218,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)captureAudioChanged:(id)sender {
   [[NSUserDefaults standardUserDefaults] setBool:(self.captureSystemAudioCheck.state == NSControlStateValueOn) forKey:@"centerCaptureSystemAudio"];
   [[NSUserDefaults standardUserDefaults] setBool:(self.captureMicCheck.state == NSControlStateValueOn) forKey:@"centerCaptureMicrophone"];
+  [self stopMicLevelMeter];
+  [self startMicLevelMeterIfNeeded];
 }
 
 - (void)captureQualityChanged:(id)sender {
@@ -17387,6 +17391,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     for (NSNumber *g in gains) { [self.captureMicGainPopup addItemWithTitle:[NSString stringWithFormat:@"%@%ld dB", [g integerValue] > 0 ? @"+" : @"", (long)[g integerValue]]]; self.captureMicGainPopup.lastItem.representedObject = g; }
     self.captureMicGainPopup.target = self; self.captureMicGainPopup.action = @selector(captureMicGainChanged:);
     [cv addSubview:self.captureMicGainPopup];
+    self.captureMicLevelIndicator = [[NSLevelIndicator alloc] initWithFrame:NSMakeRect(640, 286, 280, 8)];
+    self.captureMicLevelIndicator.minValue = 0;
+    self.captureMicLevelIndicator.maxValue = 1;
+    self.captureMicLevelIndicator.warningValue = 0.75;
+    self.captureMicLevelIndicator.criticalValue = 0.92;
+    self.captureMicLevelIndicator.levelIndicatorStyle = NSLevelIndicatorStyleContinuousCapacity;
+    self.captureMicLevelIndicator.toolTip = @"麦克风实时电平（录音前检测）";
+    [cv addSubview:self.captureMicLevelIndicator];
 
     // Row 5: screenshot action; recording countdown/pointer.
     ColorHoverButton *historyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 264, 120, 32)];
@@ -17484,10 +17496,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (NSMenuItem *mi in self.captureMicGainPopup.itemArray) if ([mi.representedObject integerValue] == micGain) [self.captureMicGainPopup selectItem:mi];
   [NSApp activateIgnoringOtherApps:YES];
   [self.captureWindow makeKeyAndOrderFront:nil];
+  [self startMicLevelMeterIfNeeded];
 }
 
 - (void)openCaptureFolder:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self captureDirectory]]]; }
-- (void)closeCaptureTool:(id)sender { [self.captureWindow orderOut:nil]; }
+- (void)closeCaptureTool:(id)sender { [self stopMicLevelMeter]; [self.captureWindow orderOut:nil]; }
 
 - (void)runScreenshotArgs:(NSArray *)args path:(NSString *)path {
   NSTask *t = [[NSTask alloc] init];
@@ -18014,6 +18027,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureCameraWaiting = NO;
   self.capturePendingScreenPath = nil;
   self.captureRecorder = nil;
+  if (self.captureWindow.isVisible) [self startMicLevelMeterIfNeeded];
 }
 
 - (void)startCaptureRecorderWithScene:(NSInteger)scene region:(NSRect)region {
@@ -18123,6 +18137,49 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (url) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:url]];
 }
 
+- (void)stopMicLevelMeter {
+  AVAudioEngine *engine = self.captureMicMeterEngine;
+  if (!engine) return;
+  self.captureMicMeterEngine = nil;
+  @try { [engine.inputNode removeTapOnBus:0]; } @catch (NSException *e) {}
+  [engine stop];
+  self.captureMicLevelIndicator.doubleValue = 0;
+}
+
+- (void)startMicLevelMeterIfNeeded {
+  if (self.captureMicMeterEngine) return;
+  if (!self.captureMicCheck || self.captureMicCheck.state != NSControlStateValueOn) return;
+  if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] == AVAuthorizationStatusDenied) {
+    self.captureMicLevelIndicator.toolTip = @"麦克风权限被拒绝";
+    return;
+  }
+  AVAudioEngine *engine = [[AVAudioEngine alloc] init];
+  AVAudioInputNode *input = engine.inputNode;
+  AVAudioFormat *fmt = [input outputFormatForBus:0];
+  if (!fmt) return;
+  __weak typeof(self) weakSelf = self;
+  [input installTapOnBus:0 bufferSize:1024 format:fmt block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
+    float rms = 0;
+    if (buffer.floatChannelData && buffer.frameLength > 0) {
+      float *data = buffer.floatChannelData[0];
+      double sum = 0;
+      for (AVAudioFrameCount i = 0; i < buffer.frameLength; i++) sum += data[i] * data[i];
+      rms = sqrt(sum / (double)buffer.frameLength);
+    }
+    double db = 20.0 * log10(MAX(rms, 0.000001));
+    double level = MAX(0, MIN(1, (db + 60.0) / 60.0));
+    dispatch_async(dispatch_get_main_queue(), ^{
+      weakSelf.captureMicLevelIndicator.doubleValue = level;
+    });
+  }];
+  NSError *err = nil;
+  if (![engine startAndReturnError:&err]) {
+    self.captureMicLevelIndicator.toolTip = err.localizedDescription ?: @"无法打开麦克风";
+    return;
+  }
+  self.captureMicMeterEngine = engine;
+}
+
 - (void)captureVideo:(id)sender {
   if (self.captureRecording) {
     [self.captureRecorder stop];
@@ -18133,6 +18190,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger delay = [self captureRecordCountdownSeconds];
   __weak typeof(self) weakSelf = self;
   if (![self ensureScreenCapturePermission]) return;
+  [self stopMicLevelMeter];
   NSString *preflight = [self capturePreflightIssue];
   if (preflight.length) {
     self.captureStatusLabel.stringValue = preflight;
