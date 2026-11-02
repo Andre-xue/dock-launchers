@@ -1471,6 +1471,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSSearchField *aiSearchField;
 @property (strong) NSComboBox *dialogAIName;
 @property (strong) NSTextField *dialogAIQuota, *dialogAIEndpoint, *dialogAIApi, *dialogAINote, *dialogAIBase, *dialogAIModel, *dialogAIStatus;
+@property (strong) NSComboBox *dialogAIModelCombo;
 @property BOOL aiQuotaRefreshing;
 @property (strong) NSPopUpButton *diskVolumePopup;
 @property (strong) NSTextField *diskStatus;
@@ -7852,6 +7853,44 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)aiAddEntry:(id)sender { [self aiShowEntryDialogForIndex:-1]; }
 
+- (void)fetchAIModelsForDialog:(id)sender {
+  NSString *base = [self.dialogAIBase.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  NSString *key = [self.dialogAIApi.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  if (!base.length) { self.dialogAIStatus.stringValue = @"请先填写 API 基础地址"; return; }
+  if (!key.length) { self.dialogAIStatus.stringValue = @"请先填写 API Key"; return; }
+  if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length - @"/chat/completions".length];
+  while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
+  self.dialogAIStatus.stringValue = @"正在获取模型列表…";
+  NSURL *url = [NSURL URLWithString:[base stringByAppendingString:@"/models"]];
+  if (!url) { self.dialogAIStatus.stringValue = @"API 地址无效"; return; }
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  req.timeoutInterval = 20;
+  __weak typeof(self) weakSelf = self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    NSMutableArray *models = [NSMutableArray array];
+    if (data.length) {
+      id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+      id list = [obj isKindOfClass:[NSDictionary class]] ? obj[@"data"] : nil;
+      if ([list isKindOfClass:[NSArray class]]) for (id m in list) {
+        NSString *mid = [m isKindOfClass:[NSDictionary class]] ? m[@"id"] : nil;
+        if (mid.length) [models addObject:mid];
+      }
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!models.count) { weakSelf.dialogAIStatus.stringValue = err.localizedDescription ?: @"未获取到模型，可手动输入"; return; }
+      [models sortUsingSelector:@selector(localizedStandardCompare:)];
+      NSComboBox *cb = weakSelf.dialogAIModelCombo;
+      NSString *current = cb.stringValue;
+      [cb removeAllItems];
+      [cb addItemsWithObjectValues:models];
+      if (current.length && [models containsObject:current]) cb.stringValue = current;
+      else cb.stringValue = models.firstObject;
+      weakSelf.dialogAIStatus.stringValue = [NSString stringWithFormat:@"已获取 %ld 个模型", (long)models.count];
+    });
+  }] resume];
+}
+
 - (void)aiShowEntryDialogForIndex:(NSInteger)idx {
   BOOL editing = idx >= 0 && idx < (NSInteger)self.aiEntries.count;
   NSDictionary *old = editing ? self.aiEntries[idx] : @{};
@@ -7873,6 +7912,16 @@ static BOOL ValidGroupName(NSString *raw) {
       for (NSDictionary *p in [self aiPresets]) [cb addItemWithObjectValue:p[@"name"]];
       cb.editable = YES; cb.completes = YES; cb.delegate = self;
       tf = cb; self.dialogAIName = cb;
+    } else if (i == 6) {
+      NSComboBox *cb = [[NSComboBox alloc] initWithFrame:NSMakeRect(112, 288 - i*38, 280, 26)];
+      cb.editable = YES; cb.completes = YES;
+      cb.stringValue = old[keys[i]] ?: @"";
+      tf = cb; self.dialogAIModelCombo = cb; self.dialogAIModel = cb;
+      ColorHoverButton *fetch = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(400, 288 - i*38 + 1, 82, 24)];
+      fetch.title = @"获取模型"; fetch.hoverColor = [NSColor systemTealColor];
+      fetch.target = self; fetch.action = @selector(fetchAIModelsForDialog:);
+      [fetch applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+      [av addSubview:fetch];
     } else {
       tf = [[NSTextField alloc] initWithFrame:NSMakeRect(112, 288 - i*38, 370, 26)];
       if (i == 1) self.dialogAIQuota = tf;
@@ -7880,7 +7929,6 @@ static BOOL ValidGroupName(NSString *raw) {
       if (i == 3) self.dialogAIApi = tf;
       if (i == 4) self.dialogAINote = tf;
       if (i == 5) self.dialogAIBase = tf;
-      if (i == 6) self.dialogAIModel = tf;
     }
     tf.stringValue = old[keys[i]] ?: @"";
     [av addSubview:tf]; [fields addObject:tf];
@@ -7889,6 +7937,9 @@ static BOOL ValidGroupName(NSString *raw) {
   self.dialogAIStatus.frame = NSMakeRect(8, 4, 480, 16);
   [av addSubview:self.dialogAIStatus];
   a.accessoryView = av;
+  if (editing && self.dialogAIBase.stringValue.length && self.dialogAIApi.stringValue.length) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self fetchAIModelsForDialog:nil]; });
+  }
   if ([a runModal] != NSAlertFirstButtonReturn) return;
   NSMutableDictionary *entry = [NSMutableDictionary dictionary];
   for (NSInteger i = 0; i < keys.count; i++) entry[keys[i]] = ((NSTextField *)fields[i]).stringValue ?: @"";
