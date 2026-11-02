@@ -1164,6 +1164,15 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *shelfTitleLabel, *shelfHelpLabel, *shelfDropLabel;
 @property (strong) NSMutableArray<NSButton *> *shelfButtons;
 @property (strong) NSIndexSet *shelfDraggingRows;
+@property (strong) NSArray<NSString *> *shelfVisiblePaths;
+@property NSInteger shelfCategory, shelfPage;
+@property (strong) NSPopUpButton *shelfCategoryPopup;
+@property (strong) NSTextField *shelfPageLabel;
+@property (strong) ColorHoverButton *shelfPrevButton, *shelfNextButton;
+@property (strong) id shelfKeyMonitor;
+@property (strong) NSTimer *shelfPruneTimer;
+@property BOOL shelfPreviewMode;
+@property (strong) NSArray<NSString *> *shelfPreviewPaths;
 @property (strong) NSMutableDictionary *diagnosticsLabels;
 @property (strong) NSWindow *groupShortcutWindow;
 @property (strong) NSMutableArray *groupShortcutButtons;
@@ -3356,6 +3365,10 @@ static void HideDockHoverTip(void) {
 }
 
 - (BOOL)windowShouldClose:(NSWindow *)sender {
+  if (sender == self.shelfWindow) {
+    [self.shelfPruneTimer invalidate]; self.shelfPruneTimer = nil;
+    return YES;
+  }
   if (sender == self.window) {
     [sender orderOut:nil];
     return NO;
@@ -8759,7 +8772,7 @@ static BOOL ValidGroupName(NSString *raw) {
     return;
   }
   self.userFilesPreviewPath = path;
-  self.diskPreviewMode = YES;
+  self.diskPreviewMode = YES; self.shelfPreviewMode = NO;
   QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
   panel.dataSource = self;
   panel.delegate = self;
@@ -9245,7 +9258,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
-  if (tableView == self.shelfTable) return self.shelfPaths.count;
+  if (tableView == self.shelfTable) return self.shelfVisiblePaths.count;
   if (tableView == self.dupTable) return self.dupItems.count;
   if (tableView == self.captureHistoryTable) return self.captureHistoryItems.count;
   if (tableView == self.groupPanelTable) return self.groupPanelItems.count;
@@ -9278,8 +9291,10 @@ static BOOL ValidGroupName(NSString *raw) {
   NSIndexSet *rows = self.shelfDraggingRows;
   self.shelfDraggingRows = nil;
   if (operation == NSDragOperationNone) return;
+  NSMutableArray *dragged = [NSMutableArray array];
+  [rows enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) { if (idx < self.shelfVisiblePaths.count) [dragged addObject:self.shelfVisiblePaths[idx]]; }];
   NSMutableArray *keep = [NSMutableArray array];
-  for (NSInteger i = 0; i < (NSInteger)self.shelfPaths.count; i++) if (![rows containsIndex:i]) [keep addObject:self.shelfPaths[i]];
+  for (NSString *p in self.shelfPaths) if (![dragged containsObject:p]) [keep addObject:p];
   self.shelfPaths = keep;
   [self saveShelfPaths];
   [self reloadShelfTable];
@@ -9295,8 +9310,8 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
   if (tableView == self.shelfTable) {
-    if (row < 0 || row >= (NSInteger)self.shelfPaths.count) return nil;
-    NSString *path = self.shelfPaths[row];
+    if (row < 0 || row >= (NSInteger)self.shelfVisiblePaths.count) return nil;
+    NSString *path = self.shelfVisiblePaths[row];
     NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
     NSTextField *n = [self label:path.lastPathComponent size:11.5 bold:YES color:nil];
     n.lineBreakMode = NSLineBreakByTruncatingMiddle;
@@ -10263,7 +10278,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.userFilesForUninstall[row][@"path"]]]];
 }
 - (void)previewUserFile {
-  self.diskPreviewMode = NO;
+  self.diskPreviewMode = NO; self.shelfPreviewMode = NO;
   NSInteger row = self.userFilesTable.selectedRow;
   if (row < 0 || row >= (NSInteger)self.userFilesForUninstall.count) return;
   self.userFilesPreviewPath = self.userFilesForUninstall[row][@"path"];
@@ -10274,10 +10289,14 @@ static BOOL ValidGroupName(NSString *raw) {
   [panel reloadData];
 }
 - (NSInteger)numberOfPreviewItemsInPreviewPanel:(QLPreviewPanel *)panel {
+  if (self.shelfPreviewMode) return self.shelfPreviewPaths.count;
   if (self.diskPreviewMode) return self.diskGalleryItems.count;
   return self.userFilesPreviewPath.length ? 1 : 0;
 }
 - (id<QLPreviewItem>)previewPanel:(QLPreviewPanel *)panel previewItemAtIndex:(NSInteger)index {
+  if (self.shelfPreviewMode && index >= 0 && index < (NSInteger)self.shelfPreviewPaths.count) {
+    return [NSURL fileURLWithPath:self.shelfPreviewPaths[index]];
+  }
   if (self.diskPreviewMode && index >= 0 && index < (NSInteger)self.diskGalleryItems.count) {
     return [NSURL fileURLWithPath:self.diskGalleryItems[index][@"path"]];
   }
@@ -13307,7 +13326,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!self.imageToolItems.count) { [self showToast:@"请先添加图片"]; return; }
   NSInteger row = self.imageToolTable.selectedRow;
   if (row < 0 || row >= (NSInteger)self.imageToolItems.count) row = 0;
-  self.diskPreviewMode = NO;
+  self.diskPreviewMode = NO; self.shelfPreviewMode = NO;
   self.userFilesPreviewPath = self.imageToolItems[row];
   QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
   panel.dataSource = self;
@@ -13534,9 +13553,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (id<NSPasteboardWriting>)tableView:(NSTableView *)tableView pasteboardWriterForRow:(NSInteger)row {
   if (tableView == self.shelfTable) {
-    if (row < 0 || row >= (NSInteger)self.shelfPaths.count) return nil;
+    if (row < 0 || row >= (NSInteger)self.shelfVisiblePaths.count) return nil;
     NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
-    [item setString:[[NSURL fileURLWithPath:self.shelfPaths[row]] absoluteString] forType:NSPasteboardTypeFileURL];
+    [item setString:[[NSURL fileURLWithPath:self.shelfVisiblePaths[row]] absoluteString] forType:NSPasteboardTypeFileURL];
     return item;
   }
   if (tableView != self.pdfTable) return nil;
@@ -13729,7 +13748,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!self.pdfItems.count) { [self showToast:@"请先添加 PDF"]; return; }
   NSInteger row = self.pdfTable.selectedRow;
   if (row < 0 || row >= (NSInteger)self.pdfItems.count) row = 0;
-  self.diskPreviewMode = NO;
+  self.diskPreviewMode = NO; self.shelfPreviewMode = NO;
   self.userFilesPreviewPath = self.pdfItems[row];
   QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
   panel.dataSource = self;
@@ -15824,7 +15843,74 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
-- (void)reloadShelfTable { [self.shelfTable reloadData]; }
+- (NSInteger)shelfCategoryForPath:(NSString *)path {
+  NSString *ext = path.pathExtension.lowercaseString;
+  BOOL isDir = NO;
+  [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir];
+  if (isDir || [ext isEqualToString:@"app"]) return 3;
+  NSSet *videos = [NSSet setWithArray:@[@"mp4",@"mov",@"m4v",@"avi",@"mkv",@"webm",@"flv",@"wmv"]];
+  NSSet *images = [NSSet setWithArray:@[@"png",@"jpg",@"jpeg",@"gif",@"webp",@"heic",@"heif",@"tiff",@"tif",@"bmp"]];
+  if ([videos containsObject:ext]) return 1;
+  if ([images containsObject:ext]) return 2;
+  return 4;
+}
+
+- (void)pruneMissingShelfFiles {
+  if (!self.shelfPaths) return;
+  NSMutableArray *valid = [NSMutableArray array];
+  for (NSString *p in self.shelfPaths) if ([[NSFileManager defaultManager] fileExistsAtPath:p] && ![valid containsObject:p]) [valid addObject:p];
+  if (valid.count != self.shelfPaths.count) {
+    self.shelfPaths = valid;
+    [self saveShelfPaths];
+    [self reloadShelfTable];
+  }
+}
+
+- (NSArray<NSString *> *)shelfFilteredPaths {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSString *p in self.shelfPaths) {
+    if (self.shelfCategory == 0 || [self shelfCategoryForPath:p] == self.shelfCategory) [out addObject:p];
+  }
+  return out;
+}
+
+- (void)reloadShelfTable {
+  [self pruneMissingShelfFiles];
+  NSArray *filtered = [self shelfFilteredPaths];
+  NSInteger perPage = 20;
+  NSInteger pages = MAX(1, (NSInteger)((filtered.count + perPage - 1) / perPage));
+  if (self.shelfPage >= pages) self.shelfPage = pages - 1;
+  if (self.shelfPage < 0) self.shelfPage = 0;
+  NSInteger start = self.shelfPage * perPage;
+  NSInteger end = MIN((NSInteger)filtered.count, start + perPage);
+  self.shelfVisiblePaths = start < (NSInteger)filtered.count ? [filtered subarrayWithRange:NSMakeRange(start, end - start)] : @[];
+  [self.shelfTable reloadData];
+  if (self.shelfPageLabel) self.shelfPageLabel.stringValue = [NSString stringWithFormat:@"%ld / %ld", (long)(self.shelfPage + 1), (long)pages];
+  if (self.shelfPrevButton) self.shelfPrevButton.enabled = self.shelfPage > 0;
+  if (self.shelfNextButton) self.shelfNextButton.enabled = self.shelfPage + 1 < pages;
+}
+
+- (void)shelfCategoryChanged:(id)sender {
+  self.shelfCategory = self.shelfCategoryPopup.indexOfSelectedItem;
+  self.shelfPage = 0;
+  [self reloadShelfTable];
+}
+- (void)shelfPrevPage:(id)sender { if (self.shelfPage > 0) { self.shelfPage--; [self reloadShelfTable]; } }
+- (void)shelfNextPage:(id)sender { self.shelfPage++; [self reloadShelfTable]; }
+
+- (void)previewShelfSelection {
+  NSArray *paths = [self selectedShelfPaths];
+  if (!paths.count) return;
+  NSMutableArray *ordered = [paths mutableCopy];
+  for (NSString *p in self.shelfVisiblePaths) if (![ordered containsObject:p]) [ordered addObject:p];
+  self.shelfPreviewPaths = ordered;
+  self.shelfPreviewMode = YES;
+  QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
+  panel.dataSource = self;
+  panel.delegate = self;
+  [panel makeKeyAndOrderFront:nil];
+  [panel reloadData];
+}
 
 - (void)addShelfURLs:(NSArray<NSURL *> *)urls {
   if (!self.shelfPaths) [self loadShelfPaths];
@@ -15840,9 +15926,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSMutableArray *out = [NSMutableArray array];
   NSIndexSet *rows = self.shelfTable.selectedRowIndexes;
   [rows enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
-    if (idx < self.shelfPaths.count) [out addObject:self.shelfPaths[idx]];
+    if (idx < self.shelfVisiblePaths.count) [out addObject:self.shelfVisiblePaths[idx]];
   }];
-  return out.count ? out : (self.shelfPaths.count ? @[self.shelfPaths.firstObject] : @[]);
+  return out.count ? out : (self.shelfVisiblePaths.count ? @[self.shelfVisiblePaths.firstObject] : @[]);
 }
 
 - (void)addShelfFiles:(id)sender {
@@ -15873,10 +15959,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)removeShelfFiles:(id)sender {
-  NSIndexSet *rows = self.shelfTable.selectedRowIndexes;
-  if (!rows.count) return;
+  NSArray *remove = [self selectedShelfPaths];
+  if (!remove.count) return;
   NSMutableArray *keep = [NSMutableArray array];
-  for (NSInteger i = 0; i < (NSInteger)self.shelfPaths.count; i++) if (![rows containsIndex:i]) [keep addObject:self.shelfPaths[i]];
+  for (NSString *p in self.shelfPaths) if (![remove containsObject:p]) [keep addObject:p];
   self.shelfPaths = keep;
   [self saveShelfPaths]; [self reloadShelfTable];
 }
@@ -15890,25 +15976,31 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)openShelfFileRow:(id)sender {
   NSInteger row = self.shelfTable.clickedRow;
   if (row < 0) row = self.shelfTable.selectedRow;
-  if (row < 0 || row >= (NSInteger)self.shelfPaths.count) return;
-  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.shelfPaths[row]]];
+  if (row < 0 || row >= (NSInteger)self.shelfVisiblePaths.count) return;
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.shelfVisiblePaths[row]]];
 }
 
 - (void)layoutShelfWindow {
   if (!self.shelfWindow) return;
   NSView *cv = self.shelfWindow.contentView;
   CGFloat w = cv.bounds.size.width, h = cv.bounds.size.height;
-  if (w < 300 || h < 260) return;
+  if (w < 300 || h < 300) return;
   self.shelfTitleLabel.frame = NSMakeRect(20, h-40, w-40, 24);
   self.shelfHelpLabel.frame = NSMakeRect(20, h-62, w-40, 18);
-  CGFloat dropH = 70;
+  CGFloat dropH = 60;
   CGFloat dropTop = h - 76;
   self.shelfDropView.frame = NSMakeRect(16, dropTop - dropH, w - 32, dropH);
   self.shelfDropLabel.frame = NSMakeRect(0, (dropH-20)/2.0, w - 32, 20);
-  CGFloat buttonY = 22;
-  CGFloat tableBottom = buttonY + 42;
-  CGFloat tableTop = dropTop - dropH - 12;
-  self.shelfScrollView.frame = NSMakeRect(16, tableBottom, w - 32, MAX(80, tableTop - tableBottom));
+  CGFloat buttonY = 20;
+  CGFloat categoryY = 82;
+  self.shelfCategoryPopup.frame = NSMakeRect(16, categoryY, 120, 26);
+  CGFloat pw = 34, lw = 60;
+  self.shelfNextButton.frame = NSMakeRect(w - 16 - pw, categoryY, pw, 26);
+  self.shelfPageLabel.frame = NSMakeRect(w - 16 - pw - lw, categoryY+4, lw, 18);
+  self.shelfPrevButton.frame = NSMakeRect(w - 16 - pw - lw - pw - 4, categoryY, pw, 26);
+  CGFloat tableBottom = categoryY + 34;
+  CGFloat tableTop = dropTop - dropH - 10;
+  self.shelfScrollView.frame = NSMakeRect(16, tableBottom, w - 32, MAX(70, tableTop - tableBottom));
   CGFloat gap = 6;
   CGFloat bw = (w - 32 - gap * (self.shelfButtons.count - 1)) / MAX(1, self.shelfButtons.count);
   for (NSInteger i = 0; i < (NSInteger)self.shelfButtons.count; i++) {
@@ -15925,7 +16017,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.shelfWindow.contentView;
     self.shelfTitleLabel = [self label:@"文件暂存架" size:18 bold:YES color:nil];
     [cv addSubview:self.shelfTitleLabel];
-    self.shelfHelpLabel = [self label:@"拖文件进来添加；把列表里的文件拖出去即可移除" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.shelfHelpLabel = [self label:@"拖文件进来添加；拖出列表移除；空格预览；文件删除后自动清理" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     [cv addSubview:self.shelfHelpLabel];
     self.shelfDropView = [[DLShelfDropView alloc] initWithFrame:NSMakeRect(16,0,408,70)];
     __weak typeof(self) weakSelf = self;
@@ -15955,11 +16047,40 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:b];
       [self.shelfButtons addObject:b];
     }
+    self.shelfCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(16,82,120,26) pullsDown:NO];
+    [self.shelfCategoryPopup addItemsWithTitles:@[@"全部", @"视频", @"图片", @"App", @"文件"]];
+    self.shelfCategoryPopup.target=self; self.shelfCategoryPopup.action=@selector(shelfCategoryChanged:);
+    [cv addSubview:self.shelfCategoryPopup];
+    self.shelfPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(0,0,34,26)];
+    self.shelfPrevButton.title=@"‹"; self.shelfPrevButton.target=self; self.shelfPrevButton.action=@selector(shelfPrevPage:);
+    [self.shelfPrevButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.shelfPrevButton];
+    self.shelfNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(0,0,34,26)];
+    self.shelfNextButton.title=@"›"; self.shelfNextButton.target=self; self.shelfNextButton.action=@selector(shelfNextPage:);
+    [self.shelfNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.shelfNextButton];
+    self.shelfPageLabel = [self label:@"1 / 1" size:10 bold:YES color:[NSColor secondaryLabelColor]];
+    self.shelfPageLabel.alignment=NSTextAlignmentCenter; [cv addSubview:self.shelfPageLabel];
+    __weak typeof(self) weakKey = self;
+    self.shelfKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+      if (e.window == weakKey.shelfWindow && e.keyCode == 49 && (e.modifierFlags & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption)) == 0) {
+        [weakKey previewShelfSelection]; return nil;
+      }
+      return e;
+    }];
     [self layoutShelfWindow];
     [self.shelfWindow center];
   }
-  [self loadShelfPaths]; [self reloadShelfTable];
+  [self loadShelfPaths];
+  if (!self.shelfPaths) self.shelfPaths = [NSMutableArray array];
+  self.shelfCategory = 0; self.shelfPage = 0;
+  if (self.shelfCategoryPopup) [self.shelfCategoryPopup selectItemAtIndex:0];
+  [self reloadShelfTable];
   [self layoutShelfWindow];
+  [self.shelfPruneTimer invalidate];
+  __weak typeof(self) weakShelf = self;
+  self.shelfPruneTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:YES block:^(NSTimer *t) {
+    if (!weakShelf.shelfWindow.isVisible) return;
+    [weakShelf pruneMissingShelfFiles];
+  }];
   [NSApp activateIgnoringOtherApps:YES];
   [self.shelfWindow makeKeyAndOrderFront:nil];
 }
