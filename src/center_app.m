@@ -1270,6 +1270,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTimer *sceneTimer;
 @property (strong) ColorHoverButton *sceneSpaceButton;
 @property (strong) NSString *lastAppliedSpaceKey;
+@property BOOL scenePromptOpen;
 @property (copy) NSString *lastAppliedScene;
 @property (strong) NSWindow *photoPermissionWindow;
 @property (strong) NSButton *photoSystemRadio, *photoLocalRadio;
@@ -11183,6 +11184,7 @@ static BOOL ValidGroupName(NSString *raw) {
   self.sceneWindow.title = @"场景模式";
   self.sceneWindow.releasedWhenClosed = NO;
   self.sceneWindow.level = NSNormalWindowLevel;
+  self.sceneWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorMoveToActiveSpace;
   NSView *cv = self.sceneWindow.contentView;
   NSTextField *title = [self label:@"场景模式" size:20 bold:YES color:nil];
   title.frame = NSMakeRect(20, 510, 300, 28); [cv addSubview:title];
@@ -11417,7 +11419,14 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)activeSpaceChanged:(NSNotification *)note {
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self applySceneForCurrentSpace]; });
+  NSDictionary *space = DLActiveSpaceInfo();
+  NSString *key = space[@"id"] ?: @"";
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (self.scenePromptOpen) return;
+    NSDictionary *now = DLActiveSpaceInfo();
+    if (key.length && ![[now[@"id"] description] isEqualToString:key]) return;
+    [self applySceneForCurrentSpace];
+  });
 }
 
 - (void)clearGroupDockEntries {
@@ -11433,6 +11442,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)applySceneForCurrentSpace {
+  if (self.scenePromptOpen) return;
   if (![[NSUserDefaults standardUserDefaults] boolForKey:@"centerScenePerSpaceEnabled"]) return;
   NSDictionary *space = DLActiveSpaceInfo();
   NSString *key = space[@"id"] ?: @"";
@@ -11453,8 +11463,14 @@ static BOOL ValidGroupName(NSString *raw) {
   if (match) {
     [self applySceneNamed:match[@"name"] ?: @"" silent:YES];
   } else {
-    [self clearGroupDockEntries];
-    self.lastAppliedScene = @"";
+    // 新建/空桌面切换时 Dock 重启可能打断 Mission Control，延迟清理
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      if (self.scenePromptOpen) return;
+      NSDictionary *now = DLActiveSpaceInfo();
+      if (![[now[@"id"] description] isEqualToString:key]) return;
+      [self clearGroupDockEntries];
+      self.lastAppliedScene = @"";
+    });
   }
 }
 
@@ -11512,7 +11528,13 @@ static BOOL ValidGroupName(NSString *raw) {
     [checks addObject:cb];
   }
   a.accessoryView = box;
-  if ([a runModal] != NSAlertFirstButtonReturn) return NO;
+  self.scenePromptOpen = YES;
+  if (a.window) {
+    a.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary;
+  }
+  NSModalResponse promptResult = [a runModal];
+  self.scenePromptOpen = NO;
+  if (promptResult != NSAlertFirstButtonReturn) return NO;
   NSString *newName = [nameField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
   if (!newName.length) {
     [self showToast:@"场景名称不能为空"];
