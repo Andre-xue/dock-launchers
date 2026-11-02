@@ -1348,6 +1348,13 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property BOOL suppressCaptureToolShow;
 @property BOOL allowTerminate;
 @property (strong) NSWindow *captureCameraWindow, *captureCountdownWindow, *captureResultWindow;
+@property (strong) NSMutableArray<NSWindow *> *pinnedScreenshotWindows;
+@property (strong) NSMutableArray<NSString *> *scrollCapturePaths;
+@property (strong) NSTimer *scrollCaptureTimer;
+@property (strong) NSWindow *scrollCaptureHUD;
+@property NSRect scrollCaptureRegion;
+@property NSInteger scrollCaptureCount;
+@property BOOL scrollCaptureBusy;
 @property (strong) NSTimer *captureResultTimer;
 @property (strong) NSWindow *videoPostWindow;
 @property (strong) NSWindow *aiAssistantWindow;
@@ -17271,6 +17278,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3003,@"cat":@0,@"title":@"暂停 / 继续录屏",@"desc":@"录制中切换暂停",@"sel":@"pauseCapture:"},
     @{@"id":@3004,@"cat":@0,@"title":@"打开最近截图 / 录屏",@"desc":@"查看历史截图和录屏",@"sel":@"showCaptureHistory:"},
     @{@"id":@3005,@"cat":@0,@"title":@"打开最近录像",@"desc":@"打开最新录屏文件",@"sel":@"openMostRecentRecording"},
+    @{@"id":@3006,@"cat":@0,@"title":@"钉屏截图",@"desc":@"截图并悬浮在屏幕上",@"sel":@"pinScreenshotInteractive:"},
+    @{@"id":@3007,@"cat":@0,@"title":@"滚动长截图",@"desc":@"滚动拼接长截图",@"sel":@"startScrollCapture:"},
 
     @{@"id":@3010,@"cat":@1,@"title":@"翻译",@"desc":@"文档与文本翻译",@"sel":@"showTranslationWindow:"},
     @{@"id":@3011,@"cat":@1,@"title":@"压缩",@"desc":@"压缩文件与文件夹",@"sel":@"showCompressWindow:"},
@@ -19172,6 +19181,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     historyBtn.title = @"最近截图"; historyBtn.hoverColor = [NSColor systemPurpleColor];
     historyBtn.target = self; historyBtn.action = @selector(showCaptureHistory:);
     [historyBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:historyBtn];
+    ColorHoverButton *pinBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(150,264,110,32)];
+    pinBtn.title=@"钉屏截图"; pinBtn.hoverColor=[NSColor systemIndigoColor];
+    pinBtn.target=self; pinBtn.action=@selector(pinScreenshotInteractive:);
+    [pinBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:pinBtn];
+    ColorHoverButton *scrollBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(266,264,110,32)];
+    scrollBtn.title=@"滚动长截图"; scrollBtn.hoverColor=[NSColor systemGreenColor];
+    scrollBtn.target=self; scrollBtn.action=@selector(startScrollCapture:);
+    [scrollBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:scrollBtn];
     NSTextField *cl = [self label:@"倒计时" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     cl.frame = NSMakeRect(496, 270, 50, 18); [cv addSubview:cl];
     self.captureRecordCountdownPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(550, 264, 90, 26) pullsDown:NO];
@@ -19377,6 +19394,225 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       weakSelf.captureCountdownLabel.stringValue = [NSString stringWithFormat:@"%ld", (long)weakSelf.captureCountdownRemaining];
     }
   }];
+}
+
+- (void)captureRegion:(NSRect)region toPath:(NSString *)path completion:(void (^)(BOOL ok))completion {
+  NSScreen *screen = [NSScreen mainScreen];
+  CGFloat screenH = screen.frame.size.height;
+  CGFloat topY = screenH - (region.origin.y + region.size.height);
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/usr/sbin/screencapture";
+  t.arguments = @[@"-x", @"-R", [NSString stringWithFormat:@"%ld,%ld,%ld,%ld", (long)llround(region.origin.x), (long)llround(topY), (long)llround(region.size.width), (long)llround(region.size.height)], path];
+  t.terminationHandler = ^(NSTask *task) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      BOOL ok = task.terminationStatus == 0 && [[NSFileManager defaultManager] fileExistsAtPath:path];
+      if (completion) completion(ok);
+    });
+  };
+  @try { [t launch]; } @catch (NSException *e) { if (completion) completion(NO); }
+}
+
+- (void)pinImageAtPath:(NSString *)path {
+  NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+  if (!img) { [self showToast:@"钉屏失败：图片读取错误"]; return; }
+  if (!self.pinnedScreenshotWindows) self.pinnedScreenshotWindows = [NSMutableArray array];
+  NSScreen *scr = [NSScreen mainScreen];
+  NSRect vis = scr.visibleFrame;
+  CGFloat maxW = vis.size.width * 0.72, maxH = vis.size.height * 0.72;
+  CGFloat scale = MIN(1.0, MIN(maxW / MAX(1, img.size.width), maxH / MAX(1, img.size.height)));
+  NSSize size = NSMakeSize(MAX(120, img.size.width * scale), MAX(80, img.size.height * scale));
+  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,size.width,size.height) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+  w.opaque = YES;
+  w.backgroundColor = [NSColor blackColor];
+  w.level = NSFloatingWindowLevel;
+  w.hasShadow = YES;
+  w.releasedWhenClosed = NO;
+  w.movableByWindowBackground = YES;
+  w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+  NSView *cv = w.contentView;
+  cv.wantsLayer = YES;
+  cv.layer.borderWidth = 1;
+  cv.layer.borderColor = [NSColor controlAccentColor].CGColor;
+  NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(0,0,size.width,size.height)];
+  iv.image = img;
+  iv.imageScaling = NSImageScaleProportionallyUpOrDown;
+  [cv addSubview:iv];
+  NSButton *close = [[NSButton alloc] initWithFrame:NSMakeRect(size.width-30, size.height-30, 24, 24)];
+  close.bordered = NO;
+  close.image = [NSImage imageWithSystemSymbolName:@"xmark.circle.fill" accessibilityDescription:@"关闭钉屏"];
+  close.contentTintColor = [NSColor systemRedColor];
+  close.target = self;
+  close.action = @selector(closePinnedScreenshot:);
+  [cv addSubview:close];
+  [w setFrameOrigin:NSMakePoint(NSMidX(vis)-size.width/2, NSMidY(vis)-size.height/2)];
+  [w orderFrontRegardless];
+  [self.pinnedScreenshotWindows addObject:w];
+}
+
+- (void)closePinnedScreenshot:(NSButton *)sender {
+  NSWindow *w = sender.window;
+  [w orderOut:nil];
+  if (self.pinnedScreenshotWindows && w) [self.pinnedScreenshotWindows removeObject:w];
+}
+
+- (void)pinScreenshotInteractive:(id)sender {
+  __weak typeof(self) weakSelf = self;
+  [self beginCaptureRegion:^(NSRect region) {
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"pin-%lld.png", (long long)[[NSDate date] timeIntervalSince1970]]];
+    [weakSelf captureRegion:region toPath:path completion:^(BOOL ok) {
+      if (ok) [weakSelf pinImageAtPath:path];
+      else [weakSelf showToast:@"钉屏截图失败"];
+    }];
+  }];
+}
+
+- (void)startScrollCapture:(id)sender {
+  __weak typeof(self) weakSelf = self;
+  [self beginCaptureRegion:^(NSRect region) {
+    [weakSelf beginScrollCaptureInRegion:region];
+  }];
+}
+
+- (void)beginScrollCaptureInRegion:(NSRect)region {
+  [self stopScrollCapture:nil];
+  self.scrollCaptureRegion = region;
+  self.scrollCapturePaths = [NSMutableArray array];
+  self.scrollCaptureCount = 0;
+  self.scrollCaptureBusy = NO;
+  NSPanel *hud = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,300,74) styleMask:NSWindowStyleMaskBorderless|NSWindowStyleMaskNonactivatingPanel backing:NSBackingStoreBuffered defer:NO];
+  hud.opaque = NO;
+  hud.backgroundColor = [NSColor colorWithCalibratedWhite:0.08 alpha:0.90];
+  hud.level = NSFloatingWindowLevel;
+  hud.hasShadow = YES;
+  hud.sharingType = NSWindowSharingNone;
+  hud.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+  NSView *cv = hud.contentView;
+  cv.wantsLayer = YES; cv.layer.cornerRadius = 12; cv.layer.masksToBounds = YES;
+  NSTextField *label = [self label:@"滚动长截图：请缓慢滚动页面" size:12 bold:YES color:[NSColor whiteColor]];
+  label.frame=NSMakeRect(14,44,270,18); [cv addSubview:label];
+  NSTextField *hint = [self label:@"完成后点右侧停止" size:9.5 bold:NO color:[NSColor whiteColor]];
+  hint.frame=NSMakeRect(14,22,190,16); [cv addSubview:hint];
+  ColorHoverButton *stop = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(208,20,78,34)];
+  stop.title=@"停止拼接"; stop.hoverColor=[NSColor systemRedColor];
+  stop.target=self; stop.action=@selector(stopScrollCapture:);
+  [stop applyColor:[NSColor systemRedColor] textColor:[NSColor whiteColor]];
+  [cv addSubview:stop];
+  NSScreen *scr=[NSScreen mainScreen]; NSRect vis=scr.visibleFrame;
+  [hud setFrameOrigin:NSMakePoint(NSMaxX(vis)-hud.frame.size.width-24, NSMaxY(vis)-hud.frame.size.height-24)];
+  self.scrollCaptureHUD = hud;
+  [hud orderFrontRegardless];
+  [self captureNextScrollFrame];
+  self.scrollCaptureTimer = [NSTimer scheduledTimerWithTimeInterval:0.75 target:self selector:@selector(captureNextScrollFrame) userInfo:nil repeats:YES];
+}
+
+- (void)captureNextScrollFrame {
+  if (self.scrollCaptureBusy || !self.scrollCapturePaths) return;
+  self.scrollCaptureBusy = YES;
+  self.scrollCaptureCount++;
+  NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"scroll-%04ld.png", (long)self.scrollCaptureCount]];
+  __weak typeof(self) weakSelf = self;
+  [self captureRegion:self.scrollCaptureRegion toPath:path completion:^(BOOL ok) {
+    weakSelf.scrollCaptureBusy = NO;
+    if (ok) [weakSelf.scrollCapturePaths addObject:path];
+  }];
+}
+
+- (void)stopScrollCapture:(id)sender {
+  [self.scrollCaptureTimer invalidate];
+  self.scrollCaptureTimer = nil;
+  [self.scrollCaptureHUD orderOut:nil];
+  self.scrollCaptureHUD = nil;
+  NSArray *paths = [self.scrollCapturePaths copy];
+  self.scrollCapturePaths = nil;
+  if (paths.count < 2) { [self showToast:@"至少需要两帧才能拼接"]; return; }
+  [self showToast:@"正在拼接长截图…"];
+  __weak typeof(self) weakSelf = self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSString *out = [weakSelf stitchScrollImages:paths];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (out.length) { [weakSelf showToast:@"长截图已保存"]; [weakSelf showCaptureResultPanel:out]; }
+      else [weakSelf showToast:@"长截图拼接失败"];
+    });
+  });
+}
+
+- (NSBitmapImageRep *)rgbaRepForPath:(NSString *)path {
+  NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+  if (!img) return nil;
+  NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithData:[img TIFFRepresentation]];
+  if (!rep) return nil;
+  if (rep.bitsPerSample == 8 && rep.samplesPerPixel >= 3 && !rep.isPlanar) return rep;
+  NSInteger w = rep.pixelsWide, h = rep.pixelsHigh;
+  NSBitmapImageRep *std = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:w pixelsHigh:h bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:w*4 bitsPerPixel:32];
+  [NSGraphicsContext saveGraphicsState];
+  [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithBitmapImageRep:std]];
+  [rep drawInRect:NSMakeRect(0,0,w,h)];
+  [NSGraphicsContext restoreGraphicsState];
+  return std;
+}
+
+- (NSMutableData *)topDownRowsForRep:(NSBitmapImageRep *)rep widthBytes:(NSInteger)w4 {
+  NSInteger h = rep.pixelsHigh;
+  NSInteger srcStride = rep.bytesPerRow;
+  NSMutableData *out = [NSMutableData dataWithLength:(NSUInteger)w4*h];
+  unsigned char *dst = out.mutableBytes;
+  unsigned char *src = rep.bitmapData;
+  for (NSInteger y = 0; y < h; y++) {
+    memcpy(dst + y*w4, src + (h-1-y)*srcStride, MIN((NSInteger)w4, srcStride));
+  }
+  return out;
+}
+
+- (NSInteger)overlapFromPrevTop:(NSData *)prev prevH:(NSInteger)prevH nextTop:(NSData *)next nextH:(NSInteger)nextH widthBytes:(NSInteger)w4 {
+  const unsigned char *a = prev.bytes, *b = next.bytes;
+  NSInteger maxO = MIN(prevH, nextH) - 8;
+  if (maxO < 12) return 0;
+  for (NSInteger o = maxO; o >= 12; o--) {
+    double diff = 0; NSInteger samples = 0;
+    NSInteger rows = MIN(36, o);
+    for (NSInteger y = 0; y < rows; y += 3) {
+      const unsigned char *ra = a + (prevH-o+y)*w4;
+      const unsigned char *rb = b + y*w4;
+      for (NSInteger x = 0; x < w4/4; x += 6) {
+        diff += ABS((int)ra[x*4] - (int)rb[x*4]) + ABS((int)ra[x*4+1] - (int)rb[x*4+1]) + ABS((int)ra[x*4+2] - (int)rb[x*4+2]);
+        samples += 3;
+      }
+    }
+    if (samples && diff/samples < 10.0) return o;
+  }
+  return 0;
+}
+
+- (NSString *)stitchScrollImages:(NSArray<NSString *> *)paths {
+  NSMutableArray<NSBitmapImageRep *> *reps = [NSMutableArray array];
+  for (NSString *p in paths) { NSBitmapImageRep *r = [self rgbaRepForPath:p]; if (r) [reps addObject:r]; }
+  if (reps.count < 2) return nil;
+  NSBitmapImageRep *first = reps.firstObject;
+  NSInteger w = first.pixelsWide;
+  NSInteger w4 = w * 4;
+  NSMutableData *comp = [self topDownRowsForRep:first widthBytes:w4];
+  NSInteger totalH = first.pixelsHigh;
+  for (NSInteger i = 1; i < (NSInteger)reps.count; i++) {
+    NSBitmapImageRep *next = reps[i];
+    NSMutableData *nextTop = [self topDownRowsForRep:next widthBytes:w4];
+    NSInteger overlap = [self overlapFromPrevTop:comp prevH:totalH nextTop:nextTop nextH:next.pixelsHigh widthBytes:w4];
+    NSInteger appendH = next.pixelsHigh - overlap;
+    if (appendH <= 0) continue;
+    NSMutableData *grown = [NSMutableData dataWithCapacity:(NSUInteger)w4*(totalH+appendH)];
+    [grown appendData:comp];
+    [grown appendBytes:(const void *)((const unsigned char *)nextTop.bytes + overlap*w4) length:(NSUInteger)w4*appendH];
+    comp = grown;
+    totalH += appendH;
+  }
+  NSBitmapImageRep *outRep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:w pixelsHigh:totalH bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:w4 bitsPerPixel:32];
+  unsigned char *dst = outRep.bitmapData;
+  const unsigned char *src = comp.bytes;
+  for (NSInteger y = 0; y < totalH; y++) {
+    memcpy(dst + (totalH-1-y)*w4, src + y*w4, w4);
+  }
+  NSData *png = [outRep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+  NSString *out = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-滚动-%@.png", [self captureTimestamp]]];
+  return [png writeToFile:out atomically:YES] ? out : nil;
 }
 
 - (void)beginCaptureRegion:(void (^)(NSRect region))completion {
