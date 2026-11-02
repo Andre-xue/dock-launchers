@@ -2456,6 +2456,7 @@ static void HideDockHoverTip(void) {
   self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
   self.window.title = @"快速面板";
   self.window.releasedWhenClosed = NO;
+  self.window.restorable = NO;
   self.window.level = NSStatusWindowLevel;
   self.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
   self.window.backgroundColor = [NSColor colorWithCalibratedWhite:0.98 alpha:1.0];
@@ -3303,6 +3304,10 @@ static void HideDockHoverTip(void) {
 }
 
 - (BOOL)windowShouldClose:(NSWindow *)sender {
+  if (sender == self.window) {
+    [sender orderOut:nil];
+    return NO;
+  }
   if (!self.pinnedWindows) return YES;
   if ([self.pinnedWindows containsObject:[NSValue valueWithNonretainedObject:sender]]) {
     [self showToast:@"窗口已钉住，先取消钉住才能关闭"];
@@ -3684,9 +3689,13 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
+  if (flag) return YES;
   [self showWindow:nil];
   return YES;
 }
+
+- (BOOL)applicationShouldRestoreState:(NSApplication *)app { return NO; }
+- (BOOL)applicationShouldSaveState:(NSApplication *)app { return NO; }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return NO; }
 
@@ -14958,6 +14967,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.radialPageLabel.alignment = NSTextAlignmentCenter;
     self.radialPageLabel.frame = NSMakeRect(150,8,48,16);
     [root addSubview:self.radialPageLabel];
+    NSButton *closeBtn = [[NSButton alloc] initWithFrame:NSMakeRect(306, 326, 28, 28)];
+    closeBtn.bordered = NO;
+    closeBtn.bezelStyle = NSBezelStyleInline;
+    closeBtn.image = [NSImage imageWithSystemSymbolName:@"xmark.circle.fill" accessibilityDescription:@"关闭"];
+    closeBtn.imageScaling = NSImageScaleProportionallyDown;
+    closeBtn.contentTintColor = [NSColor systemRedColor];
+    closeBtn.target = self;
+    closeBtn.action = @selector(closePopover:);
+    closeBtn.toolTip = @"关闭";
+    [root addSubview:closeBtn];
     [self radialApplyPage];
     pop.contentSize = NSMakeSize(340, 360);
   } else {
