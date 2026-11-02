@@ -891,7 +891,14 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
   }
   [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *error) {
     if (error || !content.displays.count) { [self finishWithError:error ?: [NSError errorWithDomain:@"DockLaunchers" code:1 userInfo:@{NSLocalizedDescriptionKey:@"无法访问屏幕内容，请允许屏幕录制权限"}]]; return; }
-    SCDisplay *display = content.displays.firstObject;
+    NSInteger wantedDisplay = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureDisplayID"];
+    SCDisplay *display = nil;
+    if (scene == DLRecordSceneRegion && region.size.width > 1) {
+      NSPoint center = NSMakePoint(NSMidX(region), NSMidY(region));
+      for (SCDisplay *d in content.displays) if (NSPointInRect(center, d.frame)) { display = d; break; }
+    }
+    if (!display) for (SCDisplay *d in content.displays) if ((NSInteger)d.displayID == wantedDisplay) { display = d; break; }
+    if (!display) display = content.displays.firstObject;
     SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
     SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
     config.showsCursor = YES;
@@ -1287,7 +1294,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSArray *captureHistoryItems;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
-@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup, *captureRecordCountdownPopup, *captureMicGainPopup, *capturePresetPopup;
+@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup, *captureRecordCountdownPopup, *captureMicGainPopup, *capturePresetPopup, *captureDisplayPopup;
 @property (strong) id clickGlobalMonitor, clickLocalMonitor;
 @property (strong) NSMutableArray *clickRingWindows;
 @property (strong) NSButton *captureCursorCheck, *captureClickCheck;
@@ -1310,7 +1317,14 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property BOOL captureCameraComposing;
 @property BOOL suppressCaptureToolShow;
 @property BOOL allowTerminate;
-@property (strong) NSWindow *captureCameraWindow, *captureCountdownWindow;
+@property (strong) NSWindow *captureCameraWindow, *captureCountdownWindow, *captureResultWindow;
+@property (strong) NSTimer *captureResultTimer;
+@property (strong) NSWindow *videoPostWindow;
+@property (strong) NSTextField *videoPostFileLabel, *videoPostStart, *videoPostEnd, *videoPostStatus;
+@property (strong) NSPopUpButton *videoPostQualityPopup;
+@property (copy) NSString *videoPostPath;
+@property (strong) id windowSnapMonitor;
+@property (copy) NSString *captureResultPath;
 @property (strong) NSTextField *captureCountdownLabel;
 @property (strong) NSTimer *captureCountdownTimer, *captureHUDTimer;
 @property (strong) NSPanel *captureHUDWindow;
@@ -2901,6 +2915,7 @@ static void HideDockHoverTip(void) {
   [self startGroupBadgeTimer];
   [self installShelfServiceWorkflowIfNeeded];
   [self startShelfInboxTimer];
+  [self startWindowSnapMonitor];
   [self startSceneAutoIfNeeded];
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerLaunchLock"] && [self hasAppPassword] && !getenv("DOCKLAUNCHERS_CENTER_SKIP_LOCK")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -4732,7 +4747,15 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
     row.groupName = g[@"name"];
     row.dropTarget = self;
     row.dropAction = @selector(groupRowDropped:);
-    row.toolTip = @"拖入 .app 应用即可添加到该分组";
+    row.toolTip = @"拖入 .app 应用即可添加到该分组；右键可启动/退出全部应用";
+    NSMenu *gmenu = [[NSMenu alloc] initWithTitle:g[@"display"] ?: g[@"name"] ?: @""];
+    NSMenuItem *launchAll = [[NSMenuItem alloc] initWithTitle:@"启动全部应用" action:@selector(groupMenuLaunchAll:) keyEquivalent:@""];
+    launchAll.target = self; launchAll.representedObject = g[@"name"];
+    [gmenu addItem:launchAll];
+    NSMenuItem *quitAll = [[NSMenuItem alloc] initWithTitle:@"退出全部应用" action:@selector(groupMenuQuitAll:) keyEquivalent:@""];
+    quitAll.target = self; quitAll.representedObject = g[@"name"];
+    [gmenu addItem:quitAll];
+    row.menu = gmenu;
     row.wantsLayer = YES;
     BOOL sel = self.groupsSelectedName.length && [g[@"name"] isEqualToString:self.groupsSelectedName];
     BOOL hl = self.groupsHighlightedName.length && [g[@"name"] isEqualToString:self.groupsHighlightedName];
@@ -4781,6 +4804,82 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   [self.groupsScroll.contentView scrollToPoint:NSMakePoint(0, 0)];
   [self applyFlatButtonsInView:self.groupsView];
   [self.groupsScroll.contentView scrollToPoint:NSMakePoint(0, 0)];
+}
+
+- (NSArray<NSString *> *)targetsForGroupName:(NSString *)name {
+  NSString *listPath = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+  NSString *content = [NSString stringWithContentsOfFile:listPath encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSString *line in [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+    if (!line.length || [line hasPrefix:@"#"]) continue;
+    NSArray *parts = [line componentsSeparatedByString:@"|"];
+    NSString *target = [parts.lastObject stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (target.length && ![out containsObject:target]) [out addObject:target];
+  }
+  return out;
+}
+
+- (NSURL *)appURLForGroupTarget:(NSString *)target {
+  if ([target hasPrefix:@"/"] && [[NSFileManager defaultManager] fileExistsAtPath:target]) return [NSURL fileURLWithPath:target];
+  if (![target hasPrefix:@"/"]) return [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:target];
+  return nil;
+}
+
+- (NSArray<NSRunningApplication *> *)runningAppsForGroupName:(NSString *)name {
+  NSArray *targets = [self targetsForGroupName:name];
+  NSMutableSet *bids = [NSMutableSet set];
+  NSMutableSet *paths = [NSMutableSet set];
+  for (NSString *t in targets) {
+    if ([t hasPrefix:@"/"]) {
+      [paths addObject:[t stringByStandardizingPath]];
+      NSString *bid = [[NSBundle bundleWithPath:t] objectForInfoDictionaryKey:@"CFBundleIdentifier"];
+      if (bid.length) [bids addObject:bid];
+    } else [bids addObject:t];
+  }
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
+    if (app.activationPolicy == NSApplicationActivationPolicyProhibited) continue;
+    if ((app.bundleIdentifier.length && [bids containsObject:app.bundleIdentifier]) ||
+        (app.bundleURL.path.length && [paths containsObject:[app.bundleURL.path stringByStandardizingPath]])) {
+      [out addObject:app];
+    }
+  }
+  return out;
+}
+
+- (void)launchAllAppsInGroupName:(NSString *)name {
+  NSArray *targets = [self targetsForGroupName:name];
+  NSMutableSet *seen = [NSMutableSet set];
+  for (NSString *t in targets) {
+    NSURL *url = [self appURLForGroupTarget:t];
+    if (!url || [seen containsObject:url.path]) continue;
+    [seen addObject:url.path];
+    [[NSWorkspace sharedWorkspace] openApplicationAtURL:url configuration:[NSWorkspaceOpenConfiguration configuration] completionHandler:nil];
+  }
+  [self showToast:[NSString stringWithFormat:@"正在启动「%@」全部应用", name]];
+}
+
+- (void)quitAllAppsInGroupName:(NSString *)name {
+  NSArray *apps = [self runningAppsForGroupName:name];
+  for (NSRunningApplication *app in apps) [app terminate];
+  [self showToast:apps.count ? [NSString stringWithFormat:@"正在退出「%@」%ld 个应用", name, (long)apps.count] : @"该分组没有运行中的应用"];
+}
+
+- (void)groupMenuLaunchAll:(NSMenuItem *)item { [self launchAllAppsInGroupName:item.representedObject]; }
+- (void)groupMenuQuitAll:(NSMenuItem *)item { [self quitAllAppsInGroupName:item.representedObject]; }
+
+- (void)launchAllGroupsApps:(id)sender {
+  for (NSDictionary *g in self.groups ?: @[]) [self launchAllAppsInGroupName:g[@"name"]];
+}
+
+- (void)quitAllGroupsApps:(id)sender {
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = @"退出所有分组应用？";
+  a.informativeText = @"将逐一退出所有分组内正在运行的应用；未保存的内容可能丢失。";
+  [a addButtonWithTitle:@"退出"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  for (NSDictionary *g in self.groups ?: @[]) [self quitAllAppsInGroupName:g[@"name"]];
 }
 
 - (void)groupRowDropped:(NSDictionary *)info {
@@ -16729,6 +16828,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3054,@"cat":@1,@"title":@"窗口左右分屏",@"desc":@"当前应用的窗口左右排列",@"sel":@"applyLayoutPresetLeftRight:"},
     @{@"id":@3055,@"cat":@1,@"title":@"窗口上下分屏",@"desc":@"当前应用的窗口上下排列",@"sel":@"applyLayoutPresetTopBottom:"},
     @{@"id":@3056,@"cat":@1,@"title":@"窗口四宫格",@"desc":@"当前应用的窗口四宫格排列",@"sel":@"applyLayoutPresetGrid:"},
+    @{@"id":@3057,@"cat":@3,@"title":@"启动全部分组应用",@"desc":@"启动所有分组内的应用",@"sel":@"launchAllGroupsApps:"},
+    @{@"id":@3058,@"cat":@3,@"title":@"退出全部分组应用",@"desc":@"退出所有分组内正在运行的应用",@"sel":@"quitAllGroupsApps:"},
+    @{@"id":@3059,@"cat":@1,@"title":@"录屏后期工具箱",@"desc":@"裁剪、压缩、GIF、提取音频",@"sel":@"openVideoPostWindow:"},
+    @{@"id":@3060,@"cat":@1,@"title":@"开关窗口拖拽吸附",@"desc":@"拖到屏幕边缘自动分屏",@"sel":@"toggleWindowSnap:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -17689,6 +17792,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"权限与诊断", @"subtitle": @"检查录制、摄像头、麦克风权限", @"type": @"工具", @"tool": @"diagnostics", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"stethoscope" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"文件暂存架", @"subtitle": @"拖入文件，稍后统一处理", @"type": @"工具", @"tool": @"shelf", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"tray.full" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"配置导出 / 导入", @"subtitle": @"迁移分组、快捷键和设置", @"type": @"工具", @"tool": @"configbackup", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.up.arrow.down.square" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"检查更新", @"subtitle": @"查看是否有新版本", @"type": @"工具", @"tool": @"updatecheck", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.triangle.2.circlepath" accessibilityDescription:nil] ?: recIcon}];
   NSArray *pages = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
   NSArray *pageIcons = @[@"chart.line.uptrend.xyaxis", @"square.grid.2x2", @"sparkles", @"externaldrive", @"trash", @"gearshape"];
@@ -17808,6 +17912,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"shelf"]) [self openShelfWindow:nil];
     else if ([tool isEqualToString:@"configbackup"]) [self openConfigBackupWindow:nil];
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
+    else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
     else if ([tool isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
@@ -18368,6 +18473,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self startMicLevelMeterIfNeeded];
 }
 
+- (void)captureDisplayChanged:(id)sender {
+  NSNumber *num = self.captureDisplayPopup.selectedItem.representedObject ?: @0;
+  [[NSUserDefaults standardUserDefaults] setInteger:num.integerValue forKey:@"centerCaptureDisplayID"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
 - (void)captureQualityChanged:(id)sender {
   NSDictionary *v = self.captureQualityPopup.selectedItem.representedObject;
   NSInteger h = [v[@"height"] integerValue] > 0 ? [v[@"height"] integerValue] : 1440;
@@ -18491,6 +18602,23 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.captureQualityPopup selectItemAtIndex:qidx];
     self.captureQualityPopup.target = self; self.captureQualityPopup.action = @selector(captureQualityChanged:);
     [cv addSubview:self.captureQualityPopup];
+    NSTextField *dispLabel = [self label:@"屏幕" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    dispLabel.frame = NSMakeRect(806, 406, 28, 18); [cv addSubview:dispLabel];
+    self.captureDisplayPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(838, 400, 84, 26) pullsDown:NO];
+    NSInteger savedDisp = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureDisplayID"];
+    NSInteger selDisp = 0;
+    NSArray *screens = [NSScreen screens];
+    for (NSInteger i = 0; i < (NSInteger)screens.count; i++) {
+      NSScreen *scr = screens[i];
+      NSNumber *num = scr.deviceDescription[@"NSScreenNumber"];
+      [self.captureDisplayPopup addItemWithTitle:i == 0 ? @"主屏幕" : [NSString stringWithFormat:@"屏幕 %ld", (long)(i+1)]];
+      self.captureDisplayPopup.lastItem.representedObject = num ?: @0;
+      if ([num integerValue] == savedDisp) selDisp = i;
+    }
+    [self.captureDisplayPopup selectItemAtIndex:selDisp];
+    self.captureDisplayPopup.target = self;
+    self.captureDisplayPopup.action = @selector(captureDisplayChanged:);
+    [cv addSubview:self.captureDisplayPopup];
 
     // Row 3: recording camera and picture-in-picture.
     NSTextField *camLabel = [self label:@"摄像头" size:10 bold:NO color:[NSColor secondaryLabelColor]];
@@ -18688,6 +18816,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         }
         self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"已保存：%@", path.lastPathComponent];
         [self showToast:@"截图已保存"];
+        [self showCaptureResultPanel:path];
       } else {
         self.captureStatusLabel.stringValue = @"截图已取消，或没有屏幕录制权限";
       }
@@ -19080,6 +19209,342 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }];
 }
 
+- (void)videoPostStatusText:(NSString *)text {
+  dispatch_async(dispatch_get_main_queue(), ^{ if (self.videoPostStatus) self.videoPostStatus.stringValue = text ?: @""; });
+}
+
+- (BOOL)windowSnapEnabled {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  return [ud objectForKey:@"centerWindowSnapEnabled"] ? [ud boolForKey:@"centerWindowSnapEnabled"] : NO;
+}
+
+- (void)startWindowSnapMonitor {
+  if (self.windowSnapMonitor) { [NSEvent removeMonitor:self.windowSnapMonitor]; self.windowSnapMonitor = nil; }
+  if (![self windowSnapEnabled]) return;
+  __weak typeof(self) weakSelf = self;
+  self.windowSnapMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskLeftMouseUp handler:^(NSEvent *e) {
+    [weakSelf handleWindowSnapMouseUp];
+  }];
+}
+
+- (void)toggleWindowSnap:(id)sender {
+  BOOL enabled = ![self windowSnapEnabled];
+  [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"centerWindowSnapEnabled"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self startWindowSnapMonitor];
+  [self showToast:enabled ? @"已开启窗口拖拽吸附" : @"已关闭窗口拖拽吸附"];
+}
+
+- (void)handleWindowSnapMouseUp {
+  if (![self windowSnapEnabled] || !AXIsProcessTrusted()) return;
+  NSPoint mouse = [NSEvent mouseLocation];
+  NSScreen *screen = nil;
+  for (NSScreen *s in [NSScreen screens]) if (NSPointInRect(mouse, s.frame)) { screen = s; break; }
+  if (!screen) return;
+  NSRect vis = screen.visibleFrame;
+  CGFloat threshold = 24;
+  NSInteger edge = 0;
+  if (mouse.x <= NSMinX(vis) + threshold) edge = 1;
+  else if (mouse.x >= NSMaxX(vis) - threshold) edge = 2;
+  else if (mouse.y >= NSMaxY(vis) - threshold) edge = 3;
+  else return;
+  AXUIElementRef system = AXUIElementCreateSystemWide();
+  CFTypeRef appRaw = NULL;
+  AXUIElementRef app = NULL;
+  if (AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute, &appRaw) == kAXErrorSuccess && appRaw) app = (AXUIElementRef)CFRetain(appRaw);
+  if (appRaw) CFRelease(appRaw);
+  CFRelease(system);
+  if (!app) return;
+  pid_t pid = 0; AXUIElementGetPid(app, &pid);
+  if (pid == [[NSProcessInfo processInfo] processIdentifier]) { CFRelease(app); return; }
+  CFTypeRef winRaw = NULL;
+  AXUIElementRef win = NULL;
+  if (AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute, &winRaw) == kAXErrorSuccess && winRaw) win = (AXUIElementRef)CFRetain(winRaw);
+  if (winRaw) CFRelease(winRaw);
+  CFRelease(app);
+  if (!win) return;
+  NSRect target = vis;
+  if (edge == 1) target = NSMakeRect(vis.origin.x, vis.origin.y, vis.size.width/2.0 - 4, vis.size.height);
+  else if (edge == 2) target = NSMakeRect(NSMidX(vis)+4, vis.origin.y, vis.size.width/2.0 - 4, vis.size.height);
+  else if (edge == 3) target = vis;
+  CGFloat screenH = screen.frame.size.height;
+  CGPoint p = CGPointMake(target.origin.x, screenH - (target.origin.y + target.size.height));
+  CGSize z = CGSizeMake(target.size.width, target.size.height);
+  AXValueRef pv = AXValueCreate(kAXValueCGPointType, &p);
+  AXValueRef zv = AXValueCreate(kAXValueCGSizeType, &z);
+  AXUIElementSetAttributeValue(win, kAXPositionAttribute, pv);
+  AXUIElementSetAttributeValue(win, kAXSizeAttribute, zv);
+  if (pv) CFRelease(pv); if (zv) CFRelease(zv);
+  CFRelease(win);
+}
+
+- (void)openVideoPostWindow:(id)sender {
+  if (!self.videoPostWindow) {
+    self.videoPostWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,460) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.videoPostWindow.title = @"录屏后期工具箱";
+    self.videoPostWindow.releasedWhenClosed = NO;
+    NSView *cv = self.videoPostWindow.contentView;
+    NSTextField *t = [self label:@"录屏后期工具箱" size:20 bold:YES color:nil];
+    t.frame=NSMakeRect(24,412,300,28); [cv addSubview:t];
+    NSTextField *h = [self label:@"选择录屏文件后裁剪、压缩、转 GIF 或提取音频" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame=NSMakeRect(24,390,560,18); [cv addSubview:h];
+    ColorHoverButton *pick = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,342,140,34)];
+    pick.title=@"选择视频…"; pick.hoverColor=[NSColor systemBlueColor]; pick.target=self; pick.action=@selector(pickVideoForPost:);
+    [pick applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:pick];
+    self.videoPostFileLabel = [self label:@"未选择视频" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    self.videoPostFileLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;
+    self.videoPostFileLabel.frame=NSMakeRect(176,350,420,20); [cv addSubview:self.videoPostFileLabel];
+    NSTextField *trim = [self label:@"裁剪" size:12 bold:YES color:nil]; trim.frame=NSMakeRect(24,298,50,20); [cv addSubview:trim];
+    NSTextField *from = [self label:@"开始(秒)" size:10 bold:NO color:[NSColor secondaryLabelColor]]; from.frame=NSMakeRect(78,300,60,18); [cv addSubview:from];
+    self.videoPostStart = [[NSTextField alloc] initWithFrame:NSMakeRect(140,294,70,26)]; self.videoPostStart.stringValue=@"0"; [cv addSubview:self.videoPostStart];
+    NSTextField *to = [self label:@"结束(秒)" size:10 bold:NO color:[NSColor secondaryLabelColor]]; to.frame=NSMakeRect(220,300,60,18); [cv addSubview:to];
+    self.videoPostEnd = [[NSTextField alloc] initWithFrame:NSMakeRect(282,294,70,26)]; self.videoPostEnd.placeholderString=@"自动"; [cv addSubview:self.videoPostEnd];
+    ColorHoverButton *trimBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(370,292,120,30)];
+    trimBtn.title=@"裁剪导出…"; trimBtn.hoverColor=[NSColor systemGreenColor]; trimBtn.target=self; trimBtn.action=@selector(exportTrimmedVideo:);
+    [trimBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:trimBtn];
+    NSTextField *comp = [self label:@"压缩" size:12 bold:YES color:nil]; comp.frame=NSMakeRect(24,246,50,20); [cv addSubview:comp];
+    self.videoPostQualityPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(78,240,150,28) pullsDown:NO];
+    [self.videoPostQualityPopup addItemsWithTitles:@[@"720p", @"1080p", @"480p", @"仅音频 M4A"]];
+    [cv addSubview:self.videoPostQualityPopup];
+    ColorHoverButton *compBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(240,240,120,30)];
+    compBtn.title=@"导出…"; compBtn.hoverColor=[NSColor systemPurpleColor]; compBtn.target=self; compBtn.action=@selector(exportCompressedVideo:);
+    [compBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:compBtn];
+    NSTextField *gifLabel = [self label:@"动图" size:12 bold:YES color:nil]; gifLabel.frame=NSMakeRect(24,194,50,20); [cv addSubview:gifLabel];
+    ColorHoverButton *gifBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(78,190,150,30)];
+    gifBtn.title=@"导出 GIF…"; gifBtn.hoverColor=[NSColor systemOrangeColor]; gifBtn.target=self; gifBtn.action=@selector(exportGIFVideo:);
+    [gifBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gifBtn];
+    NSTextField *rangeHint = [self label:@"GIF 使用上面的开始/结束时间，最多 10 秒、640px" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+    rangeHint.frame=NSMakeRect(240,197,340,16); [cv addSubview:rangeHint];
+    self.videoPostStatus = [self label:@"请选择录屏文件" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    self.videoPostStatus.lineBreakMode=NSLineBreakByTruncatingMiddle;
+    self.videoPostStatus.frame=NSMakeRect(24,140,560,18); [cv addSubview:self.videoPostStatus];
+    [self.videoPostWindow center];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.videoPostWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)pickVideoForPost:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=NO;
+  p.allowedFileTypes=@[@"mp4",@"mov",@"m4v"];
+  if ([p runModal] != NSModalResponseOK) return;
+  self.videoPostPath = p.URL.path;
+  self.videoPostFileLabel.stringValue = p.URL.lastPathComponent;
+  self.videoPostStatus.stringValue = @"已选择视频";
+  AVAsset *asset = [AVAsset assetWithURL:p.URL];
+  self.videoPostEnd.stringValue = [NSString stringWithFormat:@"%.1f", CMTimeGetSeconds(asset.duration)];
+}
+
+- (NSString *)videoPostOutputPathWithExtension:(NSString *)ext suggested:(NSString *)name {
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  sp.allowedFileTypes = @[ext];
+  sp.nameFieldStringValue = name;
+  if ([sp runModal] != NSModalResponseOK) return nil;
+  return sp.URL.path;
+}
+
+- (void)exportTrimmedVideo:(id)sender {
+  if (!self.videoPostPath.length) { [self showToast:@"请先选择视频"]; return; }
+  NSString *out = [self videoPostOutputPathWithExtension:@"mp4" suggested:@"裁剪-录屏.mp4"];
+  if (!out.length) return;
+  AVAsset *asset = [AVAsset assetWithURL:[NSURL fileURLWithPath:self.videoPostPath]];
+  CGFloat dur = CMTimeGetSeconds(asset.duration);
+  CGFloat start = MAX(0, self.videoPostStart.doubleValue);
+  CGFloat end = self.videoPostEnd.stringValue.length ? self.videoPostEnd.doubleValue : dur;
+  end = MIN(dur, MAX(start + 0.1, end));
+  AVMutableComposition *comp = [AVMutableComposition composition];
+  NSError *err = nil;
+  CMTimeRange range = CMTimeRangeMake(CMTimeMakeWithSeconds(start, 600), CMTimeMakeWithSeconds(end-start, 600));
+  for (AVAssetTrack *track in [asset tracksWithMediaType:AVMediaTypeVideo]) {
+    AVMutableCompositionTrack *ct = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+    if (![ct insertTimeRange:range ofTrack:track atTime:kCMTimeZero error:&err]) { [self showToast:err.localizedDescription ?: @"裁剪失败"]; return; }
+  }
+  for (AVAssetTrack *track in [asset tracksWithMediaType:AVMediaTypeAudio]) {
+    AVMutableCompositionTrack *ct = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+    [ct insertTimeRange:range ofTrack:track atTime:kCMTimeZero error:NULL];
+  }
+  AVAssetExportSession *ex = [AVAssetExportSession exportSessionWithAsset:comp presetName:AVAssetExportPresetHighestQuality];
+  ex.outputURL = [NSURL fileURLWithPath:out];
+  ex.outputFileType = AVFileTypeMPEG4;
+  [self.videoPostStatus setStringValue:@"正在裁剪…"];
+  [ex exportAsynchronouslyWithCompletionHandler:^{
+    dispatch_async(dispatch_get_main_queue(), ^{
+      self.videoPostStatus.stringValue = ex.status == AVAssetExportSessionStatusCompleted ? [NSString stringWithFormat:@"已保存：%@", out.lastPathComponent] : (ex.error.localizedDescription ?: @"裁剪失败");
+      if (ex.status == AVAssetExportSessionStatusCompleted) [self showCaptureResultPanel:out];
+    });
+  }];
+}
+
+- (void)exportCompressedVideo:(id)sender {
+  if (!self.videoPostPath.length) { [self showToast:@"请先选择视频"]; return; }
+  NSInteger idx = self.videoPostQualityPopup.indexOfSelectedItem;
+  if (idx == 3) {
+    NSString *out = [self videoPostOutputPathWithExtension:@"m4a" suggested:@"音频.m4a"];
+    if (!out.length) return;
+    AVAsset *asset = [AVAsset assetWithURL:[NSURL fileURLWithPath:self.videoPostPath]];
+    AVAssetExportSession *ex = [AVAssetExportSession exportSessionWithAsset:asset presetName:AVAssetExportPresetAppleM4A];
+    ex.outputURL=[NSURL fileURLWithPath:out]; ex.outputFileType=AVFileTypeAppleM4A;
+    [self.videoPostStatus setStringValue:@"正在提取音频…"];
+    [ex exportAsynchronouslyWithCompletionHandler:^{ dispatch_async(dispatch_get_main_queue(), ^{
+      self.videoPostStatus.stringValue = ex.status == AVAssetExportSessionStatusCompleted ? [NSString stringWithFormat:@"已保存：%@", out.lastPathComponent] : (ex.error.localizedDescription ?: @"提取失败");
+      if (ex.status == AVAssetExportSessionStatusCompleted) [self showCaptureResultPanel:out];
+    }); }];
+    return;
+  }
+  NSString *preset = idx == 0 ? AVAssetExportPreset1280x720 : (idx == 1 ? AVAssetExportPreset1920x1080 : AVAssetExportPreset960x540);
+  NSString *out = [self videoPostOutputPathWithExtension:@"mp4" suggested:[NSString stringWithFormat:@"压缩-%@.mp4", self.videoPostQualityPopup.titleOfSelectedItem]];
+  if (!out.length) return;
+  AVAsset *asset = [AVAsset assetWithURL:[NSURL fileURLWithPath:self.videoPostPath]];
+  AVAssetExportSession *ex = [AVAssetExportSession exportSessionWithAsset:asset presetName:preset];
+  ex.outputURL=[NSURL fileURLWithPath:out]; ex.outputFileType=AVFileTypeMPEG4;
+  [self.videoPostStatus setStringValue:@"正在压缩…"];
+  [ex exportAsynchronouslyWithCompletionHandler:^{ dispatch_async(dispatch_get_main_queue(), ^{
+    self.videoPostStatus.stringValue = ex.status == AVAssetExportSessionStatusCompleted ? [NSString stringWithFormat:@"已保存：%@", out.lastPathComponent] : (ex.error.localizedDescription ?: @"压缩失败");
+    if (ex.status == AVAssetExportSessionStatusCompleted) [self showCaptureResultPanel:out];
+  }); }];
+}
+
+- (void)exportGIFVideo:(id)sender {
+  if (!self.videoPostPath.length) { [self showToast:@"请先选择视频"]; return; }
+  NSString *out = [self videoPostOutputPathWithExtension:@"gif" suggested:@"动图.gif"];
+  if (!out.length) return;
+  AVAsset *asset = [AVAsset assetWithURL:[NSURL fileURLWithPath:self.videoPostPath]];
+  CGFloat dur = CMTimeGetSeconds(asset.duration);
+  CGFloat start = MAX(0, self.videoPostStart.doubleValue);
+  CGFloat end = self.videoPostEnd.stringValue.length ? self.videoPostEnd.doubleValue : dur;
+  end = MIN(dur, MAX(start + 0.2, end));
+  if (end - start > 10) end = start + 10;
+  self.videoPostStatus.stringValue = @"正在生成 GIF…";
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    AVAssetImageGenerator *gen = [AVAssetImageGenerator assetImageGeneratorWithAsset:asset];
+    gen.appliesPreferredTrackTransform=YES;
+    gen.maximumSize=CGSizeMake(640,640);
+    NSInteger frames = MAX(2, (NSInteger)((end-start)*10));
+    NSMutableArray *images = [NSMutableArray array];
+    for (NSInteger i=0;i<frames;i++) {
+      CGImageRef img = [gen copyCGImageAtTime:CMTimeMakeWithSeconds(start + i/10.0, 600) actualTime:NULL error:NULL];
+      if (img) { [images addObject:CFBridgingRelease(img)]; }
+    }
+    BOOL ok = NO;
+    if (images.count) {
+      CFURLRef url = (__bridge CFURLRef)[NSURL fileURLWithPath:out];
+      CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, kUTTypeGIF, images.count, NULL);
+      if (dest) {
+        NSDictionary *frameProps = @{(__bridge NSString *)kCGImagePropertyGIFDelayTime: @0.1};
+        NSDictionary *gifProps = @{(__bridge NSString *)kCGImagePropertyGIFLoopCount: @0};
+        CGImageDestinationSetProperties(dest, (__bridge CFDictionaryRef)gifProps);
+        for (id img in images) CGImageDestinationAddImage(dest, (__bridge CGImageRef)img, (__bridge CFDictionaryRef)frameProps);
+        ok = CGImageDestinationFinalize(dest); CFRelease(dest);
+      }
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      self.videoPostStatus.stringValue = ok ? [NSString stringWithFormat:@"已保存：%@", out.lastPathComponent] : @"GIF 生成失败";
+      if (ok) [self showCaptureResultPanel:out];
+    });
+  });
+}
+
+- (void)showCaptureResultPanel:(NSString *)path {
+  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+  self.captureResultPath = path;
+  [self.captureResultTimer invalidate];
+  if (self.captureResultWindow) [self.captureResultWindow orderOut:nil];
+  BOOL isVideo = [@[@"mp4",@"mov",@"m4v"] containsObject:path.pathExtension.lowercaseString];
+  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,360,132) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+  w.opaque = NO;
+  w.backgroundColor = [NSColor clearColor];
+  w.level = NSFloatingWindowLevel;
+  w.hasShadow = YES;
+  w.releasedWhenClosed = NO;
+  w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+  NSView *cv = w.contentView;
+  cv.wantsLayer = YES;
+  cv.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.10 alpha:0.94].CGColor;
+  cv.layer.cornerRadius = 14;
+  cv.layer.masksToBounds = YES;
+  NSImageView *thumb = [[NSImageView alloc] initWithFrame:NSMakeRect(12,14,96,104)];
+  thumb.imageScaling = NSImageScaleProportionallyUpOrDown;
+  thumb.wantsLayer = YES; thumb.layer.cornerRadius = 9; thumb.layer.masksToBounds = YES;
+  thumb.image = isVideo ? [[NSWorkspace sharedWorkspace] iconForFile:path] : [[NSImage alloc] initWithContentsOfFile:path];
+  [cv addSubview:thumb];
+  NSTextField *name = [self label:path.lastPathComponent size:12 bold:YES color:[NSColor whiteColor]];
+  name.lineBreakMode = NSLineBreakByTruncatingMiddle;
+  name.frame = NSMakeRect(120,96,224,18); [cv addSubview:name];
+  NSTextField *kind = [self label:isVideo ? @"录屏已保存" : @"截图已保存" size:10 bold:NO color:[NSColor colorWithCalibratedWhite:0.75 alpha:1.0]];
+  kind.frame = NSMakeRect(120,76,224,16); [cv addSubview:kind];
+  NSArray *titles = @[@"复制", @"打开", @"访达", @"AirDrop", @"删除"];
+  NSArray *sels = @[@"copyCaptureResult:", @"openCaptureResult:", @"revealCaptureResult:", @"airdropCaptureResult:", @"trashCaptureResult:"];
+  for (NSInteger i=0;i<5;i++) {
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(120+i*43,32,39,28)];
+    b.title=titles[i]; b.tag=i; b.hoverColor = i==4 ? [NSColor systemRedColor] : [NSColor systemTealColor];
+    b.target=self; b.action=NSSelectorFromString(sels[i]);
+    [b applyColor:[NSColor colorWithCalibratedWhite:0.22 alpha:1.0] textColor:[NSColor whiteColor]];
+    [cv addSubview:b];
+  }
+  ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(328,98,22,22)];
+  close.title=@"×"; close.hoverColor=[NSColor systemRedColor]; close.target=self; close.action=@selector(closeCaptureResult:);
+  [close applyColor:[NSColor colorWithCalibratedWhite:0.20 alpha:1.0] textColor:[NSColor whiteColor]];
+  [cv addSubview:close];
+  NSScreen *scr = [NSScreen mainScreen];
+  NSRect vis = scr.visibleFrame;
+  [w setFrameOrigin:NSMakePoint(NSMaxX(vis)-w.frame.size.width-20, NSMinY(vis)+20)];
+  self.captureResultWindow = w;
+  [w orderFrontRegardless];
+  __weak typeof(self) weakSelf = self;
+  self.captureResultTimer = [NSTimer scheduledTimerWithTimeInterval:12.0 repeats:NO block:^(NSTimer *t) {
+    [weakSelf.captureResultWindow orderOut:nil];
+  }];
+}
+
+- (void)copyCaptureResult:(id)sender {
+  NSString *path = self.captureResultPath;
+  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+  NSPasteboard *pb = [NSPasteboard generalPasteboard];
+  [pb clearContents];
+  if ([@[@"png",@"jpg",@"jpeg",@"tiff",@"heic"] containsObject:path.pathExtension.lowercaseString]) {
+    NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+    if (img) [pb writeObjects:@[img]];
+  } else {
+    [pb writeObjects:@[[NSURL fileURLWithPath:path]]];
+  }
+  [self showToast:@"已复制到剪贴板"];
+}
+
+- (void)openCaptureResult:(id)sender {
+  if (self.captureResultPath.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.captureResultPath]];
+}
+
+- (void)revealCaptureResult:(id)sender {
+  if (self.captureResultPath.length) [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.captureResultPath]]];
+}
+
+- (void)airdropCaptureResult:(id)sender {
+  if (!self.captureResultPath.length) return;
+  NSSharingService *svc = [NSSharingService sharingServiceNamed:NSSharingServiceNameSendViaAirDrop];
+  NSURL *u = [NSURL fileURLWithPath:self.captureResultPath];
+  if ([svc canPerformWithItems:@[u]]) [svc performWithItems:@[u]];
+  else [self showToast:@"附近没有可用的 AirDrop 接收设备"];
+}
+
+- (void)trashCaptureResult:(id)sender {
+  NSString *path = self.captureResultPath;
+  if (!path.length || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+  NSURL *u = [NSURL fileURLWithPath:path];
+  NSError *err = nil;
+  if ([[NSFileManager defaultManager] trashItemAtURL:u resultingItemURL:NULL error:&err]) {
+    [self closeCaptureResult:nil];
+    [self showToast:@"已移到废纸篓"];
+  } else {
+    [self showToast:err.localizedDescription ?: @"删除失败"];
+  }
+}
+
+- (void)closeCaptureResult:(id)sender {
+  [self.captureResultTimer invalidate];
+  [self.captureResultWindow orderOut:nil];
+}
+
 - (void)finalizeCaptureFile:(NSString *)path error:(NSError *)error {
   NSInteger gainDB = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
   BOOL needsAudio = [self fileNeedsAudioMix:path] || (gainDB != 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]);
@@ -19091,6 +19556,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
         weakSelf.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
         [weakSelf showToast:ok ? @"录屏已保存" : @"录屏已保存，音量调整失败"];
+        [weakSelf showCaptureResultPanel:path];
       } else if (error) {
         weakSelf.captureStatusLabel.stringValue = error.localizedDescription ?: @"录屏失败";
         [weakSelf showToast:error.localizedDescription ?: @"录屏失败"];
@@ -19104,6 +19570,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
     self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
     [self showToast:@"录屏已保存"];
+    [self showCaptureResultPanel:path];
   } else if (error) {
     self.captureStatusLabel.stringValue = error.localizedDescription ?: @"录屏失败";
     [self showToast:error.localizedDescription ?: @"录屏失败"];
@@ -19465,6 +19932,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
         if (img) { [[NSPasteboard generalPasteboard] clearContents]; [[NSPasteboard generalPasteboard] writeObjects:@[img]]; }
         [self showToast:@"截图已保存并复制"];
+        [self showCaptureResultPanel:path];
       } else {
         [self showToast:@"截图已取消或没有屏幕录制权限"];
       }
