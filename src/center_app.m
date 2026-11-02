@@ -6989,6 +6989,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if ([hay containsString:@"moonshot"] || [hay containsString:@"kimi"]) return @"kimi";
   if ([hay containsString:@"siliconflow"]) return @"siliconflow";
   if ([hay containsString:@"openrouter"]) return @"openrouter";
+  if ([hay containsString:@"zhipu"] || [hay containsString:@"bigmodel"] || [hay containsString:@"智谱"] || [hay containsString:@"glm"]) return @"zhipu";
   return nil;
 }
 
@@ -7075,7 +7076,12 @@ static BOOL ValidGroupName(NSString *raw) {
       if (quotaMap[@(i)] || i >= (NSInteger)self.aiEntries.count) continue;
       NSMutableDictionary *m = [self.aiEntries[i] mutableCopy];
       NSString *old = m[@"quota"] ?: @"";
-      if (!old.length || [old isEqualToString:@"未填写"]) m[@"quota"] = @"查询失败";
+      NSString *provider = [self quotaProviderKeyForEntry:self.aiEntries[i]];
+      if ([provider isEqualToString:@"zhipu"]) {
+        if (!old.length || [old isEqualToString:@"未填写"] || [old isEqualToString:@"查询失败"]) m[@"quota"] = @"暂不支持自动查询";
+      } else if (!old.length || [old isEqualToString:@"未填写"]) {
+        m[@"quota"] = @"查询失败";
+      }
       self.aiEntries[i] = m;
     }
     [self saveAIEntries];
@@ -16148,6 +16154,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *provider = [self quotaProviderKeyForEntry:e];
   NSString *apiKey = e[@"api"] ?: @"";
   if (!provider || !apiKey.length) { if (completion) completion(nil); return; }
+  if ([provider isEqualToString:@"zhipu"]) { if (completion) completion(nil); return; }
   NSString *url = nil;
   if ([provider isEqualToString:@"deepseek"]) url = @"https://api.deepseek.com/user/balance";
   else if ([provider isEqualToString:@"kimi"]) url = @"https://api.moonshot.cn/v1/users/me/balance";
