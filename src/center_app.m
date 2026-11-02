@@ -1324,7 +1324,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *aiImageWindow, *aiVideoWindow;
 @property (strong) NSPopUpButton *aiImageServicePopup, *aiVideoServicePopup, *aiImageSizePopup, *aiVideoDurationPopup;
 @property (strong) NSTextView *aiImagePrompt, *aiVideoPrompt;
-@property (strong) NSTextField *aiImageModelField, *aiImageURLField, *aiImageStatus, *aiVideoModelField, *aiVideoURLField, *aiVideoStatus;
+@property (strong) NSComboBox *aiImageModelField, *aiVideoModelField;
+@property (strong) NSTextField *aiImageURLField, *aiImageStatus, *aiVideoURLField, *aiVideoStatus;
 @property (strong) NSImageView *aiImagePreview, *aiVideoPreview;
 @property (copy) NSString *aiImageResultPath, *aiVideoResultPath, *aiVideoTaskID, *aiVideoPollURL;
 @property NSInteger aiVideoPollCount;
@@ -19494,23 +19495,43 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger idx = [self.aiVideoServicePopup.selectedItem.representedObject integerValue];
   if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
   NSDictionary *e = self.aiEntries[idx];
-  NSString *name = [e[@"name"] ?: @"" lowercaseString];
+  NSString *name = e[@"name"] ?: @"";
   NSString *base = e[@"apiBase"] ?: @"";
   if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length - @"/chat/completions".length];
   while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
-  NSString *url = @"", *model = @"";
-  if ([name containsString:@"豆包"] || [name containsString:@"方舟"] || [name containsString:@"volcengine"] || [name containsString:@"doubao"]) {
-    if (!base.length) base = @"https://ark.cn-beijing.volces.com/api/v3";
-    url = [base stringByAppendingString:@"/contents/generations/tasks"];
-    model = e[@"videoModel"] ?: @"doubao-seedance-1-0-pro-250528";
-  } else {
-    if (!base.length) base = @"";
-    url = base.length ? [base stringByAppendingString:@"/videos/generations"] : @"";
-    model = e[@"videoModel"] ?: @"";
+  [self.aiVideoModelField removeAllItems];
+  self.aiVideoModelField.stringValue = @"";
+  self.aiVideoURLField.stringValue = @"";
+  self.aiVideoStatus.stringValue = @"";
+  BOOL capable = [self aiServiceSupportsVideo:name];
+  BOOL saved = [(NSString *)(e[@"videoAPI"] ?: @"") length] > 0;
+  if (!capable && !saved) {
+    self.aiVideoStatus.stringValue = @"该 AI 服务只支持文本，暂无视频生成接口";
+    return;
   }
-  self.aiVideoURLField.stringValue = e[@"videoAPI"] ?: url;
-  self.aiVideoModelField.stringValue = model;
+  NSString *defaultURL = @"", *defaultModel = @"";
+  if ([self aiServiceName:name containsAny:@[@"豆包",@"方舟",@"volcengine",@"doubao",@"seedance"]]) {
+    if (!base.length) base = @"https://ark.cn-beijing.volces.com/api/v3";
+    defaultURL = [base stringByAppendingString:@"/contents/generations/tasks"];
+    defaultModel = @"doubao-seedance-1-0-pro-250528";
+  } else if (base.length) {
+    defaultURL = [base stringByAppendingString:@"/videos/generations"];
+  }
+  if (((NSString *)e[@"videoAPI"]).length) defaultURL = e[@"videoAPI"];
+  if (((NSString *)e[@"videoModel"]).length) defaultModel = e[@"videoModel"];
+  self.aiVideoURLField.stringValue = defaultURL;
+  self.aiVideoModelField.stringValue = defaultModel;
+  if (!defaultURL.length) { self.aiVideoStatus.stringValue = @"该服务没有可用的视频生成地址"; return; }
+  NSString *key = e[@"api"] ?: @"";
+  if (!key.length) { self.aiVideoStatus.stringValue = @"缺少 API Key，无法自动获取视频模型"; return; }
+  self.aiVideoStatus.stringValue = @"正在获取视频模型…";
+  __weak typeof(self) weakSelf = self;
+  [self fetchModelsForPanel:self.aiVideoModelField url:defaultURL key:key keywords:@[@"sora",@"seedance",@"veo",@"kling",@"runway",@"luma",@"video",@"minimax",@"hailuo"] knownDefault:defaultModel completion:^(NSArray *models) {
+    if (models.count) { weakSelf.aiVideoStatus.stringValue = [NSString stringWithFormat:@"已获取 %ld 个视频模型", (long)models.count]; }
+    else { weakSelf.aiVideoStatus.stringValue = defaultModel.length ? @"未获取到视频模型，使用默认模型" : @"未获取到视频模型，请手动填写"; }
+  }];
 }
+
 
 - (void)openAIVideoPanel:(id)sender {
   if (!self.aiVideoWindow) {
@@ -19525,8 +19546,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiVideoServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,200,28) pullsDown:NO];
     self.aiVideoServicePopup.target=self; self.aiVideoServicePopup.action=@selector(aiVideoServiceChanged:);
     [cv addSubview:self.aiVideoServicePopup];
-    self.aiVideoModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(232,520,180,28)];
-    self.aiVideoModelField.placeholderString=@"视频模型"; [cv addSubview:self.aiVideoModelField];
+    self.aiVideoModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(232,520,180,28)];
+    self.aiVideoModelField.placeholderString=@"视频模型";
+    self.aiVideoModelField.editable=YES; self.aiVideoModelField.completes=YES;
+    [cv addSubview:self.aiVideoModelField];
     self.aiVideoDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(420,520,120,28) pullsDown:NO];
     [self.aiVideoDurationPopup addItemsWithTitles:@[@"5 秒", @"10 秒"]];
     [cv addSubview:self.aiVideoDurationPopup];
@@ -19667,28 +19690,97 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (self.aiImageServicePopup.numberOfItems) { [self.aiImageServicePopup selectItemAtIndex:0]; [self aiImageServiceChanged:nil]; }
 }
 
+- (BOOL)aiServiceName:(NSString *)name containsAny:(NSArray *)words {
+  NSString *hay = [name lowercaseString] ?: @"";
+  for (NSString *w in words) if ([hay containsString:[w lowercaseString]]) return YES;
+  return NO;
+}
+
+- (BOOL)aiServiceSupportsImage:(NSString *)name {
+  if ([self aiServiceName:name containsAny:@[@"deepseek",@"kimi",@"moonshot",@"claude",@"anthropic",@"mistral",@"qwen",@"千问",@"通义",@"智谱",@"glm",@"ernie",@"文心",@"百川",@"yi",@"零一",@"混元",@"hunyuan",@"groq"]]) return NO;
+  return [self aiServiceName:name containsAny:@[@"openai",@"chatgpt",@"gpt-image",@"dall",@"豆包",@"方舟",@"volcengine",@"doubao",@"seedream",@"siliconflow",@"硅基流动",@"flux",@"stable",@"image",@"图片"]];
+}
+
+- (BOOL)aiServiceSupportsVideo:(NSString *)name {
+  return [self aiServiceName:name containsAny:@[@"豆包",@"方舟",@"volcengine",@"doubao",@"seedance",@"sora",@"runway",@"kling",@"可灵",@"luma",@"minimax",@"海螺",@"veo",@"video",@"视频"]];
+}
+
+- (NSArray<NSString *> *)filterModelIDs:(NSArray *)ids keywords:(NSArray *)keywords {
+  NSMutableArray *out = [NSMutableArray array];
+  for (id m in ids) {
+    if (![m isKindOfClass:[NSString class]]) continue;
+    NSString *low = [m lowercaseString];
+    for (NSString *k in keywords) if ([low containsString:k]) { [out addObject:m]; break; }
+  }
+  return out;
+}
+
+- (void)fetchModelsForPanel:(NSComboBox *)combo url:(NSString *)base key:(NSString *)key keywords:(NSArray *)keywords knownDefault:(NSString *)knownDefault completion:(void (^)(NSArray *models))completion {
+  if (!combo || !base.length || !key.length) { if (completion) completion(@[]); return; }
+  NSString *root = base;
+  if ([root hasSuffix:@"/chat/completions"]) root = [root substringToIndex:root.length - @"/chat/completions".length];
+  while ([root hasSuffix:@"/"]) root = [root substringToIndex:root.length - 1];
+  NSURL *url = [NSURL URLWithString:[root stringByAppendingString:@"/models"]];
+  if (!url) { if (completion) completion(@[]); return; }
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  req.timeoutInterval = 20;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    NSMutableArray *all = [NSMutableArray array];
+    if (data.length) {
+      id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+      id list = [obj isKindOfClass:[NSDictionary class]] ? obj[@"data"] : nil;
+      if ([list isKindOfClass:[NSArray class]]) for (id m in list) { id mid = [m isKindOfClass:[NSDictionary class]] ? m[@"id"] : nil; if ([mid isKindOfClass:[NSString class]]) [all addObject:mid]; }
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      NSArray *filtered = [self filterModelIDs:all keywords:keywords];
+      if (filtered.count) {
+        [combo removeAllItems]; [combo addItemsWithObjectValues:filtered];
+        if (knownDefault.length && [filtered containsObject:knownDefault]) combo.stringValue = knownDefault;
+        else if (!combo.stringValue.length) combo.stringValue = filtered.firstObject;
+      }
+      if (completion) completion(filtered);
+    });
+  }] resume];
+}
+
 - (void)aiImageServiceChanged:(id)sender {
   NSInteger idx = [self.aiImageServicePopup.selectedItem.representedObject integerValue];
   if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
   NSDictionary *e = self.aiEntries[idx];
-  NSString *name = [e[@"name"] ?: @"" lowercaseString];
+  NSString *name = e[@"name"] ?: @"";
   NSString *base = e[@"apiBase"] ?: @"";
-  NSString *model = @"";
-  if (base.length) {
-    if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length - @"/chat/completions".length];
-    while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
+  if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length - @"/chat/completions".length];
+  while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
+  [self.aiImageModelField removeAllItems];
+  self.aiImageModelField.stringValue = @"";
+  self.aiImageURLField.stringValue = @"";
+  self.aiImageStatus.stringValue = @"";
+  if (![self aiServiceSupportsImage:name]) {
+    self.aiImageStatus.stringValue = @"该 AI 服务只支持文本，暂无图片生成接口";
+    return;
   }
-  if (!base.length) {
-    if ([name containsString:@"openai"] || [name containsString:@"chatgpt"]) base = @"https://api.openai.com/v1";
-    else if ([name containsString:@"豆包"] || [name containsString:@"方舟"] || [name containsString:@"volcengine"] || [name containsString:@"doubao"]) base = @"https://ark.cn-beijing.volces.com/api/v3";
-    else if ([name containsString:@"siliconflow"] || [name containsString:@"硅基流动"]) base = @"https://api.siliconflow.cn/v1";
-  }
-  if ([name containsString:@"openai"] || [name containsString:@"chatgpt"]) model = @"gpt-image-1";
-  else if ([name containsString:@"siliconflow"] || [name containsString:@"硅基流动"]) model = @"black-forest-labs/FLUX.1-schnell";
-  else if ([name containsString:@"豆包"] || [name containsString:@"方舟"] || [name containsString:@"volcengine"] || [name containsString:@"doubao"]) model = @"doubao-seedream-3-0-t2i-250415";
-  self.aiImageURLField.stringValue = e[@"imageAPI"] ?: (base.length ? [base stringByAppendingString:@"/images/generations"] : @"");
-  self.aiImageModelField.stringValue = e[@"imageModel"] ?: model;
+  NSString *key = e[@"api"] ?: @"";
+  NSString *defaultURL = @"", *defaultModel = @"";
+  NSString *low = [name lowercaseString];
+  if ([low containsString:@"openai"] || [low containsString:@"chatgpt"]) { defaultURL = @"https://api.openai.com/v1/images/generations"; defaultModel = @"gpt-image-1"; }
+  else if ([low containsString:@"豆包"] || [low containsString:@"方舟"] || [low containsString:@"volcengine"] || [low containsString:@"doubao"]) { defaultURL = @"https://ark.cn-beijing.volces.com/api/v3/images/generations"; defaultModel = @"doubao-seedream-3-0-t2i-250415"; }
+  else if ([low containsString:@"siliconflow"] || [low containsString:@"硅基流动"]) { defaultURL = @"https://api.siliconflow.cn/v1/images/generations"; defaultModel = @"black-forest-labs/FLUX.1-schnell"; }
+  else if (base.length) defaultURL = [base stringByAppendingString:@"/images/generations"];
+  if (((NSString *)e[@"imageAPI"]).length) defaultURL = e[@"imageAPI"];
+  if (((NSString *)e[@"imageModel"]).length) defaultModel = e[@"imageModel"];
+  self.aiImageURLField.stringValue = defaultURL;
+  self.aiImageModelField.stringValue = defaultModel;
+  if (!defaultURL.length) { self.aiImageStatus.stringValue = @"该服务没有可用的图片生成地址"; return; }
+  if (!key.length) { self.aiImageStatus.stringValue = @"缺少 API Key，无法自动获取图片模型"; return; }
+  self.aiImageStatus.stringValue = @"正在获取图片模型…";
+  __weak typeof(self) weakSelf = self;
+  [self fetchModelsForPanel:self.aiImageModelField url:defaultURL key:key keywords:@[@"dall-e",@"gpt-image",@"image",@"flux",@"seedream",@"stable",@"sdxl",@"midjourney",@"imagen"] knownDefault:defaultModel completion:^(NSArray *models) {
+    if (models.count) { weakSelf.aiImageStatus.stringValue = [NSString stringWithFormat:@"已获取 %ld 个图片模型", (long)models.count]; }
+    else { weakSelf.aiImageModelField.stringValue = defaultModel; weakSelf.aiImageStatus.stringValue = @"未获取到图片模型，使用默认模型"; }
+  }];
 }
+
 
 - (void)openAIImagePanel:(id)sender {
   if (!self.aiImageWindow) {
@@ -19703,8 +19795,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiImageServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,200,28) pullsDown:NO];
     self.aiImageServicePopup.target=self; self.aiImageServicePopup.action=@selector(aiImageServiceChanged:);
     [cv addSubview:self.aiImageServicePopup];
-    self.aiImageModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(232,520,180,28)];
-    self.aiImageModelField.placeholderString=@"图片模型"; [cv addSubview:self.aiImageModelField];
+    self.aiImageModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(232,520,180,28)];
+    self.aiImageModelField.placeholderString=@"图片模型";
+    self.aiImageModelField.editable=YES; self.aiImageModelField.completes=YES;
+    [cv addSubview:self.aiImageModelField];
     self.aiImageSizePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(420,520,120,28) pullsDown:NO];
     [self.aiImageSizePopup addItemsWithTitles:@[@"1024x1024", @"1792x1024", @"1024x1792", @"512x512"]];
     [cv addSubview:self.aiImageSizePopup];
