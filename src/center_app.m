@@ -1323,7 +1323,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *aiAssistantWindow;
 @property (strong) NSTextView *aiAssistantInput, *aiAssistantOutput;
 @property (strong) NSPopUpButton *aiAssistantServicePopup, *aiAssistantModePopup;
-@property (strong) NSTextField *aiAssistantModelField, *aiAssistantURLField, *aiAssistantStatus;
+@property (strong) NSComboBox *aiAssistantModelField;
+@property (strong) NSTextField *aiAssistantURLField, *aiAssistantStatus;
 @property BOOL aiAssistantBusy;
 @property (strong) NSTextField *videoPostFileLabel, *videoPostStart, *videoPostEnd, *videoPostStatus;
 @property (strong) NSPopUpButton *videoPostQualityPopup;
@@ -19416,10 +19417,50 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (self.aiAssistantServicePopup.numberOfItems) { [self.aiAssistantServicePopup selectItemAtIndex:0]; [self aiAssistantServiceChanged:nil]; }
 }
 
+- (void)fetchAIModelsForAssistant:(id)sender {
+  NSInteger idx = [self.aiAssistantServicePopup.selectedItem.representedObject integerValue];
+  if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
+  NSDictionary *e = self.aiEntries[idx];
+  NSString *key = e[@"api"] ?: @"";
+  NSString *base = self.aiAssistantURLField.stringValue ?: @"";
+  if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length - @"/chat/completions".length];
+  while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
+  if (!base.length || !key.length) { self.aiAssistantStatus.stringValue = @"需要 API 基础地址和 Key 才能获取模型"; return; }
+  self.aiAssistantStatus.stringValue = @"正在获取模型列表…";
+  NSURL *url = [NSURL URLWithString:[base stringByAppendingString:@"/models"]];
+  if (!url) { self.aiAssistantStatus.stringValue = @"API 地址无效"; return; }
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  req.timeoutInterval = 20;
+  __weak typeof(self) weakSelf = self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    NSMutableArray *models = [NSMutableArray array];
+    if (data.length) {
+      id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+      id list = [obj isKindOfClass:[NSDictionary class]] ? obj[@"data"] : nil;
+      if ([list isKindOfClass:[NSArray class]]) for (id m in list) {
+        NSString *mid = [m isKindOfClass:[NSDictionary class]] ? m[@"id"] : nil;
+        if (mid.length) [models addObject:mid];
+      }
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!models.count) { weakSelf.aiAssistantStatus.stringValue = err.localizedDescription ?: @"未获取到模型，可手动输入"; return; }
+      [models sortUsingSelector:@selector(localizedStandardCompare:)];
+      NSString *current = weakSelf.aiAssistantModelField.stringValue;
+      [weakSelf.aiAssistantModelField removeAllItems];
+      [weakSelf.aiAssistantModelField addItemsWithObjectValues:models];
+      if (current.length && [models containsObject:current]) weakSelf.aiAssistantModelField.stringValue = current;
+      else weakSelf.aiAssistantModelField.stringValue = models.firstObject;
+      weakSelf.aiAssistantStatus.stringValue = [NSString stringWithFormat:@"已获取 %ld 个模型，可下拉选择", (long)models.count];
+    });
+  }] resume];
+}
+
 - (void)aiAssistantServiceChanged:(id)sender {
   NSInteger idx = [self.aiAssistantServicePopup.selectedItem.representedObject integerValue];
   if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
   [self aiAssistantApplyEndpointDefaults:self.aiEntries[idx]];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self fetchAIModelsForAssistant:nil]; });
 }
 
 - (void)openAIAssistant:(id)sender {
@@ -19438,8 +19479,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiAssistantModePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(236,478,140,28) pullsDown:NO];
     [self.aiAssistantModePopup addItemsWithTitles:@[@"总结", @"润色", @"翻译成中文", @"自定义"]];
     [cv addSubview:self.aiAssistantModePopup];
-    self.aiAssistantModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(388,478,150,28)];
-    self.aiAssistantModelField.placeholderString=@"模型"; [cv addSubview:self.aiAssistantModelField];
+    self.aiAssistantModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(388,478,150,28)];
+    self.aiAssistantModelField.placeholderString=@"模型";
+    self.aiAssistantModelField.editable=YES; self.aiAssistantModelField.completes=YES;
+    [cv addSubview:self.aiAssistantModelField];
+    ColorHoverButton *refreshModels = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(544,478,30,28)];
+    refreshModels.title=@"↻"; refreshModels.toolTip=@"刷新模型列表";
+    refreshModels.hoverColor=[NSColor systemTealColor]; refreshModels.target=self;
+    refreshModels.action=@selector(fetchAIModelsForAssistant:);
+    [refreshModels applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:refreshModels];
     self.aiAssistantURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,444,600,28)];
     self.aiAssistantURLField.placeholderString=@"API 地址（/v1/chat/completions）"; [cv addSubview:self.aiAssistantURLField];
     NSScrollView *inScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,270,610,170)];
