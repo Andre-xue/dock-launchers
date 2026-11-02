@@ -15858,6 +15858,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     quickPanelBtn.action = @selector(openQuickPanelFromPopover:);
     quickPanelBtn.toolTip = @"打开快速面板";
     [root addSubview:quickPanelBtn];
+    NSButton *consoleBtn = [[NSButton alloc] initWithFrame:NSMakeRect(8, 4, 28, 28)];
+    consoleBtn.bordered = NO;
+    consoleBtn.bezelStyle = NSBezelStyleInline;
+    NSImage *consoleIcon = [self characterImage:24];
+    consoleIcon.size = NSMakeSize(24, 24);
+    consoleBtn.image = consoleIcon;
+    consoleBtn.imageScaling = NSImageScaleProportionallyDown;
+    consoleBtn.target = self;
+    consoleBtn.action = @selector(openConsoleFromPopover:);
+    consoleBtn.toolTip = @"打开 DockLaunchers 控制台";
+    [root addSubview:consoleBtn];
     [self radialApplyPage];
     pop.contentSize = NSMakeSize(340, 360);
   } else {
