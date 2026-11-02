@@ -20265,7 +20265,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)beginMicBoostIfNeeded {
   if (self.micBoostActive) return;
   if (!self.captureMicCheck || self.captureMicCheck.state != NSControlStateValueOn) return;
-  if (self.captureMicBoostCheck && self.captureMicBoostCheck.state != NSControlStateValueOn) return;
+  NSInteger gain = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
+  if (gain <= 0) return;
   NSInteger old = [self systemInputVolume];
   if (old < 0) return;
   self.micBoostOldVolume = old;
@@ -20312,7 +20313,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)showCaptureTool:(id)sender {
   if (!self.captureWindow) {
-    self.captureWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1040,600) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.captureWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,940,600) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.captureWindow.title = @"截图 / 录屏";
     self.captureWindow.releasedWhenClosed = NO;
     self.captureWindow.level = NSNormalWindowLevel;
@@ -20459,6 +20460,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSArray *gains = @[@0, @6, @12];
     for (NSNumber *g in gains) { [self.captureMicGainPopup addItemWithTitle:[NSString stringWithFormat:@"%@%ld dB", [g integerValue] > 0 ? @"+" : @"", (long)[g integerValue]]]; self.captureMicGainPopup.lastItem.representedObject = g; }
     self.captureMicGainPopup.target = self; self.captureMicGainPopup.action = @selector(captureMicGainChanged:);
+    self.captureMicGainPopup.toolTip = @"选择 +6/+12 dB 时，录制期间会同时把系统麦克风输入音量提升到 100%";
     [cv addSubview:self.captureMicGainPopup];
     self.captureMicLevelIndicator = [[NSLevelIndicator alloc] initWithFrame:NSMakeRect(640, 286, 280, 8)];
     self.captureMicLevelIndicator.minValue = 0;
@@ -20468,12 +20470,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureMicLevelIndicator.levelIndicatorStyle = NSLevelIndicatorStyleContinuousCapacity;
     self.captureMicLevelIndicator.toolTip = @"麦克风实时电平（录音前检测）";
     [cv addSubview:self.captureMicLevelIndicator];
-    self.captureMicBoostCheck = [NSButton checkboxWithTitle:@"麦克风增强" target:self action:@selector(captureMicBoostChanged:)];
-    self.captureMicBoostCheck.frame = NSMakeRect(930, 314, 105, 22);
-    id boostVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureMicBoost"];
-    self.captureMicBoostCheck.state = (boostVal ? [boostVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
-    self.captureMicBoostCheck.toolTip = @"录制时临时把系统麦克风输入音量调到 100%，结束后恢复";
-    [cv addSubview:self.captureMicBoostCheck];
 
     // Row 5: screenshot action; recording countdown/pointer.
     ColorHoverButton *historyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 264, 120, 32)];
@@ -20554,7 +20550,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     close.target = self; close.action = @selector(closeCaptureTool:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     // Compact the window: pull the content up and add two folder shortcuts.
-    [self.captureWindow setContentSize:NSMakeSize(1040, 520)];
+    [self.captureWindow setContentSize:NSMakeSize(940, 520)];
     for (NSView *v in cv.subviews) if (v.frame.origin.y > 30) v.frame = NSOffsetRect(v.frame, 0, -80);
     ColorHoverButton *imgFolderBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 58, 140, 32)];
     imgFolderBtn.title = @"打开截图文件夹"; imgFolderBtn.hoverColor = [NSColor systemBlueColor];
