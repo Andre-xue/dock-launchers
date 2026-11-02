@@ -1345,6 +1345,11 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) id clickGlobalMonitor, clickLocalMonitor;
 @property (strong) NSMutableArray *clickRingWindows;
 @property (strong) NSButton *captureCursorCheck, *captureClickCheck;
+@property (strong) NSButton *captureSplitAudioCheck, *captureKeyDisplayCheck;
+@property (strong) id captureKeyMonitor;
+@property (strong) NSWindow *captureKeyWindow;
+@property (strong) NSTextField *captureKeyLabel;
+@property (strong) NSTimer *captureKeyTimer;
 @property (strong) NSSegmentedControl *capturePiPShapeControl;
 @property BOOL captureUsePreviewOverlay;
 @property (strong) NSPopUpButton *captureNoisePopup;
@@ -19282,6 +19287,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     vidFolderBtn.title = @"打开录屏文件夹"; vidFolderBtn.hoverColor = [NSColor systemPurpleColor];
     vidFolderBtn.target = self; vidFolderBtn.action = @selector(openCaptureVideoFolder:);
     [vidFolderBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:vidFolderBtn];
+    self.captureSplitAudioCheck = [NSButton checkboxWithTitle:@"音频分轨" target:self action:@selector(captureOptionsChanged:)];
+    self.captureSplitAudioCheck.frame = NSMakeRect(640, 62, 82, 22);
+    self.captureSplitAudioCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureSplitAudio"] ? NSControlStateValueOn : NSControlStateValueOff;
+    self.captureSplitAudioCheck.toolTip = @"录制结束后额外导出独立音轨文件";
+    [cv addSubview:self.captureSplitAudioCheck];
+    self.captureKeyDisplayCheck = [NSButton checkboxWithTitle:@"按键显示" target:self action:@selector(captureOptionsChanged:)];
+    self.captureKeyDisplayCheck.frame = NSMakeRect(726, 62, 82, 22);
+    self.captureKeyDisplayCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureKeyDisplay"] ? NSControlStateValueOn : NSControlStateValueOff;
+    self.captureKeyDisplayCheck.toolTip = @"录制时在屏幕底部显示按键";
+    [cv addSubview:self.captureKeyDisplayCheck];
     [self.captureWindow center];
   }
 
@@ -21324,6 +21339,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
         weakSelf.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
         [weakSelf showToast:ok ? @"录屏已保存" : @"录屏已保存，音量调整失败"];
+        if (weakSelf.captureSplitAudioCheck.state == NSControlStateValueOn) {
+          [weakSelf exportSplitAudioTracksForFile:path completion:^(NSInteger count) {
+            if (count > 0) [weakSelf showToast:[NSString stringWithFormat:@"已导出 %ld 个独立音轨", (long)count]];
+          }];
+        }
         [weakSelf showCaptureResultPanel:path];
       } else if (error) {
         weakSelf.captureStatusLabel.stringValue = error.localizedDescription ?: @"录屏失败";
@@ -21338,6 +21358,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
     self.captureStatusLabel.stringValue = [NSString stringWithFormat:@"录屏已保存：%@", path.lastPathComponent];
     [self showToast:@"录屏已保存"];
+    if (self.captureSplitAudioCheck.state == NSControlStateValueOn) {
+      [self exportSplitAudioTracksForFile:path completion:^(NSInteger count) {
+        if (count > 0) [self showToast:[NSString stringWithFormat:@"已导出 %ld 个独立音轨", (long)count]];
+      }];
+    }
     [self showCaptureResultPanel:path];
   } else if (error) {
     self.captureStatusLabel.stringValue = error.localizedDescription ?: @"录屏失败";
@@ -21345,6 +21370,112 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   } else {
     self.captureStatusLabel.stringValue = @"录屏已取消";
   }
+}
+
+- (void)captureOptionsChanged:(id)sender {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  [ud setBool:self.captureSplitAudioCheck.state == NSControlStateValueOn forKey:@"centerCaptureSplitAudio"];
+  [ud setBool:self.captureKeyDisplayCheck.state == NSControlStateValueOn forKey:@"centerCaptureKeyDisplay"];
+  [ud synchronize];
+}
+
+- (void)stopKeyDisplay {
+  if (self.captureKeyMonitor) { [NSEvent removeMonitor:self.captureKeyMonitor]; self.captureKeyMonitor = nil; }
+  [self.captureKeyTimer invalidate]; self.captureKeyTimer = nil;
+  [self.captureKeyWindow orderOut:nil];
+  self.captureKeyWindow = nil;
+}
+
+- (NSString *)displayStringForKeyEvent:(NSEvent *)e {
+  NSMutableString *s = [NSMutableString string];
+  NSEventModifierFlags f = e.modifierFlags;
+  if (f & NSEventModifierFlagControl) [s appendString:@"⌃"];
+  if (f & NSEventModifierFlagOption) [s appendString:@"⌥"];
+  if (f & NSEventModifierFlagShift) [s appendString:@"⇧"];
+  if (f & NSEventModifierFlagCommand) [s appendString:@"⌘"];
+  NSString *key = e.charactersIgnoringModifiers.uppercaseString ?: @"";
+  if (e.keyCode == 36) key = @"Return";
+  else if (e.keyCode == 48) key = @"Tab";
+  else if (e.keyCode == 49) key = @"Space";
+  else if (e.keyCode == 51) key = @"Delete";
+  else if (e.keyCode == 53) key = @"Esc";
+  else if (e.keyCode == 123) key = @"←";
+  else if (e.keyCode == 124) key = @"→";
+  else if (e.keyCode == 125) key = @"↓";
+  else if (e.keyCode == 126) key = @"↑";
+  if (!key.length) key = [NSString stringWithFormat:@"Key%u", (unsigned)e.keyCode];
+  [s appendString:key];
+  return s;
+}
+
+- (void)showKeyDisplay:(NSString *)text {
+  if (!text.length) return;
+  if (!self.captureKeyWindow) {
+    NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,260,56) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    w.opaque = NO;
+    w.backgroundColor = [NSColor colorWithCalibratedWhite:0.08 alpha:0.88];
+    w.level = NSFloatingWindowLevel;
+    w.hasShadow = YES;
+    w.ignoresMouseEvents = YES;
+    w.sharingType = NSWindowSharingReadOnly;
+    w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+    NSView *cv = w.contentView;
+    cv.wantsLayer = YES; cv.layer.cornerRadius = 12; cv.layer.masksToBounds = YES;
+    self.captureKeyLabel = [self label:@"" size:20 bold:YES color:[NSColor whiteColor]];
+    self.captureKeyLabel.alignment = NSTextAlignmentCenter;
+    self.captureKeyLabel.frame = NSMakeRect(10,15,240,26);
+    [cv addSubview:self.captureKeyLabel];
+    self.captureKeyWindow = w;
+  }
+  self.captureKeyLabel.stringValue = text;
+  NSScreen *scr = [NSScreen mainScreen];
+  NSRect vis = scr.visibleFrame;
+  [self.captureKeyWindow setFrameOrigin:NSMakePoint(NSMidX(vis)-130, NSMinY(vis)+70)];
+  [self.captureKeyWindow orderFrontRegardless];
+  [self.captureKeyTimer invalidate];
+  __weak typeof(self) weakSelf = self;
+  self.captureKeyTimer = [NSTimer scheduledTimerWithTimeInterval:1.6 repeats:NO block:^(NSTimer *t) { [weakSelf.captureKeyWindow orderOut:nil]; }];
+}
+
+- (void)startKeyDisplayIfNeeded {
+  [self stopKeyDisplay];
+  if (self.captureKeyDisplayCheck.state != NSControlStateValueOn) return;
+  __weak typeof(self) weakSelf = self;
+  self.captureKeyMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^(NSEvent *e) {
+    [weakSelf showKeyDisplay:[weakSelf displayStringForKeyEvent:e]];
+  }];
+}
+
+- (void)exportSplitAudioTracksForFile:(NSString *)path completion:(void (^)(NSInteger count))completion {
+  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
+  [asset loadValuesAsynchronouslyForKeys:@[@"tracks"] completionHandler:^{
+    NSError *loadErr = nil;
+    AVKeyValueStatus st = [asset statusOfValueForKey:@"tracks" error:&loadErr];
+    NSArray<AVAssetTrack *> *audios = st == AVKeyValueStatusLoaded ? [asset tracksWithMediaType:AVMediaTypeAudio] : @[];
+    if (!audios.count) { dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(0); }); return; }
+    dispatch_group_t group = dispatch_group_create();
+    __block NSInteger done = 0;
+    NSString *base = [path stringByDeletingPathExtension];
+    for (NSInteger i = 0; i < (NSInteger)audios.count; i++) {
+      AVAssetTrack *track = audios[i];
+      AVMutableComposition *comp = [AVMutableComposition composition];
+      AVMutableCompositionTrack *ct = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+      [ct insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:track atTime:kCMTimeZero error:NULL];
+      NSString *outPath = [NSString stringWithFormat:@"%@-音轨%ld.m4a", base, (long)(i+1)];
+      AVAssetExportSession *ex = [AVAssetExportSession exportSessionWithAsset:comp presetName:AVAssetExportPresetAppleM4A];
+      ex.outputURL = [NSURL fileURLWithPath:outPath];
+      ex.outputFileType = AVFileTypeAppleM4A;
+      [[NSFileManager defaultManager] removeItemAtPath:outPath error:NULL];
+      dispatch_group_enter(group);
+      [ex exportAsynchronouslyWithCompletionHandler:^{
+        if (ex.status == AVAssetExportSessionStatusCompleted) done++;
+        dispatch_group_leave(group);
+      }];
+    }
+    dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+      if (completion) completion(done);
+    });
+  }];
 }
 
 - (void)startCaptureHUD {
@@ -21421,6 +21552,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureRecording = NO;
   self.capturePaused = NO;
   [self stopCaptureHUD];
+  [self stopKeyDisplay];
   self.capturePauseButton.hidden = YES;
   self.captureRecordButton.title = @"开始录屏";
   self.captureRecordButton.hoverColor = [NSColor systemRedColor];
@@ -21448,6 +21580,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.captureUsePreviewOverlay = (scene == DLRecordSceneFull || scene == DLRecordSceneRegion) && camUID.length > 0;
   [self startCameraPreviewIfNeeded];
   [self startCaptureHUD];
+  [self captureOptionsChanged:nil];
+  [self startKeyDisplayIfNeeded];
   self.captureRecordButton.title = @"停止录屏";
   self.capturePauseButton.hidden = NO;
   self.capturePauseButton.title = @"暂停";
@@ -21485,10 +21619,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (self.capturePaused) {
     [self.captureRecorder resume];
     [self startCameraMovieIfNeeded];
+    [self startKeyDisplayIfNeeded];
     self.capturePaused = NO;
     self.capturePauseButton.title = @"暂停";
     self.captureStatusLabel.stringValue = @"继续录制…";
   } else {
+    [self stopKeyDisplay];
     if (self.captureCameraMovieOutput.isRecording) {
       self.captureCameraPauseStopping = YES;
       [self.captureCameraMovieOutput stopRecording];
