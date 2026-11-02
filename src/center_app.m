@@ -15687,8 +15687,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.radialCustomWindow center];
   }
   [self refreshRadialCustomChecks];
-  [NSApp activateIgnoringOtherApps:YES];
-  [self.radialCustomWindow makeKeyAndOrderFront:nil];
+  [self forceWindowToFront:self.radialCustomWindow];
 }
 
 - (void)radialPageCheckChanged:(id)sender { [self updateRadialCustomCheckStates]; }
@@ -17637,8 +17636,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.privacyWindow center];
   }
-  [NSApp activateIgnoringOtherApps:YES];
-  [self.privacyWindow makeKeyAndOrderFront:nil];
+  [self forceWindowToFront:self.privacyWindow];
 }
 
 - (void)openPrivacyPane:(NSButton *)sender {
@@ -17699,8 +17697,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.automationWindow center];
   }
   [self.automationTable reloadData];
-  [NSApp activateIgnoringOtherApps:YES];
-  [self.automationWindow makeKeyAndOrderFront:nil];
+  [self forceWindowToFront:self.automationWindow];
 }
 
 - (void)closeAutomationRules:(id)sender { [self.automationWindow orderOut:nil]; }
@@ -20405,7 +20402,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [cv addSubview:self.captureSystemAudioCheck];
     self.captureMicCheck = [NSButton checkboxWithTitle:@"麦克风" target:self action:@selector(captureAudioChanged:)];
     self.captureMicCheck.frame = NSMakeRect(744, 314, 90, 22);
-    self.captureMicCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"] ? NSControlStateValueOn : NSControlStateValueOff;
+    id micVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureMicrophone"];
+    self.captureMicCheck.state = (micVal ? [micVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
     [cv addSubview:self.captureMicCheck];
     self.captureMicGainPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(838, 312, 86, 26) pullsDown:NO];
     NSArray *gains = @[@0, @6, @12];
@@ -22378,8 +22376,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.voiceTextStatus.frame = NSMakeRect(24, 40, 580, 18); [cv addSubview:self.voiceTextStatus];
     [self.voiceTextWindow center];
   }
-  [NSApp activateIgnoringOtherApps:YES];
-  [self.voiceTextWindow makeKeyAndOrderFront:nil];
+  if (!self.voiceTextPath.length) {
+    NSString *latest = [self latestRecordingFilePath];
+    if (latest.length) {
+      self.voiceTextPath = latest;
+      self.voiceTextStatus.stringValue = [NSString stringWithFormat:@"已选择最近录屏：%@，点开始转写", latest.lastPathComponent];
+    }
+  }
+  [self forceWindowToFront:self.voiceTextWindow];
 }
 
 - (void)pickVoiceTextFile:(id)sender {
@@ -22397,6 +22401,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if (text.length) { self.voiceTextOutput.string = text; self.voiceTextStatus.stringValue = final ? @"转写完成" : @"正在识别…"; }
     if (final) {
       if (error) self.voiceTextStatus.stringValue = error.localizedDescription ?: @"转写失败";
+      else if (!self.voiceTextOutput.string.length) self.voiceTextStatus.stringValue = @"没有识别到语音：请确认录屏包含麦克风声音，录音不是静音";
       else self.voiceTextStatus.stringValue = @"转写完成";
     }
   }];
@@ -22463,8 +22468,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.meetingWindow center];
   }
-  [NSApp activateIgnoringOtherApps:YES];
-  [self.meetingWindow makeKeyAndOrderFront:nil];
+  if (!self.meetingPath.length) {
+    NSString *latest = [self latestRecordingFilePath];
+    if (latest.length) {
+      self.meetingPath = latest;
+      self.meetingPathLabel.stringValue = [NSString stringWithFormat:@"最近录屏：%@", latest.lastPathComponent];
+      self.meetingStatus.stringValue = @"已自动选择最近录屏，点开始转写";
+    }
+  }
+  [self forceWindowToFront:self.meetingWindow];
 }
 
 - (void)closeMeetingAssistant:(id)sender { [self.meetingWindow orderOut:nil]; }
@@ -22484,7 +22496,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.meetingStatus.stringValue = @"正在识别语音…";
   [self transcribeMediaAtPath:self.meetingPath update:^(NSString *text, BOOL final, NSError *error) {
     if (text.length) self.meetingTranscript.string = text;
-    if (final) self.meetingStatus.stringValue = error ? (error.localizedDescription ?: @"转写失败") : @"转写完成，可生成 AI 纪要";
+    if (final) {
+      if (error) self.meetingStatus.stringValue = error.localizedDescription ?: @"转写失败";
+      else if (!self.meetingTranscript.string.length) self.meetingStatus.stringValue = @"没有识别到语音：请确认录屏包含麦克风声音，或换一个带人声的录屏";
+      else self.meetingStatus.stringValue = @"转写完成，可生成 AI 纪要";
+    }
   }];
 }
 
@@ -23649,6 +23665,28 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   dispatch_async(dispatch_get_main_queue(), ^{ [self showQuickPanel]; });
 }
 
+- (void)forceWindowToFront:(NSWindow *)w {
+  if (!w) return;
+  [self restoreDockIcon];
+  [NSApp activateIgnoringOtherApps:YES];
+  [w makeKeyAndOrderFront:nil];
+  [w orderFrontRegardless];
+  [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (NSString *)latestRecordingFilePath {
+  NSString *dir = [self captureVideoDirectory];
+  NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+  NSString *latest = nil; NSDate *latestDate = nil;
+  for (NSString *f in files) {
+    if (![[f.pathExtension lowercaseString] isEqualToString:@"mp4"]) continue;
+    NSString *p = [dir stringByAppendingPathComponent:f];
+    NSDate *d = [[NSFileManager defaultManager] attributesOfItemAtPath:p error:NULL][NSFileModificationDate];
+    if (!latestDate || [d compare:latestDate] == NSOrderedDescending) { latest = p; latestDate = d; }
+  }
+  return latest;
+}
+
 - (void)openConsoleFromPopover:(id)sender {
   [self.popover performClose:nil];
   [self restoreDockIcon];
@@ -24494,6 +24532,21 @@ int main(int argc, const char *argv[]) {
     Method m1 = class_getInstanceMethod([NSAlert class], @selector(runModal));
     Method m2 = class_getInstanceMethod([NSAlert class], @selector(dl_runModalFront));
     if (m1 && m2) method_exchangeImplementations(m1, m2);
+    if (getenv("DOCKLAUNCHERS_TEST_SPEECH2")) {
+      Controller *tc = [[Controller alloc] init];
+      NSApp.delegate = tc;
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+        SFSpeechRecognizerAuthorizationStatus st = [SFSpeechRecognizer authorizationStatus];
+        SFSpeechRecognizer *r = [[SFSpeechRecognizer alloc] initWithLocale:[NSLocale localeWithLocaleIdentifier:@"zh-CN"]];
+        NSString *diag = [NSString stringWithFormat:@"auth=%ld rec=%@ avail=%d ondevice=%d\n", (long)st, r ? @"yes" : @"nil", r.isAvailable, [r supportsOnDeviceRecognition]];
+        [diag writeToFile:@"/tmp/dl_speech_diag.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        [tc transcribeMediaAtPath:@"/tmp/dl_speech_test.aiff" update:^(NSString *text, BOOL final, NSError *error) {
+          NSString *log = [NSString stringWithFormat:@"final=%d text=%@ err=%@\n", final, text ?: @"", error.localizedDescription ?: @""];
+          [log writeToFile:@"/tmp/dl_speech_result2.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        }];
+      });
+      [NSApp run]; return 0;
+    }
     Controller *c = [[Controller alloc] init];
     NSApp.delegate = c;
     [NSApp run];
