@@ -21932,7 +21932,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if(!model.length){
     if([name containsString:@"openai"]||[name containsString:@"chatgpt"]) model=@"gpt-4o-mini";
     else if([name containsString:@"gemini"]||[name containsString:@"谷歌"]) model=@"gemini-1.5-flash";
-    else if([name containsString:@"siliconflow"]||[name containsString:@"硅基流动"]) model=@"Qwen/Qwen2-VL-7B-Instruct";
+    else if([name containsString:@"siliconflow"]||[name containsString:@"硅基流动"]) model=@"Qwen/Qwen3-VL-32B-Instruct";
   }
   self.aiVisionModelField.stringValue=model;
   if (!model.length) self.aiVisionStatus.stringValue=@"该服务未配置模型，请先在 AI 管理填写模型或视觉模型";
