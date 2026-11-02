@@ -1228,7 +1228,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) id clickGlobalMonitor, clickLocalMonitor;
 @property (strong) NSMutableArray *clickRingWindows;
 @property (strong) NSButton *captureCursorCheck, *captureClickCheck;
-@property (strong) NSButton *capturePiPShapeCheck;
+@property (strong) NSSegmentedControl *capturePiPShapeControl;
 @property BOOL captureUsePreviewOverlay;
 @property (strong) NSPopUpButton *captureNoisePopup;
 @property (strong) NSButton *captureSystemAudioCheck, *captureMicCheck;
@@ -16994,7 +16994,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)capturePiPShapeChanged:(id)sender {
-  BOOL round = self.capturePiPShapeCheck.state == NSControlStateValueOn;
+  BOOL round = self.capturePiPShapeControl.selectedSegment == 0;
   [[NSUserDefaults standardUserDefaults] setBool:round forKey:@"centerCapturePiPShape"];
   if (self.captureCameraWindow.contentView) {
     CGFloat r = round ? self.captureCameraWindow.frame.size.width / 2.0 : 12.0;
@@ -17459,14 +17459,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.captureCursorCheck.frame = NSMakeRect(650, 266, 96, 22);
     [cv addSubview:self.captureCursorCheck];
     self.captureClickCheck = [NSButton checkboxWithTitle:@"点击高亮" target:self action:@selector(capturePointerChanged:)];
-    self.captureClickCheck.frame = NSMakeRect(754, 266, 100, 22);
+    self.captureClickCheck.frame = NSMakeRect(742, 266, 96, 22);
     [cv addSubview:self.captureClickCheck];
-    self.capturePiPShapeCheck = [NSButton checkboxWithTitle:@"圆形" target:self action:@selector(capturePiPShapeChanged:)];
-    self.capturePiPShapeCheck.frame = NSMakeRect(862, 266, 62, 22);
+    self.capturePiPShapeControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(842, 266, 90, 22)];
+    self.capturePiPShapeControl.segmentCount = 2;
+    [self.capturePiPShapeControl setLabel:@"圆形" forSegment:0];
+    [self.capturePiPShapeControl setLabel:@"方形" forSegment:1];
+    self.capturePiPShapeControl.trackingMode = NSSegmentSwitchTrackingSelectOne;
     id shapeObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCapturePiPShape"];
-    self.capturePiPShapeCheck.state = (!shapeObj || [shapeObj boolValue]) ? NSControlStateValueOn : NSControlStateValueOff;
-    self.capturePiPShapeCheck.toolTip = @"勾选圆形画中画，取消为方形；可直接拖动摄像头窗口调整位置";
-    [cv addSubview:self.capturePiPShapeCheck];
+    self.capturePiPShapeControl.selectedSegment = (!shapeObj || [shapeObj boolValue]) ? 0 : 1;
+    self.capturePiPShapeControl.target = self;
+    self.capturePiPShapeControl.action = @selector(capturePiPShapeChanged:);
+    self.capturePiPShapeControl.toolTip = @"摄像头画中画形状；可直接拖动摄像头窗口调整位置";
+    [cv addSubview:self.capturePiPShapeControl];
 
     // Row 6: save paths, aligned.
     NSTextField *imgLabel = [self label:@"截图保存" size:10 bold:NO color:[NSColor secondaryLabelColor]];
