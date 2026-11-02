@@ -15826,7 +15826,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.radialPageLabel.alignment = NSTextAlignmentCenter;
     self.radialPageLabel.frame = NSMakeRect(150,8,48,16);
     [root addSubview:self.radialPageLabel];
-    NSButton *closeBtn = [[NSButton alloc] initWithFrame:NSMakeRect(306, 326, 28, 28)];
+    NSButton *closeBtn = [[NSButton alloc] initWithFrame:NSMakeRect(8, 326, 28, 28)];
     closeBtn.bordered = NO;
     closeBtn.bezelStyle = NSBezelStyleInline;
     closeBtn.image = [NSImage imageWithSystemSymbolName:@"xmark.circle.fill" accessibilityDescription:@"关闭"];
