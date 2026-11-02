@@ -1160,6 +1160,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTableView *shelfTable;
 @property (strong) NSMutableArray<NSString *> *shelfPaths;
 @property (strong) DLShelfDropView *shelfDropView;
+@property (strong) NSScrollView *shelfScrollView;
+@property (strong) NSTextField *shelfTitleLabel, *shelfHelpLabel, *shelfDropLabel;
+@property (strong) NSMutableArray<NSButton *> *shelfButtons;
+@property (strong) NSIndexSet *shelfDraggingRows;
 @property (strong) NSMutableDictionary *diagnosticsLabels;
 @property (strong) NSWindow *groupShortcutWindow;
 @property (strong) NSMutableArray *groupShortcutButtons;
@@ -3386,6 +3390,7 @@ static void HideDockHoverTip(void) {
 }
 
 - (void)windowDidResize:(NSNotification *)notification {
+  if (notification.object == self.shelfWindow) { [self layoutShelfWindow]; return; }
   [self layoutCenterTitle];
   [self layoutPageView:self.content.subviews.firstObject];
   [self updateDiskGalleryLayout];
@@ -9264,6 +9269,22 @@ static BOOL ValidGroupName(NSString *raw) {
   if (tableView == self.userFilesTable) return self.userFilesForUninstall.count;
   return self.uninstallFiltered.count;
 }
+- (void)tableView:(NSTableView *)tableView draggingSession:(NSDraggingSession *)session willBeginAtPoint:(NSPoint)screenPoint forRowIndexes:(NSIndexSet *)rowIndexes {
+  if (tableView == self.shelfTable) self.shelfDraggingRows = [rowIndexes copy];
+}
+
+- (void)tableView:(NSTableView *)tableView draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)screenPoint operation:(NSDragOperation)operation {
+  if (tableView != self.shelfTable || !self.shelfDraggingRows) return;
+  NSIndexSet *rows = self.shelfDraggingRows;
+  self.shelfDraggingRows = nil;
+  if (operation == NSDragOperationNone) return;
+  NSMutableArray *keep = [NSMutableArray array];
+  for (NSInteger i = 0; i < (NSInteger)self.shelfPaths.count; i++) if (![rows containsIndex:i]) [keep addObject:self.shelfPaths[i]];
+  self.shelfPaths = keep;
+  [self saveShelfPaths];
+  [self reloadShelfTable];
+}
+
 - (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row {
   NSTableRowView *rv = [[NSTableRowView alloc] init];
   if ([tableView isEqual:self.aiTable] && self.aiSearchField.stringValue.length) {
@@ -13512,6 +13533,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (id<NSPasteboardWriting>)tableView:(NSTableView *)tableView pasteboardWriterForRow:(NSInteger)row {
+  if (tableView == self.shelfTable) {
+    if (row < 0 || row >= (NSInteger)self.shelfPaths.count) return nil;
+    NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
+    [item setString:[[NSURL fileURLWithPath:self.shelfPaths[row]] absoluteString] forType:NSPasteboardTypeFileURL];
+    return item;
+  }
   if (tableView != self.pdfTable) return nil;
   NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
   [item setString:[NSString stringWithFormat:@"%ld", (long)row] forType:@"DockLaunchersPDFRow"];
@@ -15867,43 +15894,72 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.shelfPaths[row]]];
 }
 
+- (void)layoutShelfWindow {
+  if (!self.shelfWindow) return;
+  NSView *cv = self.shelfWindow.contentView;
+  CGFloat w = cv.bounds.size.width, h = cv.bounds.size.height;
+  if (w < 300 || h < 260) return;
+  self.shelfTitleLabel.frame = NSMakeRect(20, h-40, w-40, 24);
+  self.shelfHelpLabel.frame = NSMakeRect(20, h-62, w-40, 18);
+  CGFloat dropH = 70;
+  CGFloat dropTop = h - 76;
+  self.shelfDropView.frame = NSMakeRect(16, dropTop - dropH, w - 32, dropH);
+  self.shelfDropLabel.frame = NSMakeRect(0, (dropH-20)/2.0, w - 32, 20);
+  CGFloat buttonY = 22;
+  CGFloat tableBottom = buttonY + 42;
+  CGFloat tableTop = dropTop - dropH - 12;
+  self.shelfScrollView.frame = NSMakeRect(16, tableBottom, w - 32, MAX(80, tableTop - tableBottom));
+  CGFloat gap = 6;
+  CGFloat bw = (w - 32 - gap * (self.shelfButtons.count - 1)) / MAX(1, self.shelfButtons.count);
+  for (NSInteger i = 0; i < (NSInteger)self.shelfButtons.count; i++) {
+    self.shelfButtons[i].frame = NSMakeRect(16 + i * (bw + gap), buttonY, bw, 30);
+  }
+}
+
 - (void)openShelfWindow:(id)sender {
   if (!self.shelfWindow) {
-    self.shelfWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,520,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.shelfWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,440,430) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.shelfWindow.title = @"文件暂存架";
     self.shelfWindow.releasedWhenClosed = NO;
+    self.shelfWindow.minSize = NSMakeSize(340, 300);
     NSView *cv = self.shelfWindow.contentView;
-    NSTextField *t = [self label:@"文件暂存架" size:18 bold:YES color:nil];
-    t.frame=NSMakeRect(24,518,300,24); [cv addSubview:t];
-    NSTextField *h = [self label:@"把文件拖到下方区域，或点「添加」；窗口关闭后仍然保留" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    h.frame=NSMakeRect(24,496,470,18); [cv addSubview:h];
-    self.shelfDropView = [[DLShelfDropView alloc] initWithFrame:NSMakeRect(20,384,480,100)];
+    self.shelfTitleLabel = [self label:@"文件暂存架" size:18 bold:YES color:nil];
+    [cv addSubview:self.shelfTitleLabel];
+    self.shelfHelpLabel = [self label:@"拖文件进来添加；把列表里的文件拖出去即可移除" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    [cv addSubview:self.shelfHelpLabel];
+    self.shelfDropView = [[DLShelfDropView alloc] initWithFrame:NSMakeRect(16,0,408,70)];
     __weak typeof(self) weakSelf = self;
     self.shelfDropView.onDrop = ^(NSArray<NSURL *> *urls) { [weakSelf addShelfURLs:urls]; };
     [cv addSubview:self.shelfDropView];
-    NSTextField *dropLabel = [self label:@"拖文件到这里" size:12 bold:YES color:[NSColor secondaryLabelColor]];
-    dropLabel.alignment=NSTextAlignmentCenter;
-    dropLabel.frame=NSMakeRect(20,424,480,20); [self.shelfDropView addSubview:dropLabel];
-    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(20,80,480,292)];
-    sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
-    self.shelfTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    self.shelfDropLabel = [self label:@"拖文件到这里" size:12 bold:YES color:[NSColor secondaryLabelColor]];
+    self.shelfDropLabel.alignment = NSTextAlignmentCenter;
+    [self.shelfDropView addSubview:self.shelfDropLabel];
+    self.shelfScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(16,0,408,200)];
+    self.shelfScrollView.hasVerticalScroller = YES;
+    self.shelfScrollView.borderType = NSBezelBorder;
+    self.shelfTable = [[NSTableView alloc] initWithFrame:self.shelfScrollView.contentView.bounds];
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"shelf"];
-    col.width=460; [self.shelfTable addTableColumn:col];
-    self.shelfTable.headerView=nil; self.shelfTable.rowHeight=34;
-    self.shelfTable.dataSource=self; self.shelfTable.delegate=self;
-    self.shelfTable.target=self; self.shelfTable.doubleAction=@selector(openShelfFileRow:);
-    sv.documentView=self.shelfTable; [cv addSubview:sv];
+    col.width = 390; [self.shelfTable addTableColumn:col];
+    self.shelfTable.headerView = nil; self.shelfTable.rowHeight = 34;
+    self.shelfTable.dataSource = self; self.shelfTable.delegate = self;
+    self.shelfTable.target = self; self.shelfTable.doubleAction = @selector(openShelfFileRow:);
+    self.shelfScrollView.documentView = self.shelfTable;
+    [cv addSubview:self.shelfScrollView];
     NSArray *titles = @[@"添加", @"打开", @"显示", @"AirDrop", @"移除", @"清空"];
     NSArray *sels = @[@"addShelfFiles:", @"openShelfFiles:", @"revealShelfFiles:", @"airdropShelfFiles:", @"removeShelfFiles:", @"clearShelfFiles:"];
+    self.shelfButtons = [NSMutableArray array];
     for (NSInteger i=0;i<6;i++) {
-      ColorHoverButton *b=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(20+i*80,30,72,32)];
+      ColorHoverButton *b=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(16+i*68,22,60,30)];
       b.title=titles[i]; b.hoverColor=i==5?[NSColor systemRedColor]:[NSColor systemBlueColor];
       b.target=self; b.action=NSSelectorFromString(sels[i]);
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:b];
+      [self.shelfButtons addObject:b];
     }
+    [self layoutShelfWindow];
     [self.shelfWindow center];
   }
   [self loadShelfPaths]; [self reloadShelfTable];
+  [self layoutShelfWindow];
   [NSApp activateIgnoringOtherApps:YES];
   [self.shelfWindow makeKeyAndOrderFront:nil];
 }
