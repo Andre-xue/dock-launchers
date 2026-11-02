@@ -1320,6 +1320,11 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *captureCameraWindow, *captureCountdownWindow, *captureResultWindow;
 @property (strong) NSTimer *captureResultTimer;
 @property (strong) NSWindow *videoPostWindow;
+@property (strong) NSWindow *aiAssistantWindow;
+@property (strong) NSTextView *aiAssistantInput, *aiAssistantOutput;
+@property (strong) NSPopUpButton *aiAssistantServicePopup, *aiAssistantModePopup;
+@property (strong) NSTextField *aiAssistantModelField, *aiAssistantURLField, *aiAssistantStatus;
+@property BOOL aiAssistantBusy;
 @property (strong) NSTextField *videoPostFileLabel, *videoPostStart, *videoPostEnd, *videoPostStatus;
 @property (strong) NSPopUpButton *videoPostQualityPopup;
 @property (copy) NSString *videoPostPath;
@@ -16832,6 +16837,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3058,@"cat":@3,@"title":@"退出全部分组应用",@"desc":@"退出所有分组内正在运行的应用",@"sel":@"quitAllGroupsApps:"},
     @{@"id":@3059,@"cat":@1,@"title":@"录屏后期工具箱",@"desc":@"裁剪、压缩、GIF、提取音频",@"sel":@"openVideoPostWindow:"},
     @{@"id":@3060,@"cat":@1,@"title":@"开关窗口拖拽吸附",@"desc":@"拖到屏幕边缘自动分屏",@"sel":@"toggleWindowSnap:"},
+    @{@"id":@3061,@"cat":@1,@"title":@"AI 助手",@"desc":@"总结、润色、翻译文本",@"sel":@"openAIAssistant:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -17793,6 +17799,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"文件暂存架", @"subtitle": @"拖入文件，稍后统一处理", @"type": @"工具", @"tool": @"shelf", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"tray.full" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"配置导出 / 导入", @"subtitle": @"迁移分组、快捷键和设置", @"type": @"工具", @"tool": @"configbackup", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.up.arrow.down.square" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"检查更新", @"subtitle": @"查看是否有新版本", @"type": @"工具", @"tool": @"updatecheck", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.triangle.2.circlepath" accessibilityDescription:nil] ?: recIcon}];
   NSArray *pages = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
   NSArray *pageIcons = @[@"chart.line.uptrend.xyaxis", @"square.grid.2x2", @"sparkles", @"externaldrive", @"trash", @"gearshape"];
@@ -17913,6 +17920,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"configbackup"]) [self openConfigBackupWindow:nil];
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
+    else if ([tool isEqualToString:@"aitext"]) [self openAIAssistant:nil];
     else if ([tool isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
@@ -19276,6 +19284,138 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   AXUIElementSetAttributeValue(win, kAXSizeAttribute, zv);
   if (pv) CFRelease(pv); if (zv) CFRelease(zv);
   CFRelease(win);
+}
+
+- (void)aiAssistantApplyEndpointDefaults:(NSDictionary *)entry {
+  NSString *name = [entry[@"name"] ?: @"" lowercaseString];
+  NSString *url = @"", *model = @"";
+  if ([name containsString:@"deepseek"]) { url = @"https://api.deepseek.com/v1/chat/completions"; model = @"deepseek-chat"; }
+  else if ([name containsString:@"kimi"] || [name containsString:@"moonshot"]) { url = @"https://api.moonshot.cn/v1/chat/completions"; model = @"moonshot-v1-8k"; }
+  else if ([name containsString:@"openrouter"]) { url = @"https://openrouter.ai/api/v1/chat/completions"; model = @"openai/gpt-4o-mini"; }
+  else if ([name containsString:@"siliconflow"] || [name containsString:@"硅基流动"]) { url = @"https://api.siliconflow.cn/v1/chat/completions"; model = @"Qwen/Qwen2.5-7B-Instruct"; }
+  else if ([name containsString:@"openai"] || [name containsString:@"gpt"]) { url = @"https://api.openai.com/v1/chat/completions"; model = @"gpt-4o-mini"; }
+  if (url.length) { self.aiAssistantURLField.stringValue = url; self.aiAssistantModelField.stringValue = model; }
+}
+
+- (void)reloadAIAssistantServices {
+  [self.aiAssistantServicePopup removeAllItems];
+  if (!self.aiEntries) [self loadAIEntries];
+  [self hydrateAIKeys];
+  for (NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++) {
+    NSDictionary *e = self.aiEntries[i];
+    [self.aiAssistantServicePopup addItemWithTitle:e[@"name"] ?: @"未命名"];
+    self.aiAssistantServicePopup.lastItem.representedObject = @(i);
+  }
+  if (self.aiAssistantServicePopup.numberOfItems) { [self.aiAssistantServicePopup selectItemAtIndex:0]; [self aiAssistantServiceChanged:nil]; }
+}
+
+- (void)aiAssistantServiceChanged:(id)sender {
+  NSInteger idx = [self.aiAssistantServicePopup.selectedItem.representedObject integerValue];
+  if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) return;
+  [self aiAssistantApplyEndpointDefaults:self.aiEntries[idx]];
+}
+
+- (void)openAIAssistant:(id)sender {
+  if (!self.aiAssistantWindow) {
+    self.aiAssistantWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,660,580) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiAssistantWindow.title = @"AI 助手";
+    self.aiAssistantWindow.releasedWhenClosed = NO;
+    NSView *cv = self.aiAssistantWindow.contentView;
+    NSTextField *t = [self label:@"AI 助手" size:20 bold:YES color:nil];
+    t.frame=NSMakeRect(24,536,300,28); [cv addSubview:t];
+    NSTextField *h = [self label:@"使用 AI 管理里配置的服务；支持总结、润色、翻译" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame=NSMakeRect(24,514,500,18); [cv addSubview:h];
+    self.aiAssistantServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,478,200,28) pullsDown:NO];
+    self.aiAssistantServicePopup.target=self; self.aiAssistantServicePopup.action=@selector(aiAssistantServiceChanged:);
+    [cv addSubview:self.aiAssistantServicePopup];
+    self.aiAssistantModePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(236,478,140,28) pullsDown:NO];
+    [self.aiAssistantModePopup addItemsWithTitles:@[@"总结", @"润色", @"翻译成中文", @"自定义"]];
+    [cv addSubview:self.aiAssistantModePopup];
+    self.aiAssistantModelField = [[NSTextField alloc] initWithFrame:NSMakeRect(388,478,150,28)];
+    self.aiAssistantModelField.placeholderString=@"模型"; [cv addSubview:self.aiAssistantModelField];
+    self.aiAssistantURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,444,600,28)];
+    self.aiAssistantURLField.placeholderString=@"API 地址（/v1/chat/completions）"; [cv addSubview:self.aiAssistantURLField];
+    NSScrollView *inScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,240,610,190)];
+    inScroll.hasVerticalScroller=YES; inScroll.borderType=NSBezelBorder;
+    self.aiAssistantInput = [[NSTextView alloc] initWithFrame:inScroll.contentView.bounds];
+    self.aiAssistantInput.font=[NSFont systemFontOfSize:12];
+    self.aiAssistantInput.string=@"";
+    inScroll.documentView=self.aiAssistantInput; [cv addSubview:inScroll];
+    NSScrollView *outScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,74,610,150)];
+    outScroll.hasVerticalScroller=YES; outScroll.borderType=NSBezelBorder;
+    self.aiAssistantOutput = [[NSTextView alloc] initWithFrame:outScroll.contentView.bounds];
+    self.aiAssistantOutput.font=[NSFont systemFontOfSize:12];
+    self.aiAssistantOutput.editable=NO; self.aiAssistantOutput.string=@"";
+    outScroll.documentView=self.aiAssistantOutput; [cv addSubview:outScroll];
+    self.aiAssistantStatus = [self label:@"就绪" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.aiAssistantStatus.frame=NSMakeRect(24,50,400,18); [cv addSubview:self.aiAssistantStatus];
+    ColorHoverButton *send = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(430,16,100,30)];
+    send.title=@"发送"; send.hoverColor=[NSColor systemBlueColor]; send.target=self; send.action=@selector(sendAIAssistant:);
+    [send applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:send];
+    ColorHoverButton *paste = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(540,16,94,30)];
+    paste.title=@"读取剪贴板"; paste.hoverColor=[NSColor systemTealColor]; paste.target=self; paste.action=@selector(aiAssistantPaste:);
+    [paste applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:paste];
+    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(644,16,0,30)];
+    copy.hidden=YES;
+    [self.aiAssistantWindow center];
+  }
+  [self reloadAIAssistantServices];
+  [NSApp activateIgnoringOtherApps:YES];
+  [self.aiAssistantWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)aiAssistantPaste:(id)sender {
+  NSString *s = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+  if (s.length) self.aiAssistantInput.string = s;
+}
+
+- (void)sendAIAssistant:(id)sender {
+  if (self.aiAssistantBusy) return;
+  NSInteger idx = [self.aiAssistantServicePopup.selectedItem.representedObject integerValue];
+  if (idx < 0 || idx >= (NSInteger)self.aiEntries.count) { self.aiAssistantStatus.stringValue=@"请先在 AI 管理添加服务"; return; }
+  NSDictionary *e = self.aiEntries[idx];
+  NSString *key = e[@"api"] ?: @"";
+  if (!key.length) { self.aiAssistantStatus.stringValue=@"该服务没有 API Key"; return; }
+  NSString *url = self.aiAssistantURLField.stringValue;
+  NSString *model = self.aiAssistantModelField.stringValue;
+  NSString *text = self.aiAssistantInput.string;
+  if (!url.length || !model.length || !text.length) { self.aiAssistantStatus.stringValue=@"请填写 API 地址、模型和输入文本"; return; }
+  NSInteger mode = self.aiAssistantModePopup.indexOfSelectedItem;
+  NSString *sys = @"你是一个中文助手。回答要准确、简洁。";
+  if (mode == 0) sys = @"请用中文总结用户内容，保留关键信息，输出简洁要点。";
+  else if (mode == 1) sys = @"请润色用户内容，保持原意，使表达更自然、专业。";
+  else if (mode == 2) sys = @"请把用户内容翻译成简体中文，只输出译文。";
+  else sys = @"请按用户的要求处理内容。";
+  NSDictionary *body = @{@"model": model, @"messages": @[@{@"role":@"system",@"content":sys},@{@"role":@"user",@"content":text}], @"temperature": @0.3};
+  NSData *data = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  req.HTTPMethod = @"POST";
+  [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  req.HTTPBody = data;
+  req.timeoutInterval = 60;
+  self.aiAssistantBusy = YES;
+  self.aiAssistantStatus.stringValue = @"请求中…";
+  __weak typeof(self) weakSelf = self;
+  NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *respData, NSURLResponse *resp, NSError *err) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      weakSelf.aiAssistantBusy = NO;
+      if (err || !respData.length) { weakSelf.aiAssistantStatus.stringValue = err.localizedDescription ?: @"请求失败"; return; }
+      id obj = [NSJSONSerialization JSONObjectWithData:respData options:0 error:NULL];
+      NSString *content = nil;
+      if ([obj isKindOfClass:[NSDictionary class]]) {
+        NSArray *choices = obj[@"choices"];
+        if ([choices isKindOfClass:[NSArray class]] && choices.count) {
+          NSDictionary *msg = choices[0][@"message"];
+          if ([msg isKindOfClass:[NSDictionary class]]) content = msg[@"content"];
+        }
+        if (!content.length) content = obj[@"error"][@"message"];
+      }
+      if (content.length) { weakSelf.aiAssistantOutput.string = content; weakSelf.aiAssistantStatus.stringValue = @"完成"; }
+      else { weakSelf.aiAssistantStatus.stringValue = @"没有解析到返回内容"; weakSelf.aiAssistantOutput.string = [[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding] ?: @""; }
+    });
+  }];
+  [task resume];
 }
 
 - (void)openVideoPostWindow:(id)sender {
