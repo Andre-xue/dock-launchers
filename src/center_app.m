@@ -3529,6 +3529,8 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@"Main"];
   NSMenuItem *appItem = [[NSMenuItem alloc] initWithTitle:@"DockLaunchers" action:nil keyEquivalent:@""];
   NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"DockLaunchers"];
+  [appMenu addItemWithTitle:@"检查更新…" action:@selector(checkForUpdates:) keyEquivalent:@""].target = self;
+  [appMenu addItem:[NSMenuItem separatorItem]];
   [appMenu addItemWithTitle:@"退出 DockLaunchers" action:@selector(quitApp:) keyEquivalent:@"q"];
   appItem.submenu = appMenu;
   [mainMenu addItem:appItem];
@@ -16560,6 +16562,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3028,@"cat":@1,@"title":@"权限与诊断",@"desc":@"检查录制相关权限",@"sel":@"openDiagnosticsWindow:"},
     @{@"id":@3029,@"cat":@1,@"title":@"文件暂存架",@"desc":@"拖入文件稍后处理",@"sel":@"openShelfWindow:"},
     @{@"id":@3050,@"cat":@1,@"title":@"配置导出 / 导入",@"desc":@"迁移分组和设置",@"sel":@"openConfigBackupWindow:"},
+    @{@"id":@3051,@"cat":@1,@"title":@"检查更新",@"desc":@"查看 DockLaunchers 新版本",@"sel":@"checkForUpdates:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -17427,6 +17430,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"权限与诊断", @"subtitle": @"检查录制、摄像头、麦克风权限", @"type": @"工具", @"tool": @"diagnostics", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"stethoscope" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"文件暂存架", @"subtitle": @"拖入文件，稍后统一处理", @"type": @"工具", @"tool": @"shelf", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"tray.full" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"配置导出 / 导入", @"subtitle": @"迁移分组、快捷键和设置", @"type": @"工具", @"tool": @"configbackup", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.up.arrow.down.square" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"检查更新", @"subtitle": @"查看是否有新版本", @"type": @"工具", @"tool": @"updatecheck", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.triangle.2.circlepath" accessibilityDescription:nil] ?: recIcon}];
   NSArray *pages = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
   NSArray *pageIcons = @[@"chart.line.uptrend.xyaxis", @"square.grid.2x2", @"sparkles", @"externaldrive", @"trash", @"gearshape"];
   for (NSInteger i = 0; i < pages.count; i++) {
@@ -17544,6 +17548,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"diagnostics"]) [self openDiagnosticsWindow:nil];
     else if ([tool isEqualToString:@"shelf"]) [self openShelfWindow:nil];
     else if ([tool isEqualToString:@"configbackup"]) [self openConfigBackupWindow:nil];
+    else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
   }
@@ -19712,6 +19717,52 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   } else if (r == NSAlertSecondButtonReturn) {
     [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders"]];
   }
+}
+
+- (void)checkForUpdates:(id)sender {
+  NSString *current = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"0";
+  NSURL *url = [NSURL URLWithString:@"https://api.github.com/repos/Andre-xue/dock-launchers/releases/latest"];
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+  [req setValue:@"DockLaunchers-UpdateCheck" forHTTPHeaderField:@"User-Agent"];
+  [req setTimeoutInterval:12];
+  NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (err || !data.length) {
+        NSAlert *a = [[NSAlert alloc] init];
+        a.messageText = @"检查更新失败";
+        a.informativeText = [NSString stringWithFormat:@"当前版本 %@\n无法连接 GitHub，请稍后重试。", current];
+        [a addButtonWithTitle:@"好"];
+        [a runModal];
+        return;
+      }
+      id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+      if (![obj isKindOfClass:[NSDictionary class]] || !obj[@"tag_name"]) {
+        NSAlert *a = [[NSAlert alloc] init];
+        a.messageText = @"暂无发布版本";
+        a.informativeText = [NSString stringWithFormat:@"当前版本 %@\n仓库还没有可用的 Release。", current];
+        [a addButtonWithTitle:@"好"];
+        [a runModal];
+        return;
+      }
+      NSString *latest = [obj[@"tag_name"] stringByReplacingOccurrencesOfString:@"v" withString:@""];
+      NSString *page = obj[@"html_url"] ?: @"https://github.com/Andre-xue/dock-launchers/releases";
+      NSComparisonResult cmp = [latest compare:current options:NSNumericSearch];
+      NSAlert *a = [[NSAlert alloc] init];
+      if (cmp == NSOrderedDescending) {
+        a.messageText = [NSString stringWithFormat:@"发现新版本 %@", latest];
+        a.informativeText = [NSString stringWithFormat:@"当前版本：%@\n最新版本：%@\n\n是否打开下载页面？", current, latest];
+        [a addButtonWithTitle:@"打开下载页"];
+        [a addButtonWithTitle:@"稍后"];
+        if ([a runModal] == NSAlertFirstButtonReturn) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:page]];
+      } else {
+        a.messageText = @"已是最新版本";
+        a.informativeText = [NSString stringWithFormat:@"当前版本：%@\n最新版本：%@", current, latest];
+        [a addButtonWithTitle:@"好"];
+        [a runModal];
+      }
+    });
+  }];
+  [task resume];
 }
 
 - (void)showAbout:(id)sender {
