@@ -22092,7 +22092,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiEditServicePopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,580,180,28) pullsDown:NO];
     self.aiEditServicePopup.target=self;self.aiEditServicePopup.action=@selector(aiEditServiceChanged:);[cv addSubview:self.aiEditServicePopup];
     self.aiEditModelField=[[NSTextField alloc] initWithFrame:NSMakeRect(212,580,170,28)];
-    self.aiEditModelField.placeholderString=@"编辑模型";[cv addSubview:self.aiEditModelField];
+    self.aiEditModelField.placeholderString=@"编辑模型";
+    self.aiEditModelField.editable=NO; self.aiEditModelField.selectable=YES;
+    self.aiEditModelField.toolTip=@"自动读取该服务的图片编辑模型，不可手动修改";
+    [cv addSubview:self.aiEditModelField];
     self.aiEditSizePopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(390,580,110,28) pullsDown:NO];
     [self.aiEditSizePopup addItemsWithTitles:@[@"1024x1024",@"1536x1024",@"1024x1536"]];
     [cv addSubview:self.aiEditSizePopup];
