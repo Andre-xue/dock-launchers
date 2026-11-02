@@ -797,19 +797,96 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 - (void)stop;
 @end
 @implementation DLScreenRecorder
+- (SCStreamConfiguration *)streamConfigurationForPicker {
+  SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
+  id sysAudioObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureSystemAudio"];
+  BOOL sysAudio = !sysAudioObj || [sysAudioObj boolValue];
+  BOOL micAudio = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"];
+  config.capturesAudio = sysAudio;
+  config.captureMicrophone = micAudio;
+  config.sampleRate = 48000;
+  config.channelCount = 2;
+  id curObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowCursor"];
+  id clickObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowClicks"];
+  config.showsCursor = (!curObj || [curObj boolValue]);
+  config.showMouseClicks = (!clickObj || [clickObj boolValue]);
+  if (config.showMouseClicks) config.pixelFormat = kCVPixelFormatType_32BGRA;
+  NSInteger fps = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureFPS"];
+  if (fps <= 0) fps = 30;
+  config.minimumFrameInterval = CMTimeMake(1, (int32_t)fps);
+  NSInteger targetH = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureQuality"];
+  if (targetH <= 0) targetH = 1440;
+  config.height = (size_t)targetH;
+  config.width = MIN(3840, MAX(640, (size_t)llround((CGFloat)targetH * 16.0 / 9.0)));
+  return config;
+}
+
+- (void)rememberFilter:(SCContentFilter *)filter scene:(NSInteger)scene {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  if (scene == DLRecordSceneWindow && filter.includedWindows.count) {
+    SCWindow *w = filter.includedWindows.firstObject;
+    [ud setObject:@{@"windowID": @(w.windowID), @"title": w.title ?: @"", @"bundle": w.owningApplication.bundleIdentifier ?: @""} forKey:@"centerCaptureLastWindow"];
+  } else if (scene == DLRecordSceneApplication && filter.includedApplications.count) {
+    NSMutableArray *ids = [NSMutableArray array];
+    for (SCRunningApplication *a in filter.includedApplications) if (a.bundleIdentifier.length) [ids addObject:a.bundleIdentifier];
+    [ud setObject:ids forKey:@"centerCaptureLastApps"];
+  }
+  [ud synchronize];
+}
+
+- (BOOL)tryRestoreRememberedSourceForScene:(NSInteger)scene {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  id saved = scene == DLRecordSceneWindow ? [ud objectForKey:@"centerCaptureLastWindow"] : [ud objectForKey:@"centerCaptureLastApps"];
+  if (!saved) return NO;
+  [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *error) {
+    if (error || !content.displays.count) {
+      dispatch_async(dispatch_get_main_queue(), ^{ [self presentPickerForScene:scene]; });
+      return;
+    }
+    SCDisplay *display = content.displays.firstObject;
+    SCContentFilter *filter = nil;
+    if (scene == DLRecordSceneWindow) {
+      NSDictionary *d = saved;
+      SCWindow *match = nil;
+      for (SCWindow *w in content.windows) {
+        if (w.windowID == [d[@"windowID"] unsignedIntValue]) { match = w; break; }
+      }
+      if (!match) for (SCWindow *w in content.windows) {
+        if ([w.title isEqualToString:d[@"title"]] && [w.owningApplication.bundleIdentifier isEqualToString:d[@"bundle"]]) { match = w; break; }
+      }
+      if (match) filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:match];
+    } else {
+      NSMutableArray *apps = [NSMutableArray array];
+      for (SCRunningApplication *a in content.applications) if ([saved containsObject:a.bundleIdentifier]) [apps addObject:a];
+      if (apps.count) filter = [[SCContentFilter alloc] initWithDisplay:display includingApplications:apps exceptingWindows:@[]];
+    }
+    if (filter) {
+      dispatch_async(dispatch_get_main_queue(), ^{ [self startStreamWithFilter:filter configuration:[self streamConfigurationForPicker]]; });
+    } else {
+      dispatch_async(dispatch_get_main_queue(), ^{ [self presentPickerForScene:scene]; });
+    }
+  }];
+  return YES;
+}
+
+- (void)presentPickerForScene:(NSInteger)scene {
+  self.picker = [SCContentSharingPicker sharedPicker];
+  SCContentSharingPickerConfiguration *cfg = [[SCContentSharingPickerConfiguration alloc] init];
+  cfg.allowedPickerModes = scene == DLRecordSceneWindow ? SCContentSharingPickerModeSingleWindow : SCContentSharingPickerModeSingleApplication;
+  cfg.allowsChangingSelectedContent = NO;
+  self.picker.defaultConfiguration = cfg;
+  self.picker.active = YES;
+  [self.picker addObserver:self];
+  [self.picker presentPickerUsingContentStyle:(scene == DLRecordSceneWindow ? SCShareableContentStyleWindow : SCShareableContentStyleApplication)];
+}
+
 - (void)startWithScene:(NSInteger)scene seconds:(NSInteger)seconds region:(NSRect)region url:(NSURL *)url {
   self.scene = scene; self.seconds = seconds; self.region = region;
   self.finalOutputURL = url; self.segmentURLs = [NSMutableArray array];
   self.segmentIndex = 0; self.paused = NO; self.stopping = NO; self.finishing = NO; self.finished = NO;
   if (scene == DLRecordSceneWindow || scene == DLRecordSceneApplication) {
-    self.picker = [SCContentSharingPicker sharedPicker];
-    SCContentSharingPickerConfiguration *cfg = [[SCContentSharingPickerConfiguration alloc] init];
-    cfg.allowedPickerModes = scene == DLRecordSceneWindow ? SCContentSharingPickerModeSingleWindow : SCContentSharingPickerModeSingleApplication;
-    cfg.allowsChangingSelectedContent = NO;
-    self.picker.defaultConfiguration = cfg;
-    self.picker.active = YES;
-    [self.picker addObserver:self];
-    [self.picker presentPickerUsingContentStyle:(scene == DLRecordSceneWindow ? SCShareableContentStyleWindow : SCShareableContentStyleApplication)];
+    if ([self tryRestoreRememberedSourceForScene:scene]) return;
+    [self presentPickerForScene:scene];
     return;
   }
   [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *error) {
@@ -983,29 +1060,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error { if (error) [self finishWithError:error]; }
 - (void)contentSharingPicker:(SCContentSharingPicker *)picker didUpdateWithFilter:(SCContentFilter *)filter forStream:(SCStream *)stream {
   [picker removeObserver:self];
-  SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
-  config.showsCursor = YES;
-  config.minimumFrameInterval = CMTimeMake(1, 30);
-  id sysAudioObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureSystemAudio"];
-  BOOL sysAudio = !sysAudioObj || [sysAudioObj boolValue];
-  BOOL micAudio = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicrophone"];
-  config.capturesAudio = sysAudio;
-  config.captureMicrophone = micAudio;
-  config.sampleRate = 48000;
-  config.channelCount = 2;
-  id curObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowCursor"];
-  id clickObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerCaptureShowClicks"];
-  config.showsCursor = (!curObj || [curObj boolValue]);
-  config.showMouseClicks = (!clickObj || [clickObj boolValue]);
-  if (config.showMouseClicks) config.pixelFormat = kCVPixelFormatType_32BGRA;
-  NSInteger fps = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureFPS"];
-  if (fps <= 0) fps = 30;
-  config.minimumFrameInterval = CMTimeMake(1, (int32_t)fps);
-  NSInteger targetH = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureQuality"];
-  if (targetH <= 0) targetH = 1440;
-  config.height = (size_t)targetH;
-  config.width = MIN(3840, MAX(640, (size_t)llround((CGFloat)targetH * 16.0 / 9.0)));
-  [self startStreamWithFilter:filter configuration:config];
+  [self rememberFilter:filter scene:self.scene];
+  [self startStreamWithFilter:filter configuration:[self streamConfigurationForPicker]];
 }
 - (void)contentSharingPicker:(SCContentSharingPicker *)picker didCancelForStream:(SCStream *)stream {
   [picker removeObserver:self];
