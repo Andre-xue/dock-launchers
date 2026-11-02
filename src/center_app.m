@@ -1110,6 +1110,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSImage *statusBaseImage;
 @property (strong) NSDictionary<NSString *, NSDictionary *> *groupBadgeCounts;
 @property (strong) NSTimer *groupBadgeTimer;
+@property (strong) ColorHoverButton *groupBadgeToggleButton;
 
 @property (strong) NSWindow *window;
 @property (strong) NSTextField *centerTitleLabel;
@@ -16835,6 +16836,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"centerGroupBadgesEnabled"];
   [[NSUserDefaults standardUserDefaults] synchronize];
   [self updateGroupBadges];
+  if (self.groupBadgeToggleButton) self.groupBadgeToggleButton.title = enabled ? @"角标：开" : @"角标：关";
   [self showToast:enabled ? @"已开启分组动态角标" : @"已关闭分组动态角标"];
 }
 
@@ -19353,6 +19355,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     folderBtn.title = @"打开分组文件夹"; folderBtn.hoverColor = [NSColor systemTealColor];
     folderBtn.target = self; folderBtn.action = @selector(openGroupsFolder:);
     [folderBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:folderBtn];
+    self.groupBadgeToggleButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(158, 16, 150, 30)];
+    BOOL badgeOn = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerGroupBadgesEnabled"] ? [[NSUserDefaults standardUserDefaults] boolForKey:@"centerGroupBadgesEnabled"] : YES;
+    self.groupBadgeToggleButton.title = badgeOn ? @"角标：开" : @"角标：关";
+    self.groupBadgeToggleButton.hoverColor = [NSColor systemOrangeColor];
+    self.groupBadgeToggleButton.target = self;
+    self.groupBadgeToggleButton.action = @selector(toggleGroupBadges:);
+    [self.groupBadgeToggleButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:self.groupBadgeToggleButton];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(320, 16, 100, 30)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeGroupPanel:);
