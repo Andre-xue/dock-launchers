@@ -14621,6 +14621,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self radialApplyPage];
 }
 
+- (void)openUninstallFromMenu {
+  if (!self.uninstallView) [self buildUninstallView];
+  [self reloadUninstallData];
+  [self showDetachedPage:self.uninstallView title:@"应用卸载"];
+}
+
 - (void)openDiskAnalysisFromMenu {
   if (!self.diskView) [self buildDiskView];
   [self showDetachedPage:self.diskView title:@"磁盘分析"];
@@ -14658,7 +14664,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"aivideo"]) [self openAIVideoPanel:nil];
   else if ([action isEqualToString:@"aivision"]) [self openAIVisionPanel:nil];
   else if ([action isEqualToString:@"aiedit"]) [self openAIEditPanel:nil];
-  else if ([action isEqualToString:@"uninstall"]) { [self showWindow:nil]; [self showSection:4]; }
+  else if ([action isEqualToString:@"uninstall"]) [self openUninstallFromMenu];
 }
 
 - (void)showDetachedPage:(NSView *)page title:(NSString *)title {
@@ -17530,6 +17536,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3064,@"cat":@1,@"title":@"AI 图片问答",@"desc":@"截图/图片理解与 OCR",@"sel":@"openAIVisionPanel:"},
     @{@"id":@3065,@"cat":@1,@"title":@"AI 图片编辑",@"desc":@"按提示词编辑图片",@"sel":@"openAIEditPanel:"},
     @{@"id":@3069,@"cat":@1,@"title":@"配置云同步",@"desc":@"上传/恢复云端配置",@"sel":@"openCloudSyncWindow:"},
+    @{@"id":@3070,@"cat":@1,@"title":@"应用卸载",@"desc":@"独立窗口卸载应用",@"sel":@"openUninstallFromMenu"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -18579,9 +18586,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)quickPanelOpenItem:(NSDictionary *)item {
   NSString *type = item[@"type"];
   if ([type isEqualToString:@"页面"] || [type isEqualToString:@"AI"]) {
+    NSInteger page = [item[@"page"] integerValue];
+    if (page == 4) { [self openUninstallFromMenu]; return; }
     [self.window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
-    [self showSection:[item[@"page"] integerValue]];
+    [self showSection:page];
   } else if ([type isEqualToString:@"分组"] || [type isEqualToString:@"应用"]) {
     NSString *path = item[@"path"];
     if (path.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
@@ -18633,6 +18642,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"aivideo"]) [self openAIVideoPanel:nil];
     else if ([tool isEqualToString:@"capturehistory"]) [self showCaptureHistory:nil];
     else if ([tool isEqualToString:@"console"]) { [self showWindow:nil]; [self showSection:0]; }
+    else if ([tool isEqualToString:@"uninstall"]) [self openUninstallFromMenu];
   }
 }
 
