@@ -54,6 +54,32 @@ static BOOL DLPrivateSpaceAPIAvailable(void) {
   return dlsym(h, "CGSMainConnectionID") && dlsym(h, "CGSCopyManagedDisplaySpaces") && dlsym(h, "CGSManagedDisplaySetCurrentSpace") && dlsym(h, "CGSCopySpacesForWindows");
 }
 
+static NSDictionary *DLActiveSpaceInfo(void) {
+  void *h = DLSkyLightHandle();
+  if (!h) return nil;
+  DL_CGSMainFn mainf = (DL_CGSMainFn)dlsym(h, "CGSMainConnectionID");
+  DL_CGSCopyDisplaySpacesFn copyf = (DL_CGSCopyDisplaySpacesFn)dlsym(h, "CGSCopyManagedDisplaySpaces");
+  if (!mainf || !copyf) return nil;
+  CFArrayRef displays = copyf(mainf());
+  if (!displays) return nil;
+  NSArray *arr = CFBridgingRelease(displays);
+  for (NSDictionary *display in arr) {
+    NSDictionary *cur = display[@"Current Space"];
+    if (![cur isKindOfClass:[NSDictionary class]]) continue;
+    NSNumber *sid = cur[@"id64"] ?: cur[@"ManagedSpaceID"];
+    if (!sid) continue;
+    NSArray *spaces = display[@"Spaces"] ?: @[];
+    NSInteger index = 0;
+    for (NSInteger i = 0; i < (NSInteger)spaces.count; i++) {
+      NSDictionary *sp = spaces[i];
+      NSNumber *spid = sp[@"id64"] ?: sp[@"ManagedSpaceID"];
+      if (spid.unsignedLongLongValue == sid.unsignedLongLongValue) { index = i + 1; break; }
+    }
+    return @{@"id": [sid stringValue], @"index": @(index), @"display": display[@"Display Identifier"] ?: @""};
+  }
+  return nil;
+}
+
 static NSString *AppPasswordFilePath(void) {
   return [[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"] stringByAppendingPathComponent:@"app_password.json"];
 }
@@ -1242,6 +1268,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSButton *sceneAutoCheck;
 @property (strong) NSScrollView *sceneScroll;
 @property (strong) NSTimer *sceneTimer;
+@property (strong) ColorHoverButton *sceneSpaceButton;
+@property (strong) NSString *lastAppliedSpaceKey;
 @property (copy) NSString *lastAppliedScene;
 @property (strong) NSWindow *photoPermissionWindow;
 @property (strong) NSButton *photoSystemRadio, *photoLocalRadio;
@@ -2917,6 +2945,7 @@ static void HideDockHoverTip(void) {
   self.statusItem.button.action = @selector(togglePopover:);
   NSNotificationCenter *wsnc = [[NSWorkspace sharedWorkspace] notificationCenter];
   [wsnc addObserver:self selector:@selector(workspaceWillPowerOff:) name:NSWorkspaceWillPowerOffNotification object:nil];
+  [wsnc addObserver:self selector:@selector(activeSpaceChanged:) name:NSWorkspaceActiveSpaceDidChangeNotification object:nil];
   for (NSString *n in @[NSWorkspaceDidMountNotification, NSWorkspaceDidUnmountNotification, NSWorkspaceDidRenameVolumeNotification]) {
     [wsnc addObserver:self selector:@selector(volumesChanged:) name:n object:nil];
   }
@@ -2935,6 +2964,7 @@ static void HideDockHoverTip(void) {
   [self startShelfInboxTimer];
   [self startWindowSnapMonitor];
   [self startSceneAutoIfNeeded];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self applySceneForCurrentSpace]; });
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerLaunchLock"] && [self hasAppPassword] && !getenv("DOCKLAUNCHERS_CENTER_SKIP_LOCK")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       if (![self promptForAppPassword]) { self.allowTerminate = YES; [NSApp terminate:nil]; }
@@ -11156,19 +11186,26 @@ static BOOL ValidGroupName(NSString *raw) {
   NSView *cv = self.sceneWindow.contentView;
   NSTextField *title = [self label:@"场景模式" size:20 bold:YES color:nil];
   title.frame = NSMakeRect(20, 510, 300, 28); [cv addSubview:title];
-  NSTextField *sub = [self label:@"选择场景要显示在 Dock 里的分组，应用后立即切换" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *sub = [self label:@"选择场景显示的 Dock 分组；可绑定到当前桌面，切换桌面自动生效" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(20, 488, 460, 18); [cv addSubview:sub];
 
   self.scenePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(20, 448, 220, 28) pullsDown:NO];
   for (NSDictionary *sc in self.scenes) [self.scenePopup addItemWithTitle:sc[@"name"] ?: @""];
   self.scenePopup.target = self; self.scenePopup.action = @selector(scenePopupChanged:);
   [cv addSubview:self.scenePopup];
-  self.sceneLayoutButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250, 448, 150, 28)];
+  self.sceneLayoutButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250, 448, 130, 28)];
   self.sceneLayoutButton.title = @"窗口布局：无";
   self.sceneLayoutButton.hoverColor = [NSColor systemPurpleColor];
   self.sceneLayoutButton.target = self; self.sceneLayoutButton.action = @selector(sceneLayoutChanged:);
   [self.sceneLayoutButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [cv addSubview:self.sceneLayoutButton];
+  self.sceneSpaceButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(388, 448, 92, 28)];
+  self.sceneSpaceButton.title = @"桌面：未绑定";
+  self.sceneSpaceButton.hoverColor = [NSColor systemTealColor];
+  self.sceneSpaceButton.target = self;
+  self.sceneSpaceButton.action = @selector(sceneSpaceButtonClicked:);
+  [self.sceneSpaceButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [cv addSubview:self.sceneSpaceButton];
 
   self.sceneAutoCheck = [NSButton checkboxWithTitle:@"按时间自动切换（工作日 9:00-18:00 工作，其余下班）" target:self action:@selector(sceneAutoChanged:)];
   self.sceneAutoCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerSceneAuto"] ? NSControlStateValueOn : NSControlStateValueOff;
@@ -11228,6 +11265,11 @@ static BOOL ValidGroupName(NSString *raw) {
   NSDictionary *scene = self.scenes[idx];
   NSString *bound = scene[@"layout"] ?: @"";
   if (self.sceneLayoutButton) self.sceneLayoutButton.title = bound.length ? [NSString stringWithFormat:@"布局：%@", bound] : @"窗口布局：无";
+  if (self.sceneSpaceButton) {
+    NSString *sid = scene[@"spaceID"] ?: @"";
+    NSNumber *sidx = scene[@"spaceIndex"];
+    self.sceneSpaceButton.title = sid.length ? [NSString stringWithFormat:@"桌面：%@", sidx ?: @""] : @"桌面：未绑定";
+  }
   NSArray *sceneGroups = scene[@"groups"] ?: @[];
   BOOL all = [self sceneIsAll:scene];
   NSArray *installed = [self installedGroupNames];
@@ -11309,6 +11351,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)sceneAutoTick:(NSTimer *)timer {
+  if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerScenePerSpaceEnabled"]) return;
   NSDate *now = [NSDate date];
   NSCalendar *cal = [NSCalendar currentCalendar];
   NSInteger weekday = [cal component:NSCalendarUnitWeekday fromDate:now];
@@ -11319,6 +11362,99 @@ static BOOL ValidGroupName(NSString *raw) {
   if ([self.lastAppliedScene isEqualToString:target]) return;
   for (NSDictionary *sc in self.scenes) {
     if ([sc[@"name"] isEqualToString:target]) { [self applySceneNamed:target silent:YES]; return; }
+  }
+}
+
+- (void)sceneSpaceButtonClicked:(id)sender {
+  NSInteger idx = self.scenePopup.indexOfSelectedItem;
+  if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
+  NSMutableDictionary *scene = [self.scenes[idx] mutableCopy];
+  NSDictionary *space = DLActiveSpaceInfo();
+  if (!space) { [self showToast:@"当前 macOS 不支持桌面识别"]; return; }
+  if (((NSString *)(scene[@"spaceID"] ?: @"")).length) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"解除桌面绑定？";
+    a.informativeText = @"解除后，这个场景不再随桌面自动切换。";
+    [a addButtonWithTitle:@"解除"];
+    [a addButtonWithTitle:@"取消"];
+    if ([a runModal] != NSAlertFirstButtonReturn) return;
+    [scene removeObjectForKey:@"spaceID"];
+    [scene removeObjectForKey:@"spaceIndex"];
+    [scene removeObjectForKey:@"spaceDisplay"];
+    self.scenes[idx] = scene;
+    [self saveScenes];
+    BOOL any = NO;
+    for (NSDictionary *sc in self.scenes) if (((NSString *)(sc[@"spaceID"] ?: @"")).length) { any = YES; break; }
+    [[NSUserDefaults standardUserDefaults] setBool:any forKey:@"centerScenePerSpaceEnabled"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    [self reloadSceneChecks];
+    self.lastAppliedSpaceKey = nil;
+    if (any) [self applySceneForCurrentSpace]; else self.lastAppliedScene = @"";
+    [self showToast:@"已解除桌面绑定"];
+    return;
+  }
+  NSString *key = space[@"id"] ?: @"";
+  for (NSInteger i = 0; i < (NSInteger)self.scenes.count; i++) {
+    if (i == idx) continue;
+    NSMutableDictionary *other = [self.scenes[i] mutableCopy];
+    if ([[other[@"spaceID"] description] isEqualToString:key]) {
+      [other removeObjectForKey:@"spaceID"];
+      [other removeObjectForKey:@"spaceIndex"];
+      self.scenes[i] = other;
+    }
+  }
+  scene[@"spaceID"] = key;
+  scene[@"spaceIndex"] = space[@"index"] ?: @0;
+  scene[@"spaceDisplay"] = space[@"display"] ?: @"";
+  self.scenes[idx] = scene;
+  [self saveScenes];
+  [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"centerScenePerSpaceEnabled"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self reloadSceneChecks];
+  self.lastAppliedSpaceKey = nil;
+  [self applySceneForCurrentSpace];
+  [self showToast:[NSString stringWithFormat:@"已绑定到桌面 %@", space[@"index"] ?: @""]];
+}
+
+- (void)activeSpaceChanged:(NSNotification *)note {
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self applySceneForCurrentSpace]; });
+}
+
+- (void)clearGroupDockEntries {
+  NSArray *installed = [self installedGroupNames];
+  BOOL changed = NO;
+  NSSet *current = [NSSet setWithArray:[self dockGroupNames]];
+  if (current.count) changed = YES;
+  for (NSString *group in installed) {
+    NSString *path = [[GroupDir() stringByAppendingPathComponent:group] stringByAppendingPathExtension:@"app"];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) [self removeDockEntry:path];
+  }
+  if (changed) [self killDock];
+}
+
+- (void)applySceneForCurrentSpace {
+  if (![[NSUserDefaults standardUserDefaults] boolForKey:@"centerScenePerSpaceEnabled"]) return;
+  NSDictionary *space = DLActiveSpaceInfo();
+  NSString *key = space[@"id"] ?: @"";
+  if (!key.length) return;
+  if ([self.lastAppliedSpaceKey isEqualToString:key]) return;
+  self.lastAppliedSpaceKey = key;
+  [self loadScenes];
+  NSDictionary *match = nil;
+  for (NSDictionary *sc in self.scenes) if ([[sc[@"spaceID"] description] isEqualToString:key]) { match = sc; break; }
+  if (!match) {
+    for (NSDictionary *sc in self.scenes) {
+      if ([sc[@"spaceIndex"] integerValue] != [space[@"index"] integerValue]) continue;
+      NSString *d1 = sc[@"spaceDisplay"] ?: @"";
+      NSString *d2 = space[@"display"] ?: @"";
+      if (!d1.length || [d1 isEqualToString:d2]) { match = sc; break; }
+    }
+  }
+  if (match) {
+    [self applySceneNamed:match[@"name"] ?: @"" silent:YES];
+  } else {
+    [self clearGroupDockEntries];
+    self.lastAppliedScene = @"";
   }
 }
 
