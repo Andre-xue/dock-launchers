@@ -1427,6 +1427,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow;
 @property (strong) NSPopUpButton *speechEnginePopup, *speechServicePopup;
 @property (strong) NSTextField *speechModelField;
+@property (strong) NSButton *speechServerCheck;
 @property (strong) NSTextView *voiceTextOutput, *meetingTranscript, *meetingSummary;
 @property (strong) NSTextField *voiceTextStatus, *meetingStatus, *meetingPathLabel;
 @property (copy) NSString *voiceTextPath, *meetingPath;
@@ -22434,6 +22435,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ml.frame = NSMakeRect(24, 140, 110, 18); [cv addSubview:ml];
     NSTextField *hint = [self label:@"例：OpenAI whisper-1、gpt-4o-transcribe；硅基流动 SenseVoice 等支持该接口的模型" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
     hint.frame = NSMakeRect(24, 108, 440, 16); [cv addSubview:hint];
+    self.speechServerCheck = [NSButton checkboxWithTitle:@"允许 Apple 云端识别（更准确，会上传音频给 Apple）" target:self action:@selector(speechSettingChanged:)];
+    self.speechServerCheck.frame = NSMakeRect(24, 78, 430, 22);
+    self.speechServerCheck.toolTip = @"不勾选时强制本机离线识别；勾选后可使用 Apple 服务器提高准确率";
+    [cv addSubview:self.speechServerCheck];
     ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(286, 58, 90, 32)];
     save.title = @"保存"; save.hoverColor = [NSColor systemGreenColor]; save.target = self; save.action = @selector(saveSpeechSettings:);
     [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
@@ -22461,6 +22466,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger engine = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerSTTEngine"];
   [self.speechEnginePopup selectItemAtIndex:(engine == 1 ? 1 : 0)];
   self.speechModelField.stringValue = [self sttModelName];
+  self.speechServerCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerSTTAllowServer"] ? NSControlStateValueOn : NSControlStateValueOff;
   BOOL api = engine == 1;
   self.speechServicePopup.enabled = api;
   self.speechModelField.enabled = api;
@@ -22478,6 +22484,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [ud setInteger:(self.speechEnginePopup.indexOfSelectedItem == 1 ? 1 : 0) forKey:@"centerSTTEngine"];
   if (self.speechServicePopup.selectedItem.representedObject) [ud setInteger:[self.speechServicePopup.selectedItem.representedObject integerValue] forKey:@"centerSTTServiceIndex"];
   [ud setObject:(self.speechModelField.stringValue.length ? self.speechModelField.stringValue : @"whisper-1") forKey:@"centerSTTModel"];
+  [ud setBool:(self.speechServerCheck.state == NSControlStateValueOn) forKey:@"centerSTTAllowServer"];
   [ud synchronize];
   [self.speechSettingsWindow orderOut:nil];
   [self showToast:(self.speechEnginePopup.indexOfSelectedItem == 1 ? @"已切换到第三方语音转写" : @"已切换到本机语音识别")];
@@ -22500,10 +22507,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         self.speechRecognizer = rec;
         SFSpeechURLRecognitionRequest *req = [[SFSpeechURLRecognitionRequest alloc] initWithURL:[NSURL fileURLWithPath:audio]];
         req.shouldReportPartialResults = YES;
-        if ([rec supportsOnDeviceRecognition]) {
+        req.taskHint = SFSpeechRecognitionTaskHintDictation;
+        if ([req respondsToSelector:@selector(setAddsPunctuation:)]) req.addsPunctuation = YES;
+        BOOL allowServer = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerSTTAllowServer"];
+        if (allowServer) {
+          req.requiresOnDeviceRecognition = NO;
+        } else if ([rec supportsOnDeviceRecognition]) {
           req.requiresOnDeviceRecognition = YES;
         } else {
-          update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:6 userInfo:@{NSLocalizedDescriptionKey: @"本机离线中文语音模型不可用，请先在系统设置中启用/下载中文语音识别"}]);
+          update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:6 userInfo:@{NSLocalizedDescriptionKey: @"本机离线中文语音模型不可用，请在转写设置中允许 Apple 云端识别，或改用第三方 Whisper"}]);
           return;
         }
         SFSpeechRecognitionTask *task = [rec recognitionTaskWithRequest:req resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
