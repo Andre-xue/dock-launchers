@@ -6925,9 +6925,11 @@ static BOOL ValidGroupName(NSString *raw) {
   self.aiTable.columnAutoresizingStyle = NSTableViewNoColumnAutoresizing;
   self.aiTable.dataSource = self;
   self.aiTable.delegate = self;
+  self.aiTable.target = self;
+  self.aiTable.doubleAction = @selector(aiEditVisibleRow:);
   NSArray *cols = @[@[@"sel", @"", @24], @[@"ainame", @"名称", @110], @[@"quota", @"余量", @120],
                     @[@"endpoint", @"链接地址(API)", @90], @[@"api", @"API Key", @70],
-                    @[@"note", @"备注(用途)", @90], @[@"aiactions", @"操作", @130]];
+                    @[@"note", @"备注(用途)", @90], @[@"aiactions", @"操作", @168]];
   for (NSArray *c in cols) {
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
     col.title = c[1]; col.width = [c[2] doubleValue];
@@ -8294,6 +8296,27 @@ static BOOL ValidGroupName(NSString *raw) {
   if ([entry[@"api"] length]) {
     [self performSelector:@selector(refreshAIQuotas:) withObject:nil afterDelay:0.4];
   }
+}
+
+- (void)aiEditVisibleRow:(id)sender {
+  NSInteger row = self.aiTable.clickedRow;
+  if (row < 0) row = self.aiTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
+  NSDictionary *target = self.aiVisibleEntries[row];
+  for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
+    if ([[self aiEntryIdentity:self.aiEntries[i]] isEqualToString:[self aiEntryIdentity:target]]) { [self aiShowEntryDialogForIndex:i]; return; }
+  }
+}
+
+- (void)aiEditRow:(NSButton *)b {
+  NSInteger row = b.tag;
+  if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
+  NSDictionary *target = self.aiVisibleEntries[row];
+  NSInteger idx = NSNotFound;
+  for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
+    if ([[self aiEntryIdentity:self.aiEntries[i]] isEqualToString:[self aiEntryIdentity:target]]) { idx = i; break; }
+  }
+  if (idx != NSNotFound) [self aiShowEntryDialogForIndex:idx];
 }
 
 - (void)aiBackupRow:(NSButton *)b {
@@ -10322,11 +10345,11 @@ static BOOL ValidGroupName(NSString *raw) {
       cb.state = [self.aiSelected containsObject:[self aiEntryIdentity:e]] ? NSControlStateValueOn : NSControlStateValueOff;
       [v addSubview:cb];
     } else if ([ident isEqualToString:@"aiactions"]) {
-      NSArray *titles = @[@"复制", @"备份", @"删除"];
-      NSArray *colors = @[[NSColor systemGreenColor], [NSColor systemBlueColor], [NSColor systemRedColor]];
-      NSArray *sels = @[@"aiCopyRow:", @"aiBackupRow:", @"aiDeleteRow:"];
-      for (NSInteger i = 0; i < 3; i++) {
-        ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(i*38, 14, 36, 26)];
+      NSArray *titles = @[@"编辑", @"复制", @"备份", @"删除"];
+      NSArray *colors = @[[NSColor systemPurpleColor], [NSColor systemGreenColor], [NSColor systemBlueColor], [NSColor systemRedColor]];
+      NSArray *sels = @[@"aiEditRow:", @"aiCopyRow:", @"aiBackupRow:", @"aiDeleteRow:"];
+      for (NSInteger i = 0; i < 4; i++) {
+        ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(i*40, 14, 38, 26)];
         b.title = titles[i]; b.hoverColor = colors[i]; b.tag = row;
         if (i == 0) b.toolTip = @"复制完整服务信息（含 API Key，需要管理员密码）";
         b.target = self; b.action = NSSelectorFromString(sels[i]);
