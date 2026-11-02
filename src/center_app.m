@@ -7095,6 +7095,12 @@ static BOOL ValidGroupName(NSString *raw) {
   });
 }
 
+- (NSString *)aiEntryIdentity:(NSDictionary *)e {
+  NSString *kid = e[@"kid"];
+  if ([kid isKindOfClass:[NSString class]] && kid.length) return kid;
+  return [NSString stringWithFormat:@"%@|%@", e[@"name"] ?: @"", [self aiModelCategoryKey:e]];
+}
+
 - (NSString *)aiModelCategoryKey:(NSDictionary *)e {
   NSString *c = e[@"modelCategory"] ?: @"";
   NSArray *valid = @[@"text", @"image", @"video", @"vision", @"edit", @"speech"];
@@ -7216,7 +7222,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)aiSelectAll:(id)sender {
   [self.aiSelected removeAllObjects];
-  for (NSDictionary *e in self.aiEntries) if (e[@"name"]) [self.aiSelected addObject:e[@"name"]];
+  for (NSDictionary *e in self.aiEntries) [self.aiSelected addObject:[self aiEntryIdentity:e]];
   [self rebuildAIDisplay];
 }
 - (void)aiSelectNone:(id)sender {
@@ -7226,8 +7232,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)aiRowToggle:(NSButton *)b {
   NSInteger row = b.tag;
   if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
-  NSString *name = self.aiVisibleEntries[row][@"name"] ?: @"";
-  if ([self.aiSelected containsObject:name]) [self.aiSelected removeObject:name]; else [self.aiSelected addObject:name];
+  NSString *ident = [self aiEntryIdentity:self.aiVisibleEntries[row]];
+  if ([self.aiSelected containsObject:ident]) [self.aiSelected removeObject:ident]; else [self.aiSelected addObject:ident];
   [self rebuildAIDisplay];
 }
 - (NSDictionary *)appPasswordRecord {
@@ -8267,11 +8273,13 @@ static BOOL ValidGroupName(NSString *raw) {
       if (![entry[@"note"] length]) entry[@"note"] = preset[@"type"] ?: @"";
     }
   }
-  if (editing) self.aiEntries[idx] = entry;
-  else {
-    NSInteger exist = NSNotFound;
-    for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) if ([self.aiEntries[i][@"name"] ?: @"" isEqualToString:entry[@"name"]]) { exist = i; break; }
-    if (exist == NSNotFound) [self.aiEntries addObject:entry]; else self.aiEntries[exist] = entry;
+  if (editing) {
+    if (![entry[@"kid"] length] && [old[@"kid"] length]) entry[@"kid"] = old[@"kid"];
+    if (![entry[@"kid"] length]) entry[@"kid"] = [[NSUUID UUID] UUIDString];
+    self.aiEntries[idx] = entry;
+  } else {
+    entry[@"kid"] = [[NSUUID UUID] UUIDString];
+    [self.aiEntries addObject:entry];
   }
   [self saveAIEntries];
   self.aiPage = 0;
@@ -8292,14 +8300,18 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)aiDeleteSelected:(id)sender {
   NSMutableArray *targets = [NSMutableArray array];
+  NSMutableArray *names = [NSMutableArray array];
   for (NSDictionary *e in self.aiEntries) {
-    NSString *name = e[@"name"] ?: @"";
-    if ([self.aiSelected containsObject:name]) [targets addObject:name];
+    NSString *ident = [self aiEntryIdentity:e];
+    if ([self.aiSelected containsObject:ident]) {
+      [targets addObject:ident];
+      [names addObject:e[@"name"] ?: e[@"name"] ?: @"未命名"];
+    }
   }
   if (!targets.count) { [self showToast:@"请先勾选要删除的服务"]; return; }
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = [NSString stringWithFormat:@"删除 %ld 条 AI 服务？", (long)targets.count];
-  a.informativeText = [targets componentsJoinedByString:@"、"];
+  a.informativeText = [names componentsJoinedByString:@"、"];
   [a addButtonWithTitle:@"删除"];
   [a addButtonWithTitle:@"取消"];
   if ([a runModal] != NSAlertFirstButtonReturn) return;
@@ -8307,11 +8319,10 @@ static BOOL ValidGroupName(NSString *raw) {
     [self showToast:@"管理员验证失败，已取消删除"];
     return;
   }
-  for (NSString *n in targets) {
+  for (NSString *ident in targets) {
     for (NSInteger i = (NSInteger)self.aiEntries.count - 1; i >= 0; i--) {
-      if ([self.aiEntries[i][@"name"] ?: @"" isEqualToString:n]) [self.aiEntries removeObjectAtIndex:i];
+      if ([[self aiEntryIdentity:self.aiEntries[i]] isEqualToString:ident]) [self.aiEntries removeObjectAtIndex:i];
     }
-    [self removeAIBackupsForName:n];
   }
   [self.aiSelected removeAllObjects];
   [self saveAIEntries];
@@ -8347,10 +8358,12 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)aiDeleteRow:(NSButton *)b {
   NSInteger row = b.tag;
   if (row < 0 || row >= (NSInteger)self.aiVisibleEntries.count) return;
-  NSString *name = self.aiVisibleEntries[row][@"name"] ?: @"";
+  NSDictionary *targetEntry = self.aiVisibleEntries[row];
+  NSString *name = targetEntry[@"name"] ?: @"";
+  NSString *ident = [self aiEntryIdentity:targetEntry];
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"删除该 AI 服务？";
-  a.informativeText = [NSString stringWithFormat:@"将删除控制台中的数据，并清理本地备份：%@", name];
+  a.informativeText = [NSString stringWithFormat:@"将删除控制台中的数据，并清理本地备份：%@（%@）", name, [self aiModelCategoryTitle:[self aiModelCategoryKey:targetEntry]]];
   [a addButtonWithTitle:@"删除"];
   [a addButtonWithTitle:@"取消"];
   if ([a runModal] != NSAlertFirstButtonReturn) return;
@@ -8359,9 +8372,9 @@ static BOOL ValidGroupName(NSString *raw) {
     return;
   }
   for (NSInteger i = (NSInteger)self.aiEntries.count - 1; i >= 0; i--) {
-    if ([self.aiEntries[i][@"name"] ?: @"" isEqualToString:name]) [self.aiEntries removeObjectAtIndex:i];
+    if ([[self aiEntryIdentity:self.aiEntries[i]] isEqualToString:ident]) [self.aiEntries removeObjectAtIndex:i];
   }
-  [self.aiSelected removeObject:name];
+  [self.aiSelected removeObject:ident];
   [self saveAIEntries];
   [self removeAIBackupsForName:name];
   [self rebuildAIDisplay];
@@ -10300,7 +10313,7 @@ static BOOL ValidGroupName(NSString *raw) {
     if ([ident isEqualToString:@"sel"]) {
       NSButton *cb = [NSButton checkboxWithTitle:@"" target:self action:@selector(aiRowToggle:)];
       cb.tag = row; cb.frame = NSMakeRect(4, 17, 18, 18);
-      cb.state = [self.aiSelected containsObject:e[@"name"] ?: @""] ? NSControlStateValueOn : NSControlStateValueOff;
+      cb.state = [self.aiSelected containsObject:[self aiEntryIdentity:e]] ? NSControlStateValueOn : NSControlStateValueOff;
       [v addSubview:cb];
     } else if ([ident isEqualToString:@"aiactions"]) {
       NSArray *titles = @[@"复制", @"备份", @"删除"];
