@@ -19831,6 +19831,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 44, 110, 32)];
     copy.title = @"复制全部"; copy.hoverColor = [NSColor systemTealColor]; copy.target = self; copy.action = @selector(copyOCRText:);
     [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
+    ColorHoverButton *translate = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(142, 44, 110, 32)];
+    translate.title = @"翻译 OCR 文字"; translate.hoverColor = [NSColor systemPurpleColor]; translate.target = self; translate.action = @selector(translateOCRText:);
+    [translate applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:translate];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(500, 44, 96, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor]; close.target = self; close.action = @selector(closeOCRWindow:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
@@ -19840,6 +19843,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.ocrStatus.stringValue = source.length ? [NSString stringWithFormat:@"识别自：%@", source.lastPathComponent] : @"识别完成";
   [NSApp activateIgnoringOtherApps:YES];
   [self.ocrWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)translateOCRText:(id)sender {
+  NSString *text = self.ocrTextView.string;
+  if (!text.length) { [self showToast:@"没有可翻译的文字"]; return; }
+  [self showTranslationWindow:nil];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.25*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+    self.translationSourceView.string = text;
+    [self translationTranslate:nil];
+  });
 }
 
 - (void)copyOCRText:(id)sender {
