@@ -22320,7 +22320,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         self.speechRecognizer = rec;
         SFSpeechURLRecognitionRequest *req = [[SFSpeechURLRecognitionRequest alloc] initWithURL:[NSURL fileURLWithPath:audio]];
         req.shouldReportPartialResults = YES;
-        if ([rec supportsOnDeviceRecognition]) req.requiresOnDeviceRecognition = NO;
+        if ([rec supportsOnDeviceRecognition]) {
+          req.requiresOnDeviceRecognition = YES;
+        } else {
+          update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:6 userInfo:@{NSLocalizedDescriptionKey: @"本机离线中文语音模型不可用，请先在系统设置中启用/下载中文语音识别"}]);
+          return;
+        }
         SFSpeechRecognitionTask *task = [rec recognitionTaskWithRequest:req resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
           dispatch_async(dispatch_get_main_queue(), ^{
             if (result) {
