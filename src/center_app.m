@@ -16101,35 +16101,37 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)exportConfiguration:(id)sender {
-  NSSavePanel *sp = [NSSavePanel savePanel];
-  sp.allowedFileTypes = @[@"zip"];
+  NSOpenPanel *op = [NSOpenPanel openPanel];
+  op.canChooseFiles = NO;
+  op.canChooseDirectories = YES;
+  op.canCreateDirectories = YES;
+  op.allowsMultipleSelection = NO;
+  op.prompt = @"选择导出位置";
+  if ([op runModal] != NSModalResponseOK) return;
   NSDateFormatter *df = [[NSDateFormatter alloc] init];
   df.dateFormat = @"yyyyMMdd-HHmm";
-  sp.nameFieldStringValue = [NSString stringWithFormat:@"DockLaunchers配置-%@.zip", [df stringFromDate:[NSDate date]] ?: @"backup"];
-  if ([sp runModal] != NSModalResponseOK) return;
-  NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dl-config-%lld", (long long)[[NSDate date] timeIntervalSince1970]]];
+  NSString *folderName = [NSString stringWithFormat:@"DockLaunchers配置-%@", [df stringFromDate:[NSDate date]] ?: @"backup"];
+  NSString *outDir = [op.URL.path stringByAppendingPathComponent:folderName];
   NSFileManager *fm = [NSFileManager defaultManager];
-  [fm removeItemAtPath:tmp error:NULL];
-  [fm createDirectoryAtPath:tmp withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSInteger suffix = 2;
+  while ([fm fileExistsAtPath:outDir]) { outDir = [op.URL.path stringByAppendingPathComponent:[folderName stringByAppendingFormat:@"-%ld", (long)suffix++]]; }
+  if (![fm createDirectoryAtPath:outDir withIntermediateDirectories:YES attributes:nil error:NULL]) { [self showToast:@"无法创建导出目录"]; return; }
   NSString *lists = [GroupDir() stringByAppendingPathComponent:@"lists"];
-  if ([fm fileExistsAtPath:lists]) [fm copyItemAtPath:lists toPath:[tmp stringByAppendingPathComponent:@"lists"] error:NULL];
+  if ([fm fileExistsAtPath:lists]) [fm copyItemAtPath:lists toPath:[outDir stringByAppendingPathComponent:@"lists"] error:NULL];
   NSDictionary *domain = [[NSUserDefaults standardUserDefaults] persistentDomainForName:@"com.docklaunchers.center"] ?: @{};
-  [domain writeToFile:[tmp stringByAppendingPathComponent:@"settings.plist"] atomically:YES];
+  [domain writeToFile:[outDir stringByAppendingPathComponent:@"settings.plist"] atomically:YES];
   NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
   NSString *shortcuts = [support stringByAppendingPathComponent:@"app_shortcuts.json"];
-  if ([fm fileExistsAtPath:shortcuts]) [fm copyItemAtPath:shortcuts toPath:[tmp stringByAppendingPathComponent:@"app_shortcuts.json"] error:NULL];
-  [[NSString stringWithFormat:@"DockLaunchers 配置备份\n导出时间：%@\n包含：分组列表、快捷键、应用设置\n注意：settings.plist 可能包含 AI API Key，请妥善保管。\n", [NSDate date]] writeToFile:[tmp stringByAppendingPathComponent:@"README.txt"] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-  NSString *outPath = sp.URL.path;
-  [fm removeItemAtPath:outPath error:NULL];
-  BOOL ok = [self runDitto:@[@"-c", @"-k", @"--sequesterRsrc", @"--zlibCompressionLevel", @"9", tmp, outPath]];
-  [fm removeItemAtPath:tmp error:NULL];
-  [self showToast:ok ? @"配置已导出" : @"配置导出失败"];
+  if ([fm fileExistsAtPath:shortcuts]) [fm copyItemAtPath:shortcuts toPath:[outDir stringByAppendingPathComponent:@"app_shortcuts.json"] error:NULL];
+  [[NSString stringWithFormat:@"DockLaunchers 配置备份\n导出时间：%@\n包含：分组列表、快捷键、应用设置\n注意：settings.plist 可能包含 AI API Key，请妥善保管。\n", [NSDate date]] writeToFile:[outDir stringByAppendingPathComponent:@"README.txt"] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  [self showToast:@"配置已导出到目录"];
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:outDir]]];
 }
 
 - (void)importConfiguration:(id)sender {
   NSOpenPanel *op = [NSOpenPanel openPanel];
-  op.canChooseFiles = YES; op.canChooseDirectories = NO; op.allowsMultipleSelection = NO;
-  op.allowedFileTypes = @[@"zip"];
+  op.canChooseFiles = YES; op.canChooseDirectories = YES; op.allowsMultipleSelection = NO;
+  op.prompt = @"选择配置目录或 ZIP";
   if ([op runModal] != NSModalResponseOK) return;
   NSAlert *confirm = [[NSAlert alloc] init];
   confirm.messageText = @"导入配置？";
@@ -16140,7 +16142,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSFileManager *fm = [NSFileManager defaultManager];
   NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dl-config-import-%lld", (long long)[[NSDate date] timeIntervalSince1970]]];
   [fm removeItemAtPath:tmp error:NULL];
-  if (![self runDitto:@[@"-x", @"-k", op.URL.path, tmp]]) { [self showToast:@"配置解压失败"]; return; }
+  BOOL isDir = NO;
+  BOOL exists = [fm fileExistsAtPath:op.URL.path isDirectory:&isDir];
+  if (exists && isDir) {
+    tmp = op.URL.path;
+  } else {
+    if (![self runDitto:@[@"-x", @"-k", op.URL.path, tmp]]) { [self showToast:@"配置解压失败"]; return; }
+  }
   NSString *backupDir = [[self configBackupDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"auto-%lld", (long long)[[NSDate date] timeIntervalSince1970]]];
   [fm createDirectoryAtPath:backupDir withIntermediateDirectories:YES attributes:nil error:NULL];
   NSString *liveLists = [GroupDir() stringByAppendingPathComponent:@"lists"];
@@ -16165,7 +16173,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [fm createDirectoryAtPath:support withIntermediateDirectories:YES attributes:nil error:NULL];
     [fm copyItemAtPath:incomingShortcuts toPath:[support stringByAppendingPathComponent:@"app_shortcuts.json"] error:NULL];
   }
-  [fm removeItemAtPath:tmp error:NULL];
+  if (!isDir) [fm removeItemAtPath:tmp error:NULL];
   [self refreshGroups];
   [self ensureGroupDockEntries];
   [self killDock];
@@ -16180,12 +16188,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.configBackupWindow.contentView;
     NSTextField *t = [self label:@"配置导出 / 导入" size:18 bold:YES color:nil];
     t.frame=NSMakeRect(24,216,300,24); [cv addSubview:t];
-    NSTextField *d = [self label:@"导出分组列表、快捷键和应用设置；导入前会自动备份当前配置。" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *d = [self label:@"导出为目录，包含分组列表、快捷键和设置；导入支持目录或 ZIP。" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     d.frame=NSMakeRect(24,192,420,18); [cv addSubview:d];
     NSTextField *warn = [self label:@"注意：配置中可能包含 AI API Key，请妥善保管备份文件。" size:10 bold:NO color:[NSColor systemOrangeColor]];
     warn.frame=NSMakeRect(24,166,420,18); [cv addSubview:warn];
     ColorHoverButton *exp = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,100,180,36)];
-    exp.title=@"导出配置…"; exp.hoverColor=[NSColor systemBlueColor]; exp.target=self; exp.action=@selector(exportConfiguration:);
+    exp.title=@"导出到目录…"; exp.hoverColor=[NSColor systemBlueColor]; exp.target=self; exp.action=@selector(exportConfiguration:);
     [exp applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:exp];
     ColorHoverButton *imp = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(216,100,180,36)];
     imp.title=@"导入配置…"; imp.hoverColor=[NSColor systemOrangeColor]; imp.target=self; imp.action=@selector(importConfiguration:);
