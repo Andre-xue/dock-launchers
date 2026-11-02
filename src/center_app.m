@@ -1107,6 +1107,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 - (void)applyConsoleMetricSelection;
 - (void)handleActivityPaths:(NSArray<NSString *> *)paths;
 @property (strong) NSStatusItem *statusItem;
+@property (strong) NSImage *statusBaseImage;
+@property (strong) NSDictionary<NSString *, NSDictionary *> *groupBadgeCounts;
+@property (strong) NSTimer *groupBadgeTimer;
 
 @property (strong) NSWindow *window;
 @property (strong) NSTextField *centerTitleLabel;
@@ -2869,6 +2872,7 @@ static void HideDockHoverTip(void) {
   self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
   NSImage *menuIcon = [self characterImage:20];
   menuIcon.template = NO;
+  self.statusBaseImage = menuIcon;
   self.statusItem.button.image = menuIcon;
   self.statusItem.button.imagePosition = NSImageLeft;
   self.statusItem.button.imageScaling = NSImageScaleProportionallyDown;
@@ -2890,6 +2894,7 @@ static void HideDockHoverTip(void) {
   [self buildWindow];
   [self buildPopover];
   [self applyThemeFromDefaults];
+  [self startGroupBadgeTimer];
   [self startSceneAutoIfNeeded];
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerLaunchLock"] && [self hasAppPassword] && !getenv("DOCKLAUNCHERS_CENTER_SKIP_LOCK")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -9375,12 +9380,24 @@ static BOOL ValidGroupName(NSString *raw) {
       t.tag = 201; t.frame = NSMakeRect(62, 28, 300, 20); [cell addSubview:t];
       NSTextField *st = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
       st.tag = 202; st.frame = NSMakeRect(62, 10, 300, 16); [cell addSubview:st];
+      NSTextField *badge = [self label:@"" size:9 bold:YES color:[NSColor whiteColor]];
+      badge.tag = 203; badge.alignment = NSTextAlignmentCenter;
+      badge.drawsBackground = YES; badge.backgroundColor = [NSColor systemRedColor];
+      badge.bordered = NO; badge.wantsLayer = YES; badge.layer.cornerRadius = 7;
+      badge.frame = NSMakeRect(40, 38, 20, 14); badge.hidden = YES;
+      [cell addSubview:badge];
     }
     NSImage *icon = [[NSImage alloc] initWithContentsOfFile:[g[@"path"] stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"]];
     if (!icon) icon = [[NSWorkspace sharedWorkspace] iconForFile:g[@"path"]];
     ((NSImageView *)[cell viewWithTag:200]).image = icon;
     ((NSTextField *)[cell viewWithTag:201]).stringValue = g[@"display"] ?: g[@"name"] ?: @"";
-    ((NSTextField *)[cell viewWithTag:202]).stringValue = @"Dock 分组 · 双击打开";
+    NSDictionary *badgeInfo = self.groupBadgeCounts[g[@"name"] ?: @""] ?: @{};
+    NSInteger running = [badgeInfo[@"running"] integerValue];
+    NSInteger total = [badgeInfo[@"total"] integerValue];
+    ((NSTextField *)[cell viewWithTag:202]).stringValue = badgeInfo ? [NSString stringWithFormat:@"运行 %ld / %ld · 双击打开", (long)running, (long)total] : @"Dock 分组 · 双击打开";
+    NSTextField *badge = [cell viewWithTag:203];
+    badge.stringValue = running > 0 ? [NSString stringWithFormat:@"%ld", (long)running] : @"";
+    badge.hidden = running <= 0;
     return cell;
   }
   if (tableView == self.fileSearchTable) {
@@ -16563,6 +16580,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3029,@"cat":@1,@"title":@"文件暂存架",@"desc":@"拖入文件稍后处理",@"sel":@"openShelfWindow:"},
     @{@"id":@3050,@"cat":@1,@"title":@"配置导出 / 导入",@"desc":@"迁移分组和设置",@"sel":@"openConfigBackupWindow:"},
     @{@"id":@3051,@"cat":@1,@"title":@"检查更新",@"desc":@"查看 DockLaunchers 新版本",@"sel":@"checkForUpdates:"},
+    @{@"id":@3052,@"cat":@3,@"title":@"开关分组动态角标",@"desc":@"菜单栏和分组面板显示运行数量",@"sel":@"toggleGroupBadges:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -16744,6 +16762,81 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)allShortcutPrev:(id)sender { if (self.allShortcutPage > 0) { self.allShortcutPage--; [self rebuildAllShortcutPage]; } }
 - (void)allShortcutNext:(id)sender { self.allShortcutPage++; [self rebuildAllShortcutPage]; }
+
+- (NSDictionary<NSString *, NSDictionary *> *)computeGroupBadgeCounts {
+  NSMutableSet *runningBIDs = [NSMutableSet set];
+  NSMutableSet *runningPaths = [NSMutableSet set];
+  for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
+    if (app.activationPolicy == NSApplicationActivationPolicyProhibited) continue;
+    if (app.bundleIdentifier.length) [runningBIDs addObject:app.bundleIdentifier];
+    if (app.bundleURL.path.length) [runningPaths addObject:[app.bundleURL.path stringByStandardizingPath]];
+  }
+  NSMutableDictionary *out = [NSMutableDictionary dictionary];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  for (NSDictionary *g in self.groups ?: @[]) {
+    NSString *name = g[@"name"] ?: @"";
+    NSString *listPath = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+    NSString *content = [NSString stringWithContentsOfFile:listPath encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+    NSInteger total = 0, running = 0;
+    for (NSString *line in [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      if (!line.length || [line hasPrefix:@"#"]) continue;
+      NSArray *parts = [line componentsSeparatedByString:@"|"];
+      NSString *target = parts.count > 1 ? parts.lastObject : parts.firstObject;
+      target = [target stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if (!target.length) continue;
+      total++;
+      BOOL isRunning = NO;
+      if ([target hasPrefix:@"/"]) {
+        NSString *std = [target stringByStandardizingPath];
+        if ([runningPaths containsObject:std]) isRunning = YES;
+        NSString *bid = [[NSBundle bundleWithPath:std] objectForInfoDictionaryKey:@"CFBundleIdentifier"];
+        if (bid.length && [runningBIDs containsObject:bid]) isRunning = YES;
+      } else if ([runningBIDs containsObject:target]) {
+        isRunning = YES;
+      }
+      if (isRunning) running++;
+    }
+    out[name] = @{@"running": @(running), @"total": @(total)};
+  }
+  return out;
+}
+
+- (void)startGroupBadgeTimer {
+  [self.groupBadgeTimer invalidate];
+  __weak typeof(self) weakSelf = self;
+  self.groupBadgeTimer = [NSTimer scheduledTimerWithTimeInterval:4.0 repeats:YES block:^(NSTimer *timer) {
+    [weakSelf updateGroupBadges];
+  }];
+  [self updateGroupBadges];
+}
+
+- (void)updateGroupBadges {
+  BOOL enabled = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerGroupBadgesEnabled"] ? [[NSUserDefaults standardUserDefaults] boolForKey:@"centerGroupBadgesEnabled"] : YES;
+  self.groupBadgeCounts = enabled ? [self computeGroupBadgeCounts] : @{};
+  NSInteger totalRunning = 0;
+  for (NSDictionary *d in self.groupBadgeCounts.allValues) totalRunning += [d[@"running"] integerValue];
+  if (totalRunning > 0 && enabled) {
+    NSMutableAttributedString *title = [[NSMutableAttributedString alloc] initWithString:[NSString stringWithFormat:@" %ld", (long)totalRunning] attributes:@{NSForegroundColorAttributeName: [NSColor systemRedColor], NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightBold]}];
+    self.statusItem.button.attributedTitle = title;
+    self.statusItem.button.toolTip = [NSString stringWithFormat:@"分组内共有 %ld 个应用正在运行", (long)totalRunning];
+    [NSApp dockTile].badgeLabel = [NSString stringWithFormat:@"%ld", (long)totalRunning];
+  } else {
+    self.statusItem.button.attributedTitle = nil;
+    self.statusItem.button.title = @"";
+    self.statusItem.button.toolTip = @"DockLaunchers";
+    [NSApp dockTile].badgeLabel = nil;
+  }
+  if (self.groupPanelWindow.isVisible) [self.groupPanelTable reloadData];
+}
+
+- (void)toggleGroupBadges:(id)sender {
+  BOOL enabled = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerGroupBadgesEnabled"] ? [[NSUserDefaults standardUserDefaults] boolForKey:@"centerGroupBadgesEnabled"] : YES;
+  enabled = !enabled;
+  [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"centerGroupBadgesEnabled"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self updateGroupBadges];
+  [self showToast:enabled ? @"已开启分组动态角标" : @"已关闭分组动态角标"];
+}
 
 - (void)installGroupHotkeys {
   if (!self.groupHotKeyRefs) self.groupHotKeyRefs = [NSMutableDictionary dictionary];
