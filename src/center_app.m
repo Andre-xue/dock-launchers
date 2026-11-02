@@ -11186,7 +11186,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSView *cv = self.sceneWindow.contentView;
   NSTextField *title = [self label:@"场景模式" size:20 bold:YES color:nil];
   title.frame = NSMakeRect(20, 510, 300, 28); [cv addSubview:title];
-  NSTextField *sub = [self label:@"选择场景显示的 Dock 分组；可绑定到当前桌面，切换桌面自动生效" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *sub = [self label:@"选择分组后点「应用此场景」，会绑定到当前桌面；切换桌面自动切换" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(20, 488, 460, 18); [cv addSubview:sub];
 
   self.scenePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(20, 448, 220, 28) pullsDown:NO];
@@ -11461,7 +11461,32 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)applyCurrentScene:(id)sender {
   NSInteger idx = self.scenePopup.indexOfSelectedItem;
   if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
+  NSDictionary *space = DLActiveSpaceInfo();
+  NSMutableDictionary *scene = [self.scenes[idx] mutableCopy];
+  if (space) {
+    NSString *key = space[@"id"] ?: @"";
+    for (NSInteger i = 0; i < (NSInteger)self.scenes.count; i++) {
+      if (i == idx) continue;
+      NSMutableDictionary *other = [self.scenes[i] mutableCopy];
+      if ([[other[@"spaceID"] description] isEqualToString:key]) {
+        [other removeObjectForKey:@"spaceID"];
+        [other removeObjectForKey:@"spaceIndex"];
+        [other removeObjectForKey:@"spaceDisplay"];
+        self.scenes[i] = other;
+      }
+    }
+    scene[@"spaceID"] = key;
+    scene[@"spaceIndex"] = space[@"index"] ?: @0;
+    scene[@"spaceDisplay"] = space[@"display"] ?: @"";
+    self.scenes[idx] = scene;
+    [self saveScenes];
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"centerScenePerSpaceEnabled"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    self.lastAppliedSpaceKey = key;
+  }
   [self applySceneNamed:self.scenes[idx][@"name"] silent:NO];
+  [self reloadSceneChecks];
+  if (space) [self showToast:[NSString stringWithFormat:@"已应用「%@」并绑定到桌面 %@", self.scenes[idx][@"name"] ?: @"", space[@"index"] ?: @""]];
 }
 
 - (void)applySceneNamed:(NSString *)name silent:(BOOL)silent {
