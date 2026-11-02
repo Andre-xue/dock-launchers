@@ -1472,6 +1472,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSComboBox *dialogAIName;
 @property (strong) NSTextField *dialogAIQuota, *dialogAIEndpoint, *dialogAIApi, *dialogAINote, *dialogAIBase, *dialogAIModel, *dialogAIStatus;
 @property (strong) NSComboBox *dialogAIModelCombo;
+@property BOOL dialogAIEditing;
 @property BOOL aiQuotaRefreshing;
 @property (strong) NSPopUpButton *diskVolumePopup;
 @property (strong) NSTextField *diskStatus;
@@ -7818,6 +7819,33 @@ static BOOL ValidGroupName(NSString *raw) {
   return best;
 }
 
+- (NSDictionary *)aiDefaultBaseAndModelForName:(NSString *)raw {
+  NSString *name = [(raw ?: @"") lowercaseString];
+  NSString *base = nil, *model = nil;
+  if ([name containsString:@"deepseek"] || [name containsString:@"深度求索"] || [name containsString:@"深度探索"]) { base = @"https://api.deepseek.com/v1"; model = @"deepseek-chat"; }
+  else if ([name containsString:@"openai"] || [name containsString:@"chatgpt"]) { base = @"https://api.openai.com/v1"; model = @"gpt-4o-mini"; }
+  else if ([name containsString:@"claude"] || [name containsString:@"anthropic"]) { base = @"https://api.anthropic.com/v1"; model = @"claude-3-5-sonnet-latest"; }
+  else if ([name containsString:@"gemini"] || [name containsString:@"谷歌"]) { base = @"https://generativelanguage.googleapis.com/v1beta/openai"; model = @"gemini-1.5-flash"; }
+  else if ([name containsString:@"grok"] || [name containsString:@"xai"]) { base = @"https://api.x.ai/v1"; model = @"grok-2-latest"; }
+  else if ([name containsString:@"mistral"]) { base = @"https://api.mistral.ai/v1"; model = @"mistral-small-latest"; }
+  else if ([name containsString:@"kimi"] || [name containsString:@"moonshot"] || [name containsString:@"月之暗面"]) { base = @"https://api.moonshot.cn/v1"; model = @"moonshot-v1-8k"; }
+  else if ([name containsString:@"智谱"] || [name containsString:@"glm"]) { base = @"https://open.bigmodel.cn/api/paas/v4"; model = @"glm-4-flash"; }
+  else if ([name containsString:@"千问"] || [name containsString:@"qwen"] || [name containsString:@"通义"] || [name containsString:@"百炼"]) { base = @"https://dashscope.aliyuncs.com/compatible-mode/v1"; model = @"qwen-plus"; }
+  else if ([name containsString:@"文心"] || [name containsString:@"千帆"] || [name containsString:@"ernie"]) { base = @"https://qianfan.baidubce.com/v2"; model = @"ernie-4.0-8k"; }
+  else if ([name containsString:@"豆包"] || [name containsString:@"方舟"] || [name containsString:@"doubao"] || [name containsString:@"volcengine"]) { base = @"https://ark.cn-beijing.volces.com/api/v3"; model = @"doubao-pro-32k"; }
+  else if ([name containsString:@"混元"] || [name containsString:@"hunyuan"]) { base = @"https://api.hunyuan.cloud.tencent.com/v1"; model = @"hunyuan-lite"; }
+  else if ([name containsString:@"minimax"] || [name containsString:@"海螺"]) { base = @"https://api.minimaxi.com/v1"; model = @"abab6.5s-chat"; }
+  else if ([name containsString:@"百川"] || [name containsString:@"baichuan"]) { base = @"https://api.baichuan-ai.com/v1"; model = @"Baichuan4"; }
+  else if ([name containsString:@"零一"] || [name containsString:@"lingyiwanwu"] || [name isEqualToString:@"yi"]) { base = @"https://api.lingyiwanwu.com/v1"; model = @"yi-lightning"; }
+  else if ([name containsString:@"阶跃"] || [name containsString:@"stepfun"]) { base = @"https://api.stepfun.com/v1"; model = @"step-1-8k"; }
+  else if ([name containsString:@"硅基流动"] || [name containsString:@"siliconflow"]) { base = @"https://api.siliconflow.cn/v1"; model = @"Qwen/Qwen2.5-7B-Instruct"; }
+  else if ([name containsString:@"openrouter"]) { base = @"https://openrouter.ai/api/v1"; model = @"openai/gpt-4o-mini"; }
+  else if ([name containsString:@"groq"]) { base = @"https://api.groq.com/openai/v1"; model = @"llama-3.1-8b-instant"; }
+  else if ([name containsString:@"together"]) { base = @"https://api.together.xyz/v1"; model = @"meta-llama/Llama-3.1-8B-Instruct-Turbo"; }
+  else if ([name containsString:@"fireworks"]) { base = @"https://api.fireworks.ai/inference/v1"; model = @"accounts/fireworks/models/llama-v3p1-8b-instruct"; }
+  return base.length ? @{@"base": base, @"model": model ?: @""} : nil;
+}
+
 - (void)applyAIPresetAutofill {
   if (!self.dialogAIName) return;
   NSString *name = self.dialogAIName.stringValue ?: @"";
@@ -7829,7 +7857,14 @@ static BOOL ValidGroupName(NSString *raw) {
   if (!preset) { self.dialogAIStatus.stringValue = @"未识别到预设服务，可手动填写地址"; return; }
   self.dialogAIEndpoint.stringValue = preset[@"url"] ?: @"";
   if (!self.dialogAINote.stringValue.length) self.dialogAINote.stringValue = preset[@"type"] ?: @"";
-  self.dialogAIStatus.stringValue = [NSString stringWithFormat:@"已识别：%@ · 已自动填写 Key 获取地址", preset[@"name"]];
+  NSDictionary *def = [self aiDefaultBaseAndModelForName:name];
+  if (def) {
+    BOOL hasSavedBase = self.dialogAIEditing && self.dialogAIBase.stringValue.length;
+    BOOL hasSavedModel = self.dialogAIEditing && self.dialogAIModel.stringValue.length;
+    if (!hasSavedBase) self.dialogAIBase.stringValue = def[@"base"] ?: @"";
+    if (!hasSavedModel) self.dialogAIModel.stringValue = def[@"model"] ?: @"";
+  }
+  self.dialogAIStatus.stringValue = [NSString stringWithFormat:@"已识别：%@ · 已自动填写地址和默认模型", preset[@"name"]];
 }
 
 - (void)controlTextDidChange:(NSNotification *)note {
@@ -7893,6 +7928,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)aiShowEntryDialogForIndex:(NSInteger)idx {
   BOOL editing = idx >= 0 && idx < (NSInteger)self.aiEntries.count;
+  self.dialogAIEditing = editing;
   NSDictionary *old = editing ? self.aiEntries[idx] : @{};
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = editing ? @"编辑 AI 服务" : @"新增 AI 服务";
