@@ -15836,6 +15836,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     closeBtn.action = @selector(quitApp:);
     closeBtn.toolTip = @"完全退出 DockLaunchers";
     [root addSubview:closeBtn];
+    NSButton *quickPanelBtn = [[NSButton alloc] initWithFrame:NSMakeRect(306, 326, 28, 28)];
+    quickPanelBtn.bordered = NO;
+    quickPanelBtn.bezelStyle = NSBezelStyleInline;
+    quickPanelBtn.image = [NSImage imageWithSystemSymbolName:@"command" accessibilityDescription:@"快速面板"];
+    quickPanelBtn.imageScaling = NSImageScaleProportionallyDown;
+    quickPanelBtn.contentTintColor = [NSColor systemBlueColor];
+    quickPanelBtn.target = self;
+    quickPanelBtn.action = @selector(openQuickPanelFromPopover:);
+    quickPanelBtn.toolTip = @"打开快速面板";
+    [root addSubview:quickPanelBtn];
     [self radialApplyPage];
     pop.contentSize = NSMakeSize(340, 360);
   } else {
@@ -22421,6 +22431,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.quickPanel.openHandler = ^(NSDictionary *item) { [weakSelf quickPanelOpenItem:item]; };
   }
   [self.quickPanel showPanel];
+}
+
+- (void)openQuickPanelFromPopover:(id)sender {
+  [self.popover performClose:nil];
+  dispatch_async(dispatch_get_main_queue(), ^{ [self showQuickPanel]; });
 }
 
 - (void)openConsoleFromPopover:(id)sender {
