@@ -11459,7 +11459,10 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)applyCurrentScene:(id)sender {
-  NSInteger idx = self.scenePopup.indexOfSelectedItem;
+  [self applySceneAtIndex:self.scenePopup.indexOfSelectedItem];
+}
+
+- (void)applySceneAtIndex:(NSInteger)idx {
   if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
   NSDictionary *space = DLActiveSpaceInfo();
   NSMutableDictionary *scene = [self.scenes[idx] mutableCopy];
@@ -15753,7 +15756,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (NSView *v in [self.quickSceneContainer.subviews copy]) [v removeFromSuperview];
   NSTextField *title = [self label:@"场景模式" size:17 bold:YES color:nil];
   title.frame = NSMakeRect(16, 454, 300, 24); [self.quickSceneContainer addSubview:title];
-  NSTextField *sub = [self label:@"选择场景要显示在 Dock 里的分组" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+  NSTextField *sub = [self label:@"应用会自动绑定当前桌面；切换桌面自动切换" size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
   sub.frame = NSMakeRect(16, 434, 380, 16); [self.quickSceneContainer addSubview:sub];
 
   self.quickScenePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(16, 400, 200, 26) pullsDown:NO];
@@ -15873,7 +15876,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)quickSceneApply:(id)sender {
   NSInteger idx = self.quickScenePopup.indexOfSelectedItem;
   if (idx < 0 || idx >= (NSInteger)self.scenes.count) return;
-  [self applySceneNamed:self.scenes[idx][@"name"] silent:NO];
+  [self applySceneAtIndex:idx];
   [self.popover performClose:nil];
 }
 
