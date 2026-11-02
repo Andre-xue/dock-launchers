@@ -1234,7 +1234,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSArray *captureHistoryItems;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
-@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup, *captureRecordCountdownPopup, *captureMicGainPopup;
+@property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup, *captureRecordCountdownPopup, *captureMicGainPopup, *capturePresetPopup;
 @property (strong) id clickGlobalMonitor, clickLocalMonitor;
 @property (strong) NSMutableArray *clickRingWindows;
 @property (strong) NSButton *captureCursorCheck, *captureClickCheck;
@@ -17612,6 +17612,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.capturePauseButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     self.capturePauseButton.hidden = YES;
     [cv addSubview:self.capturePauseButton];
+    NSTextField *presetLabel = [self label:@"预设" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    presetLabel.frame = NSMakeRect(724, 456, 32, 18); [cv addSubview:presetLabel];
+    self.capturePresetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(758, 450, 166, 26) pullsDown:NO];
+    [self.capturePresetPopup addItemsWithTitles:@[@"自定义", @"教程模式", @"会议模式", @"游戏模式", @"摄像头模式"]];
+    self.capturePresetPopup.target = self;
+    self.capturePresetPopup.action = @selector(capturePresetChanged:);
+    [cv addSubview:self.capturePresetPopup];
 
     // Row 2: screenshot delay/copy; recording scene/quality.
     NSTextField *dl = [self label:@"延迟" size:10 bold:NO color:[NSColor secondaryLabelColor]];
@@ -18530,6 +18537,48 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.15*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
     [weakSelf captureVideo:nil];
   });
+}
+
+- (void)capturePresetChanged:(id)sender {
+  NSInteger idx = self.capturePresetPopup.indexOfSelectedItem;
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  [ud setInteger:idx forKey:@"centerCapturePreset"];
+  if (idx <= 0) return;
+  BOOL systemAudio = YES, mic = NO, clicks = NO, cursor = YES;
+  NSInteger scene = 0, height = 1440, fps = 30, countdown = 0;
+  NSString *cameraUID = @"";
+  if (idx == 1) { scene = 0; height = 1080; fps = 30; mic = YES; clicks = YES; countdown = 0; }
+  else if (idx == 2) { scene = 1; height = 1080; fps = 30; mic = YES; clicks = NO; countdown = 0; }
+  else if (idx == 3) { scene = 0; height = 1440; fps = 60; mic = NO; clicks = NO; countdown = 0; }
+  else if (idx == 4) {
+    scene = 0; height = 1440; fps = 30; mic = YES; clicks = NO; countdown = 0;
+    NSArray *devices = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInWideAngleCamera, AVCaptureDeviceTypeExternal] mediaType:AVMediaTypeVideo position:AVCaptureDevicePositionUnspecified].devices;
+    for (AVCaptureDevice *d in devices) { if (d.position == AVCaptureDevicePositionFront) { cameraUID = d.uniqueID ?: @""; break; } }
+    if (!cameraUID.length && devices.count) cameraUID = ((AVCaptureDevice *)devices.firstObject).uniqueID ?: @"";
+  }
+  [ud setBool:systemAudio forKey:@"centerCaptureSystemAudio"];
+  [ud setBool:mic forKey:@"centerCaptureMicrophone"];
+  [ud setBool:clicks forKey:@"centerCaptureShowClicks"];
+  [ud setBool:cursor forKey:@"centerCaptureShowCursor"];
+  [ud setInteger:height forKey:@"centerCaptureQuality"];
+  [ud setInteger:fps forKey:@"centerCaptureFPS"];
+  if (cameraUID.length) [ud setObject:cameraUID forKey:@"centerCaptureCameraID"];
+  [self.captureScenePopup selectItemAtIndex:scene];
+  self.captureSystemAudioCheck.state = systemAudio ? NSControlStateValueOn : NSControlStateValueOff;
+  self.captureMicCheck.state = mic ? NSControlStateValueOn : NSControlStateValueOff;
+  self.captureClickCheck.state = clicks ? NSControlStateValueOn : NSControlStateValueOff;
+  self.captureCursorCheck.state = cursor ? NSControlStateValueOn : NSControlStateValueOff;
+  NSInteger qidx = 1;
+  if (height == 1080) qidx = 0; else if (height == 2160) qidx = 2; else if (height == 1440 && fps == 60) qidx = 3;
+  [self.captureQualityPopup selectItemAtIndex:qidx];
+  if (cameraUID.length) {
+    for (NSMenuItem *mi in self.captureCameraPopup.itemArray) if ([(mi.representedObject ?: @"") isEqualToString:cameraUID]) { [self.captureCameraPopup selectItem:mi]; break; }
+  } else {
+    [self.captureCameraPopup selectItemAtIndex:0];
+  }
+  if (scene == 0) [self.captureScenePopup selectItemAtIndex:0];
+  [self startMicLevelMeterIfNeeded];
+  [self showToast:[NSString stringWithFormat:@"已应用%@", self.capturePresetPopup.titleOfSelectedItem]];
 }
 
 - (void)captureVideo:(id)sender {
