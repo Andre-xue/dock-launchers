@@ -16577,6 +16577,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (NSArray<NSDictionary *> *)quickPanelItems {
   NSMutableArray *out = [NSMutableArray array];
+  NSImage *recIcon = [NSImage imageWithSystemSymbolName:@"record.circle" accessibilityDescription:nil];
+  if (self.captureRecording) {
+    [out addObject:@{@"title": self.capturePaused ? @"继续录屏" : @"暂停录屏", @"subtitle": @"快捷录制", @"type": @"录制", @"tool": @"recordpause", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"pause.circle" accessibilityDescription:nil] ?: recIcon}];
+    [out addObject:@{@"title": @"停止录屏", @"subtitle": @"快捷录制", @"type": @"录制", @"tool": @"recordstop", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"stop.circle" accessibilityDescription:nil] ?: recIcon}];
+  } else {
+    [out addObject:@{@"title": @"开始录屏", @"subtitle": @"使用上次录制设置", @"type": @"录制", @"tool": @"recordstart", @"category": @3, @"icon": recIcon ?: [NSImage imageNamed:NSImageNameApplicationIcon]}];
+  }
+  [out addObject:@{@"title": @"打开截图 / 录屏", @"subtitle": @"录制面板和更多设置", @"type": @"录制", @"tool": @"recordpanel", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"camera.viewfinder" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"打开最近录像", @"subtitle": @"显示最新录屏文件", @"type": @"录制", @"tool": @"recordrecent", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"film" accessibilityDescription:nil] ?: recIcon}];
   NSArray *pages = @[@"实时数据", @"Dock 分组", @"AI 管理", @"磁盘分析", @"应用卸载", @"设置"];
   NSArray *pageIcons = @[@"chart.line.uptrend.xyaxis", @"square.grid.2x2", @"sparkles", @"externaldrive", @"trash", @"gearshape"];
   for (NSInteger i = 0; i < pages.count; i++) {
@@ -16659,6 +16668,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   } else if ([type isEqualToString:@"分组"] || [type isEqualToString:@"应用"]) {
     NSString *path = item[@"path"];
     if (path.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+  } else if ([type isEqualToString:@"录制"]) {
+    NSString *tool = item[@"tool"] ?: @"";
+    if ([tool isEqualToString:@"recordstart"]) [self startQuickRecording];
+    else if ([tool isEqualToString:@"recordpause"]) [self pauseCapture:nil];
+    else if ([tool isEqualToString:@"recordstop"]) [self captureVideo:nil];
+    else if ([tool isEqualToString:@"recordpanel"]) [self showCaptureTool:nil];
+    else if ([tool isEqualToString:@"recordrecent"]) [self openMostRecentRecording];
   } else if ([type isEqualToString:@"工具"]) {
     NSString *tool = item[@"tool"] ?: @"";
     if ([tool isEqualToString:@"translate"]) [self showTranslationWindow:nil];
@@ -18178,6 +18194,30 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     return;
   }
   self.captureMicMeterEngine = engine;
+}
+
+- (void)openMostRecentRecording {
+  NSString *dir = [self captureVideoDirectory];
+  NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+  NSString *latest = nil; NSDate *latestDate = nil;
+  for (NSString *f in files) {
+    if (![[f.pathExtension lowercaseString] isEqualToString:@"mp4"]) continue;
+    NSString *p = [dir stringByAppendingPathComponent:f];
+    NSDate *d = [[NSFileManager defaultManager] attributesOfItemAtPath:p error:NULL][NSFileModificationDate];
+    if (!latestDate || [d compare:latestDate] == NSOrderedDescending) { latest = p; latestDate = d; }
+  }
+  if (!latest.length) { [self showToast:@"还没有录屏文件"]; return; }
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:latest]];
+}
+
+- (void)startQuickRecording {
+  if (self.captureRecording) return;
+  if (!self.captureWindow) [self showCaptureTool:nil];
+  if (self.captureWindow.isVisible) [self.captureWindow orderOut:nil];
+  __weak typeof(self) weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.15*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+    [weakSelf captureVideo:nil];
+  });
 }
 
 - (void)captureVideo:(id)sender {
