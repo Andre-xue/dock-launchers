@@ -1231,6 +1231,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (copy) NSString *radialItemsCurrentKey;
 @property (strong) NSMutableDictionary *radialItemsOrderMap;
 @property (strong) NSMutableSet *radialItemsHiddenActions;
+@property (strong) NSMutableArray *radialCustomItems;
+@property (strong) NSWindow *radialNewItemWindow;
+@property (strong) NSTextField *radialNewTitleField, *radialNewValueField;
+@property (strong) NSPopUpButton *radialNewTypePopup;
 @property (strong) NSMutableArray<NSButton *> *radialCustomChecks, *radialCustomUps, *radialCustomDowns;
 @property (strong) NSTableView *automationTable;
 @property (strong) NSMutableArray *automationRules;
@@ -14932,6 +14936,33 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)performRadialAction:(NSString *)action {
+  if ([action hasPrefix:@"custom://"]) {
+    NSArray *items = [[NSUserDefaults standardUserDefaults] arrayForKey:@"centerRadialCustomItems"] ?: @[];
+    for (NSDictionary *it in items) {
+      if (![it[@"action"] isEqualToString:action]) continue;
+      NSString *type = it[@"customType"] ?: @"url";
+      NSString *value = it[@"customValue"] ?: @"";
+      if (!value.length) return;
+      if ([type isEqualToString:@"shell"]) {
+        NSTask *task = [[NSTask alloc] init];
+        task.launchPath = @"/bin/sh";
+        task.arguments = @[@"-lc", value];
+        @try { [task launch]; } @catch (NSException *e) { [self showToast:@"命令启动失败"]; }
+      } else {
+        NSURL *url = nil;
+        if ([type isEqualToString:@"url"]) {
+          NSString *u = value;
+          if (![u containsString:@"://"]) u = [@"https://" stringByAppendingString:u];
+          url = [NSURL URLWithString:u];
+        } else {
+          url = [NSURL fileURLWithPath:[value stringByExpandingTildeInPath]];
+        }
+        if (url) [[NSWorkspace sharedWorkspace] openURL:url];
+      }
+      return;
+    }
+    return;
+  }
   if (!action.length) return;
   if ([action isEqualToString:@"translate"]) [self showTranslationWindow:nil];
   else if ([action isEqualToString:@"compress"]) [self showCompressWindow:nil];
@@ -15830,6 +15861,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       }
     }
     for (NSDictionary *it in page) if (![items containsObject:it]) [items addObject:it];
+    NSArray *customItems = [ud arrayForKey:@"centerRadialCustomItems"] ?: @[];
+    for (NSDictionary *ci in customItems) if ([ci[@"pageKey"] isEqualToString:pageKey]) [items addObject:ci];
     NSMutableArray *shown = [NSMutableArray array];
     for (NSDictionary *it in items) if (![itemHiddenSet containsObject:it[@"action"]]) [shown addObject:it];
     if (!shown.count && items.count) [shown addObject:items.firstObject];
@@ -15849,6 +15882,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
   self.radialItemsHiddenActions = [NSMutableSet setWithArray:[ud arrayForKey:@"centerRadialItemHiddenActions"] ?: @[]];
   self.radialItemsOrderMap = [[ud dictionaryForKey:@"centerRadialItemOrder"] ?: @{} mutableCopy];
+  self.radialCustomItems = [[ud arrayForKey:@"centerRadialCustomItems"] ?: @[] mutableCopy];
   NSArray *pages = self.radialPagesFull ?: self.radialPages;
   if (!self.radialItemsWindow) {
     self.radialItemsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,540,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
@@ -15873,16 +15907,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.radialItemsTable.dataSource=self; self.radialItemsTable.delegate=self;
     self.radialItemsTable.target=self;
     sv.documentView=self.radialItemsTable; [cv addSubview:sv];
-    ColorHoverButton *up = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,50,80,30)];
-    up.title=@"↑ 上移"; up.hoverColor=[NSColor systemBlueColor]; up.target=self; up.action=@selector(radialItemMoveUp:);
+    ColorHoverButton *up = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,50,70,30)];
+    up.title=@"↑ 上移"; up.hoverColor=[NSColor systemBlueColor]; up.font=[NSFont systemFontOfSize:10]; up.target=self; up.action=@selector(radialItemMoveUp:);
     [up applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:up];
-    ColorHoverButton *down = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(112,50,80,30)];
-    down.title=@"↓ 下移"; down.hoverColor=[NSColor systemTealColor]; down.target=self; down.action=@selector(radialItemMoveDown:);
+    ColorHoverButton *down = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(100,50,70,30)];
+    down.title=@"↓ 下移"; down.hoverColor=[NSColor systemTealColor]; down.font=[NSFont systemFontOfSize:10]; down.target=self; down.action=@selector(radialItemMoveDown:);
     [down applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:down];
-    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(352,50,80,30)];
+    ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(176,50,100,30)];
+    add.title=@"添加自定义…"; add.hoverColor=[NSColor systemPurpleColor]; add.font=[NSFont systemFontOfSize:10]; add.target=self; add.action=@selector(addRadialCustomItem:);
+    [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
+    ColorHoverButton *del = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(282,50,70,30)];
+    del.title=@"删除"; del.hoverColor=[NSColor systemRedColor]; del.font=[NSFont systemFontOfSize:10]; del.target=self; del.action=@selector(deleteRadialItem:);
+    [del applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:del];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(358,50,80,30)];
     save.title=@"保存"; save.hoverColor=[NSColor systemGreenColor]; save.target=self; save.action=@selector(saveRadialItems:);
     [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
-    ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(440,50,80,30)];
+    ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(444,50,72,30)];
     cancel.title=@"取消"; cancel.hoverColor=[NSColor systemGrayColor]; cancel.target=self; cancel.action=@selector(closeRadialItems:);
     [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
     [self.radialItemsWindow center];
@@ -15915,6 +15955,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSMutableArray *items = [NSMutableArray array];
   if (savedOrder.count) for (NSString *action in savedOrder) for (NSDictionary *it in page) if ([it[@"action"] isEqualToString:action] && ![items containsObject:it]) [items addObject:it];
   for (NSDictionary *it in page) if (![items containsObject:it]) [items addObject:it];
+  for (NSDictionary *ci in self.radialCustomItems ?: @[]) if ([ci[@"pageKey"] isEqualToString:key]) [items addObject:ci];
   self.radialItemsCurrentItems = items;
   [self.radialItemsTable reloadData];
 }
@@ -15964,6 +16005,84 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.popover = nil;
   [self buildPopover];
   [self showToast:@"功能项已更新"];
+}
+
+- (void)addRadialCustomItem:(id)sender {
+  if (!self.radialNewItemWindow) {
+    self.radialNewItemWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,460,300) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.radialNewItemWindow.title = @"添加自定义菜单项";
+    self.radialNewItemWindow.releasedWhenClosed = NO;
+    NSView *cv = self.radialNewItemWindow.contentView;
+    NSTextField *t = [self label:@"添加自定义菜单项" size:17 bold:YES color:nil];
+    t.frame=NSMakeRect(24,256,300,24); [cv addSubview:t];
+    NSTextField *nl = [self label:@"名称" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    nl.frame=NSMakeRect(24,214,50,18); [cv addSubview:nl];
+    self.radialNewTitleField = [[NSTextField alloc] initWithFrame:NSMakeRect(84,208,350,26)];
+    self.radialNewTitleField.placeholderString=@"例如：打开终端"; [cv addSubview:self.radialNewTitleField];
+    NSTextField *tl = [self label:@"类型" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    tl.frame=NSMakeRect(24,174,50,18); [cv addSubview:tl];
+    self.radialNewTypePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(84,168,350,28) pullsDown:NO];
+    [self.radialNewTypePopup addItemsWithTitles:@[@"打开应用", @"打开文件", @"打开网址", @"执行命令"]];
+    self.radialNewTypePopup.tag = 201; [cv addSubview:self.radialNewTypePopup];
+    NSTextField *vl = [self label:@"内容" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    vl.frame=NSMakeRect(24,134,50,18); [cv addSubview:vl];
+    self.radialNewValueField = [[NSTextField alloc] initWithFrame:NSMakeRect(84,128,350,26)];
+    self.radialNewValueField.placeholderString=@"应用路径 / 文件路径 / https://... / 命令";
+    [cv addSubview:self.radialNewValueField];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(236,48,90,32)];
+    save.title=@"添加"; save.hoverColor=[NSColor systemGreenColor]; save.target=self; save.action=@selector(saveRadialCustomItem:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(334,48,90,32)];
+    cancel.title=@"取消"; cancel.hoverColor=[NSColor systemGrayColor]; cancel.target=self; cancel.action=@selector(closeRadialNewItem:);
+    [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
+    [self.radialNewItemWindow center];
+  }
+  self.radialNewTitleField.stringValue = @"";
+  self.radialNewValueField.stringValue = @"";
+  [self.radialNewTypePopup selectItemAtIndex:0];
+  [self forceWindowToFront:self.radialNewItemWindow];
+}
+
+- (void)closeRadialNewItem:(id)sender { [self.radialNewItemWindow orderOut:nil]; }
+
+- (void)saveRadialCustomItem:(id)sender {
+  NSString *title = [self.radialNewTitleField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  NSString *value = [self.radialNewValueField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!title.length || !value.length) { [self showToast:@"请填写名称和内容"]; return; }
+  if (!self.radialItemsCurrentKey.length) { [self showToast:@"请先选择页面"]; return; }
+  NSString *uid = [[NSUUID UUID] UUIDString];
+  NSString *action = [@"custom://" stringByAppendingString:uid];
+  NSArray *typeKeys = @[@"app", @"file", @"url", @"shell"];
+  NSDictionary *item = @{@"title": title, @"symbol": @"star.fill", @"action": action,
+                         @"custom": @YES, @"customType": typeKeys[[self.radialNewTypePopup indexOfSelectedItem]],
+                         @"customValue": value, @"pageKey": self.radialItemsCurrentKey};
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSMutableArray *items = [[ud arrayForKey:@"centerRadialCustomItems"] ?: @[] mutableCopy];
+  [items addObject:item];
+  [ud setObject:items forKey:@"centerRadialCustomItems"];
+  [ud synchronize];
+  self.radialCustomItems = items;
+  [self.radialNewItemWindow orderOut:nil];
+  NSInteger pageIdx = [self.radialItemsPagePopup.selectedItem.representedObject integerValue];
+  [self loadRadialItemsForPageIndex:pageIdx];
+  [self showToast:@"已添加自定义菜单项，保存后生效"];
+}
+
+- (void)deleteRadialItem:(id)sender {
+  NSInteger row = self.radialItemsTable.selectedRow;
+  if (row < 0 || row >= (NSInteger)self.radialItemsCurrentItems.count) { [self showToast:@"请先选中一项"]; return; }
+  NSDictionary *it = self.radialItemsCurrentItems[row];
+  NSString *action = it[@"action"] ?: @"";
+  if (![action hasPrefix:@"custom://"]) { [self showToast:@"内置功能项不能删除，可取消勾选隐藏"]; return; }
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSMutableArray *items = [[ud arrayForKey:@"centerRadialCustomItems"] ?: @[] mutableCopy];
+  NSMutableArray *keep = [NSMutableArray array];
+  for (NSDictionary *ci in items) if (![ci[@"action"] isEqualToString:action]) [keep addObject:ci];
+  [ud setObject:keep forKey:@"centerRadialCustomItems"];
+  [ud synchronize];
+  self.radialCustomItems = keep;
+  [self loadRadialItemsForPageIndex:[self.radialItemsPagePopup.selectedItem.representedObject integerValue]];
+  [self showToast:@"已删除自定义菜单项，保存后生效"];
 }
 
 - (void)openRadialPageCustomization:(id)sender {
