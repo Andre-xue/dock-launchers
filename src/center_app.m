@@ -24504,6 +24504,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     t.frame=NSMakeRect(24,578,300,28); [cv addSubview:t];
     NSTextField *h = [self label:@"异步任务：提交后自动轮询，完成后可预览/保存" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame=NSMakeRect(24,556,560,18); [cv addSubview:h];
+    ColorHoverButton *localBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(240,578,112,28)];
+    localBtn.title=@"本地生成…"; localBtn.hoverColor=[NSColor systemPinkColor]; localBtn.font=[NSFont systemFontOfSize:10];
+    localBtn.target=self; localBtn.action=@selector(showVideoGeneration:);
+    localBtn.toolTip=@"用本机 ComfyUI + AnimateDiff 生成视频";
+    [localBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:localBtn];
     ColorHoverButton *historyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(358,578,112,28)];
     historyBtn.title=@"视频历史…"; historyBtn.hoverColor=[NSColor systemOrangeColor]; historyBtn.target=self; historyBtn.action=@selector(showAIVideoHistory:);
     [historyBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:historyBtn];
