@@ -22849,7 +22849,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     };
     if(imageData.length){finish(imageData);return;}
     if(imageURL.length){[[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:imageURL] completionHandler:^(NSData *d,NSURLResponse *r,NSError *er){finish(d);}] resume];return;}
-    dispatch_async(dispatch_get_main_queue(),^{weakSelf.aiEditBusy=NO;weakSelf.aiEditStatus.stringValue=[[NSString alloc] initWithData:rd encoding:NSUTF8StringEncoding]?:@"没有解析到结果";});
+    dispatch_async(dispatch_get_main_queue(),^{weakSelf.aiEditBusy=NO;weakSelf.aiEditStatus.stringValue=[weakSelf friendlyAIErrorFromData:rd fallback:@"没有解析到结果"];});
   }] resume];
 }
 
@@ -23246,7 +23246,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     };
     if (imageData.length) { finish(imageData); return; }
     if (imageURL.length) { [[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:imageURL] completionHandler:^(NSData *d, NSURLResponse *r, NSError *e2) { finish(d); }] resume]; return; }
-    dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.aiImageStatus.stringValue = [[NSString alloc] initWithData:rd encoding:NSUTF8StringEncoding] ?: @"AI 增强失败"; });
+    dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.aiImageStatus.stringValue = [weakSelf friendlyAIErrorFromData:rd fallback:@"AI 增强失败"]; });
   }] resume];
 }
 
@@ -23392,6 +23392,36 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (f.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[[self aiGeneratedDirectory] stringByAppendingPathComponent:f]]];
 }
 
+- (NSString *)friendlyAIErrorFromData:(NSData *)data fallback:(NSString *)fallback {
+  if (!data.length) return fallback ?: @"请求失败";
+  id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+  NSString *msg = nil; NSInteger code = 0;
+  if ([obj isKindOfClass:[NSDictionary class]]) {
+    id m = obj[@"message"] ?: obj[@"error"] ?: obj[@"msg"];
+    if ([m isKindOfClass:[NSDictionary class]]) m = m[@"message"];
+    if ([m isKindOfClass:[NSString class]]) msg = m;
+    id c = obj[@"code"] ?: obj[@"error_code"];
+    if ([c respondsToSelector:@selector(integerValue)]) code = [c integerValue];
+  }
+  NSString *low = msg.lowercaseString ?: @"";
+  if ([low containsString:@"prohibited"] || [low containsString:@"sensitive"] || [low containsString:@"content policy"] || [low containsString:@"违规"] || [low containsString:@"敏感"] || code == 20021) {
+    return @"提示词或图片可能包含敏感/违规内容，请修改后重试";
+  }
+  if (code == 401 || [low containsString:@"unauthorized"] || [low containsString:@"invalid api key"] || [low containsString:@"authentication"]) {
+    return @"API Key 无效或未授权，请检查 AI 管理中的 Key";
+  }
+  if (code == 429 || [low containsString:@"rate limit"] || [low containsString:@"too many requests"]) {
+    return @"请求过于频繁或额度不足，请稍后重试";
+  }
+  if (msg.length) {
+    if (msg.length > 160) msg = [[msg substringToIndex:160] stringByAppendingString:@"…"];
+    return code ? [NSString stringWithFormat:@"%@（错误码 %ld）", msg, (long)code] : msg;
+  }
+  NSString *raw = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: fallback;
+  if (raw.length > 160) raw = [[raw substringToIndex:160] stringByAppendingString:@"…"];
+  return raw.length ? raw : (fallback ?: @"请求失败");
+}
+
 - (void)generateAIImage:(id)sender {
   if (self.aiImageBusy) return;
   NSInteger idx=[self.aiImageServicePopup.selectedItem.representedObject integerValue];
@@ -23430,7 +23460,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       }
     }
     if (!imageURL && !imageData.length) {
-      dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.aiImageBusy=NO; weakSelf.aiImageStatus.stringValue=[[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding] ?: @"没有解析到图片"; });
+      dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.aiImageBusy=NO; weakSelf.aiImageStatus.stringValue=[weakSelf friendlyAIErrorFromData:respData fallback:@"没有解析到图片"]; });
       return;
     }
     void (^finish)(NSData *imgData)=^(NSData *imgData){
