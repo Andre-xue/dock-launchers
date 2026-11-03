@@ -1435,7 +1435,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiAssistantURLField, *aiAssistantStatus;
 @property BOOL aiAssistantBusy;
 @property (strong) NSTextField *videoPostFileLabel, *videoPostStart, *videoPostEnd, *videoPostStatus;
-@property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow, *aiTTSWindow;
+@property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow, *aiTTSWindow, *subtitleSettingsWindow;
 @property (strong) NSPopUpButton *aiTTSServicePopup;
 @property (strong) NSTextField *aiTTSURLField, *aiTTSStatus;
 @property (strong) NSPopUpButton *aiTTSModelField, *aiTTSVoiceField;
@@ -23580,6 +23580,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     sv2.documentView = self.meetingSummary; [cv addSubview:sv2];
     self.meetingStatus = [self label:@"请选择录屏文件" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.meetingStatus.frame = NSMakeRect(24, 54, 820, 18); [cv addSubview:self.meetingStatus];
+    ColorHoverButton *subSettings = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250, 14, 112, 32)];
+    subSettings.title = @"字幕设置…"; subSettings.hoverColor = [NSColor systemPurpleColor]; subSettings.target = self; subSettings.action = @selector(openSubtitleSettings:);
+    [subSettings applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:subSettings];
     ColorHoverButton *burn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(370, 14, 120, 32)];
     burn.title = @"烧录字幕…"; burn.hoverColor = [NSColor systemIndigoColor]; burn.target = self; burn.action = @selector(burnMeetingSubtitles:);
     [burn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:burn];
@@ -23606,6 +23609,64 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
   }
   [self forceWindowToFront:self.meetingWindow];
+}
+
+- (void)openSubtitleSettings:(id)sender {
+  if (!self.subtitleSettingsWindow) {
+    self.subtitleSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,460,300) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.subtitleSettingsWindow.title = @"字幕样式设置";
+    self.subtitleSettingsWindow.releasedWhenClosed = NO;
+    NSView *cv = self.subtitleSettingsWindow.contentView;
+    NSTextField *t = [self label:@"字幕样式设置" size:18 bold:YES color:nil];
+    t.frame = NSMakeRect(24,256,300,24); [cv addSubview:t];
+    NSTextField *h = [self label:@"烧录字幕时使用的样式；位置和字号按视频尺寸自动缩放" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24,234,410,18); [cv addSubview:h];
+    NSTextField *pl = [self label:@"位置" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    pl.frame = NSMakeRect(24,198,50,18); [cv addSubview:pl];
+    NSPopUpButton *pos = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(84,192,300,28) pullsDown:NO];
+    [pos addItemsWithTitles:@[@"底部", @"中间", @"顶部"]];
+    NSInteger pv = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerSubtitlePosition"];
+    if (pv >= 0 && pv < 3) [pos selectItemAtIndex:pv];
+    pos.tag = 101; [cv addSubview:pos];
+    NSTextField *sl = [self label:@"字号" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    sl.frame = NSMakeRect(24,158,50,18); [cv addSubview:sl];
+    NSPopUpButton *sizePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(84,152,300,28) pullsDown:NO];
+    [sizePopup addItemsWithTitles:@[@"小", @"中", @"大"]];
+    NSInteger sv = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerSubtitleFontSize"];
+    if (sv >= 0 && sv < 3) [sizePopup selectItemAtIndex:sv];
+    sizePopup.tag = 102; [cv addSubview:sizePopup];
+    NSTextField *cl = [self label:@"颜色" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    cl.frame = NSMakeRect(24,118,50,18); [cv addSubview:cl];
+    NSPopUpButton *colorPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(84,112,300,28) pullsDown:NO];
+    [colorPopup addItemsWithTitles:@[@"白色", @"黄色", @"浅绿色", @"黑色"]];
+    NSInteger cvv = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerSubtitleColor"];
+    if (cvv >= 0 && cvv < 4) [colorPopup selectItemAtIndex:cvv];
+    colorPopup.tag = 103; [cv addSubview:colorPopup];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(236,48,90,32)];
+    save.title=@"保存"; save.hoverColor=[NSColor systemGreenColor]; save.target=self; save.action=@selector(saveSubtitleSettings:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(334,48,90,32)];
+    close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeSubtitleSettings:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.subtitleSettingsWindow center];
+  }
+  [self forceWindowToFront:self.subtitleSettingsWindow];
+}
+
+- (void)closeSubtitleSettings:(id)sender { [self.subtitleSettingsWindow orderOut:nil]; }
+
+- (void)saveSubtitleSettings:(id)sender {
+  NSView *cv = self.subtitleSettingsWindow.contentView;
+  NSPopUpButton *pos = [cv viewWithTag:101];
+  NSPopUpButton *sizePopup = [cv viewWithTag:102];
+  NSPopUpButton *colorPopup = [cv viewWithTag:103];
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  [ud setInteger:pos.indexOfSelectedItem forKey:@"centerSubtitlePosition"];
+  [ud setInteger:sizePopup.indexOfSelectedItem forKey:@"centerSubtitleFontSize"];
+  [ud setInteger:colorPopup.indexOfSelectedItem forKey:@"centerSubtitleColor"];
+  [ud synchronize];
+  [self.subtitleSettingsWindow orderOut:nil];
+  [self showToast:@"字幕样式已保存"];
 }
 
 - (void)burnMeetingSubtitles:(id)sender {
@@ -23674,7 +23735,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   CALayer *videoLayer = [CALayer layer];
   videoLayer.frame = parent.frame;
   [parent addSublayer:videoLayer];
-  CGFloat fontSize = MAX(16, size.width / 34.0);
+  NSUserDefaults *subUD = [NSUserDefaults standardUserDefaults];
+  NSInteger fontSizeLevel = [subUD objectForKey:@"centerSubtitleFontSize"] ? [subUD integerForKey:@"centerSubtitleFontSize"] : 1;
+  CGFloat fontScale = fontSizeLevel == 0 ? 0.75 : (fontSizeLevel == 2 ? 1.35 : 1.0);
+  CGFloat fontSize = MAX(16, (size.width / 34.0) * fontScale);
+  NSInteger colorIndex = [subUD integerForKey:@"centerSubtitleColor"];
+  NSColor *subColor = colorIndex == 1 ? [NSColor systemYellowColor] : (colorIndex == 2 ? [NSColor systemGreenColor] : (colorIndex == 3 ? [NSColor blackColor] : [NSColor whiteColor]));
+  NSInteger position = [subUD integerForKey:@"centerSubtitlePosition"];
   for (NSInteger i = 0; i < (NSInteger)lines.count; i++) {
     CGFloat start = i * cue;
     if (start >= duration) break;
@@ -23683,13 +23750,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     text.string = lines[i];
     text.font = (__bridge CFTypeRef)[NSFont boldSystemFontOfSize:fontSize];
     text.fontSize = fontSize;
-    text.foregroundColor = [NSColor whiteColor].CGColor;
-    text.backgroundColor = [[NSColor blackColor] colorWithAlphaComponent:0.55].CGColor;
+    text.foregroundColor = subColor.CGColor;
+    text.backgroundColor = (colorIndex == 3 ? [[NSColor whiteColor] colorWithAlphaComponent:0.65] : [[NSColor blackColor] colorWithAlphaComponent:0.55]).CGColor;
     text.alignmentMode = kCAAlignmentCenter;
     text.wrapped = YES;
     text.contentsScale = 2.0;
     text.cornerRadius = fontSize * 0.25;
-    text.frame = CGRectMake(size.width * 0.06, size.height * 0.07, size.width * 0.88, fontSize * 2.6);
+    CGFloat posY = position == 2 ? size.height * 0.82 : (position == 1 ? size.height * 0.42 : size.height * 0.07);
+    text.frame = CGRectMake(size.width * 0.06, posY, size.width * 0.88, fontSize * 2.6);
     text.opacity = 0;
     CAKeyframeAnimation *anim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
     anim.values = @[@0.0, @1.0, @1.0, @0.0];
