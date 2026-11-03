@@ -1616,6 +1616,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) id radialSearchKeyMonitor;
 @property BOOL localAISwitchUpdating;
 @property BOOL localOllamaWanted, localComfyWanted;
+@property BOOL localOllamaRunning, localComfyRunning;
+@property NSInteger localAIRunningOwner;
+@property BOOL localAIExclusiveAlertShown;
 @property BOOL localOllamaAutoStarting, localComfyAutoStarting;
 @property NSTimeInterval localOllamaLastAutoStart, localComfyLastAutoStart;
 @property (strong) NSWindow *aiVisionWindow, *aiEditWindow;
@@ -7382,6 +7385,50 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showToast:@"已关闭 Ollama 界面"];
 }
 
+- (void)stopLocalOllamaForExclusive {
+  self.localOllamaWanted=NO;
+  if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/brew"]){
+    NSTask *bt=[[NSTask alloc] init]; bt.launchPath=@"/opt/homebrew/bin/brew"; bt.arguments=@[@"services",@"stop",@"ollama"];
+    bt.standardOutput=[NSFileHandle fileHandleWithNullDevice]; bt.standardError=[NSFileHandle fileHandleWithNullDevice];
+    @try{[bt launch];}@catch(NSException *e){}
+  }
+  if(self.localOllamaTask.isRunning)[self.localOllamaTask terminate];
+  self.localOllamaTask=nil;
+  NSTask *k=[[NSTask alloc] init]; k.launchPath=@"/usr/bin/pkill"; k.arguments=@[@"-f",@"Ollama.app/Contents/Resources/ollama serve"];
+  k.standardOutput=[NSFileHandle fileHandleWithNullDevice]; k.standardError=[NSFileHandle fileHandleWithNullDevice];
+  @try{[k launch];}@catch(NSException *e){}
+  self.localAISwitchUpdating=YES; self.localOllamaSwitch.state=NSControlStateValueOff; self.localAISwitchUpdating=NO;
+  self.localOllamaStatus.stringValue=@"已停止 · 为另一个本地服务释放内存";
+}
+
+- (void)stopLocalComfyForExclusive {
+  self.localComfyWanted=NO;
+  if(self.localComfyTask.isRunning)[self.localComfyTask terminate];
+  self.localComfyTask=nil;
+  NSTask *k=[[NSTask alloc] init]; k.launchPath=@"/usr/bin/pkill"; k.arguments=@[@"-f",@"main.py --listen 127.0.0.1 --port 8188"];
+  k.standardOutput=[NSFileHandle fileHandleWithNullDevice]; k.standardError=[NSFileHandle fileHandleWithNullDevice];
+  @try{[k launch];}@catch(NSException *e){}
+  self.localAISwitchUpdating=YES; self.localComfySwitch.state=NSControlStateValueOff; self.localAISwitchUpdating=NO;
+  self.localComfyStatus.stringValue=@"已停止 · 为另一个本地服务释放内存";
+}
+
+- (void)showLocalAIExclusiveAlertForOllama:(BOOL)ollama {
+  if(self.localAIExclusiveAlertShown)return;
+  self.localAIExclusiveAlertShown=YES;
+  NSAlert *a=[[NSAlert alloc] init];
+  a.messageText=@"内存不足，只能运行一个本地 AI 服务";
+  a.informativeText=ollama?@"已自动关闭 ComfyUI。8GB 内存同时运行会导致系统卡顿。" : @"已自动关闭 Ollama。8GB 内存同时运行会导致系统卡顿。";
+  [a addButtonWithTitle:@"好"];
+  [a runModal];
+}
+
+- (void)enforceLocalAIExclusive {
+  if(!(self.localOllamaRunning&&self.localComfyRunning)){self.localAIExclusiveAlertShown=NO;return;}
+  if(self.localAIRunningOwner==2){[self stopLocalOllamaForExclusive];[self showLocalAIExclusiveAlertForOllama:NO];}
+  else {[self stopLocalComfyForExclusive];[self showLocalAIExclusiveAlertForOllama:YES];}
+  self.localAIRunningOwner=0;
+}
+
 - (void)startLocalOllamaAuto {
   NSString *cli=@"/opt/homebrew/bin/ollama";
   if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/brew"] && [[NSFileManager defaultManager] isExecutableFileAtPath:cli]){
@@ -7423,6 +7470,9 @@ static BOOL ValidGroupName(NSString *raw) {
       self.localOllamaSwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
       self.localAISwitchUpdating=NO;
       self.localOllamaStatus.stringValue=on?@"运行中 · http://127.0.0.1:11434":@"已停止";
+      self.localOllamaRunning=on;
+      if(on&&self.localAIRunningOwner==0)self.localAIRunningOwner=1;
+      if(on)[self enforceLocalAIExclusive];
       NSTimeInterval now=[[NSDate date] timeIntervalSince1970];
       if(!on && self.localOllamaWanted && !self.localOllamaAutoStarting && now-self.localOllamaLastAutoStart>8){
         self.localOllamaAutoStarting=YES; self.localOllamaLastAutoStart=now;
@@ -7449,6 +7499,9 @@ static BOOL ValidGroupName(NSString *raw) {
       self.localComfySwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
       self.localAISwitchUpdating=NO;
       self.localComfyStatus.stringValue=on?@"运行中 · http://127.0.0.1:8188":@"已停止";
+      self.localComfyRunning=on;
+      if(on&&self.localAIRunningOwner==0)self.localAIRunningOwner=2;
+      if(on)[self enforceLocalAIExclusive];
       NSTimeInterval now=[[NSDate date] timeIntervalSince1970];
       if(!on && self.localComfyWanted && !self.localComfyAutoStarting && now-self.localComfyLastAutoStart>10){
         self.localComfyAutoStarting=YES; self.localComfyLastAutoStart=now;
@@ -7471,7 +7524,11 @@ static BOOL ValidGroupName(NSString *raw) {
   if(self.localAISwitchUpdating) return;
   if(sender.state==NSControlStateValueOn){
     self.localOllamaWanted=YES;
-    if(self.localComfySwitch.state==NSControlStateValueOn) [self showToast:@"8GB 内存：ComfyUI 正在运行，Ollama 可能变慢"];
+    self.localAIRunningOwner=1;
+    if(self.localComfyRunning||self.localComfySwitch.state==NSControlStateValueOn){
+      [self stopLocalComfyForExclusive];
+      [self showLocalAIExclusiveAlertForOllama:YES];
+    }
     self.localOllamaStatus.stringValue=@"正在启动…";
     if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/brew"] && [[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/ollama"]){
       NSTask *bt=[[NSTask alloc] init]; bt.launchPath=@"/opt/homebrew/bin/brew"; bt.arguments=@[@"services",@"start",@"ollama"];
@@ -7513,7 +7570,11 @@ static BOOL ValidGroupName(NSString *raw) {
   if(self.localAISwitchUpdating) return;
   if(sender.state==NSControlStateValueOn){
     self.localComfyWanted=YES;
-    if(self.localOllamaSwitch.state==NSControlStateValueOn) [self showToast:@"8GB 内存：Ollama 正在运行，ComfyUI 可能较慢"];
+    self.localAIRunningOwner=2;
+    if(self.localOllamaRunning||self.localOllamaSwitch.state==NSControlStateValueOn){
+      [self stopLocalOllamaForExclusive];
+      [self showLocalAIExclusiveAlertForOllama:NO];
+    }
     NSString *dir=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerComfyUIPath"] ?: [NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI"];
     NSString *py=[dir stringByAppendingPathComponent:@"venv/bin/python"];
     NSString *main=[dir stringByAppendingPathComponent:@"main.py"];
