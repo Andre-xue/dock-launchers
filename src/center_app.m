@@ -1443,7 +1443,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiTTSURLField, *aiTTSStatus;
 @property (strong) NSPopUpButton *aiTTSModelField, *aiTTSVoiceField;
 @property (strong) NSTextView *aiTTSText;
-@property (copy) NSString *aiTTSResultPath;
+@property (copy) NSString *aiTTSResultPath, *aiTTSTargetVideoPath, *aiTTSVideoResultPath;
+@property (strong) NSButton *aiTTSKeepOriginalCheck;
 @property (strong) NSPopUpButton *speechEnginePopup, *speechServicePopup;
 @property (strong) NSTextField *speechModelField;
 @property (strong) NSButton *speechServerCheck;
@@ -23361,8 +23362,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(358,106,100,32)];
     clear.title=@"清空全部"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(clearAITTSPanel:);
     [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    ColorHoverButton *videoTarget = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,66,120,28)];
+    videoTarget.title=@"合成到视频…"; videoTarget.hoverColor=[NSColor systemIndigoColor]; videoTarget.target=self; videoTarget.action=@selector(chooseAITTSVideoTarget:);
+    videoTarget.toolTip=@"生成配音后自动合成到所选视频";
+    [videoTarget applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:videoTarget];
+    self.aiTTSKeepOriginalCheck = [NSButton checkboxWithTitle:@"保留原声" target:nil action:nil];
+    self.aiTTSKeepOriginalCheck.frame = NSMakeRect(152,70,110,22);
+    self.aiTTSKeepOriginalCheck.toolTip = @"不勾选则用配音替换视频原音轨";
+    [cv addSubview:self.aiTTSKeepOriginalCheck];
     self.aiTTSStatus = [self label:@"选择服务后输入文本" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    self.aiTTSStatus.frame = NSMakeRect(24,70,612,18); [cv addSubview:self.aiTTSStatus];
+    self.aiTTSStatus.frame = NSMakeRect(268,70,368,18); [cv addSubview:self.aiTTSStatus];
     [self.aiTTSWindow center];
   }
   [self reloadAITTSServices];
@@ -23461,6 +23470,62 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }] resume];
 }
 
+- (void)chooseAITTSVideoTarget:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = NO;
+  p.allowedFileTypes = @[@"mp4", @"mov", @"m4v"];
+  if ([p runModal] != NSModalResponseOK) return;
+  self.aiTTSTargetVideoPath = p.URL.path;
+  self.aiTTSStatus.stringValue = [NSString stringWithFormat:@"已选择视频：%@，生成配音后会合成", p.URL.lastPathComponent];
+}
+
+- (void)muxTTSAudio:(NSString *)audioPath intoVideo:(NSString *)videoPath output:(NSString *)output keepOriginal:(BOOL)keepOriginal completion:(void (^)(NSError *error))completion {
+  AVURLAsset *videoAsset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:videoPath] options:nil];
+  AVURLAsset *audioAsset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:audioPath] options:nil];
+  [videoAsset loadValuesAsynchronouslyForKeys:@[@"duration", @"tracks"] completionHandler:^{
+    [videoAsset loadTracksWithMediaType:AVMediaTypeVideo completionHandler:^(NSArray<AVAssetTrack *> *videoTracks, NSError *ve) {
+      if (ve || !videoTracks.count) {
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(ve ?: [NSError errorWithDomain:@"DockLaunchers" code:50 userInfo:@{NSLocalizedDescriptionKey:@"视频没有画面轨道"}]); });
+        return;
+      }
+      [videoAsset loadTracksWithMediaType:AVMediaTypeAudio completionHandler:^(NSArray<AVAssetTrack *> *videoAudio, NSError *ae) {
+        [audioAsset loadValuesAsynchronouslyForKeys:@[@"duration", @"tracks"] completionHandler:^{
+          [audioAsset loadTracksWithMediaType:AVMediaTypeAudio completionHandler:^(NSArray<AVAssetTrack *> *ttsTracks, NSError *te) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+              if (te || !ttsTracks.count) { completion(te ?: [NSError errorWithDomain:@"DockLaunchers" code:51 userInfo:@{NSLocalizedDescriptionKey:@"配音音频没有音轨"}]); return; }
+              AVMutableComposition *comp = [AVMutableComposition composition];
+              NSError *err = nil;
+              CMTime videoDuration = videoAsset.duration;
+              AVMutableCompositionTrack *vt = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+              [vt insertTimeRange:CMTimeRangeMake(kCMTimeZero, videoDuration) ofTrack:videoTracks[0] atTime:kCMTimeZero error:&err];
+              if (err) { completion(err); return; }
+              if (keepOriginal && videoAudio.count) {
+                for (AVAssetTrack *at in videoAudio) {
+                  AVMutableCompositionTrack *ct = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+                  [ct insertTimeRange:CMTimeRangeMake(kCMTimeZero, videoDuration) ofTrack:at atTime:kCMTimeZero error:NULL];
+                }
+              }
+              CMTime ttsDuration = audioAsset.duration;
+              CMTime useDuration = CMTimeCompare(ttsDuration, videoDuration) < 0 ? ttsDuration : videoDuration;
+              AVMutableCompositionTrack *tts = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+              [tts insertTimeRange:CMTimeRangeMake(kCMTimeZero, useDuration) ofTrack:ttsTracks[0] atTime:kCMTimeZero error:NULL];
+              AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetHighestQuality];
+              ex.outputURL = [NSURL fileURLWithPath:output];
+              ex.outputFileType = AVFileTypeMPEG4;
+              [ex exportAsynchronouslyWithCompletionHandler:^{
+                dispatch_async(dispatch_get_main_queue(), ^{
+                  if (ex.status == AVAssetExportSessionStatusCompleted) completion(nil);
+                  else completion(ex.error ?: [NSError errorWithDomain:@"DockLaunchers" code:52 userInfo:@{NSLocalizedDescriptionKey:@"视频配音合成失败"}]);
+                });
+              }];
+            });
+          }];
+        }];
+      }];
+    }];
+  }];
+}
+
 - (void)generateAITTS:(id)sender {
   NSArray *services = [self ttsServices];
   NSInteger idx = [self.aiTTSServicePopup.selectedItem.representedObject integerValue];
@@ -23491,6 +23556,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       weakSelf.aiTTSStatus.stringValue=[NSString stringWithFormat:@"已生成：%@",path.lastPathComponent];
       NSSound *sound=[[NSSound alloc] initWithContentsOfFile:path byReference:YES];
       [sound play];
+      if (weakSelf.aiTTSTargetVideoPath.length) {
+        NSDateFormatter *vdf=[[NSDateFormatter alloc] init]; vdf.dateFormat=@"yyyyMMdd-HHmmss";
+        NSString *videoOut=[[weakSelf aiVideoOutputDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"AI配音-%@.mp4",[vdf stringFromDate:[NSDate date]]]];
+        weakSelf.aiTTSStatus.stringValue=@"正在合成视频配音…";
+        [weakSelf muxTTSAudio:path intoVideo:weakSelf.aiTTSTargetVideoPath output:videoOut keepOriginal:(weakSelf.aiTTSKeepOriginalCheck.state == NSControlStateValueOn) completion:^(NSError *muxError) {
+          if (muxError) weakSelf.aiTTSStatus.stringValue = muxError.localizedDescription ?: @"视频配音合成失败";
+          else { weakSelf.aiTTSVideoResultPath = videoOut; weakSelf.aiTTSStatus.stringValue = [NSString stringWithFormat:@"配音视频已生成：%@", videoOut.lastPathComponent]; }
+        }];
+      }
     });
   }] resume];
 }
@@ -23522,6 +23596,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)clearAITTSPanel:(id)sender {
   self.aiTTSText.string=@"";
   self.aiTTSResultPath=nil;
+  self.aiTTSVideoResultPath=nil;
+  self.aiTTSTargetVideoPath=nil;
   self.aiTTSStatus.stringValue=@"已清空";
 }
 
