@@ -19251,8 +19251,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3079,@"cat":@1,@"title":@"语音转写设置",@"desc":@"切换本机识别和第三方 Whisper",@"sel":@"openSpeechSettings:"},
     @{@"id":@3081,@"cat":@1,@"title":@"AI 用量统计",@"desc":@"查看生成数量与占用空间",@"sel":@"showAIUsageStats:"},
     @{@"id":@3082,@"cat":@2,@"title":@"录屏实时标注",@"desc":@"打开屏幕画笔标注层",@"sel":@"toggleLiveAnnotation:"},
-    @{@"id":@3083,@"cat":@1,@"title":@"菜单栏 AI 快捷指令",@"desc":@"总结/翻译/改写选中文字",@"sel":@"openAIQuickCommand:"},
-    @{@"id":@3084,@"cat":@1,@"title":@"文件格式转换中心",@"desc":@"图片/音频/视频/PDF 批量转换",@"sel":@"openFileConverter:"},
+    @{@"id":@3083,@"cat":@4,@"title":@"菜单栏 AI 快捷指令",@"desc":@"总结/翻译/改写选中文字",@"sel":@"openAIQuickCommand:"},
+    @{@"id":@3084,@"cat":@4,@"title":@"文件格式转换中心",@"desc":@"图片/音频/视频/PDF 批量转换",@"sel":@"openFileConverter:"},
     @{@"id":@3080,@"cat":@1,@"title":@"AI 配音",@"desc":@"文本转语音、音色试听与配音",@"sel":@"openAITTSWindow:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
@@ -19369,7 +19369,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *h = [self label:@"按功能分类；点击快捷键后录制新的组合键，Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame=NSMakeRect(24,570,560,18); [cv addSubview:h];
     self.allShortcutCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,530,180,28) pullsDown:NO];
-    [self.allShortcutCategoryPopup addItemsWithTitles:@[@"截图 / 录制", @"文件与工具", @"启动与搜索", @"系统与分组"]];
+    [self.allShortcutCategoryPopup addItemsWithTitles:@[@"截图 / 录制", @"文件与工具", @"启动与搜索", @"系统与分组", @"AI / 新功能"]];
     self.allShortcutCategoryPopup.target=self; self.allShortcutCategoryPopup.action=@selector(allShortcutCategoryChanged:);
     [cv addSubview:self.allShortcutCategoryPopup];
     self.allShortcutContainer = [[NSView alloc] initWithFrame:NSMakeRect(0,70,620,450)];
