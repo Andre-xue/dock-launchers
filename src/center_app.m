@@ -7367,7 +7367,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)startMarketDownloadURL:(NSString *)url name:(NSString *)name dest:(NSString *)dst kind:(NSInteger)kind {
-  if(self.marketDownloadTask){[self showToast:@"已有模型下载在进行"];return;}
+  if(self.marketDownloadTask || self.ollamaPullTask || self.videoDownloadTask){[self showToast:@"已有模型下载在进行，请等待或取消"];return;}
   if(!url.length||!name.length||!dst.length)return;
   NSDictionary *fs=[[NSFileManager defaultManager] attributesOfFileSystemForPath:[dst stringByDeletingLastPathComponent] error:NULL];
   unsigned long long free=[fs[NSFileSystemFreeSize] unsignedLongLongValue];
@@ -7635,7 +7635,7 @@ static BOOL ValidGroupName(NSString *raw) {
   a.informativeText=@"从 Ollama 官方模型库下载；支持取消。";
   [a addButtonWithTitle:@"下载"]; [a addButtonWithTitle:@"取消"];
   if([a runModal]!=NSAlertFirstButtonReturn)return;
-  if(self.ollamaPullTask){self.ollamaMarketStatus.stringValue=@"已有下载任务在进行";return;}
+  if(self.ollamaPullTask || self.marketDownloadTask || self.videoDownloadTask){self.ollamaMarketStatus.stringValue=@"已有下载任务在进行，请等待或取消";return;}
   self.ollamaMarketStatus.stringValue=[NSString stringWithFormat:@"正在拉取 %@…",name];
   NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/opt/homebrew/bin/ollama"; t.arguments=@[@"pull",name];
   NSPipe *err=[NSPipe pipe]; t.standardError=err; t.standardOutput=[NSFileHandle fileHandleWithNullDevice];
@@ -7961,7 +7961,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)videoModelMarketDownload:(id)sender {
-  if(self.videoDownloadTask){self.videoModelMarketStatus.stringValue=@"已有下载任务在进行";return;}
+  if(self.videoDownloadTask || self.marketDownloadTask || self.ollamaPullTask){self.videoModelMarketStatus.stringValue=@"已有下载任务在进行，请等待或取消";return;}
   NSInteger row=self.videoModelMarketTable.selectedRow;
   if(row<0||row>=(NSInteger)self.videoModelMarketFiltered.count){self.videoModelMarketStatus.stringValue=@"请先选择模型";return;}
   NSDictionary *m=self.videoModelMarketFiltered[row];
@@ -24776,6 +24776,24 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.aiFileModelField addItemWithObjectValue:model]; self.aiFileModelField.stringValue=model;
 }
 
+- (NSString *)aiFileOCRImage:(NSString *)path {
+  NSImage *img=[[NSImage alloc] initWithContentsOfFile:path]; if(!img)return @"";
+  CGImageRef cg=[img CGImageForProposedRect:NULL context:nil hints:nil]; if(!cg)return @"";
+  __block NSString *result=@"";
+  dispatch_semaphore_t sem=dispatch_semaphore_create(0);
+  VNRecognizeTextRequest *req=[[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *request,NSError *error){
+    NSMutableArray *lines=[NSMutableArray array];
+    for(VNRecognizedTextObservation *obs in request.results){VNRecognizedText *top=[obs topCandidates:1].firstObject;if(top.string.length)[lines addObject:top.string];}
+    result=[lines componentsJoinedByString:@"\n"]; dispatch_semaphore_signal(sem);
+  }];
+  req.recognitionLevel=VNRequestTextRecognitionLevelAccurate; req.usesLanguageCorrection=YES;
+  req.recognitionLanguages=@[@"zh-Hans",@"zh-Hant",@"en-US"];
+  VNImageRequestHandler *handler=[[VNImageRequestHandler alloc] initWithCGImage:cg options:@{}];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{[handler performRequests:@[req] error:NULL];});
+  dispatch_semaphore_wait(sem,dispatch_time(DISPATCH_TIME_NOW,(int64_t)(12*NSEC_PER_SEC)));
+  return result ?: @"";
+}
+
 - (NSString *)aiFileExtractText:(NSString *)path {
   NSString *ext=path.pathExtension.lowercaseString;
   if([ext isEqualToString:@"pdf"]){
@@ -24788,6 +24806,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if(!t.length)t=[NSString stringWithContentsOfFile:path encoding:NSISOLatin1StringEncoding error:NULL];
     return t ?: @"";
   }
+  if([@[@"png",@"jpg",@"jpeg",@"heic",@"heif",@"tiff",@"tif",@"bmp",@"webp"] containsObject:ext]) return [self aiFileOCRImage:path];
   return @"";
 }
 
