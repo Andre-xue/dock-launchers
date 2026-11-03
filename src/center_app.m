@@ -1615,6 +1615,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSMutableSet *radialSearchExpanded;
 @property (strong) id radialSearchKeyMonitor;
 @property BOOL localAISwitchUpdating;
+@property BOOL localOllamaWanted, localComfyWanted;
+@property BOOL localOllamaAutoStarting, localComfyAutoStarting;
+@property NSTimeInterval localOllamaLastAutoStart, localComfyLastAutoStart;
 @property (strong) NSWindow *aiVisionWindow, *aiEditWindow;
 @property (strong) NSPopUpButton *aiVisionServicePopup, *aiEditServicePopup, *aiEditSizePopup;
 @property (strong) NSTextField *aiVisionModelField, *aiVisionURLField, *aiVisionStatus, *aiEditModelField, *aiEditURLField, *aiEditStatus;
@@ -2274,7 +2277,7 @@ static NSDate *InstallDateForPath(NSString *path) {
 static NSCache *DiskThumbnailCache(void) {
   static NSCache *cache = nil;
   static dispatch_once_t once;
-  dispatch_once(&once, ^{ cache = [[NSCache alloc] init]; cache.countLimit = 80; });
+  dispatch_once(&once, ^{ cache = [[NSCache alloc] init]; cache.countLimit = 120; cache.totalCostLimit = 180*1024*1024; });
   return cache;
 }
 
@@ -2393,7 +2396,7 @@ static NSImage *DiskVideoFrameForPath(NSString *path) {
   [[QLThumbnailGenerator sharedGenerator] generateBestRepresentationForRequest:req completionHandler:^(QLThumbnailRepresentation *rep, NSError *error) {
     NSImage *img = rep.CGImage ? [[NSImage alloc] initWithCGImage:rep.CGImage size:NSMakeSize(800, 800)] : nil;
     if (!img) return;
-    [DiskThumbnailCache() setObject:img forKey:path];
+    [DiskThumbnailCache() setObject:img forKey:path cost:(NSUInteger)(img.size.width*img.size.height*4)];
     dispatch_async(dispatch_get_main_queue(), ^{
       if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = img;
     });
@@ -2438,7 +2441,7 @@ static NSImage *DiskVideoFrameForPath(NSString *path) {
       opt.resizeMode = PHImageRequestOptionsResizeModeFast;
       [[PHImageManager defaultManager] requestImageForAsset:asset targetSize:CGSizeMake(800, 800) contentMode:PHImageContentModeAspectFit options:opt resultHandler:^(NSImage *result, NSDictionary *info) {
         if (!result) return;
-        [DiskThumbnailCache() setObject:result forKey:[@"asset:" stringByAppendingString:assetID]];
+        [DiskThumbnailCache() setObject:result forKey:[@"asset:" stringByAppendingString:assetID] cost:(NSUInteger)(result.size.width*result.size.height*4)];
         dispatch_async(dispatch_get_main_queue(), ^{
           if ([weakSelf.file[@"assetID"] isEqualToString:assetID]) weakSelf.thumbView.image = result;
         });
@@ -2450,7 +2453,7 @@ static NSImage *DiskVideoFrameForPath(NSString *path) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
       NSImage *img = DiskThumbnailForPath(path);
       if (!img) return;
-      [DiskThumbnailCache() setObject:img forKey:path];
+      [DiskThumbnailCache() setObject:img forKey:path cost:(NSUInteger)(img.size.width*img.size.height*4)];
       dispatch_async(dispatch_get_main_queue(), ^{
         if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = img;
       });
@@ -2462,7 +2465,7 @@ static NSImage *DiskVideoFrameForPath(NSString *path) {
       dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSImage *frame = DiskVideoFrameForPath(path);
         if (frame) {
-          [DiskThumbnailCache() setObject:frame forKey:path];
+          [DiskThumbnailCache() setObject:frame forKey:path cost:(NSUInteger)(frame.size.width*frame.size.height*4)];
           dispatch_async(dispatch_get_main_queue(), ^{
             if ([weakSelf.file[@"path"] isEqualToString:path]) weakSelf.thumbView.image = frame;
           });
@@ -7379,6 +7382,36 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showToast:@"已关闭 Ollama 界面"];
 }
 
+- (void)startLocalOllamaAuto {
+  NSString *cli=@"/opt/homebrew/bin/ollama";
+  if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/brew"] && [[NSFileManager defaultManager] isExecutableFileAtPath:cli]){
+    NSTask *bt=[[NSTask alloc] init]; bt.launchPath=@"/opt/homebrew/bin/brew"; bt.arguments=@[@"services",@"start",@"ollama"];
+    bt.standardOutput=[NSFileHandle fileHandleWithNullDevice]; bt.standardError=[NSFileHandle fileHandleWithNullDevice];
+    @try{[bt launch];}@catch(NSException *e){}
+    return;
+  }
+  if(![[NSFileManager defaultManager] isExecutableFileAtPath:cli])return;
+  NSTask *t=[[NSTask alloc] init]; t.launchPath=cli; t.arguments=@[@"serve"];
+  NSString *log=[NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-ollama.log"];
+  [[NSFileManager defaultManager] createFileAtPath:log contents:nil attributes:nil];
+  NSFileHandle *fh=[NSFileHandle fileHandleForWritingAtPath:log];[fh seekToEndOfFile];
+  t.standardOutput=fh;t.standardError=fh;
+  @try{[t launch];self.localOllamaTask=t;}@catch(NSException *e){}
+}
+
+- (void)startLocalComfyAuto {
+  NSString *dir=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerComfyUIPath"] ?: [NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI"];
+  NSString *py=[dir stringByAppendingPathComponent:@"venv/bin/python"];
+  NSString *main=[dir stringByAppendingPathComponent:@"main.py"];
+  if(![[NSFileManager defaultManager] isExecutableFileAtPath:py]||![[NSFileManager defaultManager] fileExistsAtPath:main])return;
+  NSTask *t=[[NSTask alloc] init]; t.launchPath=py; t.arguments=@[main,@"--listen",@"127.0.0.1",@"--port",@"8188",@"--lowvram"]; t.currentDirectoryURL=[NSURL fileURLWithPath:dir];
+  NSString *log=[NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-comfyui.log"];
+  [[NSFileManager defaultManager] createFileAtPath:log contents:nil attributes:nil];
+  NSFileHandle *fh=[NSFileHandle fileHandleForWritingAtPath:log];[fh seekToEndOfFile];
+  t.standardOutput=fh;t.standardError=fh;
+  @try{[t launch];self.localComfyTask=t;}@catch(NSException *e){}
+}
+
 - (void)refreshLocalAIServicesSilent { [self refreshLocalAIServices:nil]; }
 
 - (void)refreshLocalAIServices:(id)sender {
@@ -7390,6 +7423,12 @@ static BOOL ValidGroupName(NSString *raw) {
       self.localOllamaSwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
       self.localAISwitchUpdating=NO;
       self.localOllamaStatus.stringValue=on?@"运行中 · http://127.0.0.1:11434":@"已停止";
+      NSTimeInterval now=[[NSDate date] timeIntervalSince1970];
+      if(!on && self.localOllamaWanted && !self.localOllamaAutoStarting && now-self.localOllamaLastAutoStart>8){
+        self.localOllamaAutoStarting=YES; self.localOllamaLastAutoStart=now;
+        [self startLocalOllamaAuto];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(6*NSEC_PER_SEC)),dispatch_get_main_queue(),^{self.localOllamaAutoStarting=NO;});
+      }
       if(on){
         [[session dataTaskWithURL:[NSURL URLWithString:@"http://127.0.0.1:11434/api/ps"] completionHandler:^(NSData *pd,NSURLResponse *pr,NSError *pe){
           id po=pd.length?[NSJSONSerialization JSONObjectWithData:pd options:0 error:NULL]:nil;
@@ -7410,6 +7449,12 @@ static BOOL ValidGroupName(NSString *raw) {
       self.localComfySwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
       self.localAISwitchUpdating=NO;
       self.localComfyStatus.stringValue=on?@"运行中 · http://127.0.0.1:8188":@"已停止";
+      NSTimeInterval now=[[NSDate date] timeIntervalSince1970];
+      if(!on && self.localComfyWanted && !self.localComfyAutoStarting && now-self.localComfyLastAutoStart>10){
+        self.localComfyAutoStarting=YES; self.localComfyLastAutoStart=now;
+        [self startLocalComfyAuto];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(8*NSEC_PER_SEC)),dispatch_get_main_queue(),^{self.localComfyAutoStarting=NO;});
+      }
     });
   }] resume];
   NSString *exe=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerWhisperExe"] ?: @"/opt/homebrew/bin/whisper-cli";
@@ -7425,6 +7470,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)localAIToggleOllama:(NSSwitch *)sender {
   if(self.localAISwitchUpdating) return;
   if(sender.state==NSControlStateValueOn){
+    self.localOllamaWanted=YES;
+    if(self.localComfySwitch.state==NSControlStateValueOn) [self showToast:@"8GB 内存：ComfyUI 正在运行，Ollama 可能变慢"];
     self.localOllamaStatus.stringValue=@"正在启动…";
     if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/brew"] && [[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/ollama"]){
       NSTask *bt=[[NSTask alloc] init]; bt.launchPath=@"/opt/homebrew/bin/brew"; bt.arguments=@[@"services",@"start",@"ollama"];
@@ -7446,6 +7493,7 @@ static BOOL ValidGroupName(NSString *raw) {
     @catch(NSException *e){self.localOllamaStatus.stringValue=@"启动失败";sender.state=NSControlStateValueOff;}
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{[self refreshLocalAIServices:nil];});
   } else {
+    self.localOllamaWanted=NO;
     self.localOllamaStatus.stringValue=@"正在停止…";
     if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/brew"]){
       NSTask *bt=[[NSTask alloc] init]; bt.launchPath=@"/opt/homebrew/bin/brew"; bt.arguments=@[@"services",@"stop",@"ollama"];
@@ -7464,6 +7512,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)localAIToggleComfy:(NSSwitch *)sender {
   if(self.localAISwitchUpdating) return;
   if(sender.state==NSControlStateValueOn){
+    self.localComfyWanted=YES;
+    if(self.localOllamaSwitch.state==NSControlStateValueOn) [self showToast:@"8GB 内存：Ollama 正在运行，ComfyUI 可能较慢"];
     NSString *dir=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerComfyUIPath"] ?: [NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI"];
     NSString *py=[dir stringByAppendingPathComponent:@"venv/bin/python"];
     NSString *main=[dir stringByAppendingPathComponent:@"main.py"];
@@ -7476,6 +7526,7 @@ static BOOL ValidGroupName(NSString *raw) {
     @try{[t launch];self.localComfyTask=t;self.localComfyStatus.stringValue=@"正在启动…";}@catch(NSException *e){self.localComfyStatus.stringValue=@"启动失败";sender.state=NSControlStateValueOff;}
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(4.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{[self refreshLocalAIServices:nil];});
   } else {
+    self.localComfyWanted=NO;
     self.localComfyStatus.stringValue=@"正在停止…";
     if(self.localComfyTask.isRunning)[self.localComfyTask terminate];
     self.localComfyTask=nil;
@@ -19149,6 +19200,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(300,20,90,30)];
     refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemGreenColor]; refresh.target=self; refresh.action=@selector(refreshPrivacyDashboardButton:);
     [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    NSTextField *note=[self label:@"屏幕录制、辅助功能修改后通常需要重启应用才能生效" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    note.frame=NSMakeRect(24,50,560,16); [cv addSubview:note];
+    ColorHoverButton *restart = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(400,20,100,30)];
+    restart.title=@"重启应用"; restart.hoverColor=[NSColor systemOrangeColor]; restart.target=self; restart.action=@selector(relaunchApplication:);
+    [restart applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:restart];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524, 20, 92, 30)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor]; close.target = self; close.action = @selector(closePrivacyDashboard:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
@@ -19159,6 +19215,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)refreshPrivacyDashboardButton:(id)sender { [self refreshPrivacyDashboard]; }
+
+- (void)relaunchApplication:(id)sender {
+  self.allowTerminate=YES;
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[[NSBundle mainBundle] bundlePath]]];
+  [NSApp terminate:nil];
+}
 
 - (void)openPrivacyPane:(NSButton *)sender {
   NSString *pane = objc_getAssociatedObject(sender, "PrivacyPane");
