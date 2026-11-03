@@ -8,9 +8,9 @@
     "audited_modules": 18,
     "audit_findings": 32,
     "fixed_p0": 5,
-    "fixed_p1": 14,
+    "fixed_p1": 16,
     "fixed_p2": 10,
-    "open_risk": 4
+    "open_risk": 3
   },
   "tests": {
     "build": "PASS",
@@ -67,5 +67,5 @@
     "ollama_not_running",
     "tcc_ui_not_automated"
   ],
-  "commit_after": "3a5d1e5"
+  "commit_after": "264b675"
 }
