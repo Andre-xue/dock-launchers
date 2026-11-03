@@ -23905,7 +23905,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiImageModelField.editable = YES;
     self.aiImageModelField.stringValue = e[@"imageModel"] ?: @"v1-5-pruned-emaonly.safetensors";
     self.aiImageURLField.stringValue = base.length ? base : @"http://127.0.0.1:8188";
-    self.aiImageStatus.stringValue = @"ComfyUI 本地：模型填 checkpoint 名称，地址填 127.0.0.1:8188";
+    self.aiImageStatus.stringValue = @"ComfyUI 本地：模型填 checkpoint 名称，地址填 127.0.0.1:8188；8GB 建议 512x512";
+    [self.aiImageSizePopup selectItemWithTitle:@"512x512"];
     return;
   }
   self.aiImageModelField.editable = NO;
