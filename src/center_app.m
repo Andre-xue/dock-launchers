@@ -7247,6 +7247,7 @@ static BOOL ValidGroupName(NSString *raw) {
     sv.documentView=self.whisperMarketTable; [cv addSubview:sv];
     self.whisperMarketStatus=[self label:@"选择模型下载到 Models 目录" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.whisperMarketStatus.frame=NSMakeRect(24,50,380,18); [cv addSubview:self.whisperMarketStatus];
     ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(410,40,110,30)]; dl.title=@"下载安装"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(whisperMarketInstall:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
+    ColorHoverButton *latest=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(492,40,100,30)]; latest.title=@"获取最新"; latest.hoverColor=[NSColor systemBlueColor]; latest.target=self; latest.action=@selector(whisperMarketReload:); [latest applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:latest];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(606,40,90,30)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeWhisperModelMarket:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.whisperMarketWindow center];
   }
@@ -7256,16 +7257,51 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)closeWhisperModelMarket:(id)sender { [self.whisperMarketWindow orderOut:nil]; }
 
+- (NSString *)marketCachePathNamed:(NSString *)name {
+  NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:[name stringByAppendingString:@"_market_cache.json"]];
+}
+
+- (NSArray *)cachedMarketEntriesNamed:(NSString *)name {
+  NSData *d=[NSData dataWithContentsOfFile:[self marketCachePathNamed:name]];
+  id o=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+  return [o isKindOfClass:[NSArray class]]?o:@[];
+}
+
+- (void)saveMarketEntries:(NSArray *)entries named:(NSString *)name {
+  NSData *d=[NSJSONSerialization dataWithJSONObject:entries options:0 error:NULL];
+  [d writeToFile:[self marketCachePathNamed:name] atomically:YES];
+}
+
 - (void)whisperMarketReload:(id)sender {
+  NSMutableArray *all=[NSMutableArray array];
+  for(NSDictionary *x in [self whisperCuratedModels])[all addObject:[x mutableCopy]];
+  NSSet *baseNames=[NSSet setWithArray:[all valueForKey:@"name"]];
+  for(NSDictionary *x in [self cachedMarketEntriesNamed:@"whisper"]) if(x[@"name"] && ![baseNames containsObject:x[@"name"]])[all addObject:[x mutableCopy]];
+  self.whisperMarketModels=all; self.whisperMarketFiltered=all; [self.whisperMarketTable reloadData];
+  self.whisperMarketStatus.stringValue=@"已显示内置/缓存，正在后台检查最新模型…";
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-    NSMutableArray *all=[NSMutableArray array];
-    for(NSDictionary *x in [self whisperCuratedModels])[all addObject:[x mutableCopy]];
+    NSMutableArray *fresh=[NSMutableArray array];
+    NSString *api=@"https://huggingface.co/api/models/ggerganov/whisper.cpp?blobs=true";
+    NSData *d=[NSData dataWithContentsOfURL:[NSURL URLWithString:api]];
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    NSArray *sib=[o isKindOfClass:[NSDictionary class]]?o[@"siblings"]:nil;
+    for(NSDictionary *x in sib){
+      NSString *fn=x[@"rfilename"]; if(![fn.pathExtension.lowercaseString isEqualToString:@"bin"])continue;
+      if(![fn containsString:@"ggml-"])continue;
+      [fresh addObject:@{@"name":fn,@"category":@"最新",@"size":@"未知",@"url":[NSString stringWithFormat:@"https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/%@",fn],@"recommended":@NO}];
+    }
+    if(fresh.count)[self saveMarketEntries:fresh named:@"whisper"];
     NSString *dir=[self localModelDir];
     NSSet *files=[NSSet setWithArray:[[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] ?: @[]];
-    for(NSMutableDictionary *m in all) if([files containsObject:m[@"name"]])m[@"installed"]=@YES;
+    NSMutableArray *merged=[NSMutableArray array];
+    NSSet *known=[NSSet setWithArray:[all valueForKey:@"name"]];
+    for(NSMutableDictionary *m in all){if([files containsObject:m[@"name"]])m[@"installed"]=@YES;[merged addObject:m];}
+    for(NSDictionary *m in fresh) if(![known containsObject:m[@"name"]])[merged addObject:m];
     dispatch_async(dispatch_get_main_queue(),^{
-      self.whisperMarketModels=all; self.whisperMarketFiltered=all; [self.whisperMarketTable reloadData];
-      self.whisperMarketStatus.stringValue=[NSString stringWithFormat:@"%ld 个模型，已安装 %ld 个",(long)all.count,(long)files.count];
+      self.whisperMarketModels=merged; self.whisperMarketFiltered=merged; [self.whisperMarketTable reloadData];
+      self.whisperMarketStatus.stringValue=fresh.count?[NSString stringWithFormat:@"已同步：%ld 个模型",(long)merged.count]:@"网络暂不可用，已显示内置/缓存";
     });
   });
 }
@@ -7313,7 +7349,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTextField *h=[self label:[NSString stringWithFormat:@"当前内存约 %.0f GB；8GB 建议 SD1.5，16GB 以上可尝试 SDXL",gb] size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,526,780,18); [cv addSubview:h];
     self.comfyMarketSearch=[[NSSearchField alloc] initWithFrame:NSMakeRect(24,490,300,28)]; self.comfyMarketSearch.placeholderString=@"搜索模型"; self.comfyMarketSearch.target=self; self.comfyMarketSearch.action=@selector(comfyMarketFilterChanged:); [self.comfyMarketSearch setContinuous:YES]; [cv addSubview:self.comfyMarketSearch];
     self.comfyMarketCategory=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(336,490,160,28) pullsDown:NO];
-    for(NSString *c in @[@"全部",@"推荐",@"基础",@"写实",@"动漫",@"SDXL",@"快速"])[self.comfyMarketCategory addItemWithTitle:c];
+    for(NSString *c in @[@"全部",@"推荐",@"基础",@"写实",@"动漫",@"SDXL",@"快速",@"最新"])[self.comfyMarketCategory addItemWithTitle:c];
     self.comfyMarketCategory.target=self; self.comfyMarketCategory.action=@selector(comfyMarketFilterChanged:); [cv addSubview:self.comfyMarketCategory];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,86,812,392)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.comfyMarketTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
@@ -7335,23 +7371,40 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)closeComfyModelMarket:(id)sender { [self.comfyMarketWindow orderOut:nil]; }
 
 - (void)comfyMarketReload:(id)sender {
-  self.comfyMarketStatus.stringValue=@"正在检查本地模型…";
+  NSMutableArray *all=[NSMutableArray array];
+  for(NSDictionary *x in [self comfyCuratedModels])[all addObject:[x mutableCopy]];
+  NSSet *baseNames=[NSSet setWithArray:[all valueForKey:@"name"]];
+  for(NSDictionary *x in [self cachedMarketEntriesNamed:@"comfy"]) if(x[@"name"] && ![baseNames containsObject:x[@"name"]])[all addObject:[x mutableCopy]];
+  self.comfyMarketModels=all; [self comfyMarketFilterChanged:nil];
+  self.comfyMarketStatus.stringValue=@"已显示内置/缓存，正在后台检查最新模型…";
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-    NSMutableArray *all=[NSMutableArray array];
-    for(NSDictionary *x in [self comfyCuratedModels])[all addObject:[x mutableCopy]];
-    NSString *dir=[self localModelDir];
-    NSArray *files=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
-    NSSet *installed=[NSSet setWithArray:files];
-    double memGB=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
-    for(NSMutableDictionary *m in all){
-      if([installed containsObject:m[@"name"]])m[@"installed"]=@YES;
-      double g=[m[@"size"] doubleValue];
-      BOOL rec=memGB<12?(g>0&&g<=3.0):(memGB<20?(g>0&&g<=7.5):YES);
-      m[@"recommended"]=@(rec);
+    NSMutableArray *fresh=[NSMutableArray array];
+    for(NSString *tag in @[@"stable-diffusion",@"sdxl"]){
+      NSString *url=[NSString stringWithFormat:@"https://huggingface.co/api/models?search=%@&sort=lastModified&direction=-1&limit=5",tag];
+      NSData *d=[NSData dataWithContentsOfURL:[NSURL URLWithString:url]];
+      id arr=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+      if(![arr isKindOfClass:[NSArray class]])continue;
+      for(NSDictionary *x in arr){
+        NSString *rid=x[@"id"]; if(!rid.length)continue;
+        [fresh addObject:@{@"name":rid,@"category":@"最新",@"size":@"未知",@"desc":@"Hugging Face 最新模型（实验）",@"recommended":@NO,@"repo":rid}];
+      }
     }
+    if(fresh.count)[self saveMarketEntries:fresh named:@"comfy"];
+    NSMutableArray *merged=[NSMutableArray array];
+    NSSet *known=[NSSet setWithArray:[all valueForKey:@"name"]];
+    for(NSMutableDictionary *m in all){
+      double g=[m[@"size"] doubleValue];
+      double mem=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
+      m[@"recommended"]=@(mem<12?(g>0&&g<=3.0):(mem<20?(g>0&&g<=7.5):YES));
+      [merged addObject:m];
+    }
+    for(NSDictionary *m in fresh) if(![known containsObject:m[@"name"]])[merged addObject:m];
+    NSString *dir=[self localModelDir];
+    NSSet *files=[NSSet setWithArray:[[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] ?: @[]];
+    for(NSMutableDictionary *m in merged) if([files containsObject:m[@"name"]])m[@"installed"]=@YES;
     dispatch_async(dispatch_get_main_queue(),^{
-      self.comfyMarketModels=all; [self comfyMarketFilterChanged:nil];
-      self.comfyMarketStatus.stringValue=[NSString stringWithFormat:@"%ld 个模型，已安装 %ld 个",(long)all.count,(long)installed.count];
+      self.comfyMarketModels=merged; [self comfyMarketFilterChanged:nil];
+      self.comfyMarketStatus.stringValue=fresh.count?[NSString stringWithFormat:@"已同步：%ld 个模型",(long)merged.count]:@"网络暂不可用，已显示内置/缓存";
     });
   });
 }
@@ -7375,7 +7428,14 @@ static BOOL ValidGroupName(NSString *raw) {
   NSDictionary *m=self.comfyMarketFiltered[row];
   if([m[@"installed"] boolValue]){self.comfyMarketStatus.stringValue=@"该模型已安装";return;}
   NSString *url=m[@"url"] ?: @""; NSString *name=m[@"name"] ?: @"";
-  if(!url.length||!name.length)return;
+  if(!url.length && m[@"repo"]){
+    NSString *api=[NSString stringWithFormat:@"https://huggingface.co/api/models/%@?blobs=true",m[@"repo"]];
+    NSData *d=[NSData dataWithContentsOfURL:[NSURL URLWithString:api]];
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    NSArray *sib=[o isKindOfClass:[NSDictionary class]]?o[@"siblings"]:nil;
+    for(NSDictionary *x in sib){NSString *fn=x[@"rfilename"];if([fn.pathExtension.lowercaseString isEqualToString:@"safetensors"]){url=[NSString stringWithFormat:@"https://hf-mirror.com/%@/resolve/main/%@",m[@"repo"],fn];name=fn;break;}}
+  }
+  if(!url.length||!name.length){self.comfyMarketStatus.stringValue=@"未找到可下载的 safetensors";return;}
   NSString *dir=[self localModelDir]; [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
   NSString *dst=[dir stringByAppendingPathComponent:name];
   NSAlert *a=[[NSAlert alloc] init]; a.messageText=[NSString stringWithFormat:@"下载 %@？",name];
@@ -7427,12 +7487,16 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)closeOllamaModelMarket:(id)sender { [self.ollamaMarketWindow orderOut:nil]; }
 
 - (void)ollamaMarketReload:(id)sender {
-  self.ollamaMarketStatus.stringValue=@"正在获取模型列表…";
+  NSMutableArray *all=[NSMutableArray array];
+  for(NSDictionary *x in [self ollamaCuratedModels])[all addObject:[x mutableCopy]];
+  NSSet *baseNames=[NSSet setWithArray:[all valueForKey:@"name"]];
+  for(NSDictionary *x in [self cachedMarketEntriesNamed:@"ollama"]) if(x[@"name"] && ![baseNames containsObject:x[@"name"]])[all addObject:[x mutableCopy]];
+  self.ollamaMarketModels=all; [self ollamaMarketFilterChanged:nil];
+  self.ollamaMarketStatus.stringValue=[NSString stringWithFormat:@"已显示 %ld 个（含缓存），正在后台更新…",(long)all.count];
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-    NSMutableArray *all=[NSMutableArray array];
-    for(NSDictionary *x in [self ollamaCuratedModels])[all addObject:[x mutableCopy]];
+    NSMutableArray *working=[all mutableCopy];
     NSMutableSet *known=[NSMutableSet set];
-    for(NSDictionary *m in all)[known addObject:m[@"name"]];
+    for(NSDictionary *m in working)[known addObject:m[@"name"]];
     double memGB=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
     NSString *installedOut=[self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"list"]];
     NSMutableSet *installed=[NSMutableSet set];
@@ -7449,10 +7513,10 @@ static BOOL ValidGroupName(NSString *raw) {
         NSString *name=[html substringWithRange:[r rangeAtIndex:1]];
         if(!name.length||[known containsObject:name])continue;
         [known addObject:name];
-        [all addObject:[@{@"name":name,@"category":[self ollamaCategoryForName:name],@"size":@"未知",@"desc":@"Ollama 官方模型库",@"recommended":@NO} mutableCopy]];
+        [working addObject:[@{@"name":name,@"category":[self ollamaCategoryForName:name],@"size":@"未知",@"desc":@"Ollama 官方模型库",@"recommended":@NO} mutableCopy]];
       }
     }
-    for(NSMutableDictionary *m in all){
+    for(NSMutableDictionary *m in working){
       if([installed containsObject:m[@"name"]])m[@"installed"]=@YES;
       NSString *sz=m[@"size"] ?: @"";
       double g=0;
@@ -7466,10 +7530,11 @@ static BOOL ValidGroupName(NSString *raw) {
       }
       m[@"recommended"]=@(rec);
     }
+    [self saveMarketEntries:working named:@"ollama"];
     dispatch_async(dispatch_get_main_queue(),^{
-      self.ollamaMarketModels=all;
+      self.ollamaMarketModels=working;
       [self ollamaMarketFilterChanged:nil];
-      self.ollamaMarketStatus.stringValue=[NSString stringWithFormat:@"共 %ld 个模型，已安装 %ld 个",(long)all.count,(long)installed.count];
+      self.ollamaMarketStatus.stringValue=[NSString stringWithFormat:@"共 %ld 个模型，已安装 %ld 个",(long)working.count,(long)installed.count];
     });
   });
 }
