@@ -9,6 +9,7 @@
 #import <IOKit/ps/IOPowerSources.h>
 #import <IOKit/ps/IOPSKeys.h>
 #import <Quartz/Quartz.h>
+#import <PDFKit/PDFKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <CoreServices/CoreServices.h>
@@ -1627,7 +1628,14 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiAssistantURLField, *aiAssistantStatus;
 @property BOOL aiAssistantBusy;
 @property (strong) NSTextField *videoPostFileLabel, *videoPostStart, *videoPostEnd, *videoPostStatus;
-@property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow, *aiTTSWindow, *subtitleSettingsWindow, *aiInpaintWindow, *liveAnnotationWindow;
+@property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow, *aiTTSWindow, *subtitleSettingsWindow, *aiInpaintWindow, *liveAnnotationWindow, *aiQuickWindow, *convertWindow;
+@property (strong) NSTableView *convertTable;
+@property (strong) NSMutableArray<NSString *> *convertPaths;
+@property (strong) NSPopUpButton *convertFormatPopup;
+@property (strong) NSTextField *convertStatus, *convertOutDirField;
+@property (copy) NSString *convertOutDir;
+@property (strong) NSTextView *aiQuickText;
+@property (strong) NSTextField *aiQuickStatus;
 @property (strong) DLLiveAnnotationView *liveAnnotationView;
 @property NSInteger liveAnnotationTool;
 @property (strong) DLImageRegionView *aiInpaintView;
@@ -10033,6 +10041,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (tableView == self.automationTable) return self.automationRules.count;
   if (tableView == self.radialItemsTable) return self.radialItemsCurrentItems.count;
   if (tableView == self.videoEditorTable) return self.videoEditorPaths.count;
+  if (tableView == self.convertTable) return self.convertPaths.count;
   if (tableView == self.aiVideoHistoryTable) return self.aiVideoHistoryItems.count;
   if (tableView == self.shelfTable) return self.shelfVisiblePaths.count;
   if (tableView == self.dupTable) return self.dupItems.count;
@@ -10110,6 +10119,13 @@ static BOOL ValidGroupName(NSString *raw) {
       l.lineBreakMode = NSLineBreakByTruncatingMiddle;
       l.frame = NSMakeRect(4, 10, col.width - 8, 18); [v addSubview:l];
     }
+    return v;
+  }
+  if (tableView == self.convertTable) {
+    if (row < 0 || row >= (NSInteger)self.convertPaths.count) return nil;
+    NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,28)];
+    NSTextField *l=[self label:self.convertPaths[row].lastPathComponent size:11 bold:NO color:nil];
+    l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,4,col.width-8,20); [v addSubview:l];
     return v;
   }
   if (tableView == self.videoEditorTable) {
@@ -18879,6 +18895,150 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
 }
 
+- (void)openFileConverter:(id)sender {
+  if(!self.convertWindow){
+    self.convertWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,680,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.convertWindow.title=@"文件格式转换中心"; self.convertWindow.releasedWhenClosed=NO;
+    NSView *cv=self.convertWindow.contentView;
+    NSTextField *t=[self label:@"文件格式转换中心" size:20 bold:YES color:nil]; t.frame=NSMakeRect(20,476,320,28); [cv addSubview:t];
+    NSTextField *h=[self label:@"批量转换图片、音频、视频和 PDF；结果保存到指定目录" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(20,454,620,18); [cv addSubview:h];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(20,150,640,290)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.convertTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"cfile"]; col.title=@"待转换文件"; col.width=620; [self.convertTable addTableColumn:col];
+    self.convertTable.rowHeight=28; self.convertTable.dataSource=self; self.convertTable.delegate=self;
+    sv.documentView=self.convertTable; [cv addSubview:sv];
+    self.convertPaths=[NSMutableArray array];
+    ColorHoverButton *add=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(20,110,110,30)]; add.title=@"添加文件…"; add.hoverColor=[NSColor systemBlueColor]; add.target=self; add.action=@selector(convertAddFiles:); [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
+    ColorHoverButton *remove=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(138,110,80,30)]; remove.title=@"移除"; remove.hoverColor=[NSColor systemRedColor]; remove.target=self; remove.action=@selector(convertRemove:); [remove applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:remove];
+    ColorHoverButton *clear=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(226,110,80,30)]; clear.title=@"清空"; clear.hoverColor=[NSColor systemGrayColor]; clear.target=self; clear.action=@selector(convertClear:); [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    self.convertFormatPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(20,68,180,28) pullsDown:NO];
+    NSArray *formats=@[@"图片 → PNG",@"图片 → JPEG",@"图片 → PDF",@"音频 → M4A",@"音频 → WAV",@"视频 → MP4",@"PDF → PNG"];
+    [self.convertFormatPopup addItemsWithTitles:formats]; [cv addSubview:self.convertFormatPopup];
+    self.convertOutDirField=[[NSTextField alloc] initWithFrame:NSMakeRect(210,68,340,26)];
+    self.convertOutDirField.editable=NO; self.convertOutDirField.bezeled=NO; self.convertOutDirField.drawsBackground=NO; self.convertOutDirField.lineBreakMode=NSLineBreakByTruncatingMiddle;
+    [cv addSubview:self.convertOutDirField];
+    ColorHoverButton *dir=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(556,66,90,28)]; dir.title=@"输出目录…"; dir.hoverColor=[NSColor systemPurpleColor]; dir.font=[NSFont systemFontOfSize:10]; dir.target=self; dir.action=@selector(convertChooseDir:); [dir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dir];
+    self.convertStatus=[self label:@"添加文件后开始转换" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.convertStatus.frame=NSMakeRect(20,38,460,18); [cv addSubview:self.convertStatus];
+    ColorHoverButton *start=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(490,30,170,34)]; start.title=@"开始转换"; start.hoverColor=[NSColor systemGreenColor]; start.target=self; start.action=@selector(convertStart:); [start applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:start];
+    [self.convertWindow center];
+  }
+  if(!self.convertOutDir.length) self.convertOutDir=[NSHomeDirectory() stringByAppendingPathComponent:@"Downloads/DockLaunchers转换"];
+  self.convertOutDirField.stringValue=self.convertOutDir;
+  [self.convertTable reloadData];
+  [self forceWindowToFront:self.convertWindow];
+}
+- (void)convertAddFiles:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=YES; [p setAllowedFileTypes:@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp",@"mp3",@"wav",@"m4a",@"aiff",@"mp4",@"mov",@"m4v",@"pdf"]]; if([p runModal]!=NSModalResponseOK)return; if(!self.convertPaths)self.convertPaths=[NSMutableArray array]; for(NSURL *u in p.URLs)[self.convertPaths addObject:u.path]; [self.convertTable reloadData]; }
+- (void)convertRemove:(id)sender { NSInteger row=self.convertTable.selectedRow; if(row>=0&&row<(NSInteger)self.convertPaths.count){[self.convertPaths removeObjectAtIndex:row];[self.convertTable reloadData];} }
+- (void)convertClear:(id)sender { [self.convertPaths removeAllObjects]; [self.convertTable reloadData]; }
+- (void)convertChooseDir:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=NO; p.canChooseDirectories=YES; p.canCreateDirectories=YES; if([p runModal]==NSModalResponseOK){self.convertOutDir=p.URL.path;self.convertOutDirField.stringValue=self.convertOutDir;} }
+
+- (BOOL)runConvertTask:(NSString *)tool args:(NSArray *)args {
+  NSTask *t=[[NSTask alloc] init]; t.launchPath=tool; t.arguments=args;
+  @try{[t launch];[t waitUntilExit];}@catch(NSException *e){return NO;}
+  return t.terminationStatus==0;
+}
+
+- (void)convertStart:(id)sender {
+  if(!self.convertPaths.count){[self showToast:@"请先添加文件"];return;}
+  if(!self.convertOutDir.length){[self showToast:@"请选择输出目录"];return;}
+  [[NSFileManager defaultManager] createDirectoryAtPath:self.convertOutDir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSInteger fmt=self.convertFormatPopup.indexOfSelectedItem;
+  self.convertStatus.stringValue=@"正在转换…";
+  if (fmt == 2) {
+    PDFDocument *pdf=[[PDFDocument alloc] init];
+    NSInteger pages=0;
+    for(NSString *path in self.convertPaths){
+      NSString *ext=path.pathExtension.lowercaseString;
+      if(![@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"] containsObject:ext]) continue;
+      NSImage *img=[[NSImage alloc] initWithContentsOfFile:path];
+      if(!img) continue;
+      PDFPage *page=[[PDFPage alloc] initWithImage:img];
+      if(page){[pdf insertPage:page atIndex:pdf.pageCount];pages++;}
+    }
+    NSString *out=[self.convertOutDir stringByAppendingPathComponent:@"图片合集.pdf"];
+    BOOL ok=pages>0&&[pdf writeToURL:[NSURL fileURLWithPath:out]];
+    self.convertStatus.stringValue=ok?[NSString stringWithFormat:@"已生成 PDF：%ld 页",(long)pages]:@"没有可合并的图片";
+    if(ok)[self showToast:@"图片已合并为 PDF"];
+    return;
+  }
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSInteger ok=0,fail=0;
+    for(NSString *path in self.convertPaths){
+      NSString *base=path.lastPathComponent.stringByDeletingPathExtension;
+      NSString *ext=path.pathExtension.lowercaseString;
+      BOOL isImage=[@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"] containsObject:ext];
+      BOOL isAudio=[@[@"mp3",@"wav",@"m4a",@"aiff"] containsObject:ext];
+      BOOL isVideo=[@[@"mp4",@"mov",@"m4v"] containsObject:ext];
+      BOOL isPDF=[ext isEqualToString:@"pdf"];
+      BOOL done=NO;
+      if(fmt==0&&isImage){done=[self runConvertTask:@"/usr/bin/sips" args:@[@"-s",@"format",@"png",path,@"--out",[self.convertOutDir stringByAppendingPathComponent:[base stringByAppendingString:@".png"]]]];}
+      else if(fmt==1&&isImage){done=[self runConvertTask:@"/usr/bin/sips" args:@[@"-s",@"format",@"jpeg",path,@"--out",[self.convertOutDir stringByAppendingPathComponent:[base stringByAppendingString:@".jpg"]]]];}
+      else if(fmt==3&&isAudio){done=[self runConvertTask:@"/usr/bin/afconvert" args:@[@"-f",@"m4af",@"-d",@"aac",path,[self.convertOutDir stringByAppendingPathComponent:[base stringByAppendingString:@".m4a"]]]];}
+      else if(fmt==4&&isAudio){done=[self runConvertTask:@"/usr/bin/afconvert" args:@[@"-f",@"WAVE",@"-d",@"LEI16",path,[self.convertOutDir stringByAppendingPathComponent:[base stringByAppendingString:@".wav"]]]];}
+      else if(fmt==5&&isVideo){done=[self runConvertTask:@"/usr/bin/avconvert" args:@[@"-p",@"PresetHighestQuality",@"-s",path,@"-o",[self.convertOutDir stringByAppendingPathComponent:[base stringByAppendingString:@".mp4"]]]];}
+      else if(fmt==6&&isPDF){
+        PDFDocument *doc=[[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
+        for(NSInteger pg=0;pg<(NSInteger)doc.pageCount;pg++){
+          PDFPage *page=[doc pageAtIndex:pg];
+          NSRect box=[page boundsForBox:kPDFDisplayBoxMediaBox];
+          CGFloat scale=2.0;
+          NSBitmapImageRep *rep=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)(box.size.width*scale) pixelsHigh:(NSInteger)(box.size.height*scale) bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+          NSGraphicsContext *g=[NSGraphicsContext graphicsContextWithBitmapImageRep:rep]; [NSGraphicsContext saveGraphicsState]; [NSGraphicsContext setCurrentContext:g];
+          CGContextScaleCTM(g.CGContext,scale,scale); [page drawWithBox:kPDFDisplayBoxMediaBox toContext:g.CGContext];
+          [NSGraphicsContext restoreGraphicsState];
+          NSData *png=[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+          NSString *out=[self.convertOutDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-第%ld页.png",base,(long)(pg+1)]];
+          if([png writeToFile:out atomically:YES])done=YES;
+        }
+      }
+      if(done)ok++;else fail++;
+    }
+    dispatch_async(dispatch_get_main_queue(),^{ self.convertStatus.stringValue=[NSString stringWithFormat:@"转换完成：成功 %ld，失败 %ld",(long)ok,(long)fail]; [self showToast:@"文件转换完成"]; });
+  });
+}
+
+- (void)openAIQuickCommand:(id)sender {
+  NSString *text = [self selectedTextFromFocusedApplication];
+  if (!text.length) {
+    text = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString] ?: @"";
+  }
+  if (!self.aiQuickWindow) {
+    self.aiQuickWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,540,420) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiQuickWindow.title = @"AI 快捷指令";
+    self.aiQuickWindow.releasedWhenClosed = NO;
+    self.aiQuickWindow.level = NSFloatingWindowLevel;
+    NSView *cv = self.aiQuickWindow.contentView;
+    NSTextField *t=[self label:@"AI 快捷指令" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,376,300,24); [cv addSubview:t];
+    NSTextField *h=[self label:@"读取当前选中文字；没有选中时读取剪贴板" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,354,450,18); [cv addSubview:h];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,110,492,230)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.aiQuickText=[[NSTextView alloc] initWithFrame:sv.contentView.bounds]; self.aiQuickText.font=[NSFont systemFontOfSize:12];
+    sv.documentView=self.aiQuickText; [cv addSubview:sv];
+    self.aiQuickStatus=[self label:@"选择操作" size:10.5 bold:NO color:[NSColor secondaryLabelColor]]; self.aiQuickStatus.frame=NSMakeRect(24,80,490,18); [cv addSubview:self.aiQuickStatus];
+    NSArray *titles=@[@"总结",@"翻译成中文",@"改写",@"复制",@"关闭"];
+    NSArray *sels=@[@"aiQuickSummarize:",@"aiQuickTranslate:",@"aiQuickRewrite:",@"aiQuickCopy:",@"closeAIQuick:"];
+    for(NSInteger i=0;i<5;i++){ColorHoverButton *b=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24+i*98,40,90,30)];b.title=titles[i];b.hoverColor=[NSColor systemBlueColor];b.font=[NSFont systemFontOfSize:10];b.target=self;b.action=NSSelectorFromString(sels[i]);[b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:b];}
+    [self.aiQuickWindow center];
+  }
+  self.aiQuickText.string = text;
+  self.aiQuickStatus.stringValue = text.length ? [NSString stringWithFormat:@"已读取 %ld 个字符", (long)text.length] : @"没有选中文字，剪贴板也为空";
+  [self forceWindowToFront:self.aiQuickWindow];
+}
+
+- (void)closeAIQuick:(id)sender { [self.aiQuickWindow orderOut:nil]; }
+- (void)aiQuickCopy:(id)sender { [NSPasteboard.generalPasteboard clearContents]; [NSPasteboard.generalPasteboard setString:self.aiQuickText.string forType:NSPasteboardTypeString]; [self showToast:@"已复制"]; }
+- (void)aiQuickSummarize:(id)sender {
+  [self openAIAssistant:nil];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.25*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ self.aiAssistantInput.string=self.aiQuickText.string; [self.aiAssistantModePopup selectItemAtIndex:0]; [self sendAIAssistant:nil]; });
+}
+- (void)aiQuickRewrite:(id)sender {
+  [self openAIAssistant:nil];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.25*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ self.aiAssistantInput.string=self.aiQuickText.string; [self.aiAssistantModePopup selectItemAtIndex:1]; [self sendAIAssistant:nil]; });
+}
+- (void)aiQuickTranslate:(id)sender {
+  [self showTranslationWindow:nil];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.25*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [self translationSetSource:self.aiQuickText.string status:@"正在翻译…"]; [self translationTranslate:nil]; });
+}
+
 - (NSString *)selectedTextFromFocusedApplication {
   if (!AXIsProcessTrusted()) {
     AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)@{(__bridge id)kAXTrustedCheckOptionPrompt: @YES});
@@ -19091,6 +19251,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3079,@"cat":@1,@"title":@"语音转写设置",@"desc":@"切换本机识别和第三方 Whisper",@"sel":@"openSpeechSettings:"},
     @{@"id":@3081,@"cat":@1,@"title":@"AI 用量统计",@"desc":@"查看生成数量与占用空间",@"sel":@"showAIUsageStats:"},
     @{@"id":@3082,@"cat":@2,@"title":@"录屏实时标注",@"desc":@"打开屏幕画笔标注层",@"sel":@"toggleLiveAnnotation:"},
+    @{@"id":@3083,@"cat":@1,@"title":@"菜单栏 AI 快捷指令",@"desc":@"总结/翻译/改写选中文字",@"sel":@"openAIQuickCommand:"},
+    @{@"id":@3084,@"cat":@1,@"title":@"文件格式转换中心",@"desc":@"图片/音频/视频/PDF 批量转换",@"sel":@"openFileConverter:"},
     @{@"id":@3080,@"cat":@1,@"title":@"AI 配音",@"desc":@"文本转语音、音色试听与配音",@"sel":@"openAITTSWindow:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
@@ -20108,6 +20270,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"AI 配音 / 语音合成", @"subtitle": @"文本转语音、音色试听与配音", @"type": @"工具", @"tool": @"tts", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"speaker.wave.3" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 用量统计", @"subtitle": @"生成数量、占用空间、今日统计", @"type": @"工具", @"tool": @"aiusage", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"chart.bar.fill" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏实时标注", @"subtitle": @"屏幕画笔、箭头标注层", @"type": @"工具", @"tool": @"liveanno", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"pencil.and.outline" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"菜单栏 AI 快捷指令", @"subtitle": @"总结、翻译、改写选中文字", @"type": @"工具", @"tool": @"aiquick", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"text.bubble" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"文件格式转换中心", @"subtitle": @"图片/音频/视频/PDF 批量转换", @"type": @"工具", @"tool": @"convert", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"arrow.triangle.2.circlepath" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 图片生成", @"subtitle": @"用 AI 服务生成图片", @"type": @"工具", @"tool": @"aiimage", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"photo.badge.plus" accessibilityDescription:nil] ?: recIcon}];
@@ -20253,6 +20417,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"tts"]) [self openAITTSWindow:nil];
     else if ([tool isEqualToString:@"aiusage"]) [self showAIUsageStats:nil];
     else if ([tool isEqualToString:@"liveanno"]) [self toggleLiveAnnotation:nil];
+    else if ([tool isEqualToString:@"aiquick"]) [self openAIQuickCommand:nil];
+    else if ([tool isEqualToString:@"convert"]) [self openFileConverter:nil];
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
     else if ([tool isEqualToString:@"aitext"]) [self openAIAssistant:nil];
