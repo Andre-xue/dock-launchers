@@ -1640,6 +1640,12 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property NSInteger localAIRunningOwner;
 @property BOOL localAIExclusiveAlertShown;
 @property (strong) NSWindow *localAIPolicyWindow;
+@property (strong) NSWindow *aiFileWindow;
+@property (strong) NSTableView *aiFileTable;
+@property (strong) NSMutableArray *aiFiles;
+@property (strong) NSTextField *aiFilePromptField, *aiFileStatus;
+@property (strong) NSTextView *aiFileOutput;
+@property (strong) NSString *aiFileResultPath;
 @property (strong) NSWindow *videoGenWindow;
 @property (strong) NSPopUpButton *videoGenCheckpointPopup, *videoGenMotionPopup, *videoGenBackendPopup;
 @property (strong) NSTextField *videoGenPromptField, *videoGenNegativeField, *videoGenStatus, *videoGenWidthField, *videoGenHeightField, *videoGenFramesField, *videoGenStepsField, *videoGenSeedField, *videoGenFpsField;
@@ -11653,6 +11659,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (tableView == self.radialItemsTable) return self.radialItemsCurrentItems.count;
   if (tableView == self.videoEditorTable) return self.videoEditorPaths.count;
   if (tableView == self.convertTable) return self.convertPaths.count;
+  if (tableView == self.aiFileTable) return self.aiFiles.count;
   if (tableView == self.aiVideoHistoryTable) return self.aiVideoHistoryItems.count;
   if (tableView == self.shelfTable) return self.shelfVisiblePaths.count;
   if (tableView == self.dupTable) return self.dupItems.count;
@@ -11827,6 +11834,15 @@ static BOOL ValidGroupName(NSString *raw) {
       NSTextField *l = [self label:title size:11 bold:NO color:nil];
       l.frame = NSMakeRect(4,7,col.width-8,18); [v addSubview:l];
     }
+    return v;
+  }
+  if (tableView == self.aiFileTable) {
+    if (row < 0 || row >= (NSInteger)self.aiFiles.count) return nil;
+    NSString *p=self.aiFiles[row];
+    NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
+    NSTextField *l=[self label:p.lastPathComponent size:11 bold:YES color:nil]; l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,15,col.width-8,17); [v addSubview:l];
+    NSNumber *sz=[[NSFileManager defaultManager] attributesOfItemAtPath:p error:NULL][NSFileSize];
+    NSTextField *d=[self label:[NSString stringWithFormat:@"%@ · %@",p.pathExtension.uppercaseString ?: @"文件",[self fmtSize:sz.unsignedLongLongValue]] size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.frame=NSMakeRect(4,2,col.width-8,13); [v addSubview:d];
     return v;
   }
   if (tableView == self.aiVideoHistoryTable) {
@@ -16891,6 +16907,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   else if ([action isEqualToString:@"scene"]) { [self rebuildQuickSceneTab]; [self showDetachedPage:self.quickScenePage title:@"场景模式"]; }
   else if ([action isEqualToString:@"ai"]) { if ([self ensureAIManagementAccess]) { [self rebuildQuickAITab]; [self showDetachedPage:self.quickAIPage title:@"AI 管理"]; } }
   else if ([action isEqualToString:@"aimgmtpage"]) [self openAIManagementFromMenu];
+  else if ([action isEqualToString:@"aifile"]) [self openAIFileAnalyzer:nil];
   else if ([action isEqualToString:@"automation"]) [self openAutomationRules:nil];
   else if ([action isEqualToString:@"groupschedule"]) [self openGroupScheduleRules:nil];
   else if ([action isEqualToString:@"layouts"]) [self showWindowLayouts:nil];
@@ -18536,7 +18553,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"Ai余量", @"symbol": @"sparkles", @"action": @"ai"},
         @{@"title": @"提示词库", @"symbol": @"text.book.closed.fill", @"action": @"prompts"},
         @{@"title": @"图片问答", @"symbol": @"text.viewfinder", @"action": @"aivision"},
-        @{@"title": @"图片编辑", @"symbol": @"wand.and.stars", @"action": @"aiedit"}
+        @{@"title": @"图片编辑", @"symbol": @"wand.and.stars", @"action": @"aiedit"},
+        @{@"title": @"AI 文件", @"symbol": @"doc.text.magnifyingglass", @"action": @"aifile"}
       ],
       @[
         @{@"title": @"图片", @"symbol": @"photo.on.rectangle.angled", @"action": @"image"},
@@ -24462,6 +24480,115 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }];
 }
 
+
+- (NSString *)aiFileExtractText:(NSString *)path {
+  NSString *ext=path.pathExtension.lowercaseString;
+  if([ext isEqualToString:@"pdf"]){
+    PDFDocument *doc=[[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
+    return doc.string ?: @"";
+  }
+  if([@[@"doc",@"docx",@"rtf",@"rtfd",@"html",@"htm",@"odt"] containsObject:ext]) return DLTextutilToText(path) ?: @"";
+  if([@[@"txt",@"md",@"markdown",@"csv",@"tsv",@"json",@"xml",@"yaml",@"yml",@"log",@"swift",@"m",@"h",@"py",@"js",@"ts",@"css"] containsObject:ext]){
+    NSString *t=[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
+    if(!t.length)t=[NSString stringWithContentsOfFile:path encoding:NSISOLatin1StringEncoding error:NULL];
+    return t ?: @"";
+  }
+  return @"";
+}
+
+- (void)openAIFileAnalyzer:(id)sender {
+  if(!self.aiEntries)[self loadAIEntries];
+  [self hydrateAIKeys];
+  if(!self.aiFileWindow){
+    self.aiFileWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,780,700) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiFileWindow.title=@"AI 文件分析"; self.aiFileWindow.releasedWhenClosed=NO;
+    NSView *cv=self.aiFileWindow.contentView;
+    NSTextField *t=[self label:@"AI 文件分析" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,656,300,28); [cv addSubview:t];
+    NSTextField *h=[self label:@"导入文件后用 AI 分析，生成 Markdown 报告并保存到桌面" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,634,620,18); [cv addSubview:h];
+    ColorHoverButton *add=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,596,120,30)]; add.title=@"导入文件…"; add.hoverColor=[NSColor systemBlueColor]; add.target=self; add.action=@selector(aiFileAddFiles:); [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
+    ColorHoverButton *clear=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(154,596,90,30)]; clear.title=@"清空"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(aiFileClear:); [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,420,732,166)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.aiFileTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"aifile"]; col.title=@"已导入文件"; col.width=710; [self.aiFileTable addTableColumn:col];
+    self.aiFileTable.rowHeight=34; self.aiFileTable.dataSource=self; self.aiFileTable.delegate=self;
+    sv.documentView=self.aiFileTable; [cv addSubview:sv];
+    self.aiFiles=[NSMutableArray array];
+    self.aiFilePromptField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,378,732,26)];
+    self.aiFilePromptField.stringValue=@"请分析这些文件：总结核心内容、提取关键数据和结论、列出风险与待办，并给出建议。";
+    [cv addSubview:self.aiFilePromptField];
+    ColorHoverButton *analyze=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,336,160,34)]; analyze.title=@"分析并生成 MD"; analyze.hoverColor=[NSColor systemPinkColor]; analyze.target=self; analyze.action=@selector(aiFileAnalyze:); [analyze applyColor:[NSColor systemPinkColor] textColor:[NSColor whiteColor]]; [cv addSubview:analyze];
+    ColorHoverButton *open=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(194,336,120,34)]; open.title=@"打开 MD"; open.hoverColor=[NSColor systemGreenColor]; open.target=self; open.action=@selector(aiFileOpenResult:); [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    self.aiFileStatus=[self label:@"导入 txt / md / pdf / docx / csv / json 等文件" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.aiFileStatus.frame=NSMakeRect(330,344,426,18); [cv addSubview:self.aiFileStatus];
+    NSScrollView *outScroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,64,732,260)]; outScroll.hasVerticalScroller=YES; outScroll.borderType=NSBezelBorder;
+    self.aiFileOutput=[[NSTextView alloc] initWithFrame:outScroll.contentView.bounds]; self.aiFileOutput.editable=NO; self.aiFileOutput.selectable=YES; self.aiFileOutput.font=[NSFont systemFontOfSize:11];
+    outScroll.documentView=self.aiFileOutput; [cv addSubview:outScroll];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(656,20,100,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(aiFileClose:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.aiFileWindow center];
+  }
+  [self.aiFileTable reloadData];
+  [self bringAuxiliaryWindowToFront:self.aiFileWindow];
+}
+
+- (void)aiFileClose:(id)sender { [self.aiFileWindow orderOut:nil]; }
+- (void)aiFileClear:(id)sender { [self.aiFiles removeAllObjects]; [self.aiFileTable reloadData]; self.aiFileOutput.string=@""; self.aiFileResultPath=nil; self.aiFileStatus.stringValue=@"已清空"; }
+- (void)aiFileAddFiles:(id)sender {
+  NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=YES;
+  p.message=@"选择要分析的文件（文本、Markdown、PDF、Word、CSV、JSON 等）";
+  if([p runModal]!=NSModalResponseOK)return;
+  if(!self.aiFiles)self.aiFiles=[NSMutableArray array];
+  for(NSURL *u in p.URLs)if(![self.aiFiles containsObject:u.path])[self.aiFiles addObject:u.path];
+  [self.aiFileTable reloadData];
+  self.aiFileStatus.stringValue=[NSString stringWithFormat:@"已导入 %ld 个文件",(long)self.aiFiles.count];
+}
+
+- (void)aiFileOpenResult:(id)sender {
+  if(!self.aiFileResultPath.length){self.aiFileStatus.stringValue=@"还没有生成报告";return;}
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.aiFileResultPath]];
+}
+
+- (void)aiFileAnalyze:(id)sender {
+  if(!self.aiFiles.count){self.aiFileStatus.stringValue=@"请先导入文件";return;}
+  NSMutableString *content=[NSMutableString string];
+  NSMutableArray *okFiles=[NSMutableArray array];
+  for(NSString *path in self.aiFiles){
+    NSString *text=[self aiFileExtractText:path];
+    if(!text.length)continue;
+    [okFiles addObject:path.lastPathComponent];
+    [content appendFormat:@"\n\n===== 文件：%@ =====\n%@",path.lastPathComponent,[text substringToIndex:MIN(text.length,(NSUInteger)12000)]];
+    if(content.length>50000)break;
+  }
+  if(!content.length){self.aiFileStatus.stringValue=@"没有可提取的文本内容";return;}
+  NSString *url=@"", *key=@"", *model=@"";
+  NSDictionary *chosen=nil;
+  for(NSDictionary *e in self.aiEntries ?: @[]){ if([[self aiModelCategoryKey:e] isEqualToString:@"text"] && [(NSString *)(e[@"api"] ?: @"") length]){chosen=e;break;} }
+  if(chosen){NSString *base=chosen[@"apiBase"] ?: @""; if([base hasSuffix:@"/chat/completions"])base=[base substringToIndex:base.length-17]; while([base hasSuffix:@"/"])base=[base substringToIndex:base.length-1]; url=[base stringByAppendingString:@"/chat/completions"]; key=chosen[@"api"] ?: @""; model=chosen[@"model"] ?: @"qwen2.5:3b";}
+  else {url=@"http://127.0.0.1:11434/v1/chat/completions"; model=@"qwen2.5:3b";}
+  if(!url.length){self.aiFileStatus.stringValue=@"没有可用的文本 AI 服务";return;}
+  NSString *prompt=[NSString stringWithFormat:@"%@\n\n请输出完整的 Markdown 报告，包含：\n1. 文件概览\n2. 每个文件的核心内容\n3. 关键数据与结论\n4. 风险与待办\n5. 建议\n不要编造文件中不存在的信息。\n\n文件内容：%@",self.aiFilePromptField.stringValue,content];
+  NSDictionary *body=@{@"model":model,@"messages":@[@{@"role":@"user",@"content":prompt}],@"temperature":@0.3,@"max_tokens":@1500};
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"]; if(key.length)[req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"]; req.HTTPBody=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL]; req.timeoutInterval=180;
+  self.aiFileStatus.stringValue=@"AI 分析中…"; self.aiFileOutput.string=@"正在分析，请稍候…";
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    NSString *answer=nil;
+    if([o isKindOfClass:[NSDictionary class]]){id c=o[@"choices"];if([c isKindOfClass:[NSArray class]]&&[c count]){id m=c[0][@"message"];if([m isKindOfClass:[NSDictionary class]])answer=m[@"content"];}}
+    dispatch_async(dispatch_get_main_queue(),^{
+      if(!answer.length){weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"分析失败：%@",err.localizedDescription ?: @"无返回内容"];weakSelf.aiFileOutput.string=weakSelf.aiFileStatus.stringValue;return;}
+      NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
+      NSString *name=[NSString stringWithFormat:@"AI文件分析-%@.md",[df stringFromDate:[NSDate date]]];
+      NSString *desktop=[NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"];
+      NSString *dir=[[NSFileManager defaultManager] fileExistsAtPath:desktop]?desktop:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AI文件"];
+      [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+      NSString *path=[dir stringByAppendingPathComponent:name];
+      NSString *md=[NSString stringWithFormat:@"# AI 文件分析\n\n生成时间：%@\n\n## 文件列表\n\n%@\n\n## AI 分析\n\n%@\n",[NSDate date],[[okFiles componentsJoinedByString:@"、"] length]?[NSString stringWithFormat:@"- %@",[okFiles componentsJoinedByString:@"\n- "]]:@"- 无",answer];
+      [md writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+      weakSelf.aiFileResultPath=path; weakSelf.aiFileOutput.string=md; weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"已生成：%@",path];
+      [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+    });
+  }] resume];
+}
 
 - (void)openAIVideoPanel:(id)sender {
   if (!self.aiVideoWindow) {
