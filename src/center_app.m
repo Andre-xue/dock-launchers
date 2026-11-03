@@ -1647,6 +1647,11 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSMutableArray *aiCloudDocs;
 @property (strong) NSWindow *cloudDocsWindow;
 @property (strong) NSTableView *cloudProviderTable;
+@property (strong) NSWindow *cloudApiWindow;
+@property (strong) NSPopUpButton *cloudApiProviderPopup;
+@property (strong) NSTextField *cloudApiTokenField, *cloudApiAppIDField, *cloudApiAppSecretField, *cloudApiStatus;
+@property (strong) NSTableView *cloudApiTable;
+@property (strong) NSArray *cloudApiItems;
 @property (strong) NSWindow *cloudLoginWindow;
 @property (strong) WKWebView *cloudLoginWebView;
 @property (strong) NSTableView *cloudLoginFileTable;
@@ -11779,6 +11784,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (tableView == self.radialItemsTable) return self.radialItemsCurrentItems.count;
   if (tableView == self.videoEditorTable) return self.videoEditorPaths.count;
   if (tableView == self.convertTable) return self.convertPaths.count;
+  if (tableView == self.cloudApiTable) return self.cloudApiItems.count;
   if (tableView == self.cloudLoginFileTable) return self.cloudLoginFiles.count;
   if (tableView == self.cloudProviderTable) return self.cloudProviders.count;
   if (tableView == self.aiFileTable) return self.aiFiles.count + self.aiCloudDocs.count;
@@ -11956,6 +11962,14 @@ static BOOL ValidGroupName(NSString *raw) {
       NSTextField *l = [self label:title size:11 bold:NO color:nil];
       l.frame = NSMakeRect(4,7,col.width-8,18); [v addSubview:l];
     }
+    return v;
+  }
+  if (tableView == self.cloudApiTable) {
+    if (row < 0 || row >= (NSInteger)self.cloudApiItems.count) return nil;
+    NSDictionary *it=self.cloudApiItems[row];
+    NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
+    NSTextField *l=[self label:it[@"title"] ?: @"" size:11 bold:YES color:nil]; l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,15,col.width-8,17); [v addSubview:l];
+    NSTextField *d=[self label:it[@"subtitle"] ?: @"" size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.frame=NSMakeRect(4,2,col.width-8,13); [v addSubview:d];
     return v;
   }
   if (tableView == self.cloudLoginFileTable) {
@@ -24877,6 +24891,152 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return @"云文档";
 }
 
+- (void)openCloudAPIWindow:(id)sender {
+  if(!self.cloudApiWindow){
+    self.cloudApiWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,600) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.cloudApiWindow.title=@"云文档 API 接入"; self.cloudApiWindow.releasedWhenClosed=NO;
+    NSView *cv=self.cloudApiWindow.contentView;
+    NSTextField *t=[self label:@"云文档 API 接入" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,548,300,28); [cv addSubview:t];
+    NSTextField *h=[self label:@"语雀/Notion 使用个人 Token；飞书需要自建应用，填入 AppID/Secret 后登录" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,524,700,18); [cv addSubview:h];
+    self.cloudApiProviderPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,486,150,28) pullsDown:NO];
+    [self.cloudApiProviderPopup addItemsWithTitles:@[@"Notion",@"语雀",@"飞书"]];
+    self.cloudApiProviderPopup.target=self; self.cloudApiProviderPopup.action=@selector(cloudAPIProviderChanged:); [cv addSubview:self.cloudApiProviderPopup];
+    self.cloudApiTokenField=[[NSSecureTextField alloc] initWithFrame:NSMakeRect(184,486,300,28)]; self.cloudApiTokenField.placeholderString=@"Integration Token / 个人 Token"; [cv addSubview:self.cloudApiTokenField];
+    self.cloudApiAppIDField=[[NSTextField alloc] initWithFrame:NSMakeRect(184,448,200,26)]; self.cloudApiAppIDField.placeholderString=@"飞书 App ID"; [cv addSubview:self.cloudApiAppIDField];
+    self.cloudApiAppSecretField=[[NSSecureTextField alloc] initWithFrame:NSMakeRect(394,448,200,26)]; self.cloudApiAppSecretField.placeholderString=@"飞书 App Secret"; [cv addSubview:self.cloudApiAppSecretField];
+    ColorHoverButton *save=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(604,486,120,28)]; save.title=@"保存并获取"; save.hoverColor=[NSColor systemGreenColor]; save.font=[NSFont systemFontOfSize:10]; save.target=self; save.action=@selector(cloudAPISaveAndList:); [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,120,712,290)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.cloudApiTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"cloudapi"]; col.title=@"文件 / 文档"; col.width=690; [self.cloudApiTable addTableColumn:col];
+    self.cloudApiTable.rowHeight=34; self.cloudApiTable.dataSource=self; self.cloudApiTable.delegate=self; self.cloudApiTable.target=self; self.cloudApiTable.doubleAction=@selector(cloudAPIImportSelected:);
+    sv.documentView=self.cloudApiTable; [cv addSubview:sv];
+    self.cloudApiStatus=[self label:@"请选择平台并填写 Token" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.cloudApiStatus.frame=NSMakeRect(24,88,650,18); [cv addSubview:self.cloudApiStatus];
+    ColorHoverButton *import=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,40,120,32)]; import.title=@"导入选中"; import.hoverColor=[NSColor systemGreenColor]; import.target=self; import.action=@selector(cloudAPIImportSelected:); [import applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:import];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(644,40,92,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeCloudAPIWindow:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.cloudApiWindow center];
+  }
+  [self cloudAPIProviderChanged:nil];
+  [self bringAuxiliaryWindowToFront:self.cloudApiWindow];
+}
+
+- (void)closeCloudAPIWindow:(id)sender { [self.cloudApiWindow orderOut:nil]; }
+
+- (void)cloudAPIProviderChanged:(id)sender {
+  NSString *p=self.cloudApiProviderPopup.titleOfSelectedItem ?: @"Notion";
+  self.cloudApiTokenField.hidden=[p isEqualToString:@"飞书"];
+  self.cloudApiAppIDField.hidden=![p isEqualToString:@"飞书"];
+  self.cloudApiAppSecretField.hidden=![p isEqualToString:@"飞书"];
+  if([p isEqualToString:@"Notion"]) self.cloudApiTokenField.placeholderString=@"Notion Integration Token";
+  else if([p isEqualToString:@"语雀"]) self.cloudApiTokenField.placeholderString=@"语雀个人 Token";
+  self.cloudApiItems=@[]; [self.cloudApiTable reloadData];
+  self.cloudApiStatus.stringValue=[p isEqualToString:@"飞书"]?@"飞书请先在开放平台创建企业自建应用并填写 AppID/Secret":@"填写 Token 后点「保存并获取」";
+}
+
+- (void)cloudAPIRequest:(NSMutableURLRequest *)req completion:(void (^)(id obj, NSError *err))completion {
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    dispatch_async(dispatch_get_main_queue(),^{ completion(o,e); });
+  }] resume];
+}
+
+- (void)cloudAPISaveAndList:(id)sender {
+  NSString *p=self.cloudApiProviderPopup.titleOfSelectedItem ?: @"Notion";
+  if([p isEqualToString:@"飞书"]){
+    NSString *aid=self.cloudApiAppIDField.stringValue, *sec=self.cloudApiAppSecretField.stringValue;
+    if(!aid.length||!sec.length){self.cloudApiStatus.stringValue=@"请填写飞书 AppID 和 AppSecret";return;}
+    [[NSUserDefaults standardUserDefaults] setObject:aid forKey:@"cloudFeishuAppID"];
+    AIKeychainSet(@"cloud.feishu.secret", sec);
+    self.cloudApiStatus.stringValue=@"飞书凭据已保存。飞书 OAuth 需要应用回调地址，请先在开放平台配置后继续。";
+    return;
+  }
+  NSString *token=self.cloudApiTokenField.stringValue;
+  if(!token.length){self.cloudApiStatus.stringValue=@"请填写 Token";return;}
+  AIKeychainSet([p isEqualToString:@"Notion"]?@"cloud.notion.token":@"cloud.yuque.token", token);
+  self.cloudApiStatus.stringValue=@"正在获取…";
+  if([p isEqualToString:@"Notion"]){
+    NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://api.notion.com/v1/search"]];
+    req.HTTPMethod=@"POST"; [req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
+    [req setValue:@"2022-06-28" forHTTPHeaderField:@"Notion-Version"]; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    req.HTTPBody=[NSJSONSerialization dataWithJSONObject:@{@"page_size":@100} options:0 error:NULL];
+    [self cloudAPIRequest:req completion:^(id o,NSError *err){
+      NSArray *results=[o isKindOfClass:[NSDictionary class]]?o[@"results"]:nil;
+      NSMutableArray *items=[NSMutableArray array];
+      for(NSDictionary *r in results){
+        NSString *title=@"未命名"; NSDictionary *props=r[@"properties"];
+        for(NSDictionary *v in props.allValues){id t=v[@"title"];if([t isKindOfClass:[NSArray class]]&&[t count]){NSDictionary *x=t[0];NSString *s=x[@"plain_text"];if(s.length){title=s;break;}}}
+        if(![title isEqualToString:@"未命名"]||r[@"id"]) [items addObject:@{@"title":title,@"subtitle":[NSString stringWithFormat:@"Notion · %@",r[@"object"] ?: @"page"],@"id":r[@"id"] ?: @"",@"kind":@"notion"}];
+      }
+      self.cloudApiItems=items; [self.cloudApiTable reloadData];
+      self.cloudApiStatus.stringValue=[NSString stringWithFormat:@"获取到 %ld 个页面/数据库",(long)items.count];
+    }];
+  } else {
+    NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://www.yuque.com/api/v2/user"]];
+    [req setValue:token forHTTPHeaderField:@"X-Auth-Token"];
+    [self cloudAPIRequest:req completion:^(id o,NSError *err){
+      NSString *login=[o isKindOfClass:[NSDictionary class]]?o[@"data"][@"login"]:nil;
+      if(!login.length){self.cloudApiStatus.stringValue=@"语雀 Token 无效或网络失败";return;}
+      NSMutableURLRequest *r2=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://www.yuque.com/api/v2/users/%@/repos",login]]];
+      [r2 setValue:token forHTTPHeaderField:@"X-Auth-Token"];
+      [self cloudAPIRequest:r2 completion:^(id o2,NSError *e2){
+        NSArray *repos=[o2 isKindOfClass:[NSDictionary class]]?o2[@"data"]:nil;
+        NSMutableArray *items=[NSMutableArray array];
+        for(NSDictionary *r in repos) if(r[@"namespace"]&&r[@"name"]) [items addObject:@{@"title":r[@"name"],@"subtitle":[NSString stringWithFormat:@"语雀知识库 · %@",r[@"namespace"]],@"namespace":r[@"namespace"],@"kind":@"yuque_repo"}];
+        self.cloudApiItems=items; [self.cloudApiTable reloadData];
+        self.cloudApiStatus.stringValue=[NSString stringWithFormat:@"获取到 %ld 个知识库，双击进入",(long)items.count];
+      }];
+    }];
+  }
+}
+
+- (void)cloudAPIImportSelected:(id)sender {
+  NSInteger row=self.cloudApiTable.selectedRow;
+  if(row<0||row>=(NSInteger)self.cloudApiItems.count)return;
+  NSDictionary *it=self.cloudApiItems[row];
+  if([it[@"kind"] isEqualToString:@"yuque_repo"]){
+    NSString *token=AIKeychainGet(@"cloud.yuque.token"); NSString *ns=it[@"namespace"];
+    NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://www.yuque.com/api/v2/repos/%@/docs",ns]]];
+    [req setValue:token forHTTPHeaderField:@"X-Auth-Token"];
+    self.cloudApiStatus.stringValue=@"正在获取语雀文档列表…";
+    [self cloudAPIRequest:req completion:^(id o,NSError *err){
+      NSArray *docs=[o isKindOfClass:[NSDictionary class]]?o[@"data"]:nil; NSMutableArray *items=[NSMutableArray array];
+      for(NSDictionary *d in docs) if(d[@"slug"])[items addObject:@{@"title":d[@"title"] ?: d[@"slug"],@"subtitle":@"语雀文档",@"namespace":ns,@"slug":d[@"slug"],@"kind":@"yuque_doc"}];
+      self.cloudApiItems=items; [self.cloudApiTable reloadData]; self.cloudApiStatus.stringValue=[NSString stringWithFormat:@"%ld 篇文档，双击导入",(long)items.count];
+    }];
+    return;
+  }
+  if([it[@"kind"] isEqualToString:@"yuque_doc"]){
+    NSString *token=AIKeychainGet(@"cloud.yuque.token");
+    NSString *url=[NSString stringWithFormat:@"https://www.yuque.com/api/v2/repos/%@/docs/%@",it[@"namespace"],it[@"slug"]];
+    NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]]; [req setValue:token forHTTPHeaderField:@"X-Auth-Token"];
+    [self cloudAPIRequest:req completion:^(id o,NSError *err){
+      NSString *body=[o isKindOfClass:[NSDictionary class]]?o[@"data"][@"body"]:nil;
+      if(!body.length){self.cloudApiStatus.stringValue=@"读取语雀正文失败";return;}
+      if(!self.aiCloudDocs)self.aiCloudDocs=[NSMutableArray array];
+      [self.aiCloudDocs addObject:@{@"title":it[@"title"] ?: @"语雀文档",@"provider":@"语雀",@"url":url,@"content":body}];
+      [self.aiFileTable reloadData]; self.cloudApiStatus.stringValue=@"已导入语雀文档";
+    }];
+    return;
+  }
+  if([it[@"kind"] isEqualToString:@"notion"]){
+    NSString *token=AIKeychainGet(@"cloud.notion.token");
+    NSString *url=[NSString stringWithFormat:@"https://api.notion.com/v1/blocks/%@/children?page_size=100",it[@"id"]];
+    NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+    [req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"]; [req setValue:@"2022-06-28" forHTTPHeaderField:@"Notion-Version"];
+    [self cloudAPIRequest:req completion:^(id o,NSError *err){
+      NSMutableString *text=[NSMutableString string];
+      for(NSDictionary *b in ([o isKindOfClass:[NSDictionary class]]?o[@"results"]:@[])){
+        NSDictionary *type=b[b[@"type"] ?: @""]; id rich=type[@"rich_text"];
+        if([rich isKindOfClass:[NSArray class]])for(NSDictionary *r in rich){if(r[@"plain_text"])[text appendString:r[@"plain_text"]];}
+        [text appendString:@"\n"];
+      }
+      if(!text.length){self.cloudApiStatus.stringValue=@"Notion 页面正文为空";return;}
+      if(!self.aiCloudDocs)self.aiCloudDocs=[NSMutableArray array];
+      [self.aiCloudDocs addObject:@{@"title":it[@"title"] ?: @"Notion 页面",@"provider":@"Notion",@"url":@"",@"content":text}];
+      [self.aiFileTable reloadData]; self.cloudApiStatus.stringValue=@"已导入 Notion 页面";
+    }];
+  }
+}
+
 - (void)openCloudDocsList:(id)sender {
   if(!self.cloudProviders){
     self.cloudProviders=@[
@@ -24901,6 +25061,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.cloudProviderTable.headerView=nil; self.cloudProviderTable.rowHeight=54; self.cloudProviderTable.dataSource=self; self.cloudProviderTable.delegate=self;
     sv.documentView=self.cloudProviderTable; [cv addSubview:sv];
     ColorHoverButton *import=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,36,130,32)]; import.title=@"导入分享链接…"; import.hoverColor=[NSColor systemGreenColor]; import.font=[NSFont systemFontOfSize:10]; import.target=self; import.action=@selector(cloudProviderImportLink:); [import applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:import];
+    ColorHoverButton *api=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(150,36,110,32)]; api.title=@"API 接入…"; api.hoverColor=[NSColor systemPurpleColor]; api.font=[NSFont systemFontOfSize:10]; api.target=self; api.action=@selector(openCloudAPIWindow:); [api applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:api];
     ColorHoverButton *logoutSel=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(368,36,104,32)]; logoutSel.title=@"退出当前平台"; logoutSel.hoverColor=[NSColor systemOrangeColor]; logoutSel.font=[NSFont systemFontOfSize:9.5]; logoutSel.target=self; logoutSel.action=@selector(cloudLogoutSelected:); [logoutSel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:logoutSel];
     ColorHoverButton *logout=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(480,36,96,32)]; logout.title=@"退出登录"; logout.hoverColor=[NSColor systemOrangeColor]; logout.font=[NSFont systemFontOfSize:10]; logout.target=self; logout.action=@selector(cloudLogout:); [logout applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:logout];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(584,36,92,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeCloudDocsList:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
