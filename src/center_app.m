@@ -1640,6 +1640,12 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property NSInteger localAIRunningOwner;
 @property BOOL localAIExclusiveAlertShown;
 @property (strong) NSWindow *localAIPolicyWindow;
+@property (strong) NSWindow *videoGenWindow;
+@property (strong) NSPopUpButton *videoGenCheckpointPopup, *videoGenMotionPopup, *videoGenBackendPopup;
+@property (strong) NSTextField *videoGenPromptField, *videoGenNegativeField, *videoGenStatus, *videoGenWidthField, *videoGenHeightField, *videoGenFramesField, *videoGenStepsField, *videoGenSeedField, *videoGenFpsField;
+@property (strong) NSTimer *videoGenPollTimer, *videoGenElapsedTimer;
+@property (strong) NSString *videoGenPromptID;
+@property NSTimeInterval videoGenStart;
 @property BOOL localOllamaAutoStarting, localComfyAutoStarting;
 @property NSTimeInterval localOllamaLastAutoStart, localComfyLastAutoStart;
 @property NSTimeInterval localOllamaStartAt, localComfyStartAt;
@@ -7686,14 +7692,149 @@ static BOOL ValidGroupName(NSString *raw) {
   else [self showToast:@"已允许双开，请确认内存足够"];
 }
 
+- (void)showVideoGeneration:(id)sender {
+  if(!self.videoGenWindow){
+    self.videoGenWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,780,650) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.videoGenWindow.title=@"本地视频生成 · AnimateDiff"; self.videoGenWindow.releasedWhenClosed=NO;
+    NSView *cv=self.videoGenWindow.contentView;
+    NSTextField *t=[self label:@"本地视频生成" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,606,300,28); [cv addSubview:t];
+    NSTextField *h=[self label:@"AnimateDiff + SD1.5；8GB 建议 512×512、16 帧、低步数" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,582,700,18); [cv addSubview:h];
+    self.videoGenStatus=[self label:@"就绪" size:10.5 bold:YES color:[NSColor systemGreenColor]]; self.videoGenStatus.frame=NSMakeRect(24,558,720,18); [cv addSubview:self.videoGenStatus];
+    NSTextField *lb=[self label:@"后端" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lb.frame=NSMakeRect(24,532,60,16); [cv addSubview:lb];
+    self.videoGenBackendPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,504,200,26) pullsDown:NO];
+    [self.videoGenBackendPopup addItemWithTitle:@"AnimateDiff (SD1.5)"];
+    [[self.videoGenBackendPopup lastItem] setEnabled:YES];
+    [cv addSubview:self.videoGenBackendPopup];
+    NSTextField *lc=[self label:@"底模" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lc.frame=NSMakeRect(240,532,80,16); [cv addSubview:lc];
+    self.videoGenCheckpointPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(240,504,300,26) pullsDown:NO]; [cv addSubview:self.videoGenCheckpointPopup];
+    NSTextField *lm=[self label:@"运动模块" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lm.frame=NSMakeRect(556,532,100,16); [cv addSubview:lm];
+    self.videoGenMotionPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(556,504,200,26) pullsDown:NO]; [cv addSubview:self.videoGenMotionPopup];
+    NSTextField *lp=[self label:@"提示词" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lp.frame=NSMakeRect(24,478,60,16); [cv addSubview:lp];
+    self.videoGenPromptField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,448,732,26)]; self.videoGenPromptField.placeholderString=@"例如：a cat walking on grass, cinematic light"; [cv addSubview:self.videoGenPromptField];
+    NSTextField *ln=[self label:@"负面提示词" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; ln.frame=NSMakeRect(24,424,100,16); [cv addSubview:ln];
+    self.videoGenNegativeField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,394,732,26)]; self.videoGenNegativeField.stringValue=@"blurry, low quality, distorted, watermark"; [cv addSubview:self.videoGenNegativeField];
+    NSArray *names=@[@"宽",@"高",@"帧数",@"步数",@"种子",@"FPS"];
+    CGFloat xs[6]={24,140,256,372,488,604};
+    NSArray *vals=@[@"512",@"512",@"16",@"6",@"42",@"8"];
+    NSMutableArray *fields=[NSMutableArray array];
+    for(NSInteger i=0;i<6;i++){
+      NSTextField *l=[self label:names[i] size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(xs[i],356,80,16); [cv addSubview:l];
+      NSTextField *f=[[NSTextField alloc] initWithFrame:NSMakeRect(xs[i],326,100,26)]; f.stringValue=vals[i]; [cv addSubview:f]; [fields addObject:f];
+    }
+    self.videoGenWidthField=fields[0]; self.videoGenHeightField=fields[1]; self.videoGenFramesField=fields[2]; self.videoGenStepsField=fields[3]; self.videoGenSeedField=fields[4]; self.videoGenFpsField=fields[5];
+    ColorHoverButton *gen=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,40,130,34)]; gen.title=@"生成视频"; gen.hoverColor=[NSColor systemPinkColor]; gen.target=self; gen.action=@selector(generateVideo:); [gen applyColor:[NSColor systemPinkColor] textColor:[NSColor whiteColor]]; [cv addSubview:gen];
+    ColorHoverButton *folder=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(164,40,130,34)]; folder.title=@"打开输出目录"; folder.hoverColor=[NSColor systemBlueColor]; folder.target=self; folder.action=@selector(openVideoGenOutput:); [folder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:folder];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(654,40,100,34)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeVideoGeneration:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.videoGenWindow center];
+  }
+  [self refreshVideoGenModels];
+  [self bringAuxiliaryWindowToFront:self.videoGenWindow];
+}
+
+- (void)closeVideoGeneration:(id)sender {
+  [self.videoGenPollTimer invalidate]; self.videoGenPollTimer=nil;
+  [self.videoGenElapsedTimer invalidate]; self.videoGenElapsedTimer=nil;
+  [self.videoGenWindow orderOut:nil];
+}
+
+- (void)refreshVideoGenModels {
+  NSString *ckptDir=[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/models/checkpoints"];
+  NSArray *ckpts=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:ckptDir error:NULL] ?: @[];
+  [self.videoGenCheckpointPopup removeAllItems];
+  for(NSString *f in ckpts) if([f.pathExtension.lowercaseString isEqualToString:@"safetensors"]||[f.pathExtension.lowercaseString isEqualToString:@"ckpt"]) [self.videoGenCheckpointPopup addItemWithTitle:f];
+  NSString *mmDir=[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/models/animatediff_models"];
+  NSArray *mms=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:mmDir error:NULL] ?: @[];
+  [self.videoGenMotionPopup removeAllItems];
+  for(NSString *f in mms) if([@[@"ckpt",@"safetensors"] containsObject:f.pathExtension.lowercaseString]) [self.videoGenMotionPopup addItemWithTitle:f];
+  if(!ckpts.count) self.videoGenStatus.stringValue=@"未找到底模";
+  else if(!mms.count) self.videoGenStatus.stringValue=@"未找到 AnimateDiff 运动模块";
+}
+
+- (void)openVideoGenOutput:(id)sender {
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/output"]]];
+}
+
+- (void)generateVideo:(id)sender {
+  if(self.videoGenPromptID.length){self.videoGenStatus.stringValue=@"已有生成任务在进行";return;}
+  NSString *ckpt=self.videoGenCheckpointPopup.titleOfSelectedItem ?: @"";
+  NSString *mm=self.videoGenMotionPopup.titleOfSelectedItem ?: @"";
+  if(!ckpt.length||!mm.length){self.videoGenStatus.stringValue=@"请先选择底模和运动模块";return;}
+  if(self.localOllamaRunning||self.localOllamaSwitch.state==NSControlStateValueOn){
+    [self stopLocalOllamaForExclusive];
+    [self showToast:@"已停止 Ollama，为视频生成释放内存"];
+  }
+  NSInteger width=MAX(256,self.videoGenWidthField.integerValue);
+  NSInteger height=MAX(256,self.videoGenHeightField.integerValue);
+  NSInteger frames=MAX(4,MIN(32,self.videoGenFramesField.integerValue));
+  NSInteger steps=MAX(2,MIN(30,self.videoGenStepsField.integerValue));
+  NSInteger fps=MAX(1,MIN(30,self.videoGenFpsField.integerValue));
+  NSInteger seed=self.videoGenSeedField.integerValue;
+  NSString *pos=self.videoGenPromptField.stringValue ?: @"";
+  NSString *neg=self.videoGenNegativeField.stringValue ?: @"";
+  NSDictionary *w=@{
+    @"1":@{@"class_type":@"CheckpointLoaderSimple",@"inputs":@{@"ckpt_name":ckpt}},
+    @"2":@{@"class_type":@"CLIPTextEncode",@"inputs":@{@"text":pos,@"clip":@[@"1",@1]}},
+    @"3":@{@"class_type":@"CLIPTextEncode",@"inputs":@{@"text":neg,@"clip":@[@"1",@1]}},
+    @"4":@{@"class_type":@"ADE_AnimateDiffLoaderGen1",@"inputs":@{@"model":@[@"1",@0],@"model_name":mm,@"beta_schedule":@"autoselect"}},
+    @"5":@{@"class_type":@"EmptyLatentImage",@"inputs":@{@"width":@(width),@"height":@(height),@"batch_size":@(frames)}},
+    @"6":@{@"class_type":@"KSampler",@"inputs":@{@"model":@[@"4",@0],@"seed":@(seed),@"steps":@(steps),@"cfg":@7,@"sampler_name":@"euler",@"scheduler":@"normal",@"positive":@[@"2",@0],@"negative":@[@"3",@0],@"latent_image":@[@"5",@0],@"denoise":@1}},
+    @"7":@{@"class_type":@"VAEDecode",@"inputs":@{@"samples":@[@"6",@0],@"vae":@[@"1",@2]}},
+    @"8":@{@"class_type":@"VHS_VideoCombine",@"inputs":@{@"images":@[@"7",@0],@"frame_rate":@(fps),@"loop_count":@0,@"filename_prefix":@"DockLaunchers/localvideo",@"format":@"video/h264-mp4",@"pingpong":@NO,@"save_output":@YES}}
+  };
+  NSData *body=[NSJSONSerialization dataWithJSONObject:@{@"prompt":w,@"client_id":@"docklaunchers"} options:0 error:NULL];
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:8188/prompt"]];
+  req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"]; req.HTTPBody=body;
+  self.videoGenStatus.stringValue=@"正在提交任务…";
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
+    dispatch_async(dispatch_get_main_queue(),^{
+      id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+      NSString *pid=[o isKindOfClass:[NSDictionary class]]?o[@"prompt_id"]:nil;
+      if(!pid.length){weakSelf.videoGenStatus.stringValue=[NSString stringWithFormat:@"提交失败：%@",e.localizedDescription ?: @"请确认 ComfyUI 已启动"];return;}
+      weakSelf.videoGenPromptID=pid; weakSelf.videoGenStart=[[NSDate date] timeIntervalSince1970];
+      weakSelf.videoGenStatus.stringValue=@"正在生成视频…";
+      weakSelf.videoGenElapsedTimer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t){
+        NSInteger sec=(NSInteger)([[NSDate date] timeIntervalSince1970]-weakSelf.videoGenStart);
+        weakSelf.videoGenStatus.stringValue=[NSString stringWithFormat:@"正在生成视频… %ld 秒（8GB 可能需要几分钟）",(long)sec];
+      }];
+      weakSelf.videoGenPollTimer=[NSTimer scheduledTimerWithTimeInterval:3 repeats:YES block:^(NSTimer *t){[weakSelf pollVideoGeneration];}];
+    });
+  }] resume];
+}
+
+- (void)pollVideoGeneration {
+  if(!self.videoGenPromptID.length)return;
+  NSString *url=[NSString stringWithFormat:@"http://127.0.0.1:8188/history/%@",self.videoGenPromptID];
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:url] completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    if(![o isKindOfClass:[NSDictionary class]]||![o[weakSelf.videoGenPromptID] isKindOfClass:[NSDictionary class]])return;
+    NSDictionary *hist=o[weakSelf.videoGenPromptID]; NSDictionary *outputs=hist[@"outputs"];
+    NSString *found=nil;
+    for(NSDictionary *node in outputs.allValues){ if(![node isKindOfClass:[NSDictionary class]])continue; for(NSString *key in @[@"gifs",@"images",@"videos"]){ NSArray *arr=node[key]; if(![arr isKindOfClass:[NSArray class]]||!arr.count)continue; NSDictionary *f=arr.firstObject; if(![f isKindOfClass:[NSDictionary class]])continue; NSString *fn=f[@"filename"]; if(fn.length){NSString *sub=f[@"subfolder"] ?: @""; found=[[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/output"] stringByAppendingPathComponent:[sub stringByAppendingPathComponent:fn]];break;} } if(found)break; }
+    dispatch_async(dispatch_get_main_queue(),^{
+      [weakSelf.videoGenPollTimer invalidate]; weakSelf.videoGenPollTimer=nil;
+      [weakSelf.videoGenElapsedTimer invalidate]; weakSelf.videoGenElapsedTimer=nil;
+      weakSelf.videoGenPromptID=nil;
+      if(found.length){weakSelf.videoGenStatus.stringValue=[NSString stringWithFormat:@"生成完成：%@",found.lastPathComponent]; [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:found]];}
+      else weakSelf.videoGenStatus.stringValue=@"生成完成，但未找到输出文件";
+    });
+  }] resume];
+}
+
 - (void)openLocalAIServices:(id)sender {
   if (!self.localAIWindow) {
     self.localAIWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.localAIWindow.title=@"本地 AI 服务"; self.localAIWindow.releasedWhenClosed=NO;
     NSView *cv=self.localAIWindow.contentView;
     NSTextField *t=[self label:@"本地 AI 服务" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,472,300,28); [cv addSubview:t];
-    NSTextField *h=[self label:@"打开开关启动服务，关闭开关停止；不加入 AI 服务列表" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,450,480,18); [cv addSubview:h];
-    ColorHoverButton *policy=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(470,470,126,30)];
+    NSTextField *h=[self label:@"打开开关启动服务，关闭开关停止；不加入 AI 服务列表" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,450,300,18); [cv addSubview:h];
+    ColorHoverButton *videoBtn=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(470,470,126,30)];
+    videoBtn.title=@"视频生成…"; videoBtn.hoverColor=[NSColor systemPinkColor]; videoBtn.font=[NSFont systemFontOfSize:10];
+    videoBtn.target=self; videoBtn.action=@selector(showVideoGeneration:);
+    videoBtn.toolTip=@"AnimateDiff 本地视频生成";
+    [videoBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:videoBtn];
+    ColorHoverButton *policy=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(336,470,126,30)];
     policy.title=@"运行策略…"; policy.hoverColor=[NSColor systemPurpleColor]; policy.font=[NSFont systemFontOfSize:10];
     policy.target=self; policy.action=@selector(showLocalAIRunPolicy:);
     policy.toolTip=@"选择只允许单开，或按电脑性能允许双开";
