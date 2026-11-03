@@ -1602,6 +1602,13 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *localOllamaStatus, *localComfyStatus, *localWhisperStatus;
 @property (strong) NSTask *localComfyTask, *localOllamaTask;
 @property (strong) NSWindow *localModelWindow;
+@property (strong) NSWindow *ollamaMarketWindow;
+@property (strong) NSTextField *ollamaMarketSearch;
+@property (strong) NSPopUpButton *ollamaMarketCategory;
+@property (strong) NSTableView *ollamaMarketTable;
+@property (strong) NSTextField *ollamaMarketStatus;
+@property (strong) NSArray *ollamaMarketModels;
+@property (strong) NSArray *ollamaMarketFiltered;
 @property (strong) NSTableView *localModelTable;
 @property (strong) NSArray *localModelItems;
 @property NSInteger localModelService;
@@ -7155,6 +7162,152 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)manageComfyModels:(id)sender { [self openLocalModelManager:1]; }
 - (void)manageWhisperModels:(id)sender { [self openLocalModelManager:2]; }
 
+- (NSArray *)ollamaCuratedModels {
+  return @[
+    @{@"name":@"qwen2.5:1.5b",@"category":@"轻量",@"size":@"1.0 GB",@"desc":@"通义千问 1.5B，中文好，8GB 首选",@"recommended":@YES},
+    @{@"name":@"qwen2.5:3b",@"category":@"对话",@"size":@"2.1 GB",@"desc":@"中文对话与写作，8GB 推荐",@"recommended":@YES},
+    @{@"name":@"qwen2.5-coder:1.5b",@"category":@"代码",@"size":@"1.0 GB",@"desc":@"轻量代码补全，8GB 推荐",@"recommended":@YES},
+    @{@"name":@"llama3.2:1b",@"category":@"轻量",@"size":@"1.3 GB",@"desc":@"英文轻量对话，响应快",@"recommended":@YES},
+    @{@"name":@"llama3.2:3b",@"category":@"对话",@"size":@"2.0 GB",@"desc":@"英文对话与工具调用，8GB 可用",@"recommended":@YES},
+    @{@"name":@"gemma2:2b",@"category":@"轻量",@"size":@"1.6 GB",@"desc":@"Google 轻量模型，8GB 可用",@"recommended":@YES},
+    @{@"name":@"phi3.5:3.8b",@"category":@"对话",@"size":@"2.2 GB",@"desc":@"微软小模型，推理不错",@"recommended":@YES},
+    @{@"name":@"tinyllama:1.1b",@"category":@"轻量",@"size":@"638 MB",@"desc":@"极小模型，仅测试用",@"recommended":@YES},
+    @{@"name":@"nomic-embed-text",@"category":@"嵌入",@"size":@"274 MB",@"desc":@"文本向量化，适合知识库",@"recommended":@YES},
+    @{@"name":@"bge-m3",@"category":@"嵌入",@"size":@"1.2 GB",@"desc":@"多语言向量模型",@"recommended":@YES},
+    @{@"name":@"qwen2.5:7b",@"category":@"对话",@"size":@"4.7 GB",@"desc":@"中文 7B，建议 16GB 内存",@"recommended":@NO},
+    @{@"name":@"qwen2.5-coder:7b",@"category":@"代码",@"size":@"4.7 GB",@"desc":@"代码生成，建议 16GB",@"recommended":@NO},
+    @{@"name":@"llama3.1:8b",@"category":@"对话",@"size":@"4.9 GB",@"desc":@"通用 8B，建议 16GB",@"recommended":@NO},
+    @{@"name":@"mistral:7b",@"category":@"对话",@"size":@"4.4 GB",@"desc":@"英文通用 7B",@"recommended":@NO},
+    @{@"name":@"llava:7b",@"category":@"视觉",@"size":@"4.7 GB",@"desc":@"图片理解，建议 16GB",@"recommended":@NO},
+    @{@"name":@"qwen2.5:14b",@"category":@"对话",@"size":@"9.0 GB",@"desc":@"中文 14B，建议 24GB+",@"recommended":@NO},
+    @{@"name":@"deepseek-r1:1.5b",@"category":@"推理",@"size":@"1.1 GB",@"desc":@"轻量推理模型",@"recommended":@YES}
+  ];
+}
+
+- (NSString *)ollamaCategoryForName:(NSString *)n {
+  NSString *l=n.lowercaseString;
+  if([l containsString:@"embed"]||[l containsString:@"bge"]||[l containsString:@"nomic"]||[l containsString:@"mxbai"])return @"嵌入";
+  if([l containsString:@"coder"]||[l containsString:@"code"]||[l containsString:@"codellama"])return @"代码";
+  if([l containsString:@"llava"]||[l containsString:@"vision"]||[l containsString:@"-vl"]||[l containsString:@"ocr"])return @"视觉";
+  if([l containsString:@"r1"]||[l containsString:@"reason"])return @"推理";
+  if([l containsString:@":1b"]||[l containsString:@":1.5b"]||[l containsString:@":2b"]||[l containsString:@"tiny"]||[l containsString:@"phi"])return @"轻量";
+  return @"对话";
+}
+
+- (void)showOllamaModelMarket:(id)sender {
+  if(!self.ollamaMarketWindow){
+    self.ollamaMarketWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,860,600) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.ollamaMarketWindow.title=@"Ollama 模型市场"; self.ollamaMarketWindow.releasedWhenClosed=NO;
+    NSView *cv=self.ollamaMarketWindow.contentView;
+    NSTextField *t=[self label:@"Ollama 模型市场" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,550,300,28); [cv addSubview:t];
+    double gb=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
+    NSTextField *h=[self label:[NSString stringWithFormat:@"当前内存约 %.0f GB；★ 为适合你电脑的推荐模型，下载前请确认磁盘空间",gb] size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,526,760,18); [cv addSubview:h];
+    self.ollamaMarketSearch=[[NSSearchField alloc] initWithFrame:NSMakeRect(24,490,300,28)]; self.ollamaMarketSearch.placeholderString=@"搜索模型"; self.ollamaMarketSearch.target=self; self.ollamaMarketSearch.action=@selector(ollamaMarketFilterChanged:); [self.ollamaMarketSearch setContinuous:YES]; [cv addSubview:self.ollamaMarketSearch];
+    self.ollamaMarketCategory=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(336,490,160,28) pullsDown:NO];
+    for(NSString *c in @[@"全部",@"推荐",@"对话",@"代码",@"视觉",@"推理",@"嵌入",@"轻量"])[self.ollamaMarketCategory addItemWithTitle:c];
+    self.ollamaMarketCategory.target=self; self.ollamaMarketCategory.action=@selector(ollamaMarketFilterChanged:); [cv addSubview:self.ollamaMarketCategory];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,86,812,392)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.ollamaMarketTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    for(NSArray *c in @[@[@"omname",@"模型",@360],@[@"omcat",@"分类",@100],@[@"omsize",@"大小",@100],@[@"omrec",@"状态",@150]]){
+      NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:c[0]]; col.title=c[1]; col.width=[c[2] doubleValue]; [self.ollamaMarketTable addTableColumn:col];
+    }
+    self.ollamaMarketTable.rowHeight=44; self.ollamaMarketTable.dataSource=self; self.ollamaMarketTable.delegate=self; self.ollamaMarketTable.target=self; self.ollamaMarketTable.doubleAction=@selector(ollamaMarketInstall:);
+    sv.documentView=self.ollamaMarketTable; [cv addSubview:sv];
+    self.ollamaMarketStatus=[self label:@"点击下载安装到 Ollama" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.ollamaMarketStatus.frame=NSMakeRect(24,50,430,18); [cv addSubview:self.ollamaMarketStatus];
+    ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(470,40,110,30)]; dl.title=@"下载安装"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(ollamaMarketInstall:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
+    ColorHoverButton *refresh=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(590,40,90,30)]; refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(ollamaMarketReload:); [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(746,40,90,30)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeOllamaModelMarket:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.ollamaMarketWindow center];
+  }
+  [self ollamaMarketReload:nil];
+  [self bringAuxiliaryWindowToFront:self.ollamaMarketWindow];
+}
+
+- (void)closeOllamaModelMarket:(id)sender { [self.ollamaMarketWindow orderOut:nil]; }
+
+- (void)ollamaMarketReload:(id)sender {
+  self.ollamaMarketStatus.stringValue=@"正在获取模型列表…";
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSMutableArray *all=[NSMutableArray array];
+    for(NSDictionary *x in [self ollamaCuratedModels])[all addObject:[x mutableCopy]];
+    NSMutableSet *known=[NSMutableSet set];
+    for(NSDictionary *m in all)[known addObject:m[@"name"]];
+    double memGB=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
+    NSString *installedOut=[self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"list"]];
+    NSMutableSet *installed=[NSMutableSet set];
+    for(NSString *line in [installedOut componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
+      NSString *x=[line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+      if(!x.length||[x hasPrefix:@"NAME "])continue;
+      NSString *n=[x componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet].firstObject;
+      if(n.length)[installed addObject:n];
+    }
+    NSString *html=[NSString stringWithContentsOfURL:[NSURL URLWithString:@"https://ollama.com/library"] encoding:NSUTF8StringEncoding error:NULL];
+    if(html.length){
+      NSRegularExpression *re=[NSRegularExpression regularExpressionWithPattern:@"href=\"/library/([^\"#?]+)\"" options:0 error:NULL];
+      for(NSTextCheckingResult *r in [re matchesInString:html options:0 range:NSMakeRange(0,html.length)]){
+        NSString *name=[html substringWithRange:[r rangeAtIndex:1]];
+        if(!name.length||[known containsObject:name])continue;
+        [known addObject:name];
+        [all addObject:[@{@"name":name,@"category":[self ollamaCategoryForName:name],@"size":@"未知",@"desc":@"Ollama 官方模型库",@"recommended":@NO} mutableCopy]];
+      }
+    }
+    for(NSMutableDictionary *m in all){
+      if([installed containsObject:m[@"name"]])m[@"installed"]=@YES;
+      NSString *sz=m[@"size"] ?: @"";
+      double g=0;
+      if([sz hasSuffix:@"GB"])g=[sz doubleValue];
+      else if([sz hasSuffix:@"MB"])g=[sz doubleValue]/1024.0;
+      BOOL rec=NO;
+      if(g>0){
+        if(memGB<12)rec=(g<=2.5);
+        else if(memGB<20)rec=(g<=6.0);
+        else rec=(g<=12.0);
+      }
+      m[@"recommended"]=@(rec);
+    }
+    dispatch_async(dispatch_get_main_queue(),^{
+      self.ollamaMarketModels=all;
+      [self ollamaMarketFilterChanged:nil];
+      self.ollamaMarketStatus.stringValue=[NSString stringWithFormat:@"共 %ld 个模型，已安装 %ld 个",(long)all.count,(long)installed.count];
+    });
+  });
+}
+
+- (void)ollamaMarketFilterChanged:(id)sender {
+  NSString *q=[self.ollamaMarketSearch.stringValue lowercaseString] ?: @"";
+  NSString *cat=self.ollamaMarketCategory.titleOfSelectedItem ?: @"全部";
+  NSMutableArray *out=[NSMutableArray array];
+  for(NSDictionary *m in self.ollamaMarketModels){
+    if(q.length && ![[(m[@"name"] ?: @"") lowercaseString] containsString:q])continue;
+    if([cat isEqualToString:@"推荐"] && ![m[@"recommended"] boolValue])continue;
+    if(![cat isEqualToString:@"全部"] && ![cat isEqualToString:@"推荐"] && !([m[@"category"] isEqualToString:cat]))continue;
+    [out addObject:m];
+  }
+  self.ollamaMarketFiltered=out;
+  [self.ollamaMarketTable reloadData];
+}
+
+- (void)ollamaMarketInstall:(id)sender {
+  NSInteger row=self.ollamaMarketTable.selectedRow;
+  if(row<0||row>=(NSInteger)self.ollamaMarketFiltered.count){self.ollamaMarketStatus.stringValue=@"请先选择模型";return;}
+  NSDictionary *m=self.ollamaMarketFiltered[row];
+  if([m[@"installed"] boolValue]){self.ollamaMarketStatus.stringValue=@"该模型已安装";return;}
+  NSString *name=m[@"name"];
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=[NSString stringWithFormat:@"下载 %@？",name];
+  a.informativeText=@"将从 Ollama 官方模型库下载，可能需要几分钟，请保持网络连接。";
+  [a addButtonWithTitle:@"下载"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  self.ollamaMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@…",name];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSString *out=[self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"pull",name]];
+    BOOL ok=[[out lowercaseString] containsString:@"success"];
+    dispatch_async(dispatch_get_main_queue(),^{
+      self.ollamaMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",name]:[NSString stringWithFormat:@"%@ 下载失败，请检查网络",name];
+      [self ollamaMarketReload:nil];
+    });
+  });
+}
+
 - (void)openLocalModelManager:(NSInteger)service {
   self.localModelService=service;
   if(!self.localModelWindow){
@@ -7163,6 +7316,10 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *cv=self.localModelWindow.contentView;
     NSTextField *t=[self label:@"模型管理" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,456,400,24); [cv addSubview:t];
     NSTextField *h=[self label:@"更换、添加、删除模型；当前模型会用于 AI 功能" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,434,520,18); [cv addSubview:h];
+    ColorHoverButton *market=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(604,456,132,26)];
+    market.title=@"模型市场…"; market.hoverColor=[NSColor systemOrangeColor]; market.font=[NSFont systemFontOfSize:10];
+    market.target=self; market.action=@selector(showOllamaModelMarket:);
+    [market applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:market];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,100,712,320)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.localModelTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
     NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"lm"]; col.title=@"模型"; col.width=690; [self.localModelTable addTableColumn:col];
@@ -10801,6 +10958,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.automationTable) return self.automationRules.count;
+  if (tableView == self.ollamaMarketTable) return self.ollamaMarketFiltered.count;
   if (tableView == self.radialSearchTable) return self.radialSearchResults.count;
   if (tableView == self.localModelTable) return self.localModelItems.count;
   if (tableView == self.radialItemsTable) return self.radialItemsCurrentItems.count;
@@ -10897,6 +11055,26 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,30)];
     NSTextField *l=[self label:self.videoEditorPaths[row].lastPathComponent size:11 bold:NO color:nil];
     l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,5,col.width-8,20); [v addSubview:l];
+    return v;
+  }
+  if (tableView == self.ollamaMarketTable) {
+    if (row < 0 || row >= (NSInteger)self.ollamaMarketFiltered.count) return nil;
+    NSDictionary *m=self.ollamaMarketFiltered[row];
+    NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
+    if ([col.identifier isEqualToString:@"omname"]) {
+      NSTextField *l=[self label:m[@"name"] ?: @"" size:11.5 bold:YES color:nil];
+      l.frame=NSMakeRect(4,20,col.width-8,18); [v addSubview:l];
+      NSTextField *d=[self label:m[@"desc"] ?: @"" size:9 bold:NO color:[NSColor secondaryLabelColor]];
+      d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(4,3,col.width-8,14); [v addSubview:d];
+    } else if ([col.identifier isEqualToString:@"omcat"]) {
+      NSTextField *l=[self label:m[@"category"] ?: @"" size:10 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
+    } else if ([col.identifier isEqualToString:@"omsize"]) {
+      NSTextField *l=[self label:m[@"size"] ?: @"未知" size:10 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
+    } else {
+      BOOL installed=[m[@"installed"] boolValue]; BOOL rec=[m[@"recommended"] boolValue];
+      NSTextField *l=[self label:installed?@"已安装":(rec?@"★ 推荐":@"") size:10 bold:YES color:installed?[NSColor systemGreenColor]:[NSColor systemOrangeColor]];
+      l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
+    }
     return v;
   }
   if (tableView == self.radialSearchTable) {
