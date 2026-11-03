@@ -7370,7 +7370,7 @@ static BOOL ValidGroupName(NSString *raw) {
   unsigned long long free=[fs[NSFileSystemFreeSize] unsignedLongLongValue];
   if(free<1024ULL*1024*1024){[self showToast:@"磁盘剩余空间不足 1GB"];return;}
   self.marketDownloadName=name; self.marketDownloadKind=kind;
-  NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/curl"; t.arguments=@[@"-L",@"--fail",@"--retry",@"2",@"--progress-bar",@"-o",dst,url];
+  NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/curl"; t.arguments=@[@"-L",@"--fail",@"--retry",@"2",@"--progress-bar",@"-C",@"-",@"-o",dst,url];
   NSPipe *err=[NSPipe pipe]; t.standardError=err; t.standardOutput=[NSFileHandle fileHandleWithNullDevice];
   __weak typeof(self) weakSelf=self;
   err.fileHandleForReading.readabilityHandler=^(NSFileHandle *h){
@@ -20396,8 +20396,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       st.frame = NSMakeRect(410, y+14, 80, 18); [cv addSubview:st];
       [self.privacyStatusLabels addObject:st];
       ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(498, y+8, 96, 26)];
-      b.title = @"系统设置"; b.tag = i; b.hoverColor = [NSColor systemBlueColor];
-      b.target = self; b.action = @selector(openPrivacyPane:);
+      b.title = (i == 7) ? @"授权" : @"系统设置"; b.tag = i; b.hoverColor = [NSColor systemBlueColor];
+      b.target = self; b.action = (i == 7) ? @selector(requestPhotoPermissionFromPrivacy:) : @selector(openPrivacyPane:);
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:b];
       objc_setAssociatedObject(b, "PrivacyPane", pane[i], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
@@ -20424,6 +20424,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.allowTerminate=YES;
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[[NSBundle mainBundle] bundlePath]]];
   [NSApp terminate:nil];
+}
+
+- (void)requestPhotoPermissionFromPrivacy:(id)sender {
+  __weak typeof(self) weakSelf=self;
+  [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
+    dispatch_async(dispatch_get_main_queue(),^{
+      [weakSelf refreshPrivacyDashboard];
+      if(status==PHAuthorizationStatusAuthorized||status==PHAuthorizationStatusLimited)[weakSelf showToast:@"照片图库已授权"];
+      else {
+        NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"照片权限未开启";
+        a.informativeText=@"请在系统设置 → 隐私与安全性 → 照片中允许 DockLaunchers 访问。";
+        [a addButtonWithTitle:@"打开系统设置"]; [a addButtonWithTitle:@"取消"];
+        if([a runModal]==NSAlertFirstButtonReturn)[weakSelf openPhotoPrivacySettings:nil];
+      }
+    });
+  }];
 }
 
 - (void)openPrivacyPane:(NSButton *)sender {
@@ -24775,6 +24791,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSScrollView *outScroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,64,872,260)]; outScroll.hasVerticalScroller=YES; outScroll.borderType=NSBezelBorder;
     self.aiFileOutput=[[NSTextView alloc] initWithFrame:outScroll.contentView.bounds]; self.aiFileOutput.editable=NO; self.aiFileOutput.selectable=YES; self.aiFileOutput.font=[NSFont systemFontOfSize:11];
     outScroll.documentView=self.aiFileOutput; [cv addSubview:outScroll];
+    ColorHoverButton *copyMD=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(568,20,100,32)]; copyMD.title=@"复制 MD"; copyMD.hoverColor=[NSColor systemPurpleColor]; copyMD.font=[NSFont systemFontOfSize:10]; copyMD.target=self; copyMD.action=@selector(aiFileCopyMarkdown:); [copyMD applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copyMD];
     ColorHoverButton *saveDir=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(680,20,100,32)]; saveDir.title=@"保存位置…"; saveDir.hoverColor=[NSColor systemTealColor]; saveDir.font=[NSFont systemFontOfSize:10]; saveDir.target=self; saveDir.action=@selector(aiFileChooseOutputDirectory:); saveDir.toolTip=@"自定义 Markdown 报告保存目录"; [saveDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:saveDir];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(800,20,96,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(aiFileClose:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.aiFileWindow center];
@@ -25043,6 +25060,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"已添加 %@",provider];
     });
   }] resume];
+}
+
+- (void)aiFileCopyMarkdown:(id)sender {
+  NSString *md=self.aiFileOutput.string ?: @"";
+  if(!md.length){self.aiFileStatus.stringValue=@"还没有可复制的报告";return;}
+  NSPasteboard *pb=[NSPasteboard generalPasteboard];
+  [pb clearContents]; [pb setString:md forType:NSPasteboardTypeString];
+  self.aiFileStatus.stringValue=@"Markdown 已复制到剪贴板";
 }
 
 - (void)aiFileChooseOutputDirectory:(id)sender {
