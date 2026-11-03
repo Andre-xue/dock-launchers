@@ -23182,18 +23182,132 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self showToast:[NSString stringWithFormat:@"AI 语音保存到：%@", p.URL.path]];
 }
 
+- (void)aiEnhanceImageAtPath:(NSString *)path {
+  NSArray *services = [self aiEntriesForModelCategory:@"edit"];
+  if (!services.count) { [self showToast:@"请先在 AI 管理添加图片编辑服务"]; return; }
+  NSDictionary *e = services.firstObject;
+  NSString *key = e[@"api"] ?: @"";
+  NSString *name = [e[@"name"] ?: @"" lowercaseString];
+  NSString *base = e[@"apiBase"] ?: @"";
+  while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length-1];
+  BOOL silicon = [name containsString:@"siliconflow"] || [name containsString:@"硅基流动"] || [base containsString:@"siliconflow"];
+  NSString *url = e[@"editAPI"] ?: (silicon ? @"https://api.siliconflow.cn/v1/images/generations" : [base stringByAppendingString:@"/images/edits"]);
+  NSString *model = e[@"editModel"] ?: (silicon ? @"Qwen/Qwen-Image-Edit-2509" : @"");
+  if (!key.length || !url.length || !model.length) { [self showToast:@"图片编辑服务配置不完整"]; return; }
+  NSData *imgData = [NSData dataWithContentsOfFile:path];
+  if (!imgData.length) { [self showToast:@"图片读取失败"]; return; }
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  req.HTTPMethod = @"POST"; req.timeoutInterval = 180;
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  NSString *prompt = @"保持人物、构图和文字不变，将图片放大并增强清晰度和细节，输出高质量图片";
+  if (silicon) {
+    NSString *dataURL = [@"data:image/png;base64," stringByAppendingString:[imgData base64EncodedStringWithOptions:0]];
+    NSDictionary *json = @{@"model": model, @"prompt": prompt, @"image": dataURL};
+    req.HTTPBody = [NSJSONSerialization dataWithJSONObject:json options:0 error:NULL];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  } else {
+    NSString *boundary = [[NSUUID UUID] UUIDString];
+    NSMutableData *body = [NSMutableData data];
+    void (^field)(NSString *, NSString *) = ^(NSString *n, NSString *v) {
+      [body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"%@\"\r\n\r\n%@\r\n", boundary, n, v] dataUsingEncoding:NSUTF8StringEncoding]];
+    };
+    field(@"model", model); field(@"prompt", prompt); field(@"n", @"1");
+    [body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"image\"; filename=\"image.png\"\r\nContent-Type: image/png\r\n\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:imgData]; [body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:[[NSString stringWithFormat:@"--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    req.HTTPBody = body;
+    [req setValue:[NSString stringWithFormat:@"multipart/form-data; boundary=%@", boundary] forHTTPHeaderField:@"Content-Type"];
+  }
+  self.aiImageStatus.stringValue = @"AI 正在增强放大…";
+  __weak typeof(self) weakSelf = self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *rd, NSURLResponse *rsp, NSError *err) {
+    if (err || !rd.length) { dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.aiImageStatus.stringValue = err.localizedDescription ?: @"AI 增强失败"; }); return; }
+    id obj = [NSJSONSerialization JSONObjectWithData:rd options:0 error:NULL];
+    NSString *imageURL = [weakSelf firstURLStringInJSONObject:obj];
+    NSData *imageData = nil;
+    if (!imageURL && [obj isKindOfClass:[NSDictionary class]]) {
+      id d = obj[@"data"];
+      if ([d isKindOfClass:[NSArray class]] && [d count]) {
+        id b64 = d[0][@"b64_json"];
+        if ([b64 isKindOfClass:[NSString class]]) imageData = [[NSData alloc] initWithBase64EncodedString:b64 options:0];
+      }
+    }
+    void (^finish)(NSData *) = ^(NSData *data) {
+      if (!data.length) { dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.aiImageStatus.stringValue = @"增强结果下载失败"; }); return; }
+      NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyyMMdd-HHmmss";
+      NSString *outPath = [[weakSelf aiGeneratedDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"AI增强-%@.png", [df stringFromDate:[NSDate date]]]];
+      [data writeToFile:outPath atomically:YES];
+      dispatch_async(dispatch_get_main_queue(), ^{
+        weakSelf.aiImageResultPath = outPath;
+        weakSelf.aiImageStatus.stringValue = [NSString stringWithFormat:@"AI 增强完成：%@", outPath.lastPathComponent];
+        if (weakSelf.aiImagePreview) weakSelf.aiImagePreview.image = [[NSImage alloc] initWithData:data];
+        [weakSelf showToast:@"AI 增强放大完成"];
+      });
+    };
+    if (imageData.length) { finish(imageData); return; }
+    if (imageURL.length) { [[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:imageURL] completionHandler:^(NSData *d, NSURLResponse *r, NSError *e2) { finish(d); }] resume]; return; }
+    dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.aiImageStatus.stringValue = [[NSString alloc] initWithData:rd encoding:NSUTF8StringEncoding] ?: @"AI 增强失败"; });
+  }] resume];
+}
+
+- (void)realESRGANUpscaleImageAtPath:(NSString *)path {
+  NSString *exe = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerRealESRGANPath"];
+  if (!exe.length || ![[NSFileManager defaultManager] isExecutableFileAtPath:exe]) {
+    NSOpenPanel *p = [NSOpenPanel openPanel];
+    p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = NO;
+    p.message = @"选择 Real-ESRGAN 可执行文件（realesrgan-ncnn-vulkan 或 python 脚本包装）";
+    if ([p runModal] != NSModalResponseOK) return;
+    exe = p.URL.path;
+    [[NSUserDefaults standardUserDefaults] setObject:exe forKey:@"centerRealESRGANPath"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+  }
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  sp.allowedFileTypes = @[@"png"];
+  sp.nameFieldStringValue = [NSString stringWithFormat:@"RealESRGAN-%@.png", path.lastPathComponent.stringByDeletingPathExtension];
+  if ([sp runModal] != NSModalResponseOK) return;
+  NSString *out = sp.URL.path;
+  [[NSFileManager defaultManager] removeItemAtPath:out error:NULL];
+  self.aiImageStatus.stringValue = @"Real-ESRGAN 正在放大…";
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    NSTask *task = [[NSTask alloc] init];
+    task.launchPath = exe;
+    task.arguments = @[@"-i", path, @"-o", out, @"-s", @"2", @"-n", @"realesrgan-x4plus"];
+    NSPipe *pipe = [NSPipe pipe]; task.standardError = pipe; task.standardOutput = pipe;
+    @try { [task launch]; [task waitUntilExit]; } @catch (NSException *e) {
+      dispatch_async(dispatch_get_main_queue(), ^{ self.aiImageStatus.stringValue = @"Real-ESRGAN 启动失败"; });
+      return;
+    }
+    BOOL ok = [[NSFileManager defaultManager] fileExistsAtPath:out];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (ok) {
+        self.aiImageResultPath = out;
+        self.aiImageStatus.stringValue = [NSString stringWithFormat:@"Real-ESRGAN 完成：%@", out.lastPathComponent];
+        if (self.aiImagePreview) self.aiImagePreview.image = [[NSImage alloc] initWithContentsOfFile:out];
+        [self showToast:@"Real-ESRGAN 放大完成"];
+      } else {
+        NSData *errData = [pipe.fileHandleForReading readDataToEndOfFile];
+        self.aiImageStatus.stringValue = [[NSString alloc] initWithData:errData encoding:NSUTF8StringEncoding] ?: @"Real-ESRGAN 执行失败";
+      }
+    });
+  });
+}
+
 - (void)upscaleImageFile:(id)sender {
   NSOpenPanel *p = [NSOpenPanel openPanel];
   p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=NO;
   p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"];
   if ([p runModal] != NSModalResponseOK) return;
   NSAlert *alert = [[NSAlert alloc] init];
-  alert.messageText = @"选择放大倍数";
-  alert.informativeText = @"本地 Lanczos 高质量放大，不调用 AI，适合截图和素材。";
-  [alert addButtonWithTitle:@"2 倍"];
-  [alert addButtonWithTitle:@"4 倍"];
+  alert.messageText = @"选择放大方式";
+  alert.informativeText = @"本地 Lanczos 不调用 AI；AI 增强使用当前图片编辑服务；Real-ESRGAN 需先配置可执行文件。";
+  [alert addButtonWithTitle:@"本地 2 倍"];
+  [alert addButtonWithTitle:@"本地 4 倍"];
+  [alert addButtonWithTitle:@"AI 增强"];
+  [alert addButtonWithTitle:@"Real-ESRGAN…"];
   [alert addButtonWithTitle:@"取消"];
   NSModalResponse resp = [alert runModal];
+  if (resp == NSAlertThirdButtonReturn) { [self aiEnhanceImageAtPath:p.URL.path]; return; }
+  if (resp == NSAlertThirdButtonReturn + 1) { [self realESRGANUpscaleImageAtPath:p.URL.path]; return; }
   if (resp != NSAlertFirstButtonReturn && resp != NSAlertSecondButtonReturn) return;
   CGFloat scale = resp == NSAlertFirstButtonReturn ? 2.0 : 4.0;
   NSImage *src = [[NSImage alloc] initWithContentsOfFile:p.URL.path];
