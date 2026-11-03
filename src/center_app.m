@@ -4151,8 +4151,19 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 }
 
 - (void)showSection:(NSInteger)idx {
-  if (idx == 2 && self.section != 2 && ![self ensureAIManagementAccess]) return;
+  BOOL needsAIAuth = (idx == 2 && self.section != 2);
+  if (needsAIAuth && ![self ensureAIManagementAccess]) return;
   self.section = idx;
+  if (needsAIAuth) {
+    for (NSNumber *delay in @[@0.4,@1.0,@1.8]) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay.doubleValue*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+        [self restoreDockIcon];
+        [self.window makeKeyAndOrderFront:nil];
+        [self.window orderFrontRegardless];
+        [NSApp activateIgnoringOtherApps:YES];
+      });
+    }
+  }
   if (idx == 2 && !self.aiEntries) [self loadAIEntries];
   for (NSView *v in self.content.subviews) [v removeFromSuperview];
   NSArray *btns = @[self.sideLive, self.sideGroups, self.sideAI, self.sideDisk, self.sideUninstall, self.sideSettings];
@@ -7914,7 +7925,7 @@ static BOOL ValidGroupName(NSString *raw) {
 - (BOOL)requestAdminAuthentication {
   BOOL hasPassword = [self hasAppPassword];
   if ([self touchIDEnabled] && [self biometricAuthAvailable]) {
-    if ([self authenticateWithBiometrics]) return YES;
+    if ([self authenticateWithBiometrics]) { self.aiAuthSessionValid = YES; return YES; }
     if (!hasPassword) { [self showToast:@"指纹验证未通过，且尚未设置应用密码"]; return NO; }
   }
   if (!hasPassword) {
@@ -7928,7 +7939,9 @@ static BOOL ValidGroupName(NSString *raw) {
     if ([a runModal] == NSAlertFirstButtonReturn) [self showPasswordSettings:nil];
     return NO;
   }
-  return [self promptForAppPassword];
+  BOOL ok = [self promptForAppPassword];
+  if (ok) self.aiAuthSessionValid = YES;
+  return ok;
 }
 
 - (void)showPasswordSettings:(id)sender {
