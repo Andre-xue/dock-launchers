@@ -1392,6 +1392,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *configBackupWindow;
 @property (strong) NSWindow *cloudSyncWindow;
 @property (strong) NSWindow *automationWindow, *automationRuleWindow, *privacyWindow;
+@property (strong) NSMutableArray *privacyStatusLabels;
 @property (strong) NSWindow *radialCustomWindow;
 @property (strong) NSMutableArray<NSNumber *> *radialCustomOrder;
 @property (strong) NSArray *radialPagesFull;
@@ -7185,6 +7186,16 @@ static BOOL ValidGroupName(NSString *raw) {
         NSString *name=[t componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet].firstObject;
         if(name.length)[models addObject:name];
       }
+      if (!models.count) {
+        NSString *root=[NSHomeDirectory() stringByAppendingPathComponent:@".ollama/models/manifests-v2/ollama.com/library"];
+        NSArray *modelDirs=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:root error:NULL] ?: @[];
+        for (NSString *m in modelDirs) {
+          NSString *mp=[root stringByAppendingPathComponent:m]; BOOL isDir=NO;
+          if (![[NSFileManager defaultManager] fileExistsAtPath:mp isDirectory:&isDir] || !isDir) continue;
+          NSArray *tags=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:mp error:NULL] ?: @[];
+          for (NSString *t in tags) if (![t hasPrefix:@"."]) [models addObject:[NSString stringWithFormat:@"%@:%@",m,t]];
+        }
+      }
       dispatch_async(dispatch_get_main_queue(),^{
         self.localModelItems=models; [self.localModelTable reloadData];
         self.localModelStatus.stringValue=models.count?[NSString stringWithFormat:@"%ld 个 Ollama 模型",(long)models.count]:@"没有模型；请先打开 Ollama 开关";
@@ -7537,9 +7548,9 @@ static BOOL ValidGroupName(NSString *raw) {
   self.aiTable.delegate = self;
   self.aiTable.target = self;
   self.aiTable.doubleAction = @selector(aiEditVisibleRow:);
-  NSArray *cols = @[@[@"sel", @"", @24], @[@"ainame", @"名称", @110], @[@"quota", @"余量", @120],
-                    @[@"endpoint", @"链接地址(API)", @90], @[@"api", @"API Key", @70],
-                    @[@"note", @"备注(用途)", @90], @[@"aiactions", @"操作", @168]];
+  NSArray *cols = @[@[@"sel", @"", @24], @[@"ainame", @"名称", @100], @[@"quota", @"余量", @100],
+                    @[@"endpoint", @"链接地址(API)", @80], @[@"api", @"API Key", @60],
+                    @[@"note", @"备注(用途)", @80], @[@"aiactions", @"操作", @150]];
   for (NSArray *c in cols) {
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
     col.title = c[1]; col.width = [c[2] doubleValue];
@@ -11160,7 +11171,7 @@ static BOOL ValidGroupName(NSString *raw) {
       NSArray *colors = @[[NSColor systemPurpleColor], [NSColor systemGreenColor], [NSColor systemBlueColor], [NSColor systemRedColor]];
       NSArray *sels = @[@"aiEditRow:", @"aiCopyRow:", @"aiBackupRow:", @"aiDeleteRow:"];
       for (NSInteger i = 0; i < 4; i++) {
-        ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(i*40, 14, 38, 26)];
+        ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(i*37, 14, 35, 26)];
         b.title = titles[i]; b.hoverColor = colors[i]; b.tag = row;
         if (i == 0) b.toolTip = @"复制完整服务信息（含 API Key，需要管理员密码）";
         b.target = self; b.action = NSSelectorFromString(sels[i]);
@@ -18845,49 +18856,84 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return @"未知";
 }
 
+- (NSInteger)privacyStatusForRow:(NSInteger)i {
+  if (i == 0) return CGPreflightScreenCaptureAccess() ? 1 : 2;
+  if (i == 1) {
+    AVAuthorizationStatus st=[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    return st==AVAuthorizationStatusAuthorized?1:(st==AVAuthorizationStatusDenied?2:(st==AVAuthorizationStatusNotDetermined?0:3));
+  }
+  if (i == 2) {
+    AVAuthorizationStatus st=[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+    return st==AVAuthorizationStatusAuthorized?1:(st==AVAuthorizationStatusDenied?2:(st==AVAuthorizationStatusNotDetermined?0:3));
+  }
+  if (i == 3) {
+    SFSpeechRecognizerAuthorizationStatus st=[SFSpeechRecognizer authorizationStatus];
+    return st==SFSpeechRecognizerAuthorizationStatusAuthorized?1:(st==SFSpeechRecognizerAuthorizationStatusDenied?2:(st==SFSpeechRecognizerAuthorizationStatusNotDetermined?0:3));
+  }
+  if (i == 4) return AXIsProcessTrusted()?1:2;
+  if (i == 5) return CGPreflightListenEventAccess()?1:2;
+  if (i == 6) return [[NSFileManager defaultManager] isReadableFileAtPath:@"/Library/Application Support/com.apple.TCC/TCC.db"]?1:2;
+  if (i == 7) {
+    PHAuthorizationStatus st=[PHPhotoLibrary authorizationStatusForAccessLevel:PHAccessLevelReadWrite];
+    if(st==PHAuthorizationStatusAuthorized||st==PHAuthorizationStatusLimited)return 1;
+    if(st==PHAuthorizationStatusDenied)return 2;
+    if(st==PHAuthorizationStatusNotDetermined)return 0;
+    return 3;
+  }
+  return 3;
+}
+
+- (void)refreshPrivacyDashboard {
+  for(NSInteger i=0;i<(NSInteger)self.privacyStatusLabels.count;i++){
+    NSInteger state=[self privacyStatusForRow:i];
+    NSTextField *st=self.privacyStatusLabels[i];
+    st.stringValue=[self privacyStateText:state];
+    st.textColor=(state==1?[NSColor systemGreenColor]:[NSColor systemOrangeColor]);
+  }
+}
+
 - (void)openPrivacyDashboard:(id)sender {
   if (!self.privacyWindow) {
-    self.privacyWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,510) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.privacyWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,660,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.privacyWindow.title = @"系统隐私仪表盘";
     self.privacyWindow.releasedWhenClosed = NO;
     NSView *cv = self.privacyWindow.contentView;
     NSTextField *t = [self label:@"系统隐私仪表盘" size:20 bold:YES color:nil];
-    t.frame = NSMakeRect(24, 466, 320, 28); [cv addSubview:t];
-    NSTextField *h = [self label:@"查看 DockLaunchers 当前权限；状态为「未决定/已拒绝」时点右侧按钮去系统设置授权" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    h.frame = NSMakeRect(24, 444, 590, 18); [cv addSubview:h];
-
-    NSArray *names = @[@"屏幕录制", @"麦克风", @"摄像头", @"语音识别", @"辅助功能", @"输入监控", @"完全磁盘访问"];
-    NSArray *details = @[@"截图、滚动截图和录屏", @"录音、会议转写和录屏", @"摄像头画中画", @"会议助手语音转文字", @"窗口布局和自动操作", @"按键显示和全局快捷键", @"卸载时清理应用残留"];
-    NSArray *pane = @[@"Privacy_ScreenCapture", @"Privacy_Microphone", @"Privacy_Camera", @"Privacy_SpeechRecognition", @"Privacy_Accessibility", @"Privacy_ListenEvent", @"Privacy_AllFiles"];
+    t.frame = NSMakeRect(24, 516, 320, 28); [cv addSubview:t];
+    NSTextField *h = [self label:@"查看 DockLaunchers 当前权限；未授权时点「系统设置」授权后点刷新" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24, 494, 600, 18); [cv addSubview:h];
+    NSArray *names = @[@"屏幕录制", @"麦克风", @"摄像头", @"语音识别", @"辅助功能", @"输入监控", @"完全磁盘访问", @"照片图库"];
+    NSArray *details = @[@"截图、滚动截图和录屏", @"录音、会议转写和录屏", @"摄像头画中画", @"会议助手语音转文字", @"窗口布局和自动操作", @"按键显示和全局快捷键", @"卸载时清理应用残留", @"文件管理中的系统相册"];
+    NSArray *pane = @[@"Privacy_ScreenCapture", @"Privacy_Microphone", @"Privacy_Camera", @"Privacy_SpeechRecognition", @"Privacy_Accessibility", @"Privacy_ListenEvent", @"Privacy_AllFiles", @"Privacy_Photos"];
+    self.privacyStatusLabels=[NSMutableArray array];
     for (NSInteger i=0;i<names.count;i++) {
-      CGFloat y = 396 - i*48;
+      CGFloat y = 446 - i*44;
       NSTextField *n = [self label:names[i] size:12 bold:YES color:nil];
-      n.frame = NSMakeRect(24, y+16, 140, 18); [cv addSubview:n];
+      n.frame = NSMakeRect(24, y+14, 120, 18); [cv addSubview:n];
       NSTextField *d = [self label:details[i] size:10 bold:NO color:[NSColor secondaryLabelColor]];
-      d.frame = NSMakeRect(170, y+16, 260, 18); [cv addSubview:d];
-      NSInteger state = 3;
-      if (i == 0) state = CGPreflightScreenCaptureAccess() ? 1 : 2;
-      else if (i == 1) state = (NSInteger)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
-      else if (i == 2) state = (NSInteger)[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
-      else if (i == 3) state = (NSInteger)[SFSpeechRecognizer authorizationStatus];
-      else if (i == 4) state = AXIsProcessTrusted() ? 1 : 2;
-      else if (i == 5) state = CGPreflightListenEventAccess() ? 1 : 2;
-      else if (i == 6) state = [[NSFileManager defaultManager] isReadableFileAtPath:@"/Library/Application Support/com.apple.TCC/TCC.db"] ? 1 : 2;
-      NSTextField *st = [self label:[self privacyStateText:state] size:10.5 bold:YES color:(state == 1 ? [NSColor systemGreenColor] : [NSColor systemOrangeColor])];
-      st.frame = NSMakeRect(440, y+16, 76, 18); [cv addSubview:st];
-      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524, y+10, 92, 26)];
+      d.frame = NSMakeRect(150, y+14, 250, 18); [cv addSubview:d];
+      NSTextField *st = [self label:@"" size:10.5 bold:YES color:[NSColor systemOrangeColor]];
+      st.frame = NSMakeRect(410, y+14, 80, 18); [cv addSubview:st];
+      [self.privacyStatusLabels addObject:st];
+      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(498, y+8, 96, 26)];
       b.title = @"系统设置"; b.tag = i; b.hoverColor = [NSColor systemBlueColor];
       b.target = self; b.action = @selector(openPrivacyPane:);
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:b];
       objc_setAssociatedObject(b, "PrivacyPane", pane[i], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
+    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(300,20,90,30)];
+    refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemGreenColor]; refresh.target=self; refresh.action=@selector(refreshPrivacyDashboardButton:);
+    [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524, 20, 92, 30)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor]; close.target = self; close.action = @selector(closePrivacyDashboard:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.privacyWindow center];
   }
+  [self refreshPrivacyDashboard];
   [self forceWindowToFront:self.privacyWindow];
 }
+
+- (void)refreshPrivacyDashboardButton:(id)sender { [self refreshPrivacyDashboard]; }
 
 - (void)openPrivacyPane:(NSButton *)sender {
   NSString *pane = objc_getAssociatedObject(sender, "PrivacyPane");
