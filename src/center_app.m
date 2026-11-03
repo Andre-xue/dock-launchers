@@ -24927,9 +24927,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.cloudApiAppIDField.hidden=![p isEqualToString:@"飞书"];
   self.cloudApiAppSecretField.hidden=![p isEqualToString:@"飞书"];
   if([p isEqualToString:@"Notion"]) self.cloudApiTokenField.placeholderString=@"Notion Integration Token";
-  else if([p isEqualToString:@"语雀"]) self.cloudApiTokenField.placeholderString=@"语雀个人 Token";
+  else if([p isEqualToString:@"语雀"]) self.cloudApiTokenField.placeholderString=@"语雀个人 Token（超级会员）";
   self.cloudApiItems=@[]; [self.cloudApiTable reloadData];
-  self.cloudApiStatus.stringValue=[p isEqualToString:@"飞书"]?@"飞书请先在开放平台创建企业自建应用并填写 AppID/Secret":@"填写 Token 后点「保存并获取」";
+  if([p isEqualToString:@"飞书"]) self.cloudApiStatus.stringValue=@"飞书请先在开放平台创建企业自建应用并填写 AppID/Secret";
+  else if([p isEqualToString:@"语雀"]) self.cloudApiStatus.stringValue=@"语雀个人 Token 目前需要超级会员；普通账号请用应用内登录/导入链接";
+  else self.cloudApiStatus.stringValue=@"填写 Token 后点「保存并获取」";
 }
 
 - (void)cloudAPIRequest:(NSMutableURLRequest *)req completion:(void (^)(id obj, NSError *err))completion {
