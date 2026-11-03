@@ -1,0 +1,39 @@
+{
+  "audit_date": "2026-11-03",
+  "app": "DockLaunchers 控制台",
+  "commit_before": "24ec41b",
+  "files": {
+    "source_lines": 28100,
+    "source_size_kb": 1100,
+    "audited_modules": 18,
+    "audit_findings": 32,
+    "fixed_p0": 5,
+    "fixed_p1": 9,
+    "fixed_p2": 4,
+    "open_risk": 14
+  },
+  "tests": {
+    "build": "PASS",
+    "selftest": "PASS",
+    "api_tts": {"status": 200, "bytes": 15487, "format": "audio/mpeg"},
+    "api_image": {"status": 200, "bytes": 1063341, "width": 1024, "height": 1024},
+    "conversion": {"image": 2, "audio": 2, "video": 1, "failed": 0},
+    "video_merge": {"input_seconds": 4.066, "clips": 2, "output_seconds": 8.133},
+    "subtitle_burn": {"status": "PASS", "output_bytes": 3145728}
+  },
+  "optimizations": [
+    "全局快捷键 ID 显式映射，修复翻译快捷键误触发录屏",
+    "视频合并复用同一 video/audio track 并按 duration 追加",
+    "AI 错误解析兼容 error 为字符串，避免崩溃",
+    "文件转换在后台使用 jobs 快照，避免并发修改崩溃",
+    "压缩/解压管道在 waitUntilExit 前读取，修复大目录死锁",
+    "更新安装改为暂存、校验、原子替换、失败回滚",
+    "配置导出/导入/回滚补齐 scenes/window_layouts/automation/prompts",
+    "自动化时间规则每分钟最多一次并按优先级首条执行",
+    "截图历史过滤 -part/camera-/音轨等垃圾文件",
+    "实时标注支持 Esc 关闭",
+    "图库支持超过 8 张滚动显示",
+    "图片编辑/视频/图库等错误提示中文化"
+  ],
+  "blocked_tests": ["local_whisper_binary_missing", "comfyui_not_running", "ollama_not_running", "tcc_ui_not_automated"]
+}

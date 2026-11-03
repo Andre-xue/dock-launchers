@@ -1,0 +1,21 @@
+用例,模块,输入,预期,实测,结果,证据
+T01,构建,./build_center.sh,编译成功,built app / 123 warnings,通过,build-final.log
+T02,自检,DOCKLAUNCHERS_CENTER_SELFTEST=1,SELFTEST OK,SELFTEST OK,通过,selftest-final.log
+T03,AI 图片生成,SiliconFlow Qwen/Qwen-Image 1024x1024 安全提示词,HTTP 200 且返回图片,HTTP 200 1024x1024 1063341 bytes,通过,generated.png
+T04,AI 语音合成,CosyVoice2-0.5B alex 中文短句,HTTP 200 返回 MP3,HTTP 200 15487 bytes ID3,通过,API 实测
+T05,图片转换,PNG→JPG,sips 成功,exit 0 输出 png-to-jpg.jpg,通过,audit/out
+T06,图片转换,JPG→PNG,sips 成功,exit 0 输出 jpg-to-png.png,通过,audit/out
+T07,音频转换,WAV→M4A,afconvert 成功,exit 0 输出 wav-to-m4a.m4a,通过,audit/out
+T08,音频转换,AIFF→WAV,afconvert 成功,exit 0 输出 aiff-to-wav.wav,通过,audit/out
+T09,视频转换,MP4→MP4,avconvert 成功,exit 0 输出 video-converted.mp4,通过,audit/out
+T10,视频合并,同一 4.066s 视频添加两次,时长约 8.13s,dur=8.133s,通过,dl_merge_test.txt
+T11,视频字幕烧录,录屏+3 句中文字幕,导出带字幕 MP4,3.0MB MP4 导出成功,通过,/tmp/dl_subburn_test.mp4
+T12,截图历史标签,文件名/标签搜索,过滤记录,代码路径检查,未手工点击,静态审计
+T13,文件转换中心,转换中修改列表,不崩溃,已改为快照 jobs,已修复,静态审计
+T14,全局快捷键,⌃⌥T 截图翻译,触发截图翻译,已修复 ID 映射,已修复,静态审计
+T15,本地 Whisper,whisper-cli+模型,返回文字,环境未安装 Whisper,阻塞,静态审计
+T16,ComfyUI,本地 127.0.0.1:8188,生图,服务未启动,阻塞,静态审计
+T17,Ollama,127.0.0.1:11434,对话,服务未启动,阻塞,静态审计
+T18,实时标注,全屏覆盖层,画笔/箭头/Esc,代码路径检查,基本可用,静态审计
+T19,AI 用量统计,扫描目录,数量/空间/费用,代码路径检查,通过代码审查,静态审计
+T20,配置导出导入,场景/布局/自动化,完整迁移,已补全 JSON 备份,已修复,静态审计

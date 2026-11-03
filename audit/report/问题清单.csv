@@ -1,0 +1,26 @@
+优先级,问题,位置,处理状态
+P0,翻译快捷键被注册成录屏,registerHotKeyForAction,已修复
+P0,视频合并所有片段从0开始导致只保留一片,appendVideoEditorPaths,已修复
+P0,AI API error 为字符串时崩溃,AI 助手/图片问答/翻译/转写/会议,已修复
+P0,文件转换中修改列表崩溃,convertStart,已修复
+P0,更新安装先删应用无回滚,installUpdateDMG,已修复为暂存+校验+回滚
+P1,压缩/解压管道死锁,runCompressTask/archiveListSafe,已修复
+P1,剪贴板清空/暂停/收藏按钮无实现,剪贴板,已修复
+P1,快速面板分组应用无响应,quickPanelOpenItem,已修复
+P1,配置导入丢场景/布局/自动化,export/import/rollback,已修复
+P1,自动化时间规则一分钟触发三次,automationTimeTick,已修复
+P1,自定义菜单项无法排序/每页超载,radial item,已修复
+P1,页面自定义取消仍隐藏页面,radial page,已修复
+P1,图库超过8张无法滚动,showAIImageGallery,已修复
+P1,本地 Whisper stderr 当结果显示,transcribeLocalWhisper,已修复
+P1,视频轮询失败卡住 busy,pollAIVideoTask,已修复
+P2,截图历史列宽超出/垃圾文件,refreshCaptureHistory,已修复
+P2,实时标注无 Esc 关闭,DLiveAnnotationView,已修复
+P2,图片画廊信息/收藏,画廊,已修复
+P2,视频历史批量删除,视频历史,已修复
+未修复,更新包仍通过 shell 字符串插值,installUpdateDMG,风险保留
+未修复,配置导入 shell 自定义项可执行,配置导入/自定义项,风险保留
+未修复,主线程 sips/音量命令阻塞,图片工具/录音,风险保留
+未修复,截图/长截图未统一权限预检,截图,风险保留
+未修复,摄像头合成失败重试循环,录像合成,风险保留
+未修复,多显示器坐标与钉屏临时文件,截图,风险保留
