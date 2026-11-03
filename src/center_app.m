@@ -7168,7 +7168,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"lm"]; col.title=@"模型"; col.width=690; [self.localModelTable addTableColumn:col];
     self.localModelTable.rowHeight=28; self.localModelTable.dataSource=self; self.localModelTable.delegate=self;
     sv.documentView=self.localModelTable; [cv addSubview:sv];
-    self.localModelAddField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,64,300,26)]; self.localModelAddField.placeholderString=@"输入模型名，例如 qwen2.5:3b"; [cv addSubview:self.localModelAddField];
+    self.localModelAddField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,64,300,26)]; self.localModelAddField.placeholderString=@"输入模型名，例如 qwen2.5:3b"; self.localModelAddField.target=self; self.localModelAddField.action=@selector(localModelAdd:); [cv addSubview:self.localModelAddField];
     self.localModelStatus=[self label:@"选择模型后操作" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.localModelStatus.frame=NSMakeRect(24,38,300,18); [cv addSubview:self.localModelStatus];
     NSArray *titles=@[@"添加",@"删除",@"设为当前",@"设置…",@"关闭"];
     NSArray *sels=@[@"localModelAdd:",@"localModelDelete:",@"localModelSetCurrent:",@"localModelSettings:",@"closeLocalModelManager:"];
@@ -7238,11 +7238,28 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)localModelAdd:(id)sender {
   if(self.localModelService==0){
     NSString *name=[self.localModelAddField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
-    if(!name.length){self.localModelStatus.stringValue=@"请输入模型名";return;}
+    if(!name.length){
+      NSAlert *a=[[NSAlert alloc] init];
+      a.messageText=@"添加 Ollama 模型";
+      a.informativeText=@"输入模型名，例如 qwen2.5:3b、llama3.2:3b";
+      NSTextField *f=[[NSTextField alloc] initWithFrame:NSMakeRect(0,0,300,24)]; f.placeholderString=@"模型名"; a.accessoryView=f;
+      [a addButtonWithTitle:@"拉取"]; [a addButtonWithTitle:@"取消"];
+      if([a runModal]!=NSAlertFirstButtonReturn)return;
+      name=[f.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+      if(!name.length){self.localModelStatus.stringValue=@"请输入模型名";return;}
+      self.localModelAddField.stringValue=name;
+    }
     self.localModelStatus.stringValue=[NSString stringWithFormat:@"正在拉取 %@…",name];
+    __weak typeof(self) weakSelf=self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-      [self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"pull",name]];
-      dispatch_async(dispatch_get_main_queue(),^{self.localModelAddField.stringValue=@"";[self localModelReload:nil];});
+      NSString *out=[self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"pull",name]];
+      BOOL ok=[[out lowercaseString] containsString:@"success"];
+      dispatch_async(dispatch_get_main_queue(),^{
+        weakSelf.localModelAddField.stringValue=@"";
+        if(ok) [weakSelf showToast:[NSString stringWithFormat:@"模型 %@ 已添加",name]];
+        else if([[out lowercaseString] containsString:@"error"]) weakSelf.localModelStatus.stringValue=[NSString stringWithFormat:@"拉取失败：%@",[out componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet].lastObject ?: @""];
+        [weakSelf localModelReload:nil];
+      });
     }); return;
   }
   NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=YES;
