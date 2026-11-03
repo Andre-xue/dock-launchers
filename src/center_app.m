@@ -1643,6 +1643,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *aiFileWindow;
 @property (strong) NSTableView *aiFileTable;
 @property (strong) NSMutableArray *aiFiles;
+@property (strong) NSMutableArray *aiCloudDocs;
 @property (strong) NSTextField *aiFilePromptField, *aiFileStatus;
 @property (strong) NSTextView *aiFileOutput;
 @property (strong) NSString *aiFileResultPath;
@@ -11659,7 +11660,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (tableView == self.radialItemsTable) return self.radialItemsCurrentItems.count;
   if (tableView == self.videoEditorTable) return self.videoEditorPaths.count;
   if (tableView == self.convertTable) return self.convertPaths.count;
-  if (tableView == self.aiFileTable) return self.aiFiles.count;
+  if (tableView == self.aiFileTable) return self.aiFiles.count + self.aiCloudDocs.count;
   if (tableView == self.aiVideoHistoryTable) return self.aiVideoHistoryItems.count;
   if (tableView == self.shelfTable) return self.shelfVisiblePaths.count;
   if (tableView == self.dupTable) return self.dupItems.count;
@@ -11837,12 +11838,19 @@ static BOOL ValidGroupName(NSString *raw) {
     return v;
   }
   if (tableView == self.aiFileTable) {
-    if (row < 0 || row >= (NSInteger)self.aiFiles.count) return nil;
-    NSString *p=self.aiFiles[row];
+    NSInteger localCount=(NSInteger)self.aiFiles.count;
+    if (row < 0 || row >= localCount + (NSInteger)self.aiCloudDocs.count) return nil;
     NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
-    NSTextField *l=[self label:p.lastPathComponent size:11 bold:YES color:nil]; l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,15,col.width-8,17); [v addSubview:l];
-    NSNumber *sz=[[NSFileManager defaultManager] attributesOfItemAtPath:p error:NULL][NSFileSize];
-    NSTextField *d=[self label:[NSString stringWithFormat:@"%@ · %@",p.pathExtension.uppercaseString ?: @"文件",[self fmtSize:sz.unsignedLongLongValue]] size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.frame=NSMakeRect(4,2,col.width-8,13); [v addSubview:d];
+    if(row<localCount){
+      NSString *p=self.aiFiles[row];
+      NSTextField *l=[self label:p.lastPathComponent size:11 bold:YES color:nil]; l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,15,col.width-8,17); [v addSubview:l];
+      NSNumber *sz=[[NSFileManager defaultManager] attributesOfItemAtPath:p error:NULL][NSFileSize];
+      NSTextField *d=[self label:[NSString stringWithFormat:@"%@ · %@",p.pathExtension.uppercaseString ?: @"文件",[self fmtSize:sz.unsignedLongLongValue]] size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.frame=NSMakeRect(4,2,col.width-8,13); [v addSubview:d];
+    } else {
+      NSDictionary *c=self.aiCloudDocs[row-localCount];
+      NSTextField *l=[self label:c[@"title"] ?: @"" size:11 bold:YES color:nil]; l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,15,col.width-8,17); [v addSubview:l];
+      NSTextField *d=[self label:[NSString stringWithFormat:@"云文档 · %@",c[@"provider"] ?: @""] size:9 bold:NO color:[NSColor systemBlueColor]]; d.frame=NSMakeRect(4,2,col.width-8,13); [v addSubview:d];
+    }
     return v;
   }
   if (tableView == self.aiVideoHistoryTable) {
@@ -24507,6 +24515,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *h=[self label:@"导入文件后用 AI 分析，生成 Markdown 报告并保存到桌面" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,634,620,18); [cv addSubview:h];
     ColorHoverButton *add=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,596,120,30)]; add.title=@"导入文件…"; add.hoverColor=[NSColor systemBlueColor]; add.target=self; add.action=@selector(aiFileAddFiles:); [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
     ColorHoverButton *clear=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(154,596,90,30)]; clear.title=@"清空"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(aiFileClear:); [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    ColorHoverButton *cloud=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(254,596,120,30)]; cloud.title=@"添加云文档…"; cloud.hoverColor=[NSColor systemBlueColor]; cloud.font=[NSFont systemFontOfSize:10]; cloud.target=self; cloud.action=@selector(aiFileAddCloudLink:); cloud.toolTip=@"支持腾讯文档、飞书、语雀、Notion、Google Docs、WPS、钉钉公开链接"; [cloud applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cloud];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,420,732,166)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.aiFileTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
     NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"aifile"]; col.title=@"已导入文件"; col.width=710; [self.aiFileTable addTableColumn:col];
@@ -24530,7 +24539,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)aiFileClose:(id)sender { [self.aiFileWindow orderOut:nil]; }
-- (void)aiFileClear:(id)sender { [self.aiFiles removeAllObjects]; [self.aiFileTable reloadData]; self.aiFileOutput.string=@""; self.aiFileResultPath=nil; self.aiFileStatus.stringValue=@"已清空"; }
+- (void)aiFileClear:(id)sender { [self.aiFiles removeAllObjects]; [self.aiCloudDocs removeAllObjects]; [self.aiFileTable reloadData]; self.aiFileOutput.string=@""; self.aiFileResultPath=nil; self.aiFileStatus.stringValue=@"已清空"; }
 - (void)aiFileAddFiles:(id)sender {
   NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=YES;
   p.message=@"选择要分析的文件（文本、Markdown、PDF、Word、CSV、JSON 等）";
@@ -24539,6 +24548,61 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for(NSURL *u in p.URLs)if(![self.aiFiles containsObject:u.path])[self.aiFiles addObject:u.path];
   [self.aiFileTable reloadData];
   self.aiFileStatus.stringValue=[NSString stringWithFormat:@"已导入 %ld 个文件",(long)self.aiFiles.count];
+}
+
+- (NSString *)aiCloudProviderForURL:(NSString *)url {
+  NSString *l=url.lowercaseString;
+  if([l containsString:@"docs.qq.com"])return @"腾讯文档";
+  if([l containsString:@"feishu.cn"]||[l containsString:@"larksuite.com"])return @"飞书文档";
+  if([l containsString:@"yuque.com"])return @"语雀";
+  if([l containsString:@"notion.so"]||[l containsString:@"notion.site"])return @"Notion";
+  if([l containsString:@"docs.google.com"])return @"Google Docs";
+  if([l containsString:@"kdocs.cn"]||[l containsString:@"wps.cn"])return @"WPS 文档";
+  if([l containsString:@"alidocs.dingtalk.com"]||[l containsString:@"dingtalk.com"])return @"钉钉文档";
+  return @"云文档";
+}
+
+- (void)aiFileAddCloudLink:(id)sender {
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"添加云文档";
+  a.informativeText=@"粘贴公开分享链接（腾讯文档/飞书/语雀/Notion/Google Docs/WPS/钉钉）。私有文档请先导出为 PDF/DOCX 再导入。";
+  NSTextField *f=[[NSTextField alloc] initWithFrame:NSMakeRect(0,0,420,24)]; f.placeholderString=@"https://docs.qq.com/doc/..."; a.accessoryView=f;
+  [a addButtonWithTitle:@"读取"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  NSString *url=f.stringValue; if(!url.length)return;
+  if(![url hasPrefix:@"http"])url=[@"https://" stringByAppendingString:url];
+  NSString *provider=[self aiCloudProviderForURL:url];
+  NSString *fetchURL=url;
+  if([provider isEqualToString:@"Google Docs"]){
+    NSRange r=[url rangeOfString:@"/document/d/"]; if(r.location!=NSNotFound){NSString *rest=[url substringFromIndex:NSMaxRange(r)]; NSString *docID=[rest componentsSeparatedByString:@"/"].firstObject; if(docID.length)fetchURL=[NSString stringWithFormat:@"https://docs.google.com/document/d/%@/export?format=txt",docID];}
+  }
+  self.aiFileStatus.stringValue=[NSString stringWithFormat:@"正在读取 %@…",provider];
+  __weak typeof(self) weakSelf=self;
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:fetchURL]];
+  req.timeoutInterval=20; [req setValue:@"Mozilla/5.0 (Macintosh) DockLaunchers/1.0" forHTTPHeaderField:@"User-Agent"];
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
+    NSString *text=nil;
+    if(d.length){
+      NSString *html=[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+      NSAttributedString *as=[[NSAttributedString alloc] initWithHTML:d documentAttributes:NULL];
+      text=as.string;
+      if(!text.length)text=html;
+    }
+    dispatch_async(dispatch_get_main_queue(),^{
+      if(!text.length){weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"读取失败：%@",err.localizedDescription ?: @"无内容"];return;}
+      if([text containsString:@"登录后查看"]||[text containsString:@"请先登录"]||[text containsString:@"Sign in"]){
+        weakSelf.aiFileStatus.stringValue=@"该文档需要登录，请先导出 PDF/DOCX 再导入";return;
+      }
+      NSRegularExpression *tag=[NSRegularExpression regularExpressionWithPattern:@"<[^>]+>" options:0 error:NULL];
+      NSString *plain=[tag stringByReplacingMatchesInString:text options:0 range:NSMakeRange(0,text.length) withTemplate:@""];
+      plain=[plain stringByReplacingOccurrencesOfString:@"\n\n\n" withString:@"\n\n"];
+      plain=[plain stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+      if(plain.length<20){weakSelf.aiFileStatus.stringValue=@"未读取到正文，请使用导出文件";return;}
+      if(!weakSelf.aiCloudDocs)weakSelf.aiCloudDocs=[NSMutableArray array];
+      [weakSelf.aiCloudDocs addObject:@{@"title":[NSString stringWithFormat:@"%@ 文档",provider],@"provider":provider,@"url":url,@"content":[plain substringToIndex:MIN(plain.length,(NSUInteger)30000)]}];
+      [weakSelf.aiFileTable reloadData];
+      weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"已添加 %@",provider];
+    });
+  }] resume];
 }
 
 - (void)aiFileOpenResult:(id)sender {
@@ -24555,6 +24619,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if(!text.length)continue;
     [okFiles addObject:path.lastPathComponent];
     [content appendFormat:@"\n\n===== 文件：%@ =====\n%@",path.lastPathComponent,[text substringToIndex:MIN(text.length,(NSUInteger)12000)]];
+    if(content.length>50000)break;
+  }
+  for(NSDictionary *c in self.aiCloudDocs){
+    NSString *text=c[@"content"] ?: @""; if(!text.length)continue;
+    [okFiles addObject:c[@"title"] ?: @"云文档"];
+    [content appendFormat:@"\n\n===== 云文档：%@（%@） =====\n%@",c[@"title"] ?: @"",c[@"provider"] ?: @"",[text substringToIndex:MIN(text.length,(NSUInteger)12000)]];
     if(content.length>50000)break;
   }
   if(!content.length){self.aiFileStatus.stringValue=@"没有可提取的文本内容";return;}
