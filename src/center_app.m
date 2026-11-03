@@ -1656,6 +1656,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSString *cloudLoginProvider;
 @property (strong) NSArray *cloudProviders;
 @property (strong) NSTextField *aiFilePromptField, *aiFileStatus;
+@property (strong) NSPopUpButton *aiFileServicePopup;
+@property (strong) NSComboBox *aiFileModelField;
 @property (strong) NSTextView *aiFileOutput;
 @property (strong) NSString *aiFileResultPath;
 @property (strong) NSWindow *videoGenWindow;
@@ -24520,6 +24522,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 
+- (void)reloadAIFileServices {
+  if(!self.aiEntries)[self loadAIEntries];
+  [self.aiFileServicePopup removeAllItems];
+  [self.aiFileServicePopup addItemWithTitle:@"本地 Ollama"]; self.aiFileServicePopup.lastItem.representedObject=@(-1);
+  for(NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++){
+    NSDictionary *e=self.aiEntries[i];
+    if(![[self aiModelCategoryKey:e] isEqualToString:@"text"])continue;
+    [self.aiFileServicePopup addItemWithTitle:e[@"name"] ?: @"未命名"]; self.aiFileServicePopup.lastItem.representedObject=@(i);
+  }
+  [self.aiFileServicePopup selectItemAtIndex:0];
+  [self aiFileServiceChanged:nil];
+}
+
+- (void)aiFileServiceChanged:(id)sender {
+  NSInteger idx=[self.aiFileServicePopup.selectedItem.representedObject integerValue];
+  [self.aiFileModelField removeAllItems];
+  NSString *model=@"qwen2.5:3b";
+  if(idx>=0 && idx<(NSInteger)self.aiEntries.count){NSDictionary *e=self.aiEntries[idx];model=e[@"model"] ?: @"qwen2.5:3b";}
+  [self.aiFileModelField addItemWithObjectValue:model]; self.aiFileModelField.stringValue=model;
+}
+
 - (NSString *)aiFileExtractText:(NSString *)path {
   NSString *ext=path.pathExtension.lowercaseString;
   if([ext isEqualToString:@"pdf"]){
@@ -24543,7 +24566,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiFileWindow.title=@"AI 文件分析"; self.aiFileWindow.releasedWhenClosed=NO;
     NSView *cv=self.aiFileWindow.contentView;
     NSTextField *t=[self label:@"AI 文件分析" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,656,300,28); [cv addSubview:t];
-    NSTextField *h=[self label:@"导入文件后用 AI 分析，生成 Markdown 报告并保存到桌面" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,634,620,18); [cv addSubview:h];
+    NSTextField *h=[self label:@"导入文件后用 AI 分析，生成 Markdown 报告并保存到桌面" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,634,500,18); [cv addSubview:h];
+    self.aiFileServicePopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(530,654,130,26) pullsDown:NO]; self.aiFileServicePopup.target=self; self.aiFileServicePopup.action=@selector(aiFileServiceChanged:); [cv addSubview:self.aiFileServicePopup];
+    self.aiFileModelField=[[NSComboBox alloc] initWithFrame:NSMakeRect(666,654,90,26)]; self.aiFileModelField.placeholderString=@"模型"; self.aiFileModelField.font=[NSFont systemFontOfSize:10]; self.aiFileModelField.editable=YES; [cv addSubview:self.aiFileModelField];
     ColorHoverButton *add=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,596,120,30)]; add.title=@"导入文件…"; add.hoverColor=[NSColor systemBlueColor]; add.target=self; add.action=@selector(aiFileAddFiles:); [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
     ColorHoverButton *clear=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(154,596,90,30)]; clear.title=@"清空"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(aiFileClear:); [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
     ColorHoverButton *cloud=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(254,596,120,30)]; cloud.title=@"添加云文档…"; cloud.hoverColor=[NSColor systemBlueColor]; cloud.font=[NSFont systemFontOfSize:10]; cloud.target=self; cloud.action=@selector(openCloudDocsList:); cloud.toolTip=@"云文档列表：官方扫码登录、导出或导入链接"; [cloud applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cloud];
@@ -24566,6 +24591,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(656,20,100,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(aiFileClose:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.aiFileWindow center];
   }
+  [self reloadAIFileServices];
   [self.aiFileTable reloadData];
   [self bringAuxiliaryWindowToFront:self.aiFileWindow];
 }
@@ -24809,12 +24835,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if(content.length>50000)break;
   }
   if(!content.length){self.aiFileStatus.stringValue=@"没有可提取的文本内容";return;}
-  NSString *url=@"", *key=@"", *model=@"";
-  NSDictionary *chosen=nil;
-  for(NSDictionary *e in self.aiEntries ?: @[]){ if([[self aiModelCategoryKey:e] isEqualToString:@"text"] && [(NSString *)(e[@"api"] ?: @"") length]){chosen=e;break;} }
-  if(chosen){NSString *base=chosen[@"apiBase"] ?: @""; if([base hasSuffix:@"/chat/completions"])base=[base substringToIndex:base.length-17]; while([base hasSuffix:@"/"])base=[base substringToIndex:base.length-1]; url=[base stringByAppendingString:@"/chat/completions"]; key=chosen[@"api"] ?: @""; model=chosen[@"model"] ?: @"qwen2.5:3b";}
-  else {url=@"http://127.0.0.1:11434/v1/chat/completions"; model=@"qwen2.5:3b";}
-  if(!url.length){self.aiFileStatus.stringValue=@"没有可用的文本 AI 服务";return;}
+  NSString *url=@"", *key=@"", *model=self.aiFileModelField.stringValue ?: @"";
+  NSInteger chosenIdx=[self.aiFileServicePopup.selectedItem.representedObject integerValue];
+  NSDictionary *chosen=(chosenIdx>=0 && chosenIdx<(NSInteger)self.aiEntries.count)?self.aiEntries[chosenIdx]:nil;
+  if(chosen){
+    NSString *base=chosen[@"apiBase"] ?: @"";
+    if([base hasSuffix:@"/chat/completions"])base=[base substringToIndex:base.length-17];
+    while([base hasSuffix:@"/"])base=[base substringToIndex:base.length-1];
+    url=base.length?[base stringByAppendingString:@"/chat/completions"]:@"";
+    key=chosen[@"api"] ?: @"";
+    if(!model.length)model=chosen[@"model"] ?: @"qwen2.5:3b";
+  } else {url=@"http://127.0.0.1:11434/v1/chat/completions"; if(!model.length)model=@"qwen2.5:3b";}
+  if(!url.length){self.aiFileStatus.stringValue=@"请选择可用的 AI 服务或填写 API 地址";return;}
   NSString *prompt=[NSString stringWithFormat:@"%@\n\n请输出完整的 Markdown 报告，包含：\n1. 文件概览\n2. 每个文件的核心内容\n3. 关键数据与结论\n4. 风险与待办\n5. 建议\n不要编造文件中不存在的信息。\n\n文件内容：%@",self.aiFilePromptField.stringValue,content];
   NSDictionary *body=@{@"model":model,@"messages":@[@{@"role":@"user",@"content":prompt}],@"temperature":@0.3,@"max_tokens":@1500};
   NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
