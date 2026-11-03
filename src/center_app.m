@@ -1323,7 +1323,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 }
 @end
 
-@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate, AVCaptureFileOutputRecordingDelegate, NSURLSessionDownloadDelegate>
+@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate, AVCaptureFileOutputRecordingDelegate, NSURLSessionDownloadDelegate, WKNavigationDelegate>
 - (void)hideClipboardPreview;
 - (void)installClipboardHoverMonitor;
 - (void)scheduleDockLiveApply;
@@ -1648,6 +1648,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *cloudDocsWindow;
 @property (strong) NSTableView *cloudProviderTable;
 @property (strong) NSWindow *cloudApiWindow;
+@property (strong) NSWindow *feishuAuthWindow;
+@property (strong) WKWebView *feishuWebView;
+@property (strong) NSString *feishuAppAccessToken;
+@property (strong) NSString *feishuUserToken;
 @property (strong) NSPopUpButton *cloudApiProviderPopup;
 @property (strong) NSTextField *cloudApiTokenField, *cloudApiAppIDField, *cloudApiAppSecretField, *cloudApiStatus;
 @property (strong) NSTableView *cloudApiTable;
@@ -24897,9 +24901,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.cloudApiWindow.title=@"云文档 API 接入"; self.cloudApiWindow.releasedWhenClosed=NO;
     NSView *cv=self.cloudApiWindow.contentView;
     NSTextField *t=[self label:@"云文档 API 接入" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,548,300,28); [cv addSubview:t];
-    NSTextField *h=[self label:@"语雀/Notion 使用个人 Token；飞书需要自建应用，填入 AppID/Secret 后登录" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,524,700,18); [cv addSubview:h];
+    NSTextField *h=[self label:@"Notion 使用个人 Token；飞书需要自建应用，填入 AppID/Secret 后扫码登录" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,524,700,18); [cv addSubview:h];
     self.cloudApiProviderPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,486,150,28) pullsDown:NO];
-    [self.cloudApiProviderPopup addItemsWithTitles:@[@"Notion",@"语雀",@"飞书"]];
+    [self.cloudApiProviderPopup addItemsWithTitles:@[@"Notion",@"飞书"]];
     self.cloudApiProviderPopup.target=self; self.cloudApiProviderPopup.action=@selector(cloudAPIProviderChanged:); [cv addSubview:self.cloudApiProviderPopup];
     self.cloudApiTokenField=[[NSSecureTextField alloc] initWithFrame:NSMakeRect(184,486,300,28)]; self.cloudApiTokenField.placeholderString=@"Integration Token / 个人 Token"; [cv addSubview:self.cloudApiTokenField];
     self.cloudApiAppIDField=[[NSTextField alloc] initWithFrame:NSMakeRect(184,448,200,26)]; self.cloudApiAppIDField.placeholderString=@"飞书 App ID"; [cv addSubview:self.cloudApiAppIDField];
@@ -24927,17 +24931,106 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.cloudApiAppIDField.hidden=![p isEqualToString:@"飞书"];
   self.cloudApiAppSecretField.hidden=![p isEqualToString:@"飞书"];
   if([p isEqualToString:@"Notion"]) self.cloudApiTokenField.placeholderString=@"Notion Integration Token";
-  else if([p isEqualToString:@"语雀"]) self.cloudApiTokenField.placeholderString=@"语雀个人 Token（超级会员）";
   self.cloudApiItems=@[]; [self.cloudApiTable reloadData];
   if([p isEqualToString:@"飞书"]) self.cloudApiStatus.stringValue=@"飞书请先在开放平台创建企业自建应用并填写 AppID/Secret";
-  else if([p isEqualToString:@"语雀"]) self.cloudApiStatus.stringValue=@"语雀个人 Token 目前需要超级会员；普通账号请用应用内登录/导入链接";
-  else self.cloudApiStatus.stringValue=@"填写 Token 后点「保存并获取」";
+  else self.cloudApiStatus.stringValue=@"填写 Notion Token 后点「保存并获取」";
 }
 
 - (void)cloudAPIRequest:(NSMutableURLRequest *)req completion:(void (^)(id obj, NSError *err))completion {
   [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
     id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
     dispatch_async(dispatch_get_main_queue(),^{ completion(o,e); });
+  }] resume];
+}
+
+- (void)feishuStartOAuthWithAppID:(NSString *)appID secret:(NSString *)secret {
+  self.cloudApiStatus.stringValue=@"正在获取飞书应用令牌…";
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal"]];
+  req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  req.HTTPBody=[NSJSONSerialization dataWithJSONObject:@{@"app_id":appID,@"app_secret":secret} options:0 error:NULL];
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    NSString *tok=[o isKindOfClass:[NSDictionary class]]?o[@"app_access_token"]:nil;
+    dispatch_async(dispatch_get_main_queue(),^{
+      if(!tok.length){weakSelf.cloudApiStatus.stringValue=[NSString stringWithFormat:@"飞书应用令牌获取失败：%@",err.localizedDescription ?: @"请检查 AppID/Secret"];return;}
+      weakSelf.feishuAppAccessToken=tok;
+      [weakSelf feishuShowAuthPageWithAppID:appID];
+    });
+  }] resume];
+}
+
+- (void)feishuShowAuthPageWithAppID:(NSString *)appID {
+  if(!self.feishuAuthWindow){
+    self.feishuAuthWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,860,680) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.feishuAuthWindow.title=@"飞书扫码登录"; self.feishuAuthWindow.releasedWhenClosed=NO;
+    NSView *cv=self.feishuAuthWindow.contentView;
+    NSTextField *t=[self label:@"飞书扫码登录" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,644,300,24); [cv addSubview:t];
+    NSTextField *h=[self label:@"请用飞书扫码授权；回调地址需在开放平台配置为 http://127.0.0.1:53682/callback" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,622,760,18); [cv addSubview:h];
+    WKWebViewConfiguration *cfg=[[WKWebViewConfiguration alloc] init]; cfg.websiteDataStore=[WKWebsiteDataStore defaultDataStore];
+    self.feishuWebView=[[WKWebView alloc] initWithFrame:NSMakeRect(20,60,820,550) configuration:cfg];
+    self.feishuWebView.navigationDelegate=self; [cv addSubview:self.feishuWebView];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(740,18,100,30)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeFeishuAuth:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.feishuAuthWindow center];
+  }
+  self.cloudApiStatus.stringValue=@"请在飞书页面扫码授权…";
+  NSString *redirect=@"http://127.0.0.1:53682/callback";
+  NSCharacterSet *allowed=[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"];
+  NSString *enc=[redirect stringByAddingPercentEncodingWithAllowedCharacters:allowed];
+  NSString *url=[NSString stringWithFormat:@"https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=%@&redirect_uri=%@&state=dl%@",appID,enc,[[NSUUID UUID] UUIDString]];
+  [self.feishuWebView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:url]]];
+  [self bringAuxiliaryWindowToFront:self.feishuAuthWindow];
+}
+
+- (void)closeFeishuAuth:(id)sender { [self.feishuAuthWindow orderOut:nil]; }
+
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+  NSURL *url=navigationAction.request.URL;
+  if([url.host isEqualToString:@"127.0.0.1"] && [url.path isEqualToString:@"/callback"]){
+    decisionHandler(WKNavigationActionPolicyCancel);
+    NSArray *pairs=[url.query componentsSeparatedByString:@"&"]; NSString *code=nil;
+    for(NSString *p in pairs){NSArray *kv=[p componentsSeparatedByString:@"="];if(kv.count==2 && [kv[0] isEqualToString:@"code"]){code=[kv[1] stringByRemovingPercentEncoding];break;}}
+    if(code.length)[self feishuExchangeCode:code];
+    return;
+  }
+  decisionHandler(WKNavigationActionPolicyAllow);
+}
+
+- (void)feishuExchangeCode:(NSString *)code {
+  self.cloudApiStatus.stringValue=@"正在换取飞书用户令牌…";
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://open.feishu.cn/open-apis/authen/v1/oidc/access_token"]];
+  req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  [req setValue:[@"Bearer " stringByAppendingString:self.feishuAppAccessToken ?: @""] forHTTPHeaderField:@"Authorization"];
+  req.HTTPBody=[NSJSONSerialization dataWithJSONObject:@{@"grant_type":@"authorization_code",@"code":code} options:0 error:NULL];
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    NSString *tok=[o isKindOfClass:[NSDictionary class]]?o[@"data"][@"access_token"]:nil;
+    dispatch_async(dispatch_get_main_queue(),^{
+      if(!tok.length){weakSelf.cloudApiStatus.stringValue=[NSString stringWithFormat:@"飞书授权失败：%@",err.localizedDescription ?: @"请检查权限"];return;}
+      weakSelf.feishuUserToken=tok; [weakSelf feishuFetchFiles];
+      if(weakSelf.feishuAuthWindow.isVisible)[weakSelf.feishuAuthWindow orderOut:nil];
+    });
+  }] resume];
+}
+
+- (void)feishuFetchFiles {
+  self.cloudApiStatus.stringValue=@"正在获取飞书云文档…";
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://open.feishu.cn/open-apis/drive/v1/files?page_size=50"]];
+  [req setValue:[@"Bearer " stringByAppendingString:self.feishuUserToken ?: @""] forHTTPHeaderField:@"Authorization"];
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    NSArray *files=[o isKindOfClass:[NSDictionary class]]?o[@"data"][@"files"]:nil;
+    NSMutableArray *items=[NSMutableArray array];
+    for(NSDictionary *f in files){
+      NSString *name=f[@"name"] ?: @"飞书文档"; NSString *token=f[@"token"] ?: @""; NSString *type=f[@"type"] ?: @"";
+      [items addObject:@{@"title":name,@"subtitle":[NSString stringWithFormat:@"飞书 · %@",type],@"id":token,@"ftype":type,@"kind":@"feishu"}];
+    }
+    dispatch_async(dispatch_get_main_queue(),^{
+      weakSelf.cloudApiItems=items; [weakSelf.cloudApiTable reloadData];
+      weakSelf.cloudApiStatus.stringValue=files.count?[NSString stringWithFormat:@"飞书已登录，获取到 %ld 个文件/文档",(long)items.count]:@"飞书登录成功，但没有找到文件";
+    });
   }] resume];
 }
 
@@ -24948,7 +25041,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if(!aid.length||!sec.length){self.cloudApiStatus.stringValue=@"请填写飞书 AppID 和 AppSecret";return;}
     [[NSUserDefaults standardUserDefaults] setObject:aid forKey:@"cloudFeishuAppID"];
     AIKeychainSet(@"cloud.feishu.secret", sec);
-    self.cloudApiStatus.stringValue=@"飞书凭据已保存。飞书 OAuth 需要应用回调地址，请先在开放平台配置后继续。";
+    [self feishuStartOAuthWithAppID:aid secret:sec];
     return;
   }
   NSString *token=self.cloudApiTokenField.stringValue;
@@ -25024,6 +25117,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger row=self.cloudApiTable.selectedRow;
   if(row<0||row>=(NSInteger)self.cloudApiItems.count)return;
   NSDictionary *it=self.cloudApiItems[row];
+  if([it[@"kind"] isEqualToString:@"feishu"]){
+    NSString *token=it[@"id"] ?: @""; NSString *ftype=it[@"ftype"] ?: @"";
+    if(![ftype isEqualToString:@"docx"] && ![ftype isEqualToString:@"doc"]){self.cloudApiStatus.stringValue=@"目前仅导入飞书 docx/doc 正文";return;}
+    NSString *url=[NSString stringWithFormat:@"https://open.feishu.cn/open-apis/docx/v1/documents/%@/raw_content",token];
+    NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+    [req setValue:[@"Bearer " stringByAppendingString:self.feishuUserToken ?: @""] forHTTPHeaderField:@"Authorization"];
+    self.cloudApiStatus.stringValue=@"正在读取飞书文档…";
+    [self cloudAPIRequest:req completion:^(id o,NSError *err){
+      NSString *body=[o isKindOfClass:[NSDictionary class]]?o[@"data"][@"content"]:nil;
+      if(!body.length){self.cloudApiStatus.stringValue=@"读取飞书正文失败（可能需要 docx:document:readonly 权限）";return;}
+      if(!self.aiCloudDocs)self.aiCloudDocs=[NSMutableArray array];
+      [self.aiCloudDocs addObject:@{@"title":it[@"title"] ?: @"飞书文档",@"provider":@"飞书",@"url":@"",@"content":body}];
+      [self.aiFileTable reloadData]; self.cloudApiStatus.stringValue=@"已导入飞书文档";
+    }];
+    return;
+  }
   if([it[@"kind"] isEqualToString:@"yuque_repo"]){
     NSString *token=AIKeychainGet(@"cloud.yuque.token"); NSString *ns=it[@"namespace"];
     NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://www.yuque.com/api/v2/repos/%@/docs",ns]]];
@@ -25067,7 +25176,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.cloudProviders=@[
       @{@"name":@"腾讯文档",@"desc":@"QQ/微信扫码登录，导出 DOCX/PDF 后导入",@"url":@"https://docs.qq.com/"},
       @{@"name":@"飞书文档",@"desc":@"飞书扫码登录，导出 Word/PDF 后导入",@"url":@"https://www.feishu.cn/"},
-      @{@"name":@"语雀",@"desc":@"网页登录，导出 Markdown/PDF 后导入",@"url":@"https://www.yuque.com/"},
       @{@"name":@"Notion",@"desc":@"登录后导出 Markdown/PDF 后导入",@"url":@"https://www.notion.so/login"},
       @{@"name":@"Google Docs",@"desc":@"Google 账号登录，公开链接可直接读取",@"url":@"https://docs.google.com/"},
       @{@"name":@"WPS 文档",@"desc":@"网页扫码登录，导出 DOCX/PDF 后导入",@"url":@"https://www.kdocs.cn/"},
@@ -25275,7 +25383,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)aiFileAddCloudLink:(id)sender {
   NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"添加云文档";
-  a.informativeText=@"粘贴公开分享链接（腾讯文档/飞书/语雀/Notion/Google Docs/WPS/钉钉）。私有文档请先导出为 PDF/DOCX 再导入。";
+  a.informativeText=@"粘贴公开分享链接（腾讯文档/飞书/Notion/Google Docs/WPS/钉钉）。私有文档请先导出为 PDF/DOCX 再导入。";
   NSTextField *f=[[NSTextField alloc] initWithFrame:NSMakeRect(0,0,420,24)]; f.placeholderString=@"https://docs.qq.com/doc/..."; a.accessoryView=f;
   [a addButtonWithTitle:@"读取"]; [a addButtonWithTitle:@"取消"];
   if([a runModal]!=NSAlertFirstButtonReturn)return;
