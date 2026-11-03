@@ -7185,6 +7185,13 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)localAIToggleOllama:(NSSwitch *)sender {
   if(sender.state==NSControlStateValueOn){
     self.localOllamaStatus.stringValue=@"正在启动…";
+    if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/brew"] && [[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/ollama"]){
+      NSTask *bt=[[NSTask alloc] init]; bt.launchPath=@"/opt/homebrew/bin/brew"; bt.arguments=@[@"services",@"start",@"ollama"];
+      bt.standardOutput=[NSFileHandle fileHandleWithNullDevice]; bt.standardError=[NSFileHandle fileHandleWithNullDevice];
+      @try{[bt launch];[bt waitUntilExit];self.localOllamaStatus.stringValue=@"Homebrew 服务已启动";}@catch(NSException *e){self.localOllamaStatus.stringValue=@"brew 启动失败";}
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{[self refreshLocalAIServices:nil];});
+      return;
+    }
     NSString *cli=@"/Applications/Ollama.app/Contents/Resources/ollama";
     if(![[NSFileManager defaultManager] isExecutableFileAtPath:cli]) cli=@"/opt/homebrew/bin/ollama";
     if(![[NSFileManager defaultManager] isExecutableFileAtPath:cli]) { self.localOllamaStatus.stringValue=@"未安装 Ollama"; sender.state=NSControlStateValueOff; return; }
@@ -7199,6 +7206,11 @@ static BOOL ValidGroupName(NSString *raw) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{[self refreshLocalAIServices:nil];});
   } else {
     self.localOllamaStatus.stringValue=@"正在停止…";
+    if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/brew"]){
+      NSTask *bt=[[NSTask alloc] init]; bt.launchPath=@"/opt/homebrew/bin/brew"; bt.arguments=@[@"services",@"stop",@"ollama"];
+      bt.standardOutput=[NSFileHandle fileHandleWithNullDevice]; bt.standardError=[NSFileHandle fileHandleWithNullDevice];
+      @try{[bt launch];[bt waitUntilExit];self.localOllamaStatus.stringValue=@"Homebrew 服务已停止";}@catch(NSException *e){}
+    }
     if(self.localOllamaTask.isRunning)[self.localOllamaTask terminate];
     self.localOllamaTask=nil;
     NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/pkill"; t.arguments=@[@"-f",@"Ollama.app/Contents/Resources/ollama serve"];
