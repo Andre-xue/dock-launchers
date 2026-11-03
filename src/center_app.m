@@ -845,6 +845,68 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 }
 @end
 
+@interface DLImageRegionView : NSView
+@property (strong) NSImage *image;
+@property NSRect selectedRect;
+@property NSPoint dragStart;
+@property BOOL dragging;
+- (NSRect)imageDrawRect;
+- (NSRect)selectionInImagePixels;
+@end
+@implementation DLImageRegionView
+- (BOOL)isFlipped { return NO; }
+- (void)setImage:(NSImage *)image { _image = image; self.selectedRect = NSZeroRect; [self setNeedsDisplay:YES]; }
+- (NSRect)imageDrawRect {
+  if (!self.image) return NSZeroRect;
+  NSSize is = self.image.size, bs = self.bounds.size;
+  if (is.width <= 0 || is.height <= 0 || bs.width <= 0 || bs.height <= 0) return NSZeroRect;
+  CGFloat scale = MIN(bs.width / is.width, bs.height / is.height);
+  CGFloat w = is.width * scale, h = is.height * scale;
+  return NSMakeRect((bs.width - w)/2, (bs.height - h)/2, w, h);
+}
+- (void)drawRect:(NSRect)dirtyRect {
+  [[NSColor colorWithWhite:0.12 alpha:1] setFill];
+  NSRectFill(self.bounds);
+  NSRect ir = [self imageDrawRect];
+  [self.image drawInRect:ir fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
+  NSRect sel = self.selectedRect;
+  if (sel.size.width > 1 && sel.size.height > 1) {
+    [[NSColor colorWithWhite:0 alpha:0.5] setFill];
+    NSRectFill(NSMakeRect(ir.origin.x, ir.origin.y, ir.size.width, sel.origin.y - ir.origin.y));
+    NSRectFill(NSMakeRect(ir.origin.x, NSMaxY(sel), ir.size.width, NSMaxY(ir) - NSMaxY(sel)));
+    NSRectFill(NSMakeRect(ir.origin.x, sel.origin.y, sel.origin.x - ir.origin.x, sel.size.height));
+    NSRectFill(NSMakeRect(NSMaxX(sel), sel.origin.y, NSMaxX(ir) - NSMaxX(sel), sel.size.height));
+    [[NSColor systemBlueColor] setStroke];
+    NSBezierPath *p = [NSBezierPath bezierPathWithRect:sel];
+    p.lineWidth = 2; [p stroke];
+  }
+}
+- (void)mouseDown:(NSEvent *)event {
+  NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+  NSRect ir = [self imageDrawRect];
+  if (!NSPointInRect(p, ir)) return;
+  self.dragStart = p; self.dragging = YES; self.selectedRect = NSZeroRect; [self setNeedsDisplay:YES];
+}
+- (void)mouseDragged:(NSEvent *)event {
+  if (!self.dragging) return;
+  NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+  NSRect ir = [self imageDrawRect];
+  p.x = MIN(MAX(p.x, ir.origin.x), NSMaxX(ir));
+  p.y = MIN(MAX(p.y, ir.origin.y), NSMaxY(ir));
+  CGFloat x = MIN(self.dragStart.x, p.x), y = MIN(self.dragStart.y, p.y);
+  self.selectedRect = NSMakeRect(x, y, fabs(p.x-self.dragStart.x), fabs(p.y-self.dragStart.y));
+  [self setNeedsDisplay:YES];
+}
+- (void)mouseUp:(NSEvent *)event { self.dragging = NO; [self setNeedsDisplay:YES]; }
+- (NSRect)selectionInImagePixels {
+  if (!self.image) return NSZeroRect;
+  NSRect ir = [self imageDrawRect], sel = self.selectedRect;
+  if (ir.size.width <= 0 || ir.size.height <= 0 || sel.size.width <= 1 || sel.size.height <= 1) return NSZeroRect;
+  CGFloat sx = self.image.size.width / ir.size.width, sy = self.image.size.height / ir.size.height;
+  return NSMakeRect((sel.origin.x - ir.origin.x) * sx, (sel.origin.y - ir.origin.y) * sy, sel.size.width * sx, sel.size.height * sy);
+}
+@end
+
 @interface DLScreenRecorder : NSObject <SCStreamDelegate, SCRecordingOutputDelegate, SCContentSharingPickerObserver>
 @property (strong) SCStream *stream;
 @property (strong) SCRecordingOutput *recordingOutput;
@@ -1495,7 +1557,11 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiAssistantURLField, *aiAssistantStatus;
 @property BOOL aiAssistantBusy;
 @property (strong) NSTextField *videoPostFileLabel, *videoPostStart, *videoPostEnd, *videoPostStatus;
-@property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow, *aiTTSWindow, *subtitleSettingsWindow;
+@property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow, *aiTTSWindow, *subtitleSettingsWindow, *aiInpaintWindow;
+@property (strong) DLImageRegionView *aiInpaintView;
+@property (strong) NSTextView *aiInpaintPrompt;
+@property (strong) NSTextField *aiInpaintStatus;
+@property (copy) NSString *aiInpaintImagePath;
 @property (strong) NSPopUpButton *aiTTSServicePopup;
 @property (strong) NSTextField *aiTTSURLField, *aiTTSStatus;
 @property (strong) NSPopUpButton *aiTTSModelField, *aiTTSVoiceField;
@@ -22823,6 +22889,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *pick=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,504,120,30)];
     pick.title=@"选择图片…";pick.hoverColor=[NSColor systemTealColor];pick.target=self;pick.action=@selector(aiEditPickImage:);
     [pick applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:pick];
+    ColorHoverButton *inpaint=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(152,504,120,30)];
+    inpaint.title=@"局部重绘…";inpaint.hoverColor=[NSColor systemPurpleColor];inpaint.target=self;inpaint.action=@selector(openAIInpaintWindow:);
+    [inpaint applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:inpaint];
     self.aiEditPreview=[[NSImageView alloc] initWithFrame:NSMakeRect(24,280,286,210)];
     self.aiEditPreview.imageScaling=NSImageScaleProportionallyUpOrDown;self.aiEditPreview.wantsLayer=YES;
     self.aiEditPreview.layer.borderColor=[NSColor separatorColor].CGColor;self.aiEditPreview.layer.borderWidth=1;
@@ -22856,6 +22925,130 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self reloadAIEditServices];
   [NSApp activateIgnoringOtherApps:YES];
   [self.aiEditWindow makeKeyAndOrderFront:nil];
+}
+
+- (NSDictionary *)inpaintEditEntry {
+  NSArray *services = [self aiEntriesForModelCategory:@"edit"];
+  if (!services.count) return nil;
+  NSDictionary *e = services.firstObject;
+  NSString *name = [e[@"name"] ?: @"" lowercaseString];
+  NSString *base = e[@"apiBase"] ?: @"";
+  BOOL silicon = [name containsString:@"siliconflow"] || [name containsString:@"硅基流动"] || [base containsString:@"siliconflow"];
+  return @{@"key":e[@"api"] ?: @"", @"url":e[@"editAPI"] ?: (silicon ? @"https://api.siliconflow.cn/v1/images/generations" : [base stringByAppendingString:@"/images/edits"]), @"model":e[@"editModel"] ?: (silicon ? @"Qwen/Qwen-Image-Edit-2509" : @""), @"silicon":@(silicon)};
+}
+
+- (void)openAIInpaintWindow:(id)sender {
+  NSString *path = self.aiEditImagePath;
+  if (!path.length) {
+    NSOpenPanel *p = [NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=NO;
+    p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"];
+    if ([p runModal] != NSModalResponseOK) return; path=p.URL.path;
+  }
+  NSImage *img=[[NSImage alloc] initWithContentsOfFile:path];
+  if(!img){[self showToast:@"图片读取失败"];return;}
+  self.aiInpaintImagePath=path;
+  if(!self.aiInpaintWindow){
+    self.aiInpaintWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,860,700) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiInpaintWindow.title=@"AI 局部重绘 / 扩图"; self.aiInpaintWindow.releasedWhenClosed=NO;
+    NSView *cv=self.aiInpaintWindow.contentView;
+    NSTextField *t=[self label:@"AI 局部重绘 / 扩图" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,656,350,28); [cv addSubview:t];
+    NSTextField *h=[self label:@"拖动框选要修改的区域；扩图会向四周扩展画面" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,634,600,18); [cv addSubview:h];
+    self.aiInpaintView=[[DLImageRegionView alloc] initWithFrame:NSMakeRect(24,180,812,440)]; [cv addSubview:self.aiInpaintView];
+    NSScrollView *ps=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,92,600,76)]; ps.hasVerticalScroller=YES; ps.borderType=NSBezelBorder;
+    self.aiInpaintPrompt=[[NSTextView alloc] initWithFrame:ps.contentView.bounds]; self.aiInpaintPrompt.font=[NSFont systemFontOfSize:12];
+    self.aiInpaintPrompt.string=@"只修改框选区域，保持周围和主体完全不变"; ps.documentView=self.aiInpaintPrompt; [cv addSubview:ps];
+    self.aiInpaintStatus=[self label:@"拖动框选区域后点开始重绘" size:10.5 bold:NO color:[NSColor secondaryLabelColor]]; self.aiInpaintStatus.frame=NSMakeRect(24,64,500,18); [cv addSubview:self.aiInpaintStatus];
+    ColorHoverButton *redraw=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(636,38,110,30)]; redraw.title=@"局部重绘"; redraw.hoverColor=[NSColor systemPurpleColor]; redraw.target=self; redraw.action=@selector(generateAIInpaint:);
+    [redraw applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:redraw];
+    ColorHoverButton *outpaint=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(752,38,84,30)]; outpaint.title=@"AI 扩图"; outpaint.hoverColor=[NSColor systemTealColor]; outpaint.target=self; outpaint.action=@selector(generateAIOutpaint:);
+    [outpaint applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:outpaint];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(636,10,200,24)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeAIInpaint:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.aiInpaintWindow center];
+  }
+  self.aiInpaintView.image=img; [self.aiInpaintView setNeedsDisplay:YES];
+  self.aiInpaintStatus.stringValue=[NSString stringWithFormat:@"已加载：%@",path.lastPathComponent];
+  [self forceWindowToFront:self.aiInpaintWindow];
+}
+
+- (void)closeAIInpaint:(id)sender { [self.aiInpaintWindow orderOut:nil]; }
+
+- (void)generateAIInpaint:(id)sender {
+  if(!self.aiInpaintView.image){[self showToast:@"请先加载图片"];return;}
+  NSRect crop=[self.aiInpaintView selectionInImagePixels];
+  if(crop.size.width<8||crop.size.height<8){[self showToast:@"请先拖动框选区域"];return;}
+  NSDictionary *info=[self inpaintEditEntry]; if(!info){[self showToast:@"请先在 AI 管理配置图片编辑服务"];return;}
+  NSImage *source=self.aiInpaintView.image; NSSize src=source.size;
+  crop=NSMakeRect(MAX(0,MIN(crop.origin.x,src.width-1)),MAX(0,MIN(crop.origin.y,src.height-1)),MIN(crop.size.width,src.width),MIN(crop.size.height,src.height));
+  NSBitmapImageRep *rep=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)MAX(1,crop.size.width) pixelsHigh:(NSInteger)MAX(1,crop.size.height) bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+  NSGraphicsContext *g=[NSGraphicsContext graphicsContextWithBitmapImageRep:rep]; [NSGraphicsContext saveGraphicsState]; [NSGraphicsContext setCurrentContext:g];
+  [source drawInRect:NSMakeRect(-crop.origin.x,-crop.origin.y,src.width,src.height)];
+  [NSGraphicsContext restoreGraphicsState];
+  NSData *png=[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+  NSString *prompt=self.aiInpaintPrompt.string ?: @"只修改这张局部图，保持自然衔接";
+  [self sendInpaintImageData:png crop:crop source:source info:info prompt:prompt];
+}
+
+- (void)generateAIOutpaint:(id)sender {
+  NSImage *source=self.aiInpaintView.image; if(!source){[self showToast:@"请先加载图片"];return;}
+  NSDictionary *info=[self inpaintEditEntry]; if(!info){[self showToast:@"请先在 AI 管理配置图片编辑服务"];return;}
+  NSSize s=source.size; CGFloat mx=s.width*0.2,my=s.height*0.2; NSSize out=NSMakeSize(s.width+2*mx,s.height+2*my);
+  NSBitmapImageRep *rep=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)out.width pixelsHigh:(NSInteger)out.height bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+  NSGraphicsContext *g=[NSGraphicsContext graphicsContextWithBitmapImageRep:rep]; [NSGraphicsContext saveGraphicsState]; [NSGraphicsContext setCurrentContext:g];
+  [[NSColor whiteColor] setFill]; NSRectFill(NSMakeRect(0,0,out.width,out.height)); [source drawInRect:NSMakeRect(mx,my,s.width,s.height)];
+  [NSGraphicsContext restoreGraphicsState];
+  NSData *png=[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+  [self sendInpaintImageData:png crop:NSZeroRect source:nil info:info prompt:@"扩展画面并自然补全四周背景，保持主体和原有内容不变"];
+}
+
+- (void)sendInpaintImageData:(NSData *)imgData crop:(NSRect)crop source:(NSImage *)source info:(NSDictionary *)info prompt:(NSString *)prompt {
+  NSString *url=info[@"url"],*model=info[@"model"],*key=info[@"key"];
+  if(!url.length||!model.length||!key.length){[self showToast:@"图片编辑服务配置不完整"];return;}
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]]; req.HTTPMethod=@"POST"; req.timeoutInterval=180;
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  if([info[@"silicon"] boolValue]){
+    NSString *dataURL=[@"data:image/png;base64," stringByAppendingString:[imgData base64EncodedStringWithOptions:0]];
+    req.HTTPBody=[NSJSONSerialization dataWithJSONObject:@{@"model":model,@"prompt":prompt,@"image":dataURL} options:0 error:NULL];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  } else {
+    NSString *b=[[NSUUID UUID] UUIDString]; NSMutableData *body=[NSMutableData data];
+    void(^f)(NSString*,NSString*)=^(NSString *n,NSString *v){[body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"%@\"\r\n\r\n%@\r\n",b,n,v] dataUsingEncoding:NSUTF8StringEncoding]];};
+    f(@"model",model); f(@"prompt",prompt);
+    [body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"image\"; filename=\"image.png\"\r\nContent-Type: image/png\r\n\r\n",b] dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:imgData]; [body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:[[NSString stringWithFormat:@"--%@--\r\n",b] dataUsingEncoding:NSUTF8StringEncoding]];
+    req.HTTPBody=body; [req setValue:[NSString stringWithFormat:@"multipart/form-data; boundary=%@",b] forHTTPHeaderField:@"Content-Type"];
+  }
+  self.aiInpaintStatus.stringValue=@"AI 正在处理…";
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *rd,NSURLResponse *rsp,NSError *err){
+    if(err||!rd.length){dispatch_async(dispatch_get_main_queue(),^{weakSelf.aiInpaintStatus.stringValue=err.localizedDescription?:@"处理失败";});return;}
+    id obj=[NSJSONSerialization JSONObjectWithData:rd options:0 error:NULL]; NSString *imageURL=[weakSelf firstURLStringInJSONObject:obj]; NSData *imageData=nil;
+    if(!imageURL&&[obj isKindOfClass:[NSDictionary class]]){id d=obj[@"data"];if([d isKindOfClass:[NSArray class]]&&[d count]){id bb=d[0][@"b64_json"];if([bb isKindOfClass:[NSString class]])imageData=[[NSData alloc] initWithBase64EncodedString:bb options:0];}}
+    void(^finish)(NSData*)=^(NSData *data){
+      if(!data.length){dispatch_async(dispatch_get_main_queue(),^{weakSelf.aiInpaintStatus.stringValue=@"结果下载失败";});return;}
+      NSImage *result=[[NSImage alloc] initWithData:data]; if(!result){dispatch_async(dispatch_get_main_queue(),^{weakSelf.aiInpaintStatus.stringValue=@"结果解析失败";});return;}
+      NSImage *output=result;
+      if(source&&crop.size.width>1&&crop.size.height>1){
+        NSSize full=source.size;
+        NSBitmapImageRep *cr=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)full.width pixelsHigh:(NSInteger)full.height bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+        NSGraphicsContext *g=[NSGraphicsContext graphicsContextWithBitmapImageRep:cr]; [NSGraphicsContext saveGraphicsState]; [NSGraphicsContext setCurrentContext:g];
+        [source drawInRect:NSMakeRect(0,0,full.width,full.height)]; [result drawInRect:crop]; [NSGraphicsContext restoreGraphicsState];
+        output=[[NSImage alloc] initWithSize:full]; [output addRepresentation:cr];
+      }
+      NSBitmapImageRep *orp=[[NSBitmapImageRep alloc] initWithData:[output TIFFRepresentation]]; NSData *png=[orp representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+      NSDateFormatter *df=[[NSDateFormatter alloc] init];df.dateFormat=@"yyyyMMdd-HHmmss";
+      NSString *path=[[weakSelf aiGeneratedDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"AI局部重绘-%@.png",[df stringFromDate:[NSDate date]]]];
+      [png writeToFile:path atomically:YES];
+      dispatch_async(dispatch_get_main_queue(),^{
+        weakSelf.aiEditResultPath=path; if(weakSelf.aiEditResultPreview)weakSelf.aiEditResultPreview.image=output;
+        weakSelf.aiInpaintStatus.stringValue=[NSString stringWithFormat:@"已生成：%@",path.lastPathComponent]; [weakSelf showToast:@"局部重绘完成"];
+      });
+    };
+    if(imageData.length){finish(imageData);return;}
+    if(imageURL.length){[[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:imageURL] completionHandler:^(NSData *d,NSURLResponse *r,NSError *e2){finish(d);}] resume];return;}
+    dispatch_async(dispatch_get_main_queue(),^{weakSelf.aiInpaintStatus.stringValue=[weakSelf friendlyAIErrorFromData:rd fallback:@"处理失败"];});
+  }] resume];
 }
 
 - (void)sendAIEdit {
