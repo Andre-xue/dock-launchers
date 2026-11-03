@@ -1607,6 +1607,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property NSInteger localModelService;
 @property (strong) NSTextField *localModelStatus, *localModelAddField;
 @property (strong) NSTimer *localAITimer;
+@property BOOL localAISwitchUpdating;
 @property (strong) NSWindow *aiVisionWindow, *aiEditWindow;
 @property (strong) NSPopUpButton *aiVisionServicePopup, *aiEditServicePopup, *aiEditSizePopup;
 @property (strong) NSTextField *aiVisionModelField, *aiVisionURLField, *aiVisionStatus, *aiEditModelField, *aiEditURLField, *aiEditStatus;
@@ -7312,6 +7313,10 @@ static BOOL ValidGroupName(NSString *raw) {
     quitOllamaUI.target=self; quitOllamaUI.action=@selector(forceCloseOllamaUI:);
     quitOllamaUI.toolTip=@"如果 Ollama 窗口卡住或停在欢迎页，强制关闭界面（不影响后台服务开关）";
     [quitOllamaUI applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:quitOllamaUI];
+    ColorHoverButton *freeMem=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(400,40,92,32)];
+    freeMem.title=@"释放内存"; freeMem.hoverColor=[NSColor systemOrangeColor]; freeMem.font=[NSFont systemFontOfSize:10];
+    freeMem.target=self; freeMem.action=@selector(releaseLocalAIMemory:);
+    [freeMem applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:freeMem];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(500,40,96,32)];
     close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeLocalAIServices:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
@@ -7323,6 +7328,31 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)closeLocalAIServices:(id)sender { [self.localAITimer invalidate]; self.localAITimer=nil; [self.localAIWindow orderOut:nil]; }
+
+- (void)releaseLocalAIMemory:(id)sender {
+  self.localOllamaStatus.stringValue=@"正在释放模型内存…";
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSString *out=[self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"ps"]];
+    NSMutableArray *names=[NSMutableArray array];
+    for(NSString *line in [out componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
+      NSString *t=[line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+      if(!t.length||[t hasPrefix:@"NAME "])continue;
+      NSString *n=[t componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet].firstObject;
+      if(n.length)[names addObject:n];
+    }
+    for(NSString *n in names)[self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"stop",n]];
+    NSURLSessionDataTask *task=[[NSURLSession sharedSession] dataTaskWithRequest:[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:8188/free"]] completionHandler:nil];
+    (void)task;
+    NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:8188/free"]];
+    req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    req.HTTPBody=[NSJSONSerialization dataWithJSONObject:@{@"unload_models":@YES,@"free_memory":@YES} options:0 error:NULL];
+    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:nil] resume];
+    dispatch_async(dispatch_get_main_queue(),^{
+      self.localOllamaStatus.stringValue=names.count?[NSString stringWithFormat:@"已释放 Ollama 模型：%@",[names componentsJoinedByString:@", "]]:@"Ollama 当前没有加载模型";
+      [self refreshLocalAIServices:nil];
+    });
+  });
+}
 
 - (void)forceCloseOllamaUI:(id)sender {
   NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/osascript"; t.arguments=@[@"-e",@"tell application \"Ollama\" to quit"];
@@ -7342,14 +7372,29 @@ static BOOL ValidGroupName(NSString *raw) {
   [[session dataTaskWithURL:[NSURL URLWithString:@"http://127.0.0.1:11434/api/version"] completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
     dispatch_async(dispatch_get_main_queue(),^{
       BOOL on=!e && [(NSHTTPURLResponse *)r statusCode]==200;
+      self.localAISwitchUpdating=YES;
       self.localOllamaSwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
+      self.localAISwitchUpdating=NO;
       self.localOllamaStatus.stringValue=on?@"运行中 · http://127.0.0.1:11434":@"已停止";
+      if(on){
+        [[session dataTaskWithURL:[NSURL URLWithString:@"http://127.0.0.1:11434/api/ps"] completionHandler:^(NSData *pd,NSURLResponse *pr,NSError *pe){
+          id po=pd.length?[NSJSONSerialization JSONObjectWithData:pd options:0 error:NULL]:nil;
+          NSArray *ms=[po isKindOfClass:[NSDictionary class]]?po[@"models"]:nil;
+          NSMutableArray *names=[NSMutableArray array];
+          if([ms isKindOfClass:[NSArray class]])for(NSDictionary *m in ms){if([m isKindOfClass:[NSDictionary class]]&&[m[@"name"] length])[names addObject:m[@"name"]];}
+          dispatch_async(dispatch_get_main_queue(),^{
+            self.localOllamaStatus.stringValue=names.count?[NSString stringWithFormat:@"运行中 · 已加载 %@",[names componentsJoinedByString:@", "]]:@"运行中 · 空闲";
+          });
+        }] resume];
+      }
     });
   }] resume];
   [[session dataTaskWithURL:[NSURL URLWithString:@"http://127.0.0.1:8188/system_stats"] completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
     dispatch_async(dispatch_get_main_queue(),^{
       BOOL on=!e && [(NSHTTPURLResponse *)r statusCode]==200;
+      self.localAISwitchUpdating=YES;
       self.localComfySwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
+      self.localAISwitchUpdating=NO;
       self.localComfyStatus.stringValue=on?@"运行中 · http://127.0.0.1:8188":@"已停止";
     });
   }] resume];
@@ -7357,11 +7402,14 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *model=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerWhisperModel"] ?: @"";
   BOOL ready=[[NSFileManager defaultManager] isExecutableFileAtPath:exe] && [[NSFileManager defaultManager] isReadableFileAtPath:model];
   BOOL enabled=[[NSUserDefaults standardUserDefaults] integerForKey:@"centerSTTEngine"]==2;
+  self.localAISwitchUpdating=YES;
   self.localWhisperSwitch.state=enabled?NSControlStateValueOn:NSControlStateValueOff;
+  self.localAISwitchUpdating=NO;
   self.localWhisperStatus.stringValue=ready?(enabled?@"已启用 · 按需运行，不常驻":@"已安装 · 当前未启用"):@"未安装或模型路径未配置";
 }
 
 - (void)localAIToggleOllama:(NSSwitch *)sender {
+  if(self.localAISwitchUpdating) return;
   if(sender.state==NSControlStateValueOn){
     self.localOllamaStatus.stringValue=@"正在启动…";
     if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/brew"] && [[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/ollama"]){
@@ -7400,6 +7448,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)localAIToggleComfy:(NSSwitch *)sender {
+  if(self.localAISwitchUpdating) return;
   if(sender.state==NSControlStateValueOn){
     NSString *dir=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerComfyUIPath"] ?: [NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI"];
     NSString *py=[dir stringByAppendingPathComponent:@"venv/bin/python"];
@@ -7424,6 +7473,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)localAIToggleWhisper:(NSSwitch *)sender {
+  if(self.localAISwitchUpdating) return;
   if(sender.state==NSControlStateValueOn){
     NSString *exe=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerWhisperExe"] ?: @"/opt/homebrew/bin/whisper-cli";
     NSString *model=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerWhisperModel"] ?: @"";
