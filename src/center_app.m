@@ -22644,6 +22644,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.2*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [self runNextAIImageBatch]; });
 }
 
+- (NSString *)aiTTSOutputDirectory {
+  NSString *custom = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerAITTSDirectory"];
+  if (!custom.length) return [self aiGeneratedDirectory];
+  NSString *dir = [custom stringByExpandingTildeInPath];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return dir;
+}
+
 - (void)chooseAIVideoDirectory:(id)sender {
   NSOpenPanel *p = [NSOpenPanel openPanel];
   p.canChooseFiles = NO; p.canChooseDirectories = YES; p.canCreateDirectories = YES; p.allowsMultipleSelection = NO;
@@ -22652,6 +22660,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[NSUserDefaults standardUserDefaults] setObject:p.URL.path forKey:@"centerAIVideoDirectory"];
   [[NSUserDefaults standardUserDefaults] synchronize];
   [self showToast:[NSString stringWithFormat:@"AI 视频保存到：%@", p.URL.path]];
+}
+
+- (void)chooseAITTSDirectory:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = NO; p.canChooseDirectories = YES; p.canCreateDirectories = YES; p.allowsMultipleSelection = NO;
+  p.prompt = @"选择 AI 语音默认保存目录";
+  if ([p runModal] != NSModalResponseOK) return;
+  [[NSUserDefaults standardUserDefaults] setObject:p.URL.path forKey:@"centerAITTSDirectory"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self showToast:[NSString stringWithFormat:@"AI 语音保存到：%@", p.URL.path]];
 }
 
 - (void)chooseAIGeneratedDirectory:(id)sender {
@@ -23257,6 +23275,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     saveAs.title=@"另存为…"; saveAs.hoverColor=[NSColor systemGreenColor]; saveAs.target=self; saveAs.action=@selector(saveAITTSResult:);
     saveAs.toolTip=@"把生成的语音另存到指定文件名和位置";
     [saveAs applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:saveAs];
+    ColorHoverButton *ttsDir = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(574,106,78,32)];
+    ttsDir.title=@"保存位置…"; ttsDir.font=[NSFont systemFontOfSize:9.5]; ttsDir.hoverColor=[NSColor systemPurpleColor]; ttsDir.target=self; ttsDir.action=@selector(chooseAITTSDirectory:);
+    ttsDir.toolTip=@"设置 AI 语音默认保存目录";
+    [ttsDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:ttsDir];
     ColorHoverButton *audition = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250,106,100,32)];
     audition.title=@"试听音色"; audition.hoverColor=[NSColor systemOrangeColor]; audition.target=self; audition.action=@selector(auditionAITTSVoice:);
     audition.toolTip=@"用当前模型和音色朗读一句短文本";
@@ -23386,8 +23408,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
     dispatch_async(dispatch_get_main_queue(), ^{
       if (err || !data.length) { weakSelf.aiTTSStatus.stringValue=err.localizedDescription ?: @"语音合成失败"; return; }
-      NSString *dir=[self aiGeneratedDirectory];
-      [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+      NSString *dir=[self aiTTSOutputDirectory];
       NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
       NSString *path=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"AI语音-%@.mp3",[df stringFromDate:[NSDate date]]]];
       if (![data writeToFile:path atomically:YES]) { weakSelf.aiTTSStatus.stringValue=@"语音保存失败"; return; }
