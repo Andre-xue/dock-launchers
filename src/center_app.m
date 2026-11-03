@@ -24531,6 +24531,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSScrollView *outScroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,64,732,260)]; outScroll.hasVerticalScroller=YES; outScroll.borderType=NSBezelBorder;
     self.aiFileOutput=[[NSTextView alloc] initWithFrame:outScroll.contentView.bounds]; self.aiFileOutput.editable=NO; self.aiFileOutput.selectable=YES; self.aiFileOutput.font=[NSFont systemFontOfSize:11];
     outScroll.documentView=self.aiFileOutput; [cv addSubview:outScroll];
+    ColorHoverButton *saveDir=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(540,20,100,32)]; saveDir.title=@"保存位置…"; saveDir.hoverColor=[NSColor systemTealColor]; saveDir.font=[NSFont systemFontOfSize:10]; saveDir.target=self; saveDir.action=@selector(aiFileChooseOutputDirectory:); saveDir.toolTip=@"自定义 Markdown 报告保存目录"; [saveDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:saveDir];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(656,20,100,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(aiFileClose:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.aiFileWindow center];
   }
@@ -24605,6 +24606,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }] resume];
 }
 
+- (void)aiFileChooseOutputDirectory:(id)sender {
+  NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=NO; p.canChooseDirectories=YES; p.allowsMultipleSelection=NO;
+  p.message=@"选择 AI 文件分析报告的保存目录";
+  NSString *saved=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerAIFileOutputDirectory"] ?: @"";
+  if(saved.length)p.directoryURL=[NSURL fileURLWithPath:saved];
+  if([p runModal]!=NSModalResponseOK)return;
+  NSString *dir=p.URL.path;
+  [[NSUserDefaults standardUserDefaults] setObject:dir forKey:@"centerAIFileOutputDirectory"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  self.aiFileStatus.stringValue=[NSString stringWithFormat:@"报告保存位置：%@",dir];
+}
+
 - (void)aiFileOpenResult:(id)sender {
   if(!self.aiFileResultPath.length){self.aiFileStatus.stringValue=@"还没有生成报告";return;}
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.aiFileResultPath]];
@@ -24649,7 +24662,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
       NSString *name=[NSString stringWithFormat:@"AI文件分析-%@.md",[df stringFromDate:[NSDate date]]];
       NSString *desktop=[NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"];
-      NSString *dir=[[NSFileManager defaultManager] fileExistsAtPath:desktop]?desktop:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AI文件"];
+      NSString *configured=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerAIFileOutputDirectory"] ?: @"";
+      NSString *dir=(configured.length && [[NSFileManager defaultManager] fileExistsAtPath:configured])?configured:([[NSFileManager defaultManager] fileExistsAtPath:desktop]?desktop:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AI文件"]);
       [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
       NSString *path=[dir stringByAppendingPathComponent:name];
       NSString *md=[NSString stringWithFormat:@"# AI 文件分析\n\n生成时间：%@\n\n## 文件列表\n\n%@\n\n## AI 分析\n\n%@\n",[NSDate date],[[okFiles componentsJoinedByString:@"、"] length]?[NSString stringWithFormat:@"- %@",[okFiles componentsJoinedByString:@"\n- "]]:@"- 无",answer];
