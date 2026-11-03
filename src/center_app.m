@@ -23253,6 +23253,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(142,106,100,32)];
     open.title=@"打开语音"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openAITTSResult:);
     [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    ColorHoverButton *saveAs = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(466,106,100,32)];
+    saveAs.title=@"另存为…"; saveAs.hoverColor=[NSColor systemGreenColor]; saveAs.target=self; saveAs.action=@selector(saveAITTSResult:);
+    saveAs.toolTip=@"把生成的语音另存到指定文件名和位置";
+    [saveAs applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:saveAs];
     ColorHoverButton *audition = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250,106,100,32)];
     audition.title=@"试听音色"; audition.hoverColor=[NSColor systemOrangeColor]; audition.target=self; audition.action=@selector(auditionAITTSVoice:);
     audition.toolTip=@"用当前模型和音色朗读一句短文本";
@@ -23393,6 +23397,25 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [sound play];
     });
   }] resume];
+}
+
+- (void)saveAITTSResult:(id)sender {
+  if (!self.aiTTSResultPath.length || ![[NSFileManager defaultManager] fileExistsAtPath:self.aiTTSResultPath]) {
+    [self showToast:@"还没有生成语音"];
+    return;
+  }
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  sp.allowedFileTypes = @[@"mp3"];
+  sp.nameFieldStringValue = self.aiTTSResultPath.lastPathComponent;
+  if ([sp runModal] != NSModalResponseOK) return;
+  NSError *err = nil;
+  [[NSFileManager defaultManager] removeItemAtPath:sp.URL.path error:NULL];
+  if ([[NSFileManager defaultManager] copyItemAtPath:self.aiTTSResultPath toPath:sp.URL.path error:&err]) {
+    self.aiTTSStatus.stringValue = [NSString stringWithFormat:@"已保存：%@", sp.URL.lastPathComponent];
+    [self showToast:@"语音已另存"];
+  } else {
+    self.aiTTSStatus.stringValue = err.localizedDescription ?: @"保存失败";
+  }
 }
 
 - (void)openAITTSResult:(id)sender {
