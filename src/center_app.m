@@ -24528,6 +24528,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.aiFileServicePopup addItemWithTitle:@"本地 Ollama"]; self.aiFileServicePopup.lastItem.representedObject=@(-1);
   for(NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++){
     NSDictionary *e=self.aiEntries[i];
+    if([e[@"localOnly"] boolValue])continue;
+    if([(NSString *)(e[@"name"] ?: @"") containsString:@"Ollama 本地"])continue;
     if(![[self aiModelCategoryKey:e] isEqualToString:@"text"])continue;
     [self.aiFileServicePopup addItemWithTitle:e[@"name"] ?: @"未命名"]; self.aiFileServicePopup.lastItem.representedObject=@(i);
   }
