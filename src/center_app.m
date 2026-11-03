@@ -1596,7 +1596,11 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property BOOL scrollCaptureBusy;
 @property (strong) NSTimer *captureResultTimer;
 @property (strong) NSWindow *videoPostWindow;
-@property (strong) NSWindow *aiAssistantWindow;
+@property (strong) NSWindow *aiAssistantWindow, *localAIWindow;
+@property (strong) NSSwitch *localOllamaSwitch, *localComfySwitch, *localWhisperSwitch;
+@property (strong) NSTextField *localOllamaStatus, *localComfyStatus, *localWhisperStatus;
+@property (strong) NSTask *localComfyTask, *localOllamaTask;
+@property (strong) NSTimer *localAITimer;
 @property (strong) NSWindow *aiVisionWindow, *aiEditWindow;
 @property (strong) NSPopUpButton *aiVisionServicePopup, *aiEditServicePopup, *aiEditSizePopup;
 @property (strong) NSTextField *aiVisionModelField, *aiVisionURLField, *aiVisionStatus, *aiEditModelField, *aiEditURLField, *aiEditStatus;
@@ -7095,6 +7099,143 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showToast:@"已恢复 AI 数据历史版本，恢复前状态已自动保存"];
 }
 
+- (void)openLocalAIServices:(id)sender {
+  if (!self.localAIWindow) {
+    self.localAIWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.localAIWindow.title=@"本地 AI 服务"; self.localAIWindow.releasedWhenClosed=NO;
+    NSView *cv=self.localAIWindow.contentView;
+    NSTextField *t=[self label:@"本地 AI 服务" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,472,300,28); [cv addSubview:t];
+    NSTextField *h=[self label:@"打开开关启动服务，关闭开关停止；不加入 AI 服务列表" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,450,540,18); [cv addSubview:h];
+    NSArray *titles=@[@"Ollama",@"ComfyUI",@"Whisper.cpp"];
+    NSArray *subs=@[@"本地对话模型服务",@"本地 SD1.5 生图服务",@"按需转写，不常驻"];
+    for(NSInteger i=0;i<3;i++){
+      NSBox *card=[[NSBox alloc] initWithFrame:NSMakeRect(24,330-i*104,572,88)];
+      card.boxType=NSBoxCustom; card.cornerRadius=10; card.borderWidth=1; card.borderColor=[NSColor separatorColor]; card.fillColor=DLButtonBackground();
+      [cv addSubview:card];
+      NSTextField *tl=[self label:titles[i] size:14 bold:YES color:nil]; tl.frame=NSMakeRect(18,50,200,20); [card addSubview:tl];
+      NSTextField *sl=[self label:subs[i] size:10 bold:NO color:[NSColor secondaryLabelColor]]; sl.frame=NSMakeRect(18,30,300,16); [card addSubview:sl];
+      NSTextField *st=[self label:@"检查中…" size:10 bold:NO color:[NSColor secondaryLabelColor]]; st.frame=NSMakeRect(18,8,440,16); [card addSubview:st];
+      NSSwitch *sw=[[NSSwitch alloc] initWithFrame:NSMakeRect(500,32,44,26)];
+      sw.target=self;
+      if(i==0){sw.action=@selector(localAIToggleOllama:);self.localOllamaStatus=st;self.localOllamaSwitch=sw;}
+      else if(i==1){sw.action=@selector(localAIToggleComfy:);self.localComfyStatus=st;self.localComfySwitch=sw;}
+      else {sw.action=@selector(localAIToggleWhisper:);self.localWhisperStatus=st;self.localWhisperSwitch=sw;}
+      [card addSubview:sw];
+    }
+    ColorHoverButton *refresh=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,40,100,32)];
+    refresh.title=@"刷新状态"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(refreshLocalAIServices:);
+    [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *log=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,40,120,32)];
+    log.title=@"打开 ComfyUI 日志"; log.hoverColor=[NSColor systemTealColor]; log.font=[NSFont systemFontOfSize:10]; log.target=self; log.action=@selector(openLocalAIComfyLog:);
+    [log applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:log];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(500,40,96,32)];
+    close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeLocalAIServices:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.localAIWindow center];
+  }
+  [self refreshLocalAIServices:nil];
+  if(!self.localAITimer) self.localAITimer=[NSTimer scheduledTimerWithTimeInterval:3.0 repeats:YES block:^(NSTimer *t){ [self refreshLocalAIServicesSilent]; }];
+  [self forceWindowToFront:self.localAIWindow];
+}
+
+- (void)closeLocalAIServices:(id)sender { [self.localAITimer invalidate]; self.localAITimer=nil; [self.localAIWindow orderOut:nil]; }
+
+- (void)refreshLocalAIServicesSilent { [self refreshLocalAIServices:nil]; }
+
+- (void)refreshLocalAIServices:(id)sender {
+  NSURLSession *session=[NSURLSession sharedSession];
+  [[session dataTaskWithURL:[NSURL URLWithString:@"http://127.0.0.1:11434/api/version"] completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
+    dispatch_async(dispatch_get_main_queue(),^{
+      BOOL on=!e && [(NSHTTPURLResponse *)r statusCode]==200;
+      self.localOllamaSwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
+      self.localOllamaStatus.stringValue=on?@"运行中 · http://127.0.0.1:11434":@"已停止";
+    });
+  }] resume];
+  [[session dataTaskWithURL:[NSURL URLWithString:@"http://127.0.0.1:8188/system_stats"] completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
+    dispatch_async(dispatch_get_main_queue(),^{
+      BOOL on=!e && [(NSHTTPURLResponse *)r statusCode]==200;
+      self.localComfySwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
+      self.localComfyStatus.stringValue=on?@"运行中 · http://127.0.0.1:8188":@"已停止";
+    });
+  }] resume];
+  NSString *exe=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerWhisperExe"] ?: @"/opt/homebrew/bin/whisper-cli";
+  NSString *model=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerWhisperModel"] ?: @"";
+  BOOL ready=[[NSFileManager defaultManager] isExecutableFileAtPath:exe] && [[NSFileManager defaultManager] isReadableFileAtPath:model];
+  BOOL enabled=[[NSUserDefaults standardUserDefaults] integerForKey:@"centerSTTEngine"]==2;
+  self.localWhisperSwitch.state=enabled?NSControlStateValueOn:NSControlStateValueOff;
+  self.localWhisperStatus.stringValue=ready?(enabled?@"已启用 · 按需运行，不常驻":@"已安装 · 当前未启用"):@"未安装或模型路径未配置";
+}
+
+- (void)localAIToggleOllama:(NSSwitch *)sender {
+  if(sender.state==NSControlStateValueOn){
+    self.localOllamaStatus.stringValue=@"正在启动…";
+    NSString *app=@"/Applications/Ollama.app";
+    if([[NSFileManager defaultManager] fileExistsAtPath:app]) [[NSWorkspace sharedWorkspace] openApplicationAtURL:[NSURL fileURLWithPath:app] configuration:[NSWorkspaceOpenConfiguration configuration] completionHandler:nil];
+    else if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/ollama"]){
+      NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/opt/homebrew/bin/ollama"; t.arguments=@[@"serve"];
+      t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+      @try{[t launch];self.localOllamaTask=t;}@catch(NSException *e){self.localOllamaStatus.stringValue=@"启动失败";sender.state=NSControlStateValueOff;}
+    } else { self.localOllamaStatus.stringValue=@"未安装 Ollama"; sender.state=NSControlStateValueOff; }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{[self refreshLocalAIServices:nil];});
+  } else {
+    self.localOllamaStatus.stringValue=@"正在停止…";
+    [[NSWorkspace sharedWorkspace] runningApplications];
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/osascript"; t.arguments=@[@"-e",@"tell application \"Ollama\" to quit"];
+    t.standardOutput=[NSFileHandle fileHandleWithNullDevice];t.standardError=[NSFileHandle fileHandleWithNullDevice];
+    @try{[t launch];[t waitUntilExit];}@catch(NSException *e){}
+    if(self.localOllamaTask.isRunning)[self.localOllamaTask terminate];
+    self.localOllamaTask=nil;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.5*NSEC_PER_SEC)),dispatch_get_main_queue(),^{[self refreshLocalAIServices:nil];});
+  }
+}
+
+- (void)localAIToggleComfy:(NSSwitch *)sender {
+  if(sender.state==NSControlStateValueOn){
+    NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI"];
+    NSString *py=[dir stringByAppendingPathComponent:@"venv/bin/python"];
+    NSString *main=[dir stringByAppendingPathComponent:@"main.py"];
+    if(![[NSFileManager defaultManager] isExecutableFileAtPath:py] || ![[NSFileManager defaultManager] fileExistsAtPath:main]){ self.localComfyStatus.stringValue=@"未找到 ~/ComfyUI"; sender.state=NSControlStateValueOff; return; }
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=py; t.arguments=@[main,@"--listen",@"127.0.0.1",@"--port",@"8188",@"--lowvram"]; t.currentDirectoryURL=[NSURL fileURLWithPath:dir];
+    NSString *log=[NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-comfyui.log"];
+    [[NSFileManager defaultManager] createFileAtPath:log contents:nil attributes:nil];
+    NSFileHandle *fh=[NSFileHandle fileHandleForWritingAtPath:log]; [fh seekToEndOfFile];
+    t.standardOutput=fh; t.standardError=fh;
+    @try{[t launch];self.localComfyTask=t;self.localComfyStatus.stringValue=@"正在启动…";}@catch(NSException *e){self.localComfyStatus.stringValue=@"启动失败";sender.state=NSControlStateValueOff;}
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(4.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{[self refreshLocalAIServices:nil];});
+  } else {
+    self.localComfyStatus.stringValue=@"正在停止…";
+    if(self.localComfyTask.isRunning)[self.localComfyTask terminate];
+    self.localComfyTask=nil;
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/pkill"; t.arguments=@[@"-f",@"main.py --listen 127.0.0.1 --port 8188"];
+    t.standardOutput=[NSFileHandle fileHandleWithNullDevice];t.standardError=[NSFileHandle fileHandleWithNullDevice];
+    @try{[t launch];}@catch(NSException *e){}
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{[self refreshLocalAIServices:nil];});
+  }
+}
+
+- (void)localAIToggleWhisper:(NSSwitch *)sender {
+  if(sender.state==NSControlStateValueOn){
+    NSString *exe=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerWhisperExe"] ?: @"/opt/homebrew/bin/whisper-cli";
+    NSString *model=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerWhisperModel"] ?: @"";
+    if(![[NSFileManager defaultManager] isExecutableFileAtPath:exe] || ![[NSFileManager defaultManager] isReadableFileAtPath:model]){
+      self.localWhisperStatus.stringValue=@"未安装或模型缺失"; sender.state=NSControlStateValueOff; return;
+    }
+    [[NSUserDefaults standardUserDefaults] setInteger:2 forKey:@"centerSTTEngine"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    self.localWhisperStatus.stringValue=@"已启用 · 按需运行，不常驻";
+  } else {
+    [[NSUserDefaults standardUserDefaults] setInteger:0 forKey:@"centerSTTEngine"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    self.localWhisperStatus.stringValue=@"已停用 · 使用 Apple Speech";
+  }
+}
+
+- (void)openLocalAIComfyLog:(id)sender {
+  NSString *log=[NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-comfyui.log"];
+  if([[NSFileManager defaultManager] fileExistsAtPath:log]) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:log]];
+  else [self showToast:@"还没有 ComfyUI 日志"];
+}
+
 - (void)showAIKeyFilePicker:(id)sender {
   [self loadAIEntries];
   if (!self.aiEntries.count) { [self showToast:@"暂无 AI 服务"]; return; }
@@ -7134,6 +7275,12 @@ static BOOL ValidGroupName(NSString *raw) {
   keyFileBtn.toolTip = @"选择 AI 服务，验证应用密码后定位本地密钥文件";
   [keyFileBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:keyFileBtn];
+  ColorHoverButton *localAIBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(456,598,132,28)];
+  localAIBtn.title=@"本地服务…"; localAIBtn.hoverColor=[NSColor systemPurpleColor];
+  localAIBtn.target=self; localAIBtn.action=@selector(openLocalAIServices:);
+  localAIBtn.toolTip=@"管理 Ollama / ComfyUI / Whisper 的启动和停止";
+  [localAIBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:localAIBtn];
 
   [self loadAIEntries];
   ColorHoverButton *add = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 540, 120, 30)];
@@ -7423,6 +7570,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *q = query.lowercaseString;
   NSMutableArray *filtered = [NSMutableArray array];
   for (NSDictionary *e in self.aiEntries) {
+    if ([e[@"localOnly"] boolValue]) continue;
     if (self.aiCategory.length && ![self.aiCategory isEqualToString:@"全部"]) {
       if (![[self aiCategoryForEntry:e] isEqualToString:self.aiCategory]) continue;
     }
