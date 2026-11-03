@@ -1884,6 +1884,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSImageView *diskPreviewImageView;
 @property (strong) NSTextField *diskPreviewTitle;
 @property (strong) id diskKeyMonitor;
+@property (strong) id globalEscapeMonitor;
 @property (strong) NSString *diskSelectedMount;
 @property NSInteger diskGeneration;
 @property (strong) NSMutableString *gpuText;
@@ -3334,6 +3335,12 @@ static void HideDockHoverTip(void) {
   }
   self.diskKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
     if ([self handleDiskGalleryKeyEvent:e]) return nil;
+    return e;
+  }];
+  self.globalEscapeMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    if (e.type == NSEventTypeKeyDown && e.keyCode == 53) {
+      if ([self handleGlobalEscape]) return nil;
+    }
     return e;
   }];
   // 静默启动：不把控制台固定到 Dock，只维护分组图标
@@ -27913,6 +27920,25 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)openQuickPanelFromPopover:(id)sender {
   [self.popover performClose:nil];
   dispatch_async(dispatch_get_main_queue(), ^{ [self showQuickPanel]; });
+}
+
+- (BOOL)handleGlobalEscape {
+  if (NSApp.modalWindow) return NO;
+  if (self.popover.isShown) { [self.popover performClose:nil]; return YES; }
+  QLPreviewPanel *ql = [QLPreviewPanel sharedPreviewPanel];
+  if (ql.isVisible) { [ql orderOut:nil]; return YES; }
+  NSWindow *target = NSApp.keyWindow;
+  if (!target.isVisible) target = self.window;
+  if (!target.isVisible) {
+    for (NSWindow *w in [NSApp orderedWindows]) if (w.isVisible) { target = w; break; }
+  }
+  if (!target.isVisible) return NO;
+  BOOL isMain = (target == self.window);
+  [target orderOut:nil];
+  if (isMain) {
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+  }
+  return YES;
 }
 
 - (void)bringAuxiliaryWindowToFront:(NSWindow *)w {
