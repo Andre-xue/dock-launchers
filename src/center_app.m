@@ -21159,7 +21159,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)openCaptureFolder:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self captureDirectory]]]; }
 - (void)closeCaptureTool:(id)sender { [self stopMicLevelMeter]; if (!self.captureRecording) [self stopCameraPreview]; [self.captureWindow orderOut:nil]; }
 
+- (void)hideCapturePanelForCapture {
+  if (self.captureWindow.isVisible) {
+    [self.captureWindow orderOut:nil];
+    [self.captureWindow displayIfNeeded];
+  }
+}
+
 - (void)runScreenshotArgs:(NSArray *)args path:(NSString *)path {
+  [self hideCapturePanelForCapture];
+  usleep(150000);
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = @"/usr/sbin/screencapture";
   t.arguments = args;
@@ -21325,6 +21334,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)startScrollCapture:(id)sender {
+  [self hideCapturePanelForCapture];
   __weak typeof(self) weakSelf = self;
   [self beginCaptureRegion:^(NSRect region) {
     [weakSelf beginScrollCaptureInRegion:region];
@@ -25535,6 +25545,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if ([a runModal] == NSAlertFirstButtonReturn) [self openPrivacyPaneForCaptureIssue:preflight];
     return;
   }
+  [self hideCapturePanelForCapture];
   if (scene == 3) {
     [self beginCaptureRegion:^(NSRect region) {
       if (region.size.width < 12 || region.size.height < 12) return;
@@ -25548,6 +25559,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)quickScreenshot:(id)sender {
+  [self hideCapturePanelForCapture];
+  usleep(120000);
   NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = @"/usr/sbin/screencapture";
@@ -25569,6 +25582,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)quickRecord:(id)sender {
   if (![self ensureScreenCapturePermission]) return;
+  [self hideCapturePanelForCapture];
   NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mp4", [self captureTimestamp]]];
   DLScreenRecorder *rec = [[DLScreenRecorder alloc] init];
   rec.onFinished = ^(NSURL *url, NSError *error) {
