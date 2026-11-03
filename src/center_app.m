@@ -9,6 +9,7 @@
 #import <IOKit/ps/IOPowerSources.h>
 #import <IOKit/ps/IOPSKeys.h>
 #import <Quartz/Quartz.h>
+#import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <CoreServices/CoreServices.h>
 #import <dlfcn.h>
@@ -23535,6 +23536,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     sv2.documentView = self.meetingSummary; [cv addSubview:sv2];
     self.meetingStatus = [self label:@"请选择录屏文件" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.meetingStatus.frame = NSMakeRect(24, 54, 820, 18); [cv addSubview:self.meetingStatus];
+    ColorHoverButton *burn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(370, 14, 120, 32)];
+    burn.title = @"烧录字幕…"; burn.hoverColor = [NSColor systemIndigoColor]; burn.target = self; burn.action = @selector(burnMeetingSubtitles:);
+    [burn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:burn];
     NSPopUpButton *exportMeeting = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(500, 14, 116, 32) pullsDown:NO];
     [exportMeeting addItemsWithTitles:@[@"导出 TXT", @"导出 Markdown", @"导出 SRT 字幕"]];
     exportMeeting.target = self; exportMeeting.action = @selector(exportMeetingTranscript:);
@@ -23558,6 +23562,113 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
   }
   [self forceWindowToFront:self.meetingWindow];
+}
+
+- (void)burnMeetingSubtitles:(id)sender {
+  if (!self.meetingPath.length) { [self showToast:@"请先选择录屏"]; return; }
+  NSString *text = self.meetingTranscript.string ?: @"";
+  if (!text.length) { [self showToast:@"请先完成会议转写"]; return; }
+  NSSavePanel *sp = [NSSavePanel savePanel];
+  sp.allowedFileTypes = @[@"mp4"];
+  sp.nameFieldStringValue = @"会议字幕版.mp4";
+  if ([sp runModal] != NSModalResponseOK) return;
+  NSString *out = sp.URL.path;
+  [[NSFileManager defaultManager] removeItemAtPath:out error:NULL];
+  self.meetingStatus.stringValue = @"正在烧录字幕…";
+  [self burnSubtitlesIntoVideo:self.meetingPath transcript:text output:out completion:^(NSError *error) {
+    self.meetingStatus.stringValue = error ? (error.localizedDescription ?: @"字幕烧录失败") : [NSString stringWithFormat:@"已生成字幕视频：%@", out.lastPathComponent];
+    if (!error) [self showToast:@"字幕视频已生成"];
+  }];
+}
+
+- (void)burnSubtitlesIntoVideo:(NSString *)videoPath transcript:(NSString *)transcript output:(NSString *)output completion:(void (^)(NSError *error))completion {
+  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:videoPath] options:nil];
+  [asset loadValuesAsynchronouslyForKeys:@[@"duration"] completionHandler:^{
+    [asset loadTracksWithMediaType:AVMediaTypeVideo completionHandler:^(NSArray<AVAssetTrack *> *videoTracks, NSError *videoError) {
+      if (videoError || !videoTracks.count) {
+        dispatch_async(dispatch_get_main_queue(), ^{ completion([NSError errorWithDomain:@"DockLaunchers" code:30 userInfo:@{NSLocalizedDescriptionKey:videoError.localizedDescription ?: @"视频没有画面轨道"}]); });
+        return;
+      }
+      [asset loadTracksWithMediaType:AVMediaTypeAudio completionHandler:^(NSArray<AVAssetTrack *> *audioTracks, NSError *audioError) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          [self burnSubtitlesLoadedAsset:asset videoTracks:videoTracks audioTracks:audioTracks transcript:transcript output:output completion:completion];
+        });
+      }];
+    }];
+  }];
+}
+
+- (void)burnSubtitlesLoadedAsset:(AVURLAsset *)asset videoTracks:(NSArray<AVAssetTrack *> *)videoTracks audioTracks:(NSArray<AVAssetTrack *> *)audioTracks transcript:(NSString *)transcript output:(NSString *)output completion:(void (^)(NSError *error))completion {
+  AVMutableComposition *comp = [AVMutableComposition composition];
+  NSError *err = nil;
+  AVMutableCompositionTrack *vt = [comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+  [vt insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:videoTracks[0] atTime:kCMTimeZero error:&err];
+  if (err) { completion(err); return; }
+  for (AVAssetTrack *at in audioTracks) {
+    AVMutableCompositionTrack *ct = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+    [ct insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:at atTime:kCMTimeZero error:NULL];
+  }
+  AVMutableVideoComposition *vc = [AVMutableVideoComposition videoCompositionWithPropertiesOfAsset:asset];
+  CGSize size = vc.renderSize.width > 0 ? vc.renderSize : videoTracks[0].naturalSize;
+  CGFloat duration = CMTimeGetSeconds(asset.duration);
+  NSMutableArray *lines = [NSMutableArray array];
+  NSArray *rawLines = [transcript componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\n。！？!?"]];
+  for (NSString *raw in rawLines) {
+    NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (!line.length) continue;
+    while (line.length > 32) {
+      [lines addObject:[line substringToIndex:32]];
+      line = [line substringFromIndex:32];
+    }
+    if (line.length) [lines addObject:line];
+  }
+  if (!lines.count) { completion([NSError errorWithDomain:@"DockLaunchers" code:31 userInfo:@{NSLocalizedDescriptionKey:@"没有可烧录的字幕"}]); return; }
+  CGFloat cue = MAX(1.2, MIN(4.0, duration / MAX(1, (NSInteger)lines.count)));
+  CALayer *parent = [CALayer layer];
+  parent.frame = CGRectMake(0, 0, size.width, size.height);
+  parent.masksToBounds = YES;
+  CALayer *videoLayer = [CALayer layer];
+  videoLayer.frame = parent.frame;
+  [parent addSublayer:videoLayer];
+  CGFloat fontSize = MAX(16, size.width / 34.0);
+  for (NSInteger i = 0; i < (NSInteger)lines.count; i++) {
+    CGFloat start = i * cue;
+    if (start >= duration) break;
+    CGFloat end = MIN(duration, start + cue);
+    CATextLayer *text = [CATextLayer layer];
+    text.string = lines[i];
+    text.font = (__bridge CFTypeRef)[NSFont boldSystemFontOfSize:fontSize];
+    text.fontSize = fontSize;
+    text.foregroundColor = [NSColor whiteColor].CGColor;
+    text.backgroundColor = [[NSColor blackColor] colorWithAlphaComponent:0.55].CGColor;
+    text.alignmentMode = kCAAlignmentCenter;
+    text.wrapped = YES;
+    text.contentsScale = 2.0;
+    text.cornerRadius = fontSize * 0.25;
+    text.frame = CGRectMake(size.width * 0.06, size.height * 0.07, size.width * 0.88, fontSize * 2.6);
+    text.opacity = 0;
+    CAKeyframeAnimation *anim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+    anim.values = @[@0.0, @1.0, @1.0, @0.0];
+    anim.keyTimes = @[@0.0, @0.06, @0.88, @1.0];
+    anim.beginTime = start;
+    anim.duration = MAX(0.2, end - start);
+    anim.fillMode = kCAFillModeForwards;
+    anim.removedOnCompletion = NO;
+    [text addAnimation:anim forKey:@"subtitle"];
+    [parent addSublayer:text];
+  }
+  vc.animationTool = [AVVideoCompositionCoreAnimationTool videoCompositionCoreAnimationToolWithPostProcessingAsVideoLayer:videoLayer inLayer:parent];
+  AVAssetExportSession *ex = [[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetHighestQuality];
+  ex.videoComposition = vc;
+  ex.outputURL = [NSURL fileURLWithPath:output];
+  ex.outputFileType = AVFileTypeMPEG4;
+  ex.shouldOptimizeForNetworkUse = YES;
+  [ex exportAsynchronouslyWithCompletionHandler:^{
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (ex.status == AVAssetExportSessionStatusCompleted) completion(nil);
+      else completion(ex.error ?: [NSError errorWithDomain:@"DockLaunchers" code:32 userInfo:@{NSLocalizedDescriptionKey:@"字幕导出失败"}]);
+    });
+  }];
 }
 
 - (void)exportMeetingTranscript:(NSPopUpButton *)sender {
