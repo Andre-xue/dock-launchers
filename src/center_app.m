@@ -1644,6 +1644,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTableView *aiFileTable;
 @property (strong) NSMutableArray *aiFiles;
 @property (strong) NSMutableArray *aiCloudDocs;
+@property (strong) NSWindow *cloudDocsWindow;
+@property (strong) NSTableView *cloudProviderTable;
+@property (strong) NSArray *cloudProviders;
 @property (strong) NSTextField *aiFilePromptField, *aiFileStatus;
 @property (strong) NSTextView *aiFileOutput;
 @property (strong) NSString *aiFileResultPath;
@@ -11660,6 +11663,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (tableView == self.radialItemsTable) return self.radialItemsCurrentItems.count;
   if (tableView == self.videoEditorTable) return self.videoEditorPaths.count;
   if (tableView == self.convertTable) return self.convertPaths.count;
+  if (tableView == self.cloudProviderTable) return self.cloudProviders.count;
   if (tableView == self.aiFileTable) return self.aiFiles.count + self.aiCloudDocs.count;
   if (tableView == self.aiVideoHistoryTable) return self.aiVideoHistoryItems.count;
   if (tableView == self.shelfTable) return self.shelfVisiblePaths.count;
@@ -11835,6 +11839,16 @@ static BOOL ValidGroupName(NSString *raw) {
       NSTextField *l = [self label:title size:11 bold:NO color:nil];
       l.frame = NSMakeRect(4,7,col.width-8,18); [v addSubview:l];
     }
+    return v;
+  }
+  if (tableView == self.cloudProviderTable) {
+    if (row < 0 || row >= (NSInteger)self.cloudProviders.count) return nil;
+    NSDictionary *p=self.cloudProviders[row];
+    NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,54)];
+    NSTextField *l=[self label:p[@"name"] ?: @"" size:12 bold:YES color:nil]; l.frame=NSMakeRect(8,28,col.width-190,18); [v addSubview:l];
+    NSTextField *d=[self label:p[@"desc"] ?: @"" size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(8,9,col.width-190,14); [v addSubview:d];
+    ColorHoverButton *login=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(col.width-172,13,76,28)]; login.title=@"扫码登录"; login.tag=row; login.font=[NSFont systemFontOfSize:9.5]; login.hoverColor=[NSColor systemBlueColor]; login.target=self; login.action=@selector(cloudProviderLogin:); [login applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:login];
+    ColorHoverButton *imp=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(col.width-90,13,76,28)]; imp.title=@"导入链接"; imp.tag=row; imp.font=[NSFont systemFontOfSize:9.5]; imp.hoverColor=[NSColor systemGreenColor]; imp.target=self; imp.action=@selector(cloudProviderImport:); [imp applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:imp];
     return v;
   }
   if (tableView == self.aiFileTable) {
@@ -24515,7 +24529,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *h=[self label:@"导入文件后用 AI 分析，生成 Markdown 报告并保存到桌面" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,634,620,18); [cv addSubview:h];
     ColorHoverButton *add=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,596,120,30)]; add.title=@"导入文件…"; add.hoverColor=[NSColor systemBlueColor]; add.target=self; add.action=@selector(aiFileAddFiles:); [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
     ColorHoverButton *clear=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(154,596,90,30)]; clear.title=@"清空"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(aiFileClear:); [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
-    ColorHoverButton *cloud=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(254,596,120,30)]; cloud.title=@"添加云文档…"; cloud.hoverColor=[NSColor systemBlueColor]; cloud.font=[NSFont systemFontOfSize:10]; cloud.target=self; cloud.action=@selector(aiFileAddCloudLink:); cloud.toolTip=@"支持腾讯文档、飞书、语雀、Notion、Google Docs、WPS、钉钉公开链接"; [cloud applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cloud];
+    ColorHoverButton *cloud=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(254,596,120,30)]; cloud.title=@"添加云文档…"; cloud.hoverColor=[NSColor systemBlueColor]; cloud.font=[NSFont systemFontOfSize:10]; cloud.target=self; cloud.action=@selector(openCloudDocsList:); cloud.toolTip=@"云文档列表：官方扫码登录、导出或导入链接"; [cloud applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cloud];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,420,732,166)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.aiFileTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
     NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"aifile"]; col.title=@"已导入文件"; col.width=710; [self.aiFileTable addTableColumn:col];
@@ -24561,6 +24575,52 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if([l containsString:@"kdocs.cn"]||[l containsString:@"wps.cn"])return @"WPS 文档";
   if([l containsString:@"alidocs.dingtalk.com"]||[l containsString:@"dingtalk.com"])return @"钉钉文档";
   return @"云文档";
+}
+
+- (void)openCloudDocsList:(id)sender {
+  if(!self.cloudProviders){
+    self.cloudProviders=@[
+      @{@"name":@"腾讯文档",@"desc":@"QQ/微信扫码登录，导出 DOCX/PDF 后导入",@"url":@"https://docs.qq.com/"},
+      @{@"name":@"飞书文档",@"desc":@"飞书扫码登录，导出 Word/PDF 后导入",@"url":@"https://www.feishu.cn/"},
+      @{@"name":@"语雀",@"desc":@"网页登录，导出 Markdown/PDF 后导入",@"url":@"https://www.yuque.com/"},
+      @{@"name":@"Notion",@"desc":@"登录后导出 Markdown/PDF 后导入",@"url":@"https://www.notion.so/login"},
+      @{@"name":@"Google Docs",@"desc":@"Google 账号登录，公开链接可直接读取",@"url":@"https://docs.google.com/"},
+      @{@"name":@"WPS 文档",@"desc":@"网页扫码登录，导出 DOCX/PDF 后导入",@"url":@"https://www.kdocs.cn/"},
+      @{@"name":@"钉钉文档",@"desc":@"钉钉扫码登录，导出 PDF 后导入",@"url":@"https://alidocs.dingtalk.com/"}
+    ];
+  }
+  if(!self.cloudDocsWindow){
+    self.cloudDocsWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,700,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.cloudDocsWindow.title=@"云文档"; self.cloudDocsWindow.releasedWhenClosed=NO;
+    NSView *cv=self.cloudDocsWindow.contentView;
+    NSTextField *t=[self label:@"云文档" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,470,300,28); [cv addSubview:t];
+    NSTextField *h=[self label:@"先点「扫码登录」在官方网页登录，再点「导入链接」或导出文件；不会保存账号密码" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,446,650,18); [cv addSubview:h];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,84,652,350)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.cloudProviderTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"cloudprovider"]; col.title=@"云文档平台"; col.width=630; [self.cloudProviderTable addTableColumn:col];
+    self.cloudProviderTable.headerView=nil; self.cloudProviderTable.rowHeight=54; self.cloudProviderTable.dataSource=self; self.cloudProviderTable.delegate=self;
+    sv.documentView=self.cloudProviderTable; [cv addSubview:sv];
+    ColorHoverButton *import=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,36,130,32)]; import.title=@"导入分享链接…"; import.hoverColor=[NSColor systemGreenColor]; import.font=[NSFont systemFontOfSize:10]; import.target=self; import.action=@selector(cloudProviderImportLink:); [import applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:import];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(584,36,92,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeCloudDocsList:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.cloudDocsWindow center];
+  }
+  [self.cloudProviderTable reloadData];
+  [self bringAuxiliaryWindowToFront:self.cloudDocsWindow];
+}
+
+- (void)closeCloudDocsList:(id)sender { [self.cloudDocsWindow orderOut:nil]; }
+
+- (void)cloudProviderLogin:(NSButton *)sender {
+  NSInteger row=sender.tag; if(row<0||row>=(NSInteger)self.cloudProviders.count)return;
+  NSURL *url=[NSURL URLWithString:self.cloudProviders[row][@"url"] ?: @""];
+  if(url)[[NSWorkspace sharedWorkspace] openURL:url];
+}
+
+- (void)cloudProviderImport:(NSButton *)sender { [self cloudProviderImportLink:nil]; }
+
+- (void)cloudProviderImportLink:(id)sender {
+  [self.cloudDocsWindow orderOut:nil];
+  [self aiFileAddCloudLink:nil];
 }
 
 - (void)aiFileAddCloudLink:(id)sender {
