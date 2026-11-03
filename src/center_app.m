@@ -9490,6 +9490,11 @@ static BOOL ValidGroupName(NSString *raw) {
           [weakSelf.diskSpinner stopAnimation:nil];
           weakSelf.diskStatus.stringValue = @"未授权照片图库，请在系统设置中允许访问";
           weakSelf.diskStatus.textColor = [NSColor systemRedColor];
+          NSAlert *pa=[[NSAlert alloc] init];
+          pa.messageText=@"未授权照片图库";
+          pa.informativeText=@"请在系统设置 → 隐私与安全性 → 照片中允许 DockLaunchers 访问，然后回到这里点刷新分析。";
+          [pa addButtonWithTitle:@"打开系统设置"]; [pa addButtonWithTitle:@"取消"];
+          if([pa runModal]==NSAlertFirstButtonReturn) [weakSelf openPhotoPrivacySettings:nil];
         });
         return;
       }
@@ -27787,6 +27792,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   });
 }
 
+- (void)openPhotoPrivacySettings:(id)sender {
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Photos"]];
+}
+
 - (void)requestPhotoLibraryAccess {
   [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -28054,6 +28063,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     folders.target = self; folders.action = @selector(chooseLocalPhotoFolders:);
     [folders applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [cv addSubview:folders];
+    ColorHoverButton *privacy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(210, 72, 150, 30)];
+    privacy.title = @"系统照片权限…"; privacy.hoverColor = [NSColor systemBlueColor]; privacy.font=[NSFont systemFontOfSize:10];
+    privacy.target = self; privacy.action = @selector(openPhotoPrivacySettings:);
+    privacy.toolTip = @"打开系统设置 → 隐私与安全性 → 照片";
+    [privacy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:privacy];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(424, 72, 90, 30)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closePhotoPermissionSettings:);
@@ -28078,21 +28092,38 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [a addButtonWithTitle:@"确认授权"];
     [a addButtonWithTitle:@"取消"];
     if ([a runModal] != NSAlertFirstButtonReturn) { [self updatePhotoPermissionUI]; return; }
-    __block PHAuthorizationStatus auth = PHAuthorizationStatusNotDetermined;
-    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) { auth = status; dispatch_semaphore_signal(sem); }];
-    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)));
-    if (auth != PHAuthorizationStatusAuthorized && auth != PHAuthorizationStatusLimited) {
-      [self updatePhotoPermissionUI];
+    PHAuthorizationStatus current = [PHPhotoLibrary authorizationStatusForAccessLevel:PHAccessLevelReadWrite];
+    if (current == PHAuthorizationStatusDenied || current == PHAuthorizationStatusRestricted) {
       NSAlert *d = [[NSAlert alloc] init];
       d.messageText = @"系统相册权限未开启";
-      d.informativeText = @"请到系统设置 → 隐私与安全性 → 照片中允许访问。";
-      [d addButtonWithTitle:@"好"];
-      [d runModal];
+      d.informativeText = @"请在系统设置 → 隐私与安全性 → 照片中允许 DockLaunchers 访问。";
+      [d addButtonWithTitle:@"打开系统设置"];
+      [d addButtonWithTitle:@"取消"];
+      if ([d runModal] == NSAlertFirstButtonReturn) [self openPhotoPrivacySettings:nil];
+      [self updatePhotoPermissionUI];
       return;
     }
-    [[NSUserDefaults standardUserDefaults] setObject:@"system" forKey:@"centerPhotoMode"];
-    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"centerAlbumFullLibrary"];
+    __weak typeof(self) weakSelf = self;
+    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (status != PHAuthorizationStatusAuthorized && status != PHAuthorizationStatusLimited) {
+          NSAlert *d = [[NSAlert alloc] init];
+          d.messageText = @"系统相册权限未开启";
+          d.informativeText = @"请在系统设置 → 隐私与安全性 → 照片中允许 DockLaunchers 访问。";
+          [d addButtonWithTitle:@"打开系统设置"];
+          [d addButtonWithTitle:@"取消"];
+          if ([d runModal] == NSAlertFirstButtonReturn) [weakSelf openPhotoPrivacySettings:nil];
+          [weakSelf updatePhotoPermissionUI];
+          return;
+        }
+        [[NSUserDefaults standardUserDefaults] setObject:@"system" forKey:@"centerPhotoMode"];
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"centerAlbumFullLibrary"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+        [weakSelf updatePhotoPermissionUI];
+        [weakSelf showToast:@"系统相册已授权"];
+      });
+    }];
+    return;
   } else {
     NSAlert *q = [[NSAlert alloc] init];
     q.messageText = @"本机相册需要选择文件夹";
