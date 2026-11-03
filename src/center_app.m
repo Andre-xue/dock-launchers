@@ -710,6 +710,69 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 
 typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordSceneWindow = 1, DLRecordSceneApplication = 2, DLRecordSceneRegion = 3 };
 
+@interface DLLiveAnnotationView : NSView
+@property NSInteger tool; // 0 pen, 1 arrow
+@property (strong) NSMutableArray<NSDictionary *> *items;
+@property (strong) NSMutableArray<NSValue *> *currentPoints;
+@property NSPoint startPoint;
+@property (strong) NSColor *color;
+@property CGFloat lineWidth;
+@end
+@implementation DLLiveAnnotationView
+- (BOOL)isOpaque { return NO; }
+- (BOOL)isFlipped { return NO; }
+- (void)drawRect:(NSRect)dirtyRect {
+  NSColor *c = self.color ?: [NSColor systemRedColor];
+  [c setStroke];
+  for (NSDictionary *it in self.items) {
+    NSInteger t = [it[@"tool"] integerValue];
+    if (t == 0) {
+      NSArray *pts = it[@"points"];
+      if (pts.count > 1) {
+        NSBezierPath *p = [NSBezierPath bezierPath];
+        p.lineWidth = self.lineWidth; p.lineCapStyle = NSLineCapStyleRound; p.lineJoinStyle = NSLineJoinStyleRound;
+        [p moveToPoint:[pts[0] pointValue]];
+        for (NSInteger i=1;i<(NSInteger)pts.count;i++) [p lineToPoint:[pts[i] pointValue]];
+        [p stroke];
+      }
+    } else {
+      NSPoint a=[it[@"start"] pointValue], b=[it[@"end"] pointValue];
+      NSBezierPath *p=[NSBezierPath bezierPath]; p.lineWidth=self.lineWidth;
+      [p moveToPoint:a]; [p lineToPoint:b]; [p stroke];
+      CGFloat ang=atan2(b.y-a.y,b.x-a.x), len=MAX(14,self.lineWidth*4);
+      NSBezierPath *h=[NSBezierPath bezierPath];
+      [h moveToPoint:b]; [h lineToPoint:NSMakePoint(b.x-len*cos(ang-0.45),b.y-len*sin(ang-0.45))];
+      [h moveToPoint:b]; [h lineToPoint:NSMakePoint(b.x-len*cos(ang+0.45),b.y-len*sin(ang+0.45))];
+      [h stroke];
+    }
+  }
+  if (self.currentPoints.count > 1 && self.tool == 0) {
+    NSBezierPath *p=[NSBezierPath bezierPath]; p.lineWidth=self.lineWidth; p.lineCapStyle=NSLineCapStyleRound;
+    [p moveToPoint:[self.currentPoints[0] pointValue]];
+    for (NSInteger i=1;i<(NSInteger)self.currentPoints.count;i++) [p lineToPoint:[self.currentPoints[i] pointValue]];
+    [p stroke];
+  }
+}
+- (void)mouseDown:(NSEvent *)event {
+  self.startPoint=[self convertPoint:event.locationInWindow fromView:nil];
+  self.currentPoints=[NSMutableArray arrayWithObject:[NSValue valueWithPoint:self.startPoint]];
+}
+- (void)mouseDragged:(NSEvent *)event {
+  NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];
+  if (self.tool==0) { [self.currentPoints addObject:[NSValue valueWithPoint:p]]; [self setNeedsDisplay:YES]; }
+  else { [self setNeedsDisplay:YES]; }
+}
+- (void)mouseUp:(NSEvent *)event {
+  NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];
+  if (self.tool==0) {
+    if (self.currentPoints.count>1) [self.items addObject:@{@"tool":@0,@"points":[self.currentPoints copy]}];
+  } else {
+    if (hypot(p.x-self.startPoint.x,p.y-self.startPoint.y)>10) [self.items addObject:@{@"tool":@1,@"start":[NSValue valueWithPoint:self.startPoint],@"end":[NSValue valueWithPoint:p]}];
+  }
+  self.currentPoints=nil; [self setNeedsDisplay:YES];
+}
+@end
+
 @interface DLAnnotateView : NSView
 @property (strong) NSImage *image;
 @property (strong) NSMutableArray<NSDictionary *> *items;
@@ -1537,7 +1600,13 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiImageURLField, *aiImageStatus, *aiVideoURLField, *aiVideoStatus;
 @property (strong) NSImageView *aiImagePreview, *aiVideoPreview;
 @property (copy) NSString *aiImageResultPath, *aiVideoResultPath, *aiVideoTaskID, *aiVideoPollURL, *aiVideoFirstFramePath;
-@property (strong) NSWindow *aiImageBatchWindow, *aiGalleryWindow, *aiVideoBatchWindow, *aiVideoHistoryWindow, *aiUsageWindow;
+@property (strong) NSWindow *aiImageBatchWindow, *aiGalleryWindow, *aiVideoBatchWindow, *aiVideoHistoryWindow, *aiUsageWindow, *videoEditorWindow;
+@property (strong) NSTableView *videoEditorTable;
+@property (strong) NSMutableArray<NSString *> *videoEditorPaths;
+@property (strong) NSTextField *videoEditorStatus, *videoTrimStartField, *videoTrimEndField;
+@property (strong) NSSearchField *aiGallerySearchField;
+@property (strong) NSPopUpButton *aiGalleryFilterPopup;
+@property (strong) NSMutableSet *aiGalleryFavorites;
 @property (strong) NSTextField *aiUsageImagesLabel, *aiUsageEditsLabel, *aiUsageVideosLabel, *aiUsageAudioLabel, *aiUsageSizeLabel, *aiUsageTodayLabel, *aiUsagePathLabel;
 @property (strong) NSTableView *aiVideoHistoryTable;
 @property (strong) NSTextField *aiVideoHistoryPathLabel;
@@ -1558,7 +1627,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiAssistantURLField, *aiAssistantStatus;
 @property BOOL aiAssistantBusy;
 @property (strong) NSTextField *videoPostFileLabel, *videoPostStart, *videoPostEnd, *videoPostStatus;
-@property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow, *aiTTSWindow, *subtitleSettingsWindow, *aiInpaintWindow;
+@property (strong) NSWindow *voiceTextWindow, *meetingWindow, *speechSettingsWindow, *aiTTSWindow, *subtitleSettingsWindow, *aiInpaintWindow, *liveAnnotationWindow;
+@property (strong) DLLiveAnnotationView *liveAnnotationView;
+@property NSInteger liveAnnotationTool;
 @property (strong) DLImageRegionView *aiInpaintView;
 @property (strong) NSTextView *aiInpaintPrompt;
 @property (strong) NSTextField *aiInpaintStatus;
@@ -9961,6 +10032,7 @@ static BOOL ValidGroupName(NSString *raw) {
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.automationTable) return self.automationRules.count;
   if (tableView == self.radialItemsTable) return self.radialItemsCurrentItems.count;
+  if (tableView == self.videoEditorTable) return self.videoEditorPaths.count;
   if (tableView == self.aiVideoHistoryTable) return self.aiVideoHistoryItems.count;
   if (tableView == self.shelfTable) return self.shelfVisiblePaths.count;
   if (tableView == self.dupTable) return self.dupItems.count;
@@ -10038,6 +10110,13 @@ static BOOL ValidGroupName(NSString *raw) {
       l.lineBreakMode = NSLineBreakByTruncatingMiddle;
       l.frame = NSMakeRect(4, 10, col.width - 8, 18); [v addSubview:l];
     }
+    return v;
+  }
+  if (tableView == self.videoEditorTable) {
+    if (row < 0 || row >= (NSInteger)self.videoEditorPaths.count) return nil;
+    NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,30)];
+    NSTextField *l=[self label:self.videoEditorPaths[row].lastPathComponent size:11 bold:NO color:nil];
+    l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,5,col.width-8,20); [v addSubview:l];
     return v;
   }
   if (tableView == self.radialItemsTable) {
@@ -21194,6 +21273,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     // Compact the window: pull the content up and add two folder shortcuts.
     [self.captureWindow setContentSize:NSMakeSize(940, 520)];
     for (NSView *v in cv.subviews) if (v.frame.origin.y > 30) v.frame = NSOffsetRect(v.frame, 0, -80);
+    ColorHoverButton *liveAnnoBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(180, 58, 120, 32)];
+    liveAnnoBtn.title = @"实时标注"; liveAnnoBtn.hoverColor = [NSColor systemOrangeColor];
+    liveAnnoBtn.target = self; liveAnnoBtn.action = @selector(toggleLiveAnnotation:);
+    [liveAnnoBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:liveAnnoBtn];
     ColorHoverButton *imgFolderBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 58, 140, 32)];
     imgFolderBtn.title = @"打开截图文件夹"; imgFolderBtn.hoverColor = [NSColor systemBlueColor];
     imgFolderBtn.target = self; imgFolderBtn.action = @selector(openCaptureFolder:);
@@ -21290,6 +21373,43 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   };
   @try { [t launch]; } @catch (NSException *e) { self.captureStatusLabel.stringValue = @"无法启动截图"; }
 }
+
+- (void)toggleLiveAnnotation:(id)sender {
+  if (self.liveAnnotationWindow.isVisible) {
+    [self.liveAnnotationWindow orderOut:nil];
+    return;
+  }
+  [self hideCapturePanelForCapture];
+  NSRect frame = [NSScreen mainScreen].frame;
+  self.liveAnnotationWindow = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+  self.liveAnnotationWindow.opaque = NO;
+  self.liveAnnotationWindow.backgroundColor = [NSColor clearColor];
+  self.liveAnnotationWindow.hasShadow = NO;
+  self.liveAnnotationWindow.level = NSStatusWindowLevel + 2;
+  self.liveAnnotationWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+  self.liveAnnotationView = [[DLLiveAnnotationView alloc] initWithFrame:NSMakeRect(0,0,frame.size.width,frame.size.height)];
+  self.liveAnnotationView.tool = 0;
+  self.liveAnnotationView.color = [NSColor systemRedColor];
+  self.liveAnnotationView.lineWidth = 5;
+  self.liveAnnotationView.items = [NSMutableArray array];
+  self.liveAnnotationWindow.contentView = self.liveAnnotationView;
+  NSArray *titles = @[@"画笔", @"箭头", @"清除", @"关闭"];
+  NSArray *sels = @[@"liveAnnoPen:", @"liveAnnoArrow:", @"liveAnnoClear:", @"liveAnnoClose:"];
+  for (NSInteger i=0;i<4;i++) {
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(frame.size.width/2 - 190 + i*96, frame.size.height - 50, 88, 32)];
+    b.title = titles[i]; b.hoverColor = [NSColor systemOrangeColor];
+    b.target = self; b.action = NSSelectorFromString(sels[i]);
+    [b applyColor:[NSColor colorWithWhite:0.1 alpha:0.85] textColor:[NSColor whiteColor]];
+    [self.liveAnnotationView addSubview:b];
+  }
+  [self.liveAnnotationWindow makeKeyAndOrderFront:nil];
+  [self showToast:@"实时标注已开启；点顶部工具栏关闭"];
+}
+
+- (void)liveAnnoPen:(id)sender { self.liveAnnotationView.tool = 0; }
+- (void)liveAnnoArrow:(id)sender { self.liveAnnotationView.tool = 1; }
+- (void)liveAnnoClear:(id)sender { [self.liveAnnotationView.items removeAllObjects]; [self.liveAnnotationView setNeedsDisplay:YES]; }
+- (void)liveAnnoClose:(id)sender { [self.liveAnnotationWindow orderOut:nil]; }
 
 - (void)captureFullScreen:(id)sender {
   NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
@@ -22131,6 +22251,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *historyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(358,578,112,28)];
     historyBtn.title=@"视频历史…"; historyBtn.hoverColor=[NSColor systemOrangeColor]; historyBtn.target=self; historyBtn.action=@selector(showAIVideoHistory:);
     [historyBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:historyBtn];
+    ColorHoverButton *editorBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(478,578,90,28)];
+    editorBtn.title=@"剪辑…"; editorBtn.hoverColor=[NSColor systemIndigoColor]; editorBtn.target=self; editorBtn.action=@selector(openVideoEditor:);
+    [editorBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:editorBtn];
     self.aiVideoServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,160,28) pullsDown:NO];
     self.aiVideoServicePopup.target=self; self.aiVideoServicePopup.action=@selector(aiVideoServiceChanged:);
     [cv addSubview:self.aiVideoServicePopup];
@@ -22199,6 +22322,94 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self reloadAIVideoServices];
   [NSApp activateIgnoringOtherApps:YES];
   [self.aiVideoWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)openVideoEditor:(id)sender {
+  if (!self.videoEditorWindow) {
+    self.videoEditorWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.videoEditorWindow.title=@"视频剪辑 / 合并"; self.videoEditorWindow.releasedWhenClosed=NO;
+    NSView *cv=self.videoEditorWindow.contentView;
+    NSTextField *t=[self label:@"视频剪辑 / 合并" size:20 bold:YES color:nil]; t.frame=NSMakeRect(20,516,300,28); [cv addSubview:t];
+    NSTextField *h=[self label:@"按列表顺序合并视频；可设置统一的裁剪起止秒数" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(20,494,620,18); [cv addSubview:h];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(20,150,680,330)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.videoEditorTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"vfile"]; col.title=@"视频文件"; col.width=660; [self.videoEditorTable addTableColumn:col];
+    self.videoEditorTable.rowHeight=30; self.videoEditorTable.dataSource=self; self.videoEditorTable.delegate=self;
+    sv.documentView=self.videoEditorTable; [cv addSubview:sv];
+    self.videoEditorPaths=[NSMutableArray array];
+    NSArray *titles=@[@"添加视频…",@"移除",@"↑",@"↓",@"清空"];
+    NSArray *sels=@[@"videoEditorAdd:",@"videoEditorRemove:",@"videoEditorUp:",@"videoEditorDown:",@"videoEditorClear:"];
+    CGFloat xs[5]={20,142,212,256,300}; CGFloat ws[5]={112,60,34,34,60};
+    for(NSInteger i=0;i<5;i++){ColorHoverButton *b=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(xs[i],108,ws[i],30)];b.title=titles[i];b.hoverColor=[NSColor systemBlueColor];b.font=[NSFont systemFontOfSize:10];b.target=self;b.action=NSSelectorFromString(sels[i]);[b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:b];}
+    NSTextField *sl=[self label:@"裁剪起点(秒)" size:10 bold:NO color:[NSColor secondaryLabelColor]]; sl.frame=NSMakeRect(20,74,90,18); [cv addSubview:sl];
+    self.videoTrimStartField=[[NSTextField alloc] initWithFrame:NSMakeRect(112,68,70,24)]; self.videoTrimStartField.placeholderString=@"0"; [cv addSubview:self.videoTrimStartField];
+    NSTextField *el=[self label:@"终点(0=结尾)" size:10 bold:NO color:[NSColor secondaryLabelColor]]; el.frame=NSMakeRect(192,74,80,18); [cv addSubview:el];
+    self.videoTrimEndField=[[NSTextField alloc] initWithFrame:NSMakeRect(274,68,70,24)]; self.videoTrimEndField.placeholderString=@"0"; [cv addSubview:self.videoTrimEndField];
+    self.videoEditorStatus=[self label:@"添加视频后导出" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.videoEditorStatus.frame=NSMakeRect(20,40,500,18); [cv addSubview:self.videoEditorStatus];
+    ColorHoverButton *out=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(540,36,140,34)]; out.title=@"导出合并视频…"; out.hoverColor=[NSColor systemGreenColor]; out.target=self; out.action=@selector(videoEditorExport:); [out applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:out];
+    [self.videoEditorWindow center];
+  }
+  [self.videoEditorTable reloadData];
+  [self forceWindowToFront:self.videoEditorWindow];
+}
+
+- (void)videoEditorAdd:(id)sender {
+  NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=YES;
+  p.allowedFileTypes=@[@"mp4",@"mov",@"m4v"];
+  if([p runModal]!=NSModalResponseOK)return;
+  if(!self.videoEditorPaths)self.videoEditorPaths=[NSMutableArray array];
+  for(NSURL *u in p.URLs)[self.videoEditorPaths addObject:u.path];
+  [self.videoEditorTable reloadData];
+}
+- (void)videoEditorRemove:(id)sender { NSInteger row=self.videoEditorTable.selectedRow; if(row>=0&&row<(NSInteger)self.videoEditorPaths.count){[self.videoEditorPaths removeObjectAtIndex:row];[self.videoEditorTable reloadData];} }
+- (void)videoEditorUp:(id)sender { NSInteger row=self.videoEditorTable.selectedRow; if(row>0){[self.videoEditorPaths exchangeObjectAtIndex:row withObjectAtIndex:row-1];[self.videoEditorTable reloadData];[self.videoEditorTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row-1] byExtendingSelection:NO];} }
+- (void)videoEditorDown:(id)sender { NSInteger row=self.videoEditorTable.selectedRow; if(row>=0&&row+1<(NSInteger)self.videoEditorPaths.count){[self.videoEditorPaths exchangeObjectAtIndex:row withObjectAtIndex:row+1];[self.videoEditorTable reloadData];[self.videoEditorTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row+1] byExtendingSelection:NO];} }
+- (void)videoEditorClear:(id)sender { [self.videoEditorPaths removeAllObjects]; [self.videoEditorTable reloadData]; }
+
+- (void)videoEditorExport:(id)sender {
+  if(!self.videoEditorPaths.count){[self showToast:@"请先添加视频"];return;}
+  CGFloat start=[self.videoTrimStartField.stringValue doubleValue];
+  CGFloat end=[self.videoTrimEndField.stringValue doubleValue];
+  AVMutableComposition *comp=[AVMutableComposition composition];
+  [self appendVideoEditorPaths:self.videoEditorPaths index:0 composition:comp start:start end:end completion:^(NSString *error){
+    if(error.length){self.videoEditorStatus.stringValue=error;return;}
+    NSSavePanel *sp=[NSSavePanel savePanel]; sp.allowedFileTypes=@[@"mp4"]; sp.nameFieldStringValue=@"视频剪辑.mp4";
+    if([sp runModal]!=NSModalResponseOK)return;
+    [[NSFileManager defaultManager] removeItemAtPath:sp.URL.path error:NULL];
+    self.videoEditorStatus.stringValue=@"正在导出…";
+    AVAssetExportSession *ex=[[AVAssetExportSession alloc] initWithAsset:comp presetName:AVAssetExportPresetHighestQuality];
+    ex.outputURL=sp.URL; ex.outputFileType=AVFileTypeMPEG4; ex.shouldOptimizeForNetworkUse=YES;
+    [ex exportAsynchronouslyWithCompletionHandler:^{
+      dispatch_async(dispatch_get_main_queue(),^{
+        self.videoEditorStatus.stringValue = ex.status==AVAssetExportSessionStatusCompleted ? [NSString stringWithFormat:@"已导出：%@",sp.URL.lastPathComponent] : (ex.error.localizedDescription ?: @"导出失败");
+        if(ex.status==AVAssetExportSessionStatusCompleted)[self showToast:@"视频导出完成"];
+      });
+    }];
+  }];
+}
+
+- (void)appendVideoEditorPaths:(NSArray<NSString *> *)paths index:(NSInteger)index composition:(AVMutableComposition *)comp start:(CGFloat)start end:(CGFloat)end completion:(void (^)(NSString *error))completion {
+  if(index>=(NSInteger)paths.count){completion(nil);return;}
+  AVURLAsset *asset=[AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:paths[index]] options:nil];
+  [asset loadValuesAsynchronouslyForKeys:@[@"duration"] completionHandler:^{
+    [asset loadTracksWithMediaType:AVMediaTypeVideo completionHandler:^(NSArray<AVAssetTrack *> *vts,NSError *ve){
+      [asset loadTracksWithMediaType:AVMediaTypeAudio completionHandler:^(NSArray<AVAssetTrack *> *ats,NSError *ae){
+        dispatch_async(dispatch_get_main_queue(),^{
+          if(ve||!vts.count){completion([NSString stringWithFormat:@"无法读取：%@",paths[index].lastPathComponent]);return;}
+          CMTime dur=asset.duration; CMTime s=CMTimeMakeWithSeconds(MAX(0,start),600);
+          CMTime e=(end>0)?CMTimeMakeWithSeconds(end,600):dur;
+          if(CMTimeCompare(e,s)<=0||CMTimeCompare(s,dur)>=0){completion([NSString stringWithFormat:@"裁剪范围无效：%@",paths[index].lastPathComponent]);return;}
+          if(CMTimeCompare(e,dur)>0)e=dur;
+          CMTimeRange range=CMTimeRangeFromTimeToTime(s,e);
+          AVMutableCompositionTrack *vt=[comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+          NSError *err=nil; [vt insertTimeRange:range ofTrack:vts[0] atTime:kCMTimeZero error:&err];
+          if(err){completion(err.localizedDescription);return;}
+          for(AVAssetTrack *at in ats){AVMutableCompositionTrack *ct=[comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];[ct insertTimeRange:range ofTrack:at atTime:kCMTimeZero error:NULL];}
+          [self appendVideoEditorPaths:paths index:index+1 composition:comp start:start end:end completion:completion];
+        });
+      }];
+    }];
+  }];
 }
 
 - (void)showAIVideoHistory:(id)sender {
@@ -23753,10 +23964,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.aiGalleryWindow.contentView;
     NSTextField *t = [self label:@"AI 图片历史图库" size:18 bold:YES color:nil];
     t.frame=NSMakeRect(24,516,300,24); [cv addSubview:t];
-    ColorHoverButton *openDir = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(512,514,110,28)];
+    self.aiGallerySearchField = [[NSSearchField alloc] initWithFrame:NSMakeRect(250,514,180,26)];
+    self.aiGallerySearchField.placeholderString=@"搜索文件名";
+    self.aiGallerySearchField.target=self; self.aiGallerySearchField.action=@selector(showAIImageGallery:);
+    [self.aiGallerySearchField setContinuous:YES];
+    [cv addSubview:self.aiGallerySearchField];
+    self.aiGalleryFilterPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(438,514,100,26) pullsDown:NO];
+    [self.aiGalleryFilterPopup addItemsWithTitles:@[@"全部",@"今天",@"本周",@"收藏"]];
+    self.aiGalleryFilterPopup.target=self; self.aiGalleryFilterPopup.action=@selector(showAIImageGallery:);
+    [cv addSubview:self.aiGalleryFilterPopup];
+    ColorHoverButton *openDir = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(546,514,100,28)];
     openDir.title=@"打开文件夹"; openDir.hoverColor=[NSColor systemTealColor]; openDir.font=[NSFont systemFontOfSize:10]; openDir.target=self; openDir.action=@selector(openAIImageGalleryFolder:);
     [openDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:openDir];
-    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(630,514,106,28)];
+    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(654,514,82,28)];
     refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(showAIImageGallery:);
     [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
   }
@@ -23767,9 +23987,24 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   sv.hasVerticalScroller=YES; sv.drawsBackground=NO;
   objc_setAssociatedObject(cv, "GalleryScroll", sv, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
   NSView *doc = [[NSView alloc] initWithFrame:NSMakeRect(0,0,700,440)];
+  if (!self.aiGalleryFavorites) self.aiGalleryFavorites = [NSMutableSet setWithArray:[[NSUserDefaults standardUserDefaults] arrayForKey:@"centerAIGalleryFavorites"] ?: @[]];
   NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:[self aiGeneratedDirectory] error:NULL] ?: @[];
+  NSString *query = self.aiGallerySearchField.stringValue.lowercaseString ?: @"";
+  NSInteger filter = self.aiGalleryFilterPopup.indexOfSelectedItem;
+  NSDate *today = [NSCalendar.currentCalendar startOfDayForDate:[NSDate date]];
+  NSDate *weekStart = [today dateByAddingTimeInterval:-7*24*3600];
   NSMutableArray *imgs = [NSMutableArray array];
-  for (NSString *f in files) if ([@[@"png",@"jpg",@"jpeg"] containsObject:f.pathExtension.lowercaseString]) [imgs addObject:f];
+  for (NSString *f in files) {
+    if (![@[@"png",@"jpg",@"jpeg"] containsObject:f.pathExtension.lowercaseString]) continue;
+    if (query.length && ![f.lowercaseString containsString:query]) continue;
+    NSString *full = [[self aiGeneratedDirectory] stringByAppendingPathComponent:f];
+    NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:full error:NULL] ?: @{};
+    NSDate *date = attr[NSFileModificationDate];
+    if (filter == 1 && (!date || [date compare:today] == NSOrderedAscending)) continue;
+    if (filter == 2 && (!date || [date compare:weekStart] == NSOrderedAscending)) continue;
+    if (filter == 3 && ![self.aiGalleryFavorites containsObject:f]) continue;
+    [imgs addObject:f];
+  }
   [imgs sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b){ return [b compare:a]; }];
   CGFloat x=8,y=300;
   for (NSString *f in imgs) {
@@ -23783,6 +24018,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
     NSMenuItem *openItem = [[NSMenuItem alloc] initWithTitle:@"打开" action:@selector(openGalleryImagePath:) keyEquivalent:@""];
     openItem.target=self; openItem.representedObject=f; [menu addItem:openItem];
+    NSString *favTitle = [self.aiGalleryFavorites containsObject:f] ? @"取消收藏" : @"收藏";
+    NSMenuItem *favItem = [[NSMenuItem alloc] initWithTitle:favTitle action:@selector(toggleGalleryFavorite:) keyEquivalent:@""];
+    favItem.target=self; favItem.representedObject=f; [menu addItem:favItem];
     NSMenuItem *revealItem = [[NSMenuItem alloc] initWithTitle:@"在 Finder 显示" action:@selector(revealGalleryImagePath:) keyEquivalent:@""];
     revealItem.target=self; revealItem.representedObject=f; [menu addItem:revealItem];
     NSMenuItem *infoItem = [[NSMenuItem alloc] initWithTitle:@"显示信息" action:@selector(showGalleryImageInfo:) keyEquivalent:@""];
@@ -23805,6 +24043,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)openGalleryImagePath:(NSMenuItem *)item {
   NSString *f = item.representedObject;
   if (f.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[[self aiGeneratedDirectory] stringByAppendingPathComponent:f]]];
+}
+
+- (void)toggleGalleryFavorite:(NSMenuItem *)item {
+  NSString *f = item.representedObject;
+  if (!f.length) return;
+  if (!self.aiGalleryFavorites) self.aiGalleryFavorites = [NSMutableSet set];
+  if ([self.aiGalleryFavorites containsObject:f]) [self.aiGalleryFavorites removeObject:f];
+  else [self.aiGalleryFavorites addObject:f];
+  [[NSUserDefaults standardUserDefaults] setObject:self.aiGalleryFavorites.allObjects forKey:@"centerAIGalleryFavorites"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self showAIImageGallery:nil];
 }
 
 - (void)revealGalleryImagePath:(NSMenuItem *)item {
