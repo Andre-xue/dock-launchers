@@ -1622,6 +1622,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *localAIPolicyWindow;
 @property BOOL localOllamaAutoStarting, localComfyAutoStarting;
 @property NSTimeInterval localOllamaLastAutoStart, localComfyLastAutoStart;
+@property NSTimeInterval localOllamaStartAt, localComfyStartAt;
 @property (strong) NSWindow *aiVisionWindow, *aiEditWindow;
 @property (strong) NSPopUpButton *aiVisionServicePopup, *aiEditServicePopup, *aiEditSizePopup;
 @property (strong) NSTextField *aiVisionModelField, *aiVisionURLField, *aiVisionStatus, *aiEditModelField, *aiEditURLField, *aiEditStatus;
@@ -7501,16 +7502,17 @@ static BOOL ValidGroupName(NSString *raw) {
   [[session dataTaskWithURL:[NSURL URLWithString:@"http://127.0.0.1:11434/api/version"] completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
     dispatch_async(dispatch_get_main_queue(),^{
       BOOL on=!e && [(NSHTTPURLResponse *)r statusCode]==200;
-      self.localAISwitchUpdating=YES;
-      self.localOllamaSwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
-      self.localAISwitchUpdating=NO;
-      self.localOllamaStatus.stringValue=on?@"运行中 · http://127.0.0.1:11434":@"已停止";
       self.localOllamaRunning=on;
       if(on&&self.localAIRunningOwner==0)self.localAIRunningOwner=1;
       if(on)[self enforceLocalAIExclusive];
       NSTimeInterval now=[[NSDate date] timeIntervalSince1970];
-      if(!on && self.localOllamaWanted && !self.localOllamaAutoStarting && now-self.localOllamaLastAutoStart>8){
-        self.localOllamaAutoStarting=YES; self.localOllamaLastAutoStart=now;
+      BOOL starting=!on&&self.localOllamaWanted&&(now-self.localOllamaStartAt<90);
+      self.localAISwitchUpdating=YES;
+      self.localOllamaSwitch.state=(on||starting)?NSControlStateValueOn:NSControlStateValueOff;
+      self.localAISwitchUpdating=NO;
+      self.localOllamaStatus.stringValue=on?@"运行中 · http://127.0.0.1:11434":(starting?@"正在启动，首次约 10–20 秒…":@"已停止");
+      if(!on && self.localOllamaWanted && !starting && !self.localOllamaAutoStarting && now-self.localOllamaLastAutoStart>8){
+        self.localOllamaAutoStarting=YES; self.localOllamaLastAutoStart=now; self.localOllamaStartAt=now;
         [self startLocalOllamaAuto];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(6*NSEC_PER_SEC)),dispatch_get_main_queue(),^{self.localOllamaAutoStarting=NO;});
       }
@@ -7530,16 +7532,17 @@ static BOOL ValidGroupName(NSString *raw) {
   [[session dataTaskWithURL:[NSURL URLWithString:@"http://127.0.0.1:8188/system_stats"] completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
     dispatch_async(dispatch_get_main_queue(),^{
       BOOL on=!e && [(NSHTTPURLResponse *)r statusCode]==200;
-      self.localAISwitchUpdating=YES;
-      self.localComfySwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
-      self.localAISwitchUpdating=NO;
-      self.localComfyStatus.stringValue=on?@"运行中 · http://127.0.0.1:8188":@"已停止";
       self.localComfyRunning=on;
       if(on&&self.localAIRunningOwner==0)self.localAIRunningOwner=2;
       if(on)[self enforceLocalAIExclusive];
       NSTimeInterval now=[[NSDate date] timeIntervalSince1970];
-      if(!on && self.localComfyWanted && !self.localComfyAutoStarting && now-self.localComfyLastAutoStart>10){
-        self.localComfyAutoStarting=YES; self.localComfyLastAutoStart=now;
+      BOOL starting=!on&&self.localComfyWanted&&(now-self.localComfyStartAt<120);
+      self.localAISwitchUpdating=YES;
+      self.localComfySwitch.state=(on||starting)?NSControlStateValueOn:NSControlStateValueOff;
+      self.localAISwitchUpdating=NO;
+      self.localComfyStatus.stringValue=on?@"运行中 · http://127.0.0.1:8188":(starting?@"正在启动，首次约 10–30 秒…":@"已停止");
+      if(!on && self.localComfyWanted && !starting && !self.localComfyAutoStarting && now-self.localComfyLastAutoStart>10){
+        self.localComfyAutoStarting=YES; self.localComfyLastAutoStart=now; self.localComfyStartAt=now;
         [self startLocalComfyAuto];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(8*NSEC_PER_SEC)),dispatch_get_main_queue(),^{self.localComfyAutoStarting=NO;});
       }
@@ -7557,8 +7560,14 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)localAIToggleOllama:(NSSwitch *)sender {
   if(self.localAISwitchUpdating) return;
+  if(sender.state==NSControlStateValueOn && self.localOllamaWanted && ([[NSDate date] timeIntervalSince1970]-self.localOllamaStartAt<30)){
+    self.localOllamaStatus.stringValue=@"正在启动，请稍候…";
+    self.localAISwitchUpdating=YES; sender.state=NSControlStateValueOn; self.localAISwitchUpdating=NO;
+    return;
+  }
   if(sender.state==NSControlStateValueOn){
     self.localOllamaWanted=YES;
+    self.localOllamaStartAt=[[NSDate date] timeIntervalSince1970];
     self.localAIRunningOwner=1;
     if(![self localAIDualAllowed] && (self.localComfyRunning||self.localComfySwitch.state==NSControlStateValueOn)){
       [self stopLocalComfyForExclusive];
@@ -7603,8 +7612,14 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)localAIToggleComfy:(NSSwitch *)sender {
   if(self.localAISwitchUpdating) return;
+  if(sender.state==NSControlStateValueOn && self.localComfyWanted && (self.localComfyTask.isRunning || [[NSDate date] timeIntervalSince1970]-self.localComfyStartAt<120)){
+    self.localComfyStatus.stringValue=@"正在启动，请稍候…";
+    self.localAISwitchUpdating=YES; sender.state=NSControlStateValueOn; self.localAISwitchUpdating=NO;
+    return;
+  }
   if(sender.state==NSControlStateValueOn){
     self.localComfyWanted=YES;
+    self.localComfyStartAt=[[NSDate date] timeIntervalSince1970];
     self.localAIRunningOwner=2;
     if(![self localAIDualAllowed] && (self.localOllamaRunning||self.localOllamaSwitch.state==NSControlStateValueOn)){
       [self stopLocalOllamaForExclusive];
