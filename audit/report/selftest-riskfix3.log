@@ -1,0 +1,14 @@
+PASS section 0
+PASS section 1
+PASS section 2
+PASS section 3
+PASS section 4
+PASS section 5
+PASS groups loaded
+PASS exact group search
+PASS AI preset exact name
+PASS AI preset alias
+PASS AI rows per page
+PASS protected path filter
+PASS AI category inference
+SELFTEST OK
