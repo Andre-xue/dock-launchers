@@ -2354,6 +2354,10 @@ static NSImage *DiskVideoFrameForPath(NSString *path) {
 - (void)cellDoubleClicked:(id)sender {
   if ([self.owner respondsToSelector:@selector(galleryItemDoubleClicked:)]) [self.owner performSelector:@selector(galleryItemDoubleClicked:) withObject:self];
 }
+- (void)prepareForReuse {
+  [super prepareForReuse];
+  self.view.layer.borderWidth = 0;
+}
 - (void)setSelected:(BOOL)selected {
   [super setSelected:selected];
   self.view.layer.borderWidth = selected ? 3 : 0;
@@ -9568,6 +9572,8 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger start = self.diskGalleryPage * 6;
   NSInteger len = MIN(6, MAX(0, total - start));
   self.diskGalleryItems = len > 0 ? [self.diskAllGalleryItems subarrayWithRange:NSMakeRange(start, len)] : @[];
+  self.diskSelectedIndex = -1;
+  [self.diskCollection deselectAll:nil];
   [self.diskCollection reloadData];
   self.diskPageLabel.stringValue = [NSString stringWithFormat:@"%ld/%ld", (long)(self.diskGalleryPage + 1), (long)pages];
   BOOL show = self.diskCollectionScroll.hidden == NO && total > 0;
@@ -9754,6 +9760,7 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)collectionView:(NSCollectionView *)collectionView didSelectItemsAtIndexPaths:(NSSet<NSIndexPath *> *)indexPaths {
   NSIndexPath *ip = indexPaths.anyObject;
   self.diskSelectedIndex = ip ? ip.item : -1;
+  for (NSCollectionViewItem *it in collectionView.visibleItems) { NSIndexPath *p=[collectionView indexPathForItem:it]; [it setSelected:ip && p && [p isEqual:ip]]; }
 }
 - (void)galleryItemClicked:(DiskGalleryItem *)item {
   NSInteger idx = [self.diskGalleryItems indexOfObject:item.file];
@@ -9954,6 +9961,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger local=global-newPage*pageSize;
   if(local<0||local>=(NSInteger)self.diskGalleryItems.count)return;
   NSIndexPath *ip=[NSIndexPath indexPathForItem:local inSection:0];
+  [self.diskCollection deselectAll:nil];
   [self.diskCollection selectItemsAtIndexPaths:[NSSet setWithObject:ip] scrollPosition:NSCollectionViewScrollPositionNearestHorizontalEdge];
   self.diskSelectedIndex=local;
   QLPreviewPanel *panel=[QLPreviewPanel sharedPreviewPanel];
