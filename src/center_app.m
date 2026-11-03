@@ -1581,6 +1581,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSString *capturePendingScreenPath;
 @property BOOL captureCameraWaiting;
 @property BOOL captureCameraComposing;
+@property BOOL captureNoiseAttempted;
 @property BOOL suppressCaptureToolShow;
 @property BOOL allowTerminate;
 @property (strong) NSWindow *captureCameraWindow, *captureCountdownWindow, *captureResultWindow;
@@ -14446,24 +14447,32 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *ext = exts[MIN(fi, 3)];
   long quality = 85;
   NSInteger maxSide = [self.imageResolutionPopup.selectedItem.representedObject integerValue];
-  NSInteger ok = 0, fail = 0;
-  for (NSString *path in self.imageToolItems) {
-    NSString *base = path.lastPathComponent.stringByDeletingPathExtension;
-    NSString *out = [[p.URL.path stringByAppendingPathComponent:base] stringByAppendingPathExtension:ext];
-    if ([[out stringByStandardizingPath] isEqualToString:[path stringByStandardizingPath]]) out = [[p.URL.path stringByAppendingPathComponent:[base stringByAppendingString:@"_converted"]] stringByAppendingPathExtension:ext];
-    NSMutableArray *args = [NSMutableArray arrayWithObjects:@"-s", @"format", format, nil];
-    NSInteger rotate = [self.imageRotatePopup.selectedItem.representedObject integerValue];
-    if (rotate != 0) [args addObjectsFromArray:@[@"-r", [NSString stringWithFormat:@"%ld", (long)rotate]]];
-    if ([format isEqualToString:@"jpeg"]) [args addObjectsFromArray:@[@"-s", @"formatOptions", [NSString stringWithFormat:@"%ld", quality]]];
-    if (maxSide > 0) [args addObjectsFromArray:@[@"--resampleHeightWidthMax", [NSString stringWithFormat:@"%ld", (long)maxSide]]];
-    [args addObjectsFromArray:@[path, @"--out", out]];
-    NSTask *t = [[NSTask alloc] init];
-    t.launchPath = @"/usr/bin/sips"; t.arguments = args;
-    t.standardOutput = [NSPipe pipe]; t.standardError = [NSPipe pipe];
-    @try { [t launch]; [t waitUntilExit]; if (t.terminationStatus == 0) ok++; else fail++; } @catch (NSException *e) { fail++; }
-  }
-  [self showToast:[NSString stringWithFormat:@"转换完成：%ld 个成功，%ld 个失败", (long)ok, (long)fail]];
-  [[NSWorkspace sharedWorkspace] openURL:p.URL];
+  NSInteger rotate = [self.imageRotatePopup.selectedItem.representedObject integerValue];
+  NSArray *paths = [self.imageToolItems copy];
+  NSString *outDir = [p.URL.path copy];
+  [self showToast:@"正在转换图片…"];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSInteger ok = 0, fail = 0;
+    for (NSString *path in paths) {
+      NSString *base = path.lastPathComponent.stringByDeletingPathExtension;
+      NSString *out = [[outDir stringByAppendingPathComponent:base] stringByAppendingPathExtension:ext];
+      if ([[out stringByStandardizingPath] isEqualToString:[path stringByStandardizingPath]]) out = [[outDir stringByAppendingPathComponent:[base stringByAppendingString:@"_converted"]] stringByAppendingPathExtension:ext];
+      NSMutableArray *args = [NSMutableArray arrayWithObjects:@"-s", @"format", format, nil];
+      if (rotate != 0) [args addObjectsFromArray:@[@"-r", [NSString stringWithFormat:@"%ld", (long)rotate]]];
+      if ([format isEqualToString:@"jpeg"]) [args addObjectsFromArray:@[@"-s", @"formatOptions", [NSString stringWithFormat:@"%ld", quality]]];
+      if (maxSide > 0) [args addObjectsFromArray:@[@"--resampleHeightWidthMax", [NSString stringWithFormat:@"%ld", (long)maxSide]]];
+      [args addObjectsFromArray:@[path, @"--out", out]];
+      NSTask *t = [[NSTask alloc] init];
+      t.launchPath = @"/usr/bin/sips"; t.arguments = args;
+      t.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+      t.standardError = [NSFileHandle fileHandleWithNullDevice];
+      @try { [t launch]; [t waitUntilExit]; if (t.terminationStatus == 0) ok++; else fail++; } @catch (NSException *e) { fail++; }
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self showToast:[NSString stringWithFormat:@"转换完成：%ld 个成功，%ld 个失败", (long)ok, (long)fail]];
+      [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:outDir]];
+    });
+  });
 }
 
 - (void)imageImportFinderSelection:(id)sender {
@@ -18025,6 +18034,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSString *incoming = [tmp stringByAppendingPathComponent:name];
     if ([fm fileExistsAtPath:incoming]) [fm copyItemAtPath:incoming toPath:[support stringByAppendingPathComponent:name] error:NULL];
   }
+  // 安全：导入配置时移除可执行 shell 自定义菜单项，避免静默执行命令
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSArray *customItems = [ud arrayForKey:@"centerRadialCustomItems"] ?: @[];
+  NSMutableArray *safeItems = [NSMutableArray array];
+  for (NSDictionary *ci in customItems) if (![ci[@"customType"] isEqualToString:@"shell"]) [safeItems addObject:ci];
+  if (safeItems.count != customItems.count) {
+    [ud setObject:safeItems forKey:@"centerRadialCustomItems"];
+    [ud synchronize];
+  }
   if (!isDir) [fm removeItemAtPath:tmp error:NULL];
   [self refreshGroups];
   [self ensureGroupDockEntries];
@@ -21089,11 +21107,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)composeCameraSegments:(NSArray<NSURL *> *)cameraPaths overScreen:(NSString *)screenPath {
   BOOL noiseReduction = [self noiseReductionLevel] > 0;
-  if (noiseReduction && [self fileNeedsAudioMix:screenPath]) {
+  if (noiseReduction && !self.captureNoiseAttempted && [self fileNeedsAudioMix:screenPath]) {
+    self.captureNoiseAttempted = YES;
     NSInteger gainDB = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerCaptureMicGain"];
     self.captureStatusLabel.stringValue = @"正在处理麦克风降噪…";
     __weak typeof(self) weakSelf = self;
     [self applyMicGainToFile:screenPath gainDB:gainDB completion:^(BOOL ok) {
+      if (!ok) dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.captureStatusLabel.stringValue = @"麦克风降噪失败，继续合成"; });
       [weakSelf composeCameraSegments:cameraPaths overScreen:screenPath];
     }];
     return;
@@ -21261,9 +21281,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = @"/usr/bin/osascript";
   t.arguments = @[@"-e", @"input volume of (get volume settings)"];
-  NSPipe *pipe = [NSPipe pipe]; t.standardOutput = pipe; t.standardError = [NSPipe pipe];
-  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) { return -1; }
+  NSPipe *pipe = [NSPipe pipe]; t.standardOutput = pipe; t.standardError = [NSFileHandle fileHandleWithNullDevice];
+  @try { [t launch]; } @catch (NSException *e) { return -1; }
   NSData *d = [pipe.fileHandleForReading readDataToEndOfFile];
+  [t waitUntilExit];
   NSString *s = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
   return s ? s.integerValue : -1;
 }
@@ -21716,6 +21737,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)liveAnnoClose:(id)sender { [self.liveAnnotationWindow orderOut:nil]; }
 
 - (void)captureFullScreen:(id)sender {
+  if (![self ensureScreenCapturePermission]) return;
   NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
   NSInteger delay = [self captureDelaySeconds];
   NSMutableArray *args = [NSMutableArray arrayWithObjects:@"-x", nil];
@@ -21725,11 +21747,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)captureRegion:(id)sender {
+  if (![self ensureScreenCapturePermission]) return;
   NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
   [self runScreenshotArgs:@[@"-i", @"-x", path] path:path];
 }
 
 - (void)captureWindowShot:(id)sender {
+  if (![self ensureScreenCapturePermission]) return;
   NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
   [self runScreenshotArgs:@[@"-i", @"-W", @"-x", path] path:path];
 }
@@ -21843,6 +21867,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)pinScreenshotInteractive:(id)sender {
+  if (![self ensureScreenCapturePermission]) return;
   __weak typeof(self) weakSelf = self;
   [self beginCaptureRegion:^(NSRect region) {
     NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"pin-%lld.png", (long long)[[NSDate date] timeIntervalSince1970]]];
@@ -21854,6 +21879,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)startScrollCapture:(id)sender {
+  if (![self ensureScreenCapturePermission]) return;
   [self hideCapturePanelForCapture];
   __weak typeof(self) weakSelf = self;
   [self beginCaptureRegion:^(NSRect region) {
@@ -25226,7 +25252,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiTTSKeepOriginalCheck.toolTip = @"不勾选则用配音替换视频原音轨";
     [cv addSubview:self.aiTTSKeepOriginalCheck];
     self.aiTTSStatus = [self label:@"选择服务后输入文本" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    self.aiTTSStatus.frame = NSMakeRect(268,70,368,18); [cv addSubview:self.aiTTSStatus];
+    self.aiTTSStatus.frame = NSMakeRect(268,70,220,18); [cv addSubview:self.aiTTSStatus];
+    ColorHoverButton *openVideo = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(500,66,120,28)];
+    openVideo.title=@"打开配音视频"; openVideo.hoverColor=[NSColor systemIndigoColor]; openVideo.font=[NSFont systemFontOfSize:10]; openVideo.target=self; openVideo.action=@selector(openAITTSVideoResult:);
+    [openVideo applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:openVideo];
     [self.aiTTSWindow center];
   }
   [self reloadAITTSServices];
@@ -25441,6 +25470,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   } else {
     self.aiTTSStatus.stringValue = err.localizedDescription ?: @"保存失败";
   }
+}
+
+- (void)openAITTSVideoResult:(id)sender {
+  if (!self.aiTTSVideoResultPath.length || ![[NSFileManager defaultManager] fileExistsAtPath:self.aiTTSVideoResultPath]) { [self showToast:@"还没有合成配音视频"]; return; }
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.aiTTSVideoResultPath]];
 }
 
 - (void)openAITTSResult:(id)sender {
@@ -25719,8 +25753,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     AVMutableCompositionTrack *ct = [comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
     [ct insertTimeRange:CMTimeRangeMake(kCMTimeZero, asset.duration) ofTrack:at atTime:kCMTimeZero error:NULL];
   }
-  AVMutableVideoComposition *vc = [AVMutableVideoComposition videoCompositionWithPropertiesOfAsset:asset];
-  CGSize size = vc.renderSize.width > 0 ? vc.renderSize : videoTracks[0].naturalSize;
+  AVMutableVideoComposition *vc = [AVMutableVideoComposition videoComposition];
+  vc.renderSize = videoTracks[0].naturalSize;
+  vc.frameDuration = CMTimeMake(1, 30);
+  AVMutableVideoCompositionInstruction *instruction = [AVMutableVideoCompositionInstruction videoCompositionInstruction];
+  instruction.timeRange = CMTimeRangeMake(kCMTimeZero, comp.duration);
+  AVMutableVideoCompositionLayerInstruction *layerInstruction = [AVMutableVideoCompositionLayerInstruction videoCompositionLayerInstructionWithAssetTrack:vt];
+  [layerInstruction setTransform:videoTracks[0].preferredTransform atTime:kCMTimeZero];
+  instruction.layerInstructions = @[layerInstruction];
+  vc.instructions = @[instruction];
+  CGSize size = vc.renderSize;
   CGFloat duration = CMTimeGetSeconds(asset.duration);
   NSMutableArray *lines = [NSMutableArray array];
   NSArray *rawLines = [transcript componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\n。！？!?"]];
@@ -26063,7 +26105,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.captureResultTimer invalidate];
   if (self.captureResultWindow) [self.captureResultWindow orderOut:nil];
   BOOL isVideo = [@[@"mp4",@"mov",@"m4v"] containsObject:path.pathExtension.lowercaseString];
-  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,360,132) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+  NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,400,140) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
   w.opaque = NO;
   w.backgroundColor = [NSColor clearColor];
   w.level = NSFloatingWindowLevel;
@@ -26082,19 +26124,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [cv addSubview:thumb];
   NSTextField *name = [self label:path.lastPathComponent size:12 bold:YES color:[NSColor whiteColor]];
   name.lineBreakMode = NSLineBreakByTruncatingMiddle;
-  name.frame = NSMakeRect(120,96,224,18); [cv addSubview:name];
+  name.frame = NSMakeRect(120,102,230,18); [cv addSubview:name];
   NSTextField *kind = [self label:isVideo ? @"录屏已保存" : @"截图已保存" size:10 bold:NO color:[NSColor colorWithCalibratedWhite:0.75 alpha:1.0]];
-  kind.frame = NSMakeRect(120,76,224,16); [cv addSubview:kind];
+  kind.frame = NSMakeRect(120,80,230,16); [cv addSubview:kind];
   NSArray *titles = @[@"复制", @"打开", @"访达", @"AirDrop", @"删除"];
   NSArray *sels = @[@"copyCaptureResult:", @"openCaptureResult:", @"revealCaptureResult:", @"airdropCaptureResult:", @"trashCaptureResult:"];
   for (NSInteger i=0;i<5;i++) {
-    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(120+i*43,32,39,28)];
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(120+i*46,32,42,28)];
     b.title=titles[i]; b.tag=i; b.hoverColor = i==4 ? [NSColor systemRedColor] : [NSColor systemTealColor];
     b.target=self; b.action=NSSelectorFromString(sels[i]);
     [b applyColor:[NSColor colorWithCalibratedWhite:0.22 alpha:1.0] textColor:[NSColor whiteColor]];
     [cv addSubview:b];
   }
-  ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(328,98,22,22)];
+  ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(368,104,22,22)];
   close.title=@"×"; close.hoverColor=[NSColor systemRedColor]; close.target=self; close.action=@selector(closeCaptureResult:);
   [close applyColor:[NSColor colorWithCalibratedWhite:0.20 alpha:1.0] textColor:[NSColor whiteColor]];
   [cv addSubview:close];
@@ -26397,6 +26439,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)startCaptureRecorderWithScene:(NSInteger)scene region:(NSRect)region {
+  self.captureNoiseAttempted = NO;
   if (!self.captureRecorder) self.captureRecorder = [[DLScreenRecorder alloc] init];
   NSInteger seconds = [self.captureDurationPopup.selectedItem.representedObject integerValue];
   NSString *path = [[self captureVideoDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"录屏-%@.mp4", [self captureTimestamp]]];
@@ -26659,6 +26702,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)quickScreenshot:(id)sender {
+  if (![self ensureScreenCapturePermission]) return;
   [self hideCapturePanelForCapture];
   usleep(120000);
   NSString *path = [[self captureDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"截图-%@.png", [self captureTimestamp]]];
