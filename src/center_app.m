@@ -25211,6 +25211,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   __block NSInteger ci=0; NSMutableArray *summaries=[NSMutableArray array];
   __block void (^next)(void); next=^{
+    if(token!=weakSelf.aiFileAnalysisToken)return;
     if(ci>=(NSInteger)chunks.count){
       NSMutableString *joined=[NSMutableString string];
       for(NSString *x in summaries)[joined appendFormat:@"\n\n%@",x];
@@ -25219,14 +25220,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [weakSelf aiFileAPICall:prompt model:model url:url key:key completion:^(NSString *answer,NSString *err){ if(token!=weakSelf.aiFileAnalysisToken)return; if(!answer.length){weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"分析失败：%@",err ?: @"无返回"];return;} [weakSelf aiFileSaveReport:answer files:files]; }];
       return;
     }
-    NSDictionary *c=chunks[ci];
-    weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"分段分析 %ld/%ld…",(long)(ci+1),(long)chunks.count];
-    NSString *p=[NSString stringWithFormat:@"请总结下面这段文档，保留关键数据、条款、结论和风险，并保留来源标记。\n来源：%@ 第%@段\n\n%@",c[@"source"],c[@"part"],c[@"text"]];
-    [weakSelf aiFileAPICall:p model:model url:url key:key completion:^(NSString *answer,NSString *err){
-      if(token!=weakSelf.aiFileAnalysisToken)return;
-      if(answer.length)[summaries addObject:[NSString stringWithFormat:@"[来源：%@ 第%@段]\n%@",c[@"source"],c[@"part"],answer]];
-      ci++; next();
-    }];
+    NSInteger start=ci; NSInteger end=MIN(start+2,(NSInteger)chunks.count); ci=end;
+    weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"分段分析 %ld-%ld/%ld（并发 2）…",(long)(start+1),(long)end,(long)chunks.count];
+    __block NSInteger pending=end-start;
+    dispatch_group_t group=dispatch_group_create();
+    for(NSInteger idx=start;idx<end;idx++){
+      NSDictionary *c=chunks[idx];
+      dispatch_group_enter(group);
+      NSString *p=[NSString stringWithFormat:@"请总结下面这段文档，保留关键数据、条款、结论和风险，并保留来源标记。\n来源：%@ 第%@段\n\n%@",c[@"source"],c[@"part"],c[@"text"]];
+      [weakSelf aiFileAPICall:p model:model url:url key:key completion:^(NSString *answer,NSString *err){
+        if(token!=weakSelf.aiFileAnalysisToken){dispatch_group_leave(group);return;}
+        if(answer.length)[summaries addObject:[NSString stringWithFormat:@"[来源：%@ 第%@段]\n%@",c[@"source"],c[@"part"],answer]];
+        pending--;
+        dispatch_group_leave(group);
+      }];
+    }
+    dispatch_group_notify(group,dispatch_get_main_queue(),^{ if(token==weakSelf.aiFileAnalysisToken)next(); });
   };
   next();
 }
