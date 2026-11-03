@@ -1603,6 +1603,19 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTask *localComfyTask, *localOllamaTask;
 @property (strong) NSWindow *localModelWindow;
 @property (strong) NSWindow *ollamaMarketWindow;
+@property (strong) NSButton *localModelMarketButton;
+@property (strong) NSWindow *comfyMarketWindow;
+@property (strong) NSWindow *whisperMarketWindow;
+@property (strong) NSTableView *whisperMarketTable;
+@property (strong) NSArray *whisperMarketModels;
+@property (strong) NSArray *whisperMarketFiltered;
+@property (strong) NSTextField *whisperMarketStatus;
+@property (strong) NSTextField *comfyMarketSearch;
+@property (strong) NSPopUpButton *comfyMarketCategory;
+@property (strong) NSTableView *comfyMarketTable;
+@property (strong) NSTextField *comfyMarketStatus;
+@property (strong) NSArray *comfyMarketModels;
+@property (strong) NSArray *comfyMarketFiltered;
 @property (strong) NSTextField *ollamaMarketSearch;
 @property (strong) NSPopUpButton *ollamaMarketCategory;
 @property (strong) NSTableView *ollamaMarketTable;
@@ -7194,6 +7207,179 @@ static BOOL ValidGroupName(NSString *raw) {
   return @"对话";
 }
 
+- (NSArray *)whisperCuratedModels {
+  return @[
+    @{@"name":@"ggml-tiny.bin",@"category":@"轻量",@"size":@"75 MB",@"url":@"https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",@"recommended":@YES},
+    @{@"name":@"ggml-base.bin",@"category":@"平衡",@"size":@"142 MB",@"url":@"https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",@"recommended":@YES},
+    @{@"name":@"ggml-small.bin",@"category":@"平衡",@"size":@"466 MB",@"url":@"https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",@"recommended":@YES},
+    @{@"name":@"ggml-medium.bin",@"category":@"高精度",@"size":@"1.5 GB",@"url":@"https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",@"recommended":@NO},
+    @{@"name":@"ggml-large-v3.bin",@"category":@"高精度",@"size":@"3.1 GB",@"url":@"https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",@"recommended":@NO}
+  ];
+}
+
+- (void)showWhisperModelMarket:(id)sender {
+  if(!self.whisperMarketWindow){
+    self.whisperMarketWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.whisperMarketWindow.title=@"Whisper 模型市场"; self.whisperMarketWindow.releasedWhenClosed=NO;
+    NSView *cv=self.whisperMarketWindow.contentView;
+    NSTextField *t=[self label:@"Whisper 模型市场" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,450,320,28); [cv addSubview:t];
+    double gb=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
+    NSTextField *h=[self label:[NSString stringWithFormat:@"当前内存约 %.0f GB；base/small 适合 8GB，medium/large 需要更多内存",gb] size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,426,660,18); [cv addSubview:h];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,86,672,320)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.whisperMarketTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"wm"]; col.title=@"模型"; col.width=650; [self.whisperMarketTable addTableColumn:col];
+    self.whisperMarketTable.rowHeight=34; self.whisperMarketTable.dataSource=self; self.whisperMarketTable.delegate=self; self.whisperMarketTable.target=self; self.whisperMarketTable.doubleAction=@selector(whisperMarketInstall:);
+    sv.documentView=self.whisperMarketTable; [cv addSubview:sv];
+    self.whisperMarketStatus=[self label:@"选择模型下载到 Models 目录" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.whisperMarketStatus.frame=NSMakeRect(24,50,380,18); [cv addSubview:self.whisperMarketStatus];
+    ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(410,40,110,30)]; dl.title=@"下载安装"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(whisperMarketInstall:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(606,40,90,30)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeWhisperModelMarket:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.whisperMarketWindow center];
+  }
+  [self whisperMarketReload:nil];
+  [self bringAuxiliaryWindowToFront:self.whisperMarketWindow];
+}
+
+- (void)closeWhisperModelMarket:(id)sender { [self.whisperMarketWindow orderOut:nil]; }
+
+- (void)whisperMarketReload:(id)sender {
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSMutableArray *all=[NSMutableArray array];
+    for(NSDictionary *x in [self whisperCuratedModels])[all addObject:[x mutableCopy]];
+    NSString *dir=[self localModelDir];
+    NSSet *files=[NSSet setWithArray:[[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] ?: @[]];
+    for(NSMutableDictionary *m in all) if([files containsObject:m[@"name"]])m[@"installed"]=@YES;
+    dispatch_async(dispatch_get_main_queue(),^{
+      self.whisperMarketModels=all; self.whisperMarketFiltered=all; [self.whisperMarketTable reloadData];
+      self.whisperMarketStatus.stringValue=[NSString stringWithFormat:@"%ld 个模型，已安装 %ld 个",(long)all.count,(long)files.count];
+    });
+  });
+}
+
+- (void)whisperMarketInstall:(id)sender {
+  NSInteger row=self.whisperMarketTable.selectedRow;
+  if(row<0||row>=(NSInteger)self.whisperMarketFiltered.count){self.whisperMarketStatus.stringValue=@"请先选择模型";return;}
+  NSDictionary *m=self.whisperMarketFiltered[row];
+  if([m[@"installed"] boolValue]){self.whisperMarketStatus.stringValue=@"该模型已安装";return;}
+  NSString *name=m[@"name"] ?: @""; NSString *url=m[@"url"] ?: @""; if(!url.length)return;
+  NSString *dir=[self localModelDir]; [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *dst=[dir stringByAppendingPathComponent:name];
+  self.whisperMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@…",name];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/curl"; t.arguments=@[@"-L",@"--fail",@"--retry",@"2",@"-o",dst,url];
+    t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+    BOOL ok=NO; @try{[t launch];[t waitUntilExit];ok=(t.terminationStatus==0);}@catch(NSException *e){}
+    dispatch_async(dispatch_get_main_queue(),^{
+      self.whisperMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",name]:[NSString stringWithFormat:@"%@ 下载失败",name];
+      [self whisperMarketReload:nil];
+    });
+  });
+}
+
+- (NSArray *)comfyCuratedModels {
+  return @[
+    @{@"name":@"v1-5-pruned-emaonly-fp16.safetensors",@"category":@"基础",@"size":@"2.1 GB",@"desc":@"SD1.5 fp16，8GB 内存首选",@"url":@"https://hf-mirror.com/Comfy-Org/stable-diffusion-v1-5-archive/resolve/main/v1-5-pruned-emaonly-fp16.safetensors",@"recommended":@YES},
+    @{@"name":@"v1-5-pruned-emaonly.safetensors",@"category":@"基础",@"size":@"4.0 GB",@"desc":@"SD1.5 完整版，兼容性最好",@"url":@"https://hf-mirror.com/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors",@"recommended":@YES},
+    @{@"name":@"DreamShaper_8_pruned.safetensors",@"category":@"写实",@"size":@"2.0 GB",@"desc":@"DreamShaper 8，SD1.5 写实",@"url":@"https://hf-mirror.com/Lykon/DreamShaper/resolve/main/DreamShaper_8_pruned.safetensors",@"recommended":@YES},
+    @{@"name":@"anything-v5.safetensors",@"category":@"动漫",@"size":@"2.0 GB",@"desc":@"Anything V5 动漫风格",@"url":@"https://hf-mirror.com/stablediffusionapi/anything-v5/resolve/main/anything-v5.safetensors",@"recommended":@YES},
+    @{@"name":@"Realistic_Vision_V6.0_NV_B1.safetensors",@"category":@"写实",@"size":@"2.0 GB",@"desc":@"真实人像，SD1.5",@"url":@"https://hf-mirror.com/SG161222/Realistic_Vision_V6.0_B1_noVAE/resolve/main/Realistic_Vision_V6.0_NV_B1.safetensors",@"recommended":@YES},
+    @{@"name":@"sd_xl_base_1.0.safetensors",@"category":@"SDXL",@"size":@"6.9 GB",@"desc":@"SDXL 基础模型，建议 16GB",@"url":@"https://hf-mirror.com/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors",@"recommended":@NO},
+    @{@"name":@"sd_xl_refiner_1.0.safetensors",@"category":@"SDXL",@"size":@"6.1 GB",@"desc":@"SDXL 精修模型",@"url":@"https://hf-mirror.com/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors",@"recommended":@NO},
+    @{@"name":@"sd_xl_turbo_1.0_fp16.safetensors",@"category":@"快速",@"size":@"6.9 GB",@"desc":@"SDXL Turbo，少步出图",@"url":@"https://hf-mirror.com/stabilityai/sdxl-turbo/resolve/main/sd_xl_turbo_1.0_fp16.safetensors",@"recommended":@NO}
+  ];
+}
+
+- (void)showComfyModelMarket:(id)sender {
+  if(!self.comfyMarketWindow){
+    self.comfyMarketWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,860,600) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.comfyMarketWindow.title=@"ComfyUI 模型市场"; self.comfyMarketWindow.releasedWhenClosed=NO;
+    NSView *cv=self.comfyMarketWindow.contentView;
+    NSTextField *t=[self label:@"ComfyUI 模型市场" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,550,320,28); [cv addSubview:t];
+    double gb=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
+    NSTextField *h=[self label:[NSString stringWithFormat:@"当前内存约 %.0f GB；8GB 建议 SD1.5，16GB 以上可尝试 SDXL",gb] size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,526,780,18); [cv addSubview:h];
+    self.comfyMarketSearch=[[NSSearchField alloc] initWithFrame:NSMakeRect(24,490,300,28)]; self.comfyMarketSearch.placeholderString=@"搜索模型"; self.comfyMarketSearch.target=self; self.comfyMarketSearch.action=@selector(comfyMarketFilterChanged:); [self.comfyMarketSearch setContinuous:YES]; [cv addSubview:self.comfyMarketSearch];
+    self.comfyMarketCategory=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(336,490,160,28) pullsDown:NO];
+    for(NSString *c in @[@"全部",@"推荐",@"基础",@"写实",@"动漫",@"SDXL",@"快速"])[self.comfyMarketCategory addItemWithTitle:c];
+    self.comfyMarketCategory.target=self; self.comfyMarketCategory.action=@selector(comfyMarketFilterChanged:); [cv addSubview:self.comfyMarketCategory];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,86,812,392)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.comfyMarketTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    for(NSArray *c in @[@[@"cmname",@"模型",@400],@[@"cmcat",@"分类",@100],@[@"cmsize",@"大小",@100],@[@"cmstatus",@"状态",@120]]){
+      NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:c[0]]; col.title=c[1]; col.width=[c[2] doubleValue]; [self.comfyMarketTable addTableColumn:col];
+    }
+    self.comfyMarketTable.rowHeight=44; self.comfyMarketTable.dataSource=self; self.comfyMarketTable.delegate=self; self.comfyMarketTable.target=self; self.comfyMarketTable.doubleAction=@selector(comfyMarketInstall:);
+    sv.documentView=self.comfyMarketTable; [cv addSubview:sv];
+    self.comfyMarketStatus=[self label:@"选择模型下载到 checkpoints 目录" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.comfyMarketStatus.frame=NSMakeRect(24,50,430,18); [cv addSubview:self.comfyMarketStatus];
+    ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(470,40,110,30)]; dl.title=@"下载安装"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(comfyMarketInstall:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
+    ColorHoverButton *refresh=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(590,40,90,30)]; refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(comfyMarketReload:); [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(746,40,90,30)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeComfyModelMarket:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.comfyMarketWindow center];
+  }
+  [self comfyMarketReload:nil];
+  [self bringAuxiliaryWindowToFront:self.comfyMarketWindow];
+}
+
+- (void)closeComfyModelMarket:(id)sender { [self.comfyMarketWindow orderOut:nil]; }
+
+- (void)comfyMarketReload:(id)sender {
+  self.comfyMarketStatus.stringValue=@"正在检查本地模型…";
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSMutableArray *all=[NSMutableArray array];
+    for(NSDictionary *x in [self comfyCuratedModels])[all addObject:[x mutableCopy]];
+    NSString *dir=[self localModelDir];
+    NSArray *files=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+    NSSet *installed=[NSSet setWithArray:files];
+    double memGB=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
+    for(NSMutableDictionary *m in all){
+      if([installed containsObject:m[@"name"]])m[@"installed"]=@YES;
+      double g=[m[@"size"] doubleValue];
+      BOOL rec=memGB<12?(g>0&&g<=3.0):(memGB<20?(g>0&&g<=7.5):YES);
+      m[@"recommended"]=@(rec);
+    }
+    dispatch_async(dispatch_get_main_queue(),^{
+      self.comfyMarketModels=all; [self comfyMarketFilterChanged:nil];
+      self.comfyMarketStatus.stringValue=[NSString stringWithFormat:@"%ld 个模型，已安装 %ld 个",(long)all.count,(long)installed.count];
+    });
+  });
+}
+
+- (void)comfyMarketFilterChanged:(id)sender {
+  NSString *q=[self.comfyMarketSearch.stringValue lowercaseString] ?: @"";
+  NSString *cat=self.comfyMarketCategory.titleOfSelectedItem ?: @"全部";
+  NSMutableArray *out=[NSMutableArray array];
+  for(NSDictionary *m in self.comfyMarketModels){
+    if(q.length&&![[(m[@"name"] ?: @"") lowercaseString] containsString:q])continue;
+    if([cat isEqualToString:@"推荐"]&&![m[@"recommended"] boolValue])continue;
+    if(![cat isEqualToString:@"全部"]&&![cat isEqualToString:@"推荐"]&&!([m[@"category"] isEqualToString:cat]))continue;
+    [out addObject:m];
+  }
+  self.comfyMarketFiltered=out; [self.comfyMarketTable reloadData];
+}
+
+- (void)comfyMarketInstall:(id)sender {
+  NSInteger row=self.comfyMarketTable.selectedRow;
+  if(row<0||row>=(NSInteger)self.comfyMarketFiltered.count){self.comfyMarketStatus.stringValue=@"请先选择模型";return;}
+  NSDictionary *m=self.comfyMarketFiltered[row];
+  if([m[@"installed"] boolValue]){self.comfyMarketStatus.stringValue=@"该模型已安装";return;}
+  NSString *url=m[@"url"] ?: @""; NSString *name=m[@"name"] ?: @"";
+  if(!url.length||!name.length)return;
+  NSString *dir=[self localModelDir]; [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *dst=[dir stringByAppendingPathComponent:name];
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=[NSString stringWithFormat:@"下载 %@？",name];
+  a.informativeText=[NSString stringWithFormat:@"文件约 %@，保存到：\n%@",m[@"size"] ?: @"未知",dir];
+  [a addButtonWithTitle:@"下载"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  self.comfyMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@…",name];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/curl"; t.arguments=@[@"-L",@"--fail",@"--retry",@"3",@"-o",dst,url];
+    t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+    BOOL ok=NO;
+    @try{[t launch];[t waitUntilExit];ok=(t.terminationStatus==0);}@catch(NSException *e){}
+    dispatch_async(dispatch_get_main_queue(),^{
+      self.comfyMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",name]:[NSString stringWithFormat:@"%@ 下载失败，请检查网络",name];
+      [self comfyMarketReload:nil];
+    });
+  });
+}
+
 - (void)showOllamaModelMarket:(id)sender {
   if(!self.ollamaMarketWindow){
     self.ollamaMarketWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,860,600) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -7319,6 +7505,7 @@ static BOOL ValidGroupName(NSString *raw) {
     ColorHoverButton *market=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(604,456,132,26)];
     market.title=@"模型市场…"; market.hoverColor=[NSColor systemOrangeColor]; market.font=[NSFont systemFontOfSize:10];
     market.target=self; market.action=@selector(showOllamaModelMarket:);
+    self.localModelMarketButton=market;
     [market applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:market];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,100,712,320)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.localModelTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
@@ -7334,6 +7521,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [self.localModelWindow center];
   }
   self.localModelWindow.title=service==0?@"Ollama 模型管理":(service==1?@"ComfyUI 模型管理":@"Whisper 模型管理");
+  self.localModelMarketButton.action=service==0?@selector(showOllamaModelMarket:):(service==1?@selector(showComfyModelMarket:):@selector(showWhisperModelMarket:));
   NSView *cv=self.localModelWindow.contentView;
   for(NSView *v in cv.subviews) if([v isKindOfClass:[ColorHoverButton class]] && ((ColorHoverButton *)v).tag<=4){v.hidden=NO;}
   // 重新排布底部按钮
@@ -10958,6 +11146,8 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.automationTable) return self.automationRules.count;
+  if (tableView == self.whisperMarketTable) return self.whisperMarketFiltered.count;
+  if (tableView == self.comfyMarketTable) return self.comfyMarketFiltered.count;
   if (tableView == self.ollamaMarketTable) return self.ollamaMarketFiltered.count;
   if (tableView == self.radialSearchTable) return self.radialSearchResults.count;
   if (tableView == self.localModelTable) return self.localModelItems.count;
@@ -11055,6 +11245,31 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,30)];
     NSTextField *l=[self label:self.videoEditorPaths[row].lastPathComponent size:11 bold:NO color:nil];
     l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,5,col.width-8,20); [v addSubview:l];
+    return v;
+  }
+  if (tableView == self.whisperMarketTable) {
+    if (row < 0 || row >= (NSInteger)self.whisperMarketFiltered.count) return nil;
+    NSDictionary *m=self.whisperMarketFiltered[row];
+    NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
+    NSTextField *l=[self label:m[@"name"] ?: @"" size:11 bold:YES color:nil]; l.frame=NSMakeRect(4,16,col.width-8,18); [v addSubview:l];
+    NSTextField *d=[self label:[NSString stringWithFormat:@"%@ · %@",m[@"category"] ?: @"",m[@"size"] ?: @""] size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.frame=NSMakeRect(4,2,col.width-8,14); [v addSubview:d];
+    return v;
+  }
+  if (tableView == self.comfyMarketTable) {
+    if (row < 0 || row >= (NSInteger)self.comfyMarketFiltered.count) return nil;
+    NSDictionary *m=self.comfyMarketFiltered[row];
+    NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
+    if ([col.identifier isEqualToString:@"cmname"]) {
+      NSTextField *l=[self label:m[@"name"] ?: @"" size:11 bold:YES color:nil]; l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,20,col.width-8,18); [v addSubview:l];
+      NSTextField *d=[self label:m[@"desc"] ?: @"" size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(4,3,col.width-8,14); [v addSubview:d];
+    } else if ([col.identifier isEqualToString:@"cmcat"]) {
+      NSTextField *l=[self label:m[@"category"] ?: @"" size:10 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
+    } else if ([col.identifier isEqualToString:@"cmsize"]) {
+      NSTextField *l=[self label:m[@"size"] ?: @"未知" size:10 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
+    } else {
+      BOOL installed=[m[@"installed"] boolValue]; BOOL rec=[m[@"recommended"] boolValue];
+      NSTextField *l=[self label:installed?@"已安装":(rec?@"★ 推荐":@"") size:10 bold:YES color:installed?[NSColor systemGreenColor]:[NSColor systemOrangeColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
+    }
     return v;
   }
   if (tableView == self.ollamaMarketTable) {
