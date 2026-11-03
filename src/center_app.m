@@ -1611,6 +1611,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSSearchField *radialSearchField;
 @property (strong) NSTableView *radialSearchTable;
 @property (strong) NSArray *radialSearchResults;
+@property (strong) NSPopUpButton *radialSearchModulePopup;
+@property (strong) NSMutableSet *radialSearchExpanded;
+@property (strong) id radialSearchKeyMonitor;
 @property BOOL localAISwitchUpdating;
 @property (strong) NSWindow *aiVisionWindow, *aiEditWindow;
 @property (strong) NSPopUpButton *aiVisionServicePopup, *aiEditServicePopup, *aiEditSizePopup;
@@ -10714,10 +10717,18 @@ static BOOL ValidGroupName(NSString *raw) {
     if (row < 0 || row >= (NSInteger)self.radialSearchResults.count) return nil;
     NSDictionary *r=self.radialSearchResults[row];
     NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
-    NSTextField *l=[self label:r[@"title"] ?: @"" size:11.5 bold:YES color:nil];
-    l.frame=NSMakeRect(6,16,col.width-12,18); [v addSubview:l];
-    NSTextField *p=[self label:[NSString stringWithFormat:@"第 %ld 页 · %@",(long)([r[@"page"] integerValue]+1),r[@"pageTitle"] ?: @""] size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
-    p.frame=NSMakeRect(6,2,col.width-12,14); [v addSubview:p];
+    if ([r[@"type"] isEqualToString:@"module"]) {
+      BOOL expanded=[r[@"expanded"] boolValue];
+      NSButton *arrow=[NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:(expanded?@"chevron.down":@"chevron.right") accessibilityDescription:nil] target:self action:@selector(radialSearchToggleRow:)];
+      arrow.bordered=NO; arrow.tag=row; arrow.frame=NSMakeRect(4,6,22,22); [v addSubview:arrow];
+      NSTextField *l=[self label:r[@"title"] ?: @"" size:12 bold:YES color:nil];
+      l.frame=NSMakeRect(30,8,col.width-100,18); [v addSubview:l];
+      NSTextField *c=[self label:[NSString stringWithFormat:@"%ld 项",(long)[r[@"count"] integerValue]] size:9.5 bold:NO color:[NSColor secondaryLabelColor]];
+      c.alignment=NSTextAlignmentRight; c.frame=NSMakeRect(col.width-80,9,66,16); [v addSubview:c];
+    } else {
+      NSTextField *l=[self label:r[@"title"] ?: @"" size:11 bold:NO color:nil];
+      l.frame=NSMakeRect(32,8,col.width-40,18); [v addSubview:l];
+    }
     return v;
   }
   if (tableView == self.localModelTable) {
@@ -17033,20 +17044,36 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 - (void)closeRadialPageCustomization:(id)sender { [self.radialCustomWindow orderOut:nil]; }
 
+- (NSString *)radialModuleTitleForPage:(NSInteger)page {
+  if(page<0||page>=(NSInteger)self.radialPages.count)return @"模块";
+  NSArray *items=self.radialPages[page];
+  NSMutableSet *actions=[NSMutableSet set];
+  for(NSDictionary *it in items) if(it[@"action"])[actions addObject:it[@"action"]];
+  if([actions containsObject:@"image"]||[actions containsObject:@"aiedit"]||[actions containsObject:@"aivision"])return @"图片 / 文档";
+  if([actions containsObject:@"capture"]||[actions containsObject:@"fullshot"]||[actions containsObject:@"scrollshot"])return @"截图工具";
+  if([actions containsObject:@"recordtoggle"]||[actions containsObject:@"recordpause"]||[actions containsObject:@"videopost"])return @"录屏工具";
+  if([actions containsObject:@"rename"]||[actions containsObject:@"compress"]||[actions containsObject:@"pdf"]||[actions containsObject:@"filesearch"])return @"文件工具";
+  if([actions containsObject:@"groups"]||[actions containsObject:@"scene"]||[actions containsObject:@"layouts"])return @"分组 / 场景";
+  if([actions containsObject:@"usage"]||[actions containsObject:@"process"]||[actions containsObject:@"startup"]||[actions containsObject:@"automation"])return @"系统工具";
+  return @"AI 工具";
+}
+
 - (void)showRadialSearch:(id)sender {
   [self.popover performClose:nil];
   if(!self.radialSearchWindow){
-    self.radialSearchWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,380,440) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.radialSearchWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,380,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.radialSearchWindow.title=@"搜索菜单栏功能";
     self.radialSearchWindow.releasedWhenClosed=NO;
     NSView *cv=self.radialSearchWindow.contentView;
-    NSTextField *t=[self label:@"搜索菜单栏功能" size:18 bold:YES color:nil]; t.frame=NSMakeRect(20,396,300,24); [cv addSubview:t];
-    self.radialSearchField=[[NSSearchField alloc] initWithFrame:NSMakeRect(20,358,340,28)];
-    self.radialSearchField.placeholderString=@"输入功能名，例如 AI 图片";
+    NSTextField *t=[self label:@"搜索菜单栏功能" size:18 bold:YES color:nil]; t.frame=NSMakeRect(20,456,300,24); [cv addSubview:t];
+    self.radialSearchField=[[NSSearchField alloc] initWithFrame:NSMakeRect(20,418,340,28)];
+    self.radialSearchField.placeholderString=@"搜索功能";
     self.radialSearchField.target=self; self.radialSearchField.action=@selector(radialSearchChanged:);
-    [self.radialSearchField setContinuous:YES];
-    [cv addSubview:self.radialSearchField];
-    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(20,64,340,280)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    [self.radialSearchField setContinuous:YES]; [cv addSubview:self.radialSearchField];
+    self.radialSearchModulePopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(20,382,340,26) pullsDown:NO];
+    self.radialSearchModulePopup.target=self; self.radialSearchModulePopup.action=@selector(radialSearchChanged:);
+    [cv addSubview:self.radialSearchModulePopup];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(20,64,340,310)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.radialSearchTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
     NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"rs"]; col.title=@"功能"; col.width=318; [self.radialSearchTable addTableColumn:col];
     self.radialSearchTable.rowHeight=34; self.radialSearchTable.dataSource=self; self.radialSearchTable.delegate=self;
@@ -17059,38 +17086,95 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeRadialSearch:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.radialSearchWindow center];
+    __weak typeof(self) weakSelf=self;
+    self.radialSearchKeyMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e){
+      if(!weakSelf.radialSearchWindow.isVisible)return e;
+      if(e.keyCode==36||e.keyCode==76){[weakSelf radialSearchOpenSelected:nil];return nil;}
+      if(e.keyCode==123){[weakSelf radialSearchToggleSelectedExpanded:NO];return nil;}
+      if(e.keyCode==124){[weakSelf radialSearchToggleSelectedExpanded:YES];return nil;}
+      if(e.keyCode==125||e.keyCode==126){
+        NSInteger n=[weakSelf.radialSearchTable numberOfRows];
+        if(n>0){NSInteger row=[weakSelf.radialSearchTable selectedRow];row += (e.keyCode==125?1:-1);row=MAX(0,MIN(n-1,row));[weakSelf.radialSearchTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];[weakSelf.radialSearchTable scrollRowToVisible:row];}
+        return nil;
+      }
+      return e;
+    }];
   }
+  if(!self.radialSearchExpanded)self.radialSearchExpanded=[NSMutableSet set];
   self.radialSearchField.stringValue=@"";
+  [self radialSearchBuildModulePopup];
   [self radialSearchChanged:nil];
   [self bringAuxiliaryWindowToFront:self.radialSearchWindow];
   [self.radialSearchWindow makeFirstResponder:self.radialSearchField];
 }
 
-- (void)closeRadialSearch:(id)sender { [self.radialSearchWindow orderOut:nil]; }
+- (void)closeRadialSearch:(id)sender {
+  if(self.radialSearchKeyMonitor){[NSEvent removeMonitor:self.radialSearchKeyMonitor];self.radialSearchKeyMonitor=nil;}
+  [self.radialSearchWindow orderOut:nil];
+}
+
+- (void)radialSearchBuildModulePopup {
+  [self.radialSearchModulePopup removeAllItems];
+  [self.radialSearchModulePopup addItemWithTitle:@"全部模块"]; self.radialSearchModulePopup.lastItem.representedObject=@(-1);
+  for(NSInteger i=0;i<(NSInteger)self.radialPages.count;i++){
+    [self.radialSearchModulePopup addItemWithTitle:[self radialModuleTitleForPage:i]];
+    self.radialSearchModulePopup.lastItem.representedObject=@(i);
+  }
+  [self.radialSearchModulePopup selectItemAtIndex:0];
+}
 
 - (void)radialSearchChanged:(id)sender {
   NSString *q=[self.radialSearchField.stringValue lowercaseString] ?: @"";
-  NSMutableArray *out=[NSMutableArray array];
+  NSInteger filter=[self.radialSearchModulePopup.selectedItem.representedObject integerValue];
+  NSMutableArray *rows=[NSMutableArray array];
   for(NSInteger page=0;page<(NSInteger)self.radialPages.count;page++){
+    if(filter>=0&&filter!=page)continue;
     NSArray *items=self.radialPages[page];
+    NSMutableArray *matches=[NSMutableArray array];
     for(NSDictionary *it in items){
       NSString *title=it[@"title"] ?: @"";
-      if(q.length && ![title.lowercaseString containsString:q]) continue;
-      [out addObject:@{@"title":title,@"action":it[@"action"] ?: @"",@"page":@(page),@"pageTitle":items.firstObject[@"title"] ?: [NSString stringWithFormat:@"第 %ld 页",(long)(page+1)]}];
+      if(q.length && ![title.lowercaseString containsString:q])continue;
+      [matches addObject:it];
     }
+    if(q.length&&!matches.count)continue;
+    BOOL expanded=q.length?YES:[self.radialSearchExpanded containsObject:@(page)];
+    [rows addObject:@{@"type":@"module",@"title":[self radialModuleTitleForPage:page],@"page":@(page),@"expanded":@(expanded),@"count":@(matches.count)}];
+    if(expanded)for(NSDictionary *it in matches)[rows addObject:@{@"type":@"item",@"title":it[@"title"] ?: @"",@"action":it[@"action"] ?: @"",@"page":@(page)}];
   }
-  self.radialSearchResults=out;
+  self.radialSearchResults=rows;
   [self.radialSearchTable reloadData];
-  if(out.count) [self.radialSearchTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+  if(rows.count)[self.radialSearchTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+}
+
+- (void)radialSearchToggleRow:(NSButton *)sender {
+  NSInteger row=sender.tag;
+  if(row<0||row>=(NSInteger)self.radialSearchResults.count)return;
+  NSDictionary *r=self.radialSearchResults[row];
+  if(![r[@"type"] isEqualToString:@"module"])return;
+  NSInteger page=[r[@"page"] integerValue];
+  if([self.radialSearchExpanded containsObject:@(page)])[self.radialSearchExpanded removeObject:@(page)];
+  else [self.radialSearchExpanded addObject:@(page)];
+  [self radialSearchChanged:nil];
+}
+
+- (void)radialSearchToggleSelectedExpanded:(BOOL)expand {
+  NSInteger row=self.radialSearchTable.selectedRow;
+  if(row<0||row>=(NSInteger)self.radialSearchResults.count)return;
+  NSDictionary *r=self.radialSearchResults[row];
+  if(![r[@"type"] isEqualToString:@"module"])return;
+  NSInteger page=[r[@"page"] integerValue];
+  if(expand)[self.radialSearchExpanded addObject:@(page)]; else [self.radialSearchExpanded removeObject:@(page)];
+  [self radialSearchChanged:nil];
 }
 
 - (void)radialSearchOpenSelected:(id)sender {
   NSInteger row=self.radialSearchTable.selectedRow;
   if(row<0||row>=(NSInteger)self.radialSearchResults.count)return;
   NSDictionary *r=self.radialSearchResults[row];
+  if([r[@"type"] isEqualToString:@"module"]){[self radialSearchToggleSelectedExpanded:YES];return;}
   self.radialPage=[r[@"page"] integerValue];
   [self radialApplyPage];
-  [self.radialSearchWindow orderOut:nil];
+  [self closeRadialSearch:nil];
   [self performRadialAction:r[@"action"] ?: @""];
 }
 
