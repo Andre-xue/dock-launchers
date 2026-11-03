@@ -4151,19 +4151,8 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 }
 
 - (void)showSection:(NSInteger)idx {
-  BOOL needsAIAuth = (idx == 2 && self.section != 2);
-  if (needsAIAuth && ![self ensureAIManagementAccess]) return;
+  // 进入 AI 管理页面不再强制验证；查看/复制密钥、查询余量等敏感操作仍单独验证
   self.section = idx;
-  if (needsAIAuth) {
-    for (NSNumber *delay in @[@0.4,@1.0,@1.8]) {
-      dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay.doubleValue*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
-        [self restoreDockIcon];
-        [self.window makeKeyAndOrderFront:nil];
-        [self.window orderFrontRegardless];
-        [NSApp activateIgnoringOtherApps:YES];
-      });
-    }
-  }
   if (idx == 2 && !self.aiEntries) [self loadAIEntries];
   for (NSView *v in self.content.subviews) [v removeFromSuperview];
   NSArray *btns = @[self.sideLive, self.sideGroups, self.sideAI, self.sideDisk, self.sideUninstall, self.sideSettings];
