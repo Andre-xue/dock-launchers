@@ -1656,7 +1656,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSString *cloudLoginProvider;
 @property (strong) NSArray *cloudProviders;
 @property (strong) NSTextField *aiFilePromptField, *aiFileStatus;
-@property (strong) NSPopUpButton *aiFileServicePopup;
+@property (strong) NSPopUpButton *aiFileServicePopup, *aiFileTemplateCategoryPopup, *aiFileTemplatePopup;
+@property (strong) NSDictionary *aiFileTemplates;
 @property (strong) NSComboBox *aiFileModelField;
 @property (strong) NSTextView *aiFileOutput;
 @property (strong) NSString *aiFileResultPath;
@@ -24522,6 +24523,70 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 
+- (void)reloadAIFileTemplates {
+  if(!self.aiFileTemplates){
+    self.aiFileTemplates=@{
+      @"通用":@[@{@"name":@"结构化摘要",@"prompt":@"请对文件做结构化摘要：概述、核心观点、关键数据、结论、风险与待办，用 Markdown 输出。"},
+               @{@"name":@"会议纪要",@"prompt":@"请把文件整理成会议纪要：时间、参与方、议题、结论、行动项、负责人和截止时间。"},
+               @{@"name":@"风险审查",@"prompt":@"请审查文件中的风险点：法律、财务、合规、执行风险，按严重程度排序并给出建议。"},
+               @{@"name":@"对比分析",@"prompt":@"请对比文件中的多个方案/对象：维度、优劣、成本、风险、适用场景，并给出推荐。"}],
+      @"金融/财务":@[@{@"name":@"财报分析",@"prompt":@"请分析财务文件：收入、利润、现金流、资产负债、同比环比、异常项和投资/经营建议。"},
+                   @{@"name":@"合同财务条款",@"prompt":@"请提取合同中的付款、发票、税费、违约、结算和对账条款，并标注风险。"},
+                   @{@"name":@"预算审查",@"prompt":@"请审查预算文件：预算结构、超支项、合理性、可优化空间和审批建议。"}],
+      @"法律/合同":@[@{@"name":@"合同审查",@"prompt":@"请审查合同：主体、标的、价款、履行、违约、解除、争议解决、知识产权和隐私条款，输出风险等级和修改建议。"},
+                   @{@"name":@"条款提取",@"prompt":@"请提取文件中的关键法律条款，逐条说明含义、义务、风险和注意事项。"},
+                   @{@"name":@"合规检查",@"prompt":@"请从合规角度分析文件，列出可能违反的法规/政策、证据位置和整改建议。"}],
+      @"医疗/健康":@[@{@"name":@"病历摘要",@"prompt":@"请整理病历摘要：主诉、现病史、检查、诊断、治疗、用药和随访建议；仅作信息整理，不替代医生诊断。"},
+                   @{@"name":@"检查报告解读",@"prompt":@"请解读检查报告：指标、参考范围、异常项、可能意义和就医建议；明确提示不能替代医生诊断。"},
+                   @{@"name":@"健康计划",@"prompt":@"请根据文件信息整理健康管理建议：饮食、运动、作息、复查和风险提醒。"}],
+      @"教育/培训":@[@{@"name":@"教案设计",@"prompt":@"请根据文件设计教案：教学目标、重点难点、流程、活动、作业和评估方式。"},
+                   @{@"name":@"试题生成",@"prompt":@"请根据文件生成练习题：选择、填空、简答，附答案和解析。"},
+                   @{@"name":@"学习计划",@"prompt":@"请把文件内容整理成学习计划：知识点、顺序、时间安排、练习和复习建议。"}],
+      @"市场/运营":@[@{@"name":@"竞品分析",@"prompt":@"请做竞品分析：产品定位、功能、价格、渠道、用户口碑、差异点和机会。"},
+                   @{@"name":@"营销方案",@"prompt":@"请根据文件输出营销方案：目标人群、卖点、渠道、内容、预算、节奏和效果指标。"},
+                   @{@"name":@"用户反馈分析",@"prompt":@"请分析用户反馈：高频问题、情绪、需求、优先级和改进建议。"}],
+      @"产品/需求":@[@{@"name":@"PRD 评审",@"prompt":@"请评审 PRD：背景、目标、用户、流程、功能、边界、异常、数据和验收标准，列出遗漏和风险。"},
+                   @{@"name":@"用户故事",@"prompt":@"请把需求整理成用户故事和验收标准，按优先级分组。"},
+                   @{@"name":@"需求对比",@"prompt":@"请对比文件中的需求方案：价值、成本、风险、依赖和推荐排序。"}],
+      @"技术/代码":@[@{@"name":@"代码审查",@"prompt":@"请审查代码：正确性、安全、性能、可维护性、边界条件和测试建议，按严重程度列出问题。"},
+                   @{@"name":@"架构分析",@"prompt":@"请分析技术文档/架构：模块、依赖、数据流、扩展性、风险和优化建议。"},
+                   @{@"name":@"故障报告",@"prompt":@"请整理故障报告：现象、影响、时间线、根因、处置、恢复和预防措施。"}],
+      @"销售/客户":@[@{@"name":@"客户资料分析",@"prompt":@"请分析客户资料：需求、痛点、决策链、预算、机会、风险和跟进建议。"},
+                   @{@"name":@"销售方案",@"prompt":@"请根据文件生成销售方案：客户画像、价值主张、方案、报价思路、异议处理和执行计划。"},
+                   @{@"name":@"报价审查",@"prompt":@"请审查报价文件：价格结构、折扣、成本、利润、风险和谈判建议。"}],
+      @"人事/招聘":@[@{@"name":@"简历筛选",@"prompt":@"请筛选简历：匹配度、经验、技能、风险、面试问题和推荐结论。"},
+                   @{@"name":@"面试评估",@"prompt":@"请整理面试评估：能力项、证据、评分、风险和录用建议。"},
+                   @{@"name":@"制度审查",@"prompt":@"请审查人事制度：合法性、完整性、执行风险和修改建议。"}],
+      @"行政/公文":@[@{@"name":@"公文起草",@"prompt":@"请根据文件起草正式公文：标题、主送、正文、要求、落款，语言简洁规范。"},
+                   @{@"name":@"通知公告",@"prompt":@"请整理成通知公告：事项、时间、地点、对象、要求和联系人。"},
+                   @{@"name":@"会议安排",@"prompt":@"请整理会议安排：议程、参会人、时间、材料、决策项和后续行动。"}],
+      @"数据分析":@[@{@"name":@"数据洞察",@"prompt":@"请分析数据文件：指标口径、趋势、异常、相关性、结论和行动建议；没有数据时不要编造。"},
+                   @{@"name":@"报表解读",@"prompt":@"请解读报表：关键指标、变化原因、异常点、风险和优化建议。"},
+                   @{@"name":@"异常排查",@"prompt":@"请从数据中排查异常：异常点、可能原因、验证方法和处理建议。"}]
+    };
+  }
+  [self.aiFileTemplateCategoryPopup removeAllItems];
+  NSArray *cats=[self.aiFileTemplates.allKeys sortedArrayUsingSelector:@selector(localizedCompare:)];
+  for(NSString *c in cats)[self.aiFileTemplateCategoryPopup addItemWithTitle:c];
+  [self aiFileTemplateCategoryChanged:nil];
+}
+
+- (void)aiFileTemplateCategoryChanged:(id)sender {
+  NSString *cat=self.aiFileTemplateCategoryPopup.titleOfSelectedItem ?: @"通用";
+  NSArray *items=self.aiFileTemplates[cat] ?: @[];
+  [self.aiFileTemplatePopup removeAllItems];
+  for(NSDictionary *t in items)[self.aiFileTemplatePopup addItemWithTitle:t[@"name"]];
+  [self aiFileTemplateChanged:nil];
+}
+
+- (void)aiFileTemplateChanged:(id)sender {
+  NSString *cat=self.aiFileTemplateCategoryPopup.titleOfSelectedItem ?: @"通用";
+  NSInteger idx=self.aiFileTemplatePopup.indexOfSelectedItem;
+  NSArray *items=self.aiFileTemplates[cat];
+  if(idx<0||idx>=(NSInteger)items.count)return;
+  self.aiFilePromptField.stringValue=items[idx][@"prompt"] ?: @"";
+}
+
 - (void)reloadAIFileServices {
   if(!self.aiEntries)[self loadAIEntries];
   [self.aiFileServicePopup removeAllItems];
@@ -24574,6 +24639,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *add=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,596,120,30)]; add.title=@"导入文件…"; add.hoverColor=[NSColor systemBlueColor]; add.target=self; add.action=@selector(aiFileAddFiles:); [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
     ColorHoverButton *clear=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(154,596,90,30)]; clear.title=@"清空"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(aiFileClear:); [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
     ColorHoverButton *cloud=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(254,596,120,30)]; cloud.title=@"添加云文档…"; cloud.hoverColor=[NSColor systemBlueColor]; cloud.font=[NSFont systemFontOfSize:10]; cloud.target=self; cloud.action=@selector(openCloudDocsList:); cloud.toolTip=@"云文档列表：官方扫码登录、导出或导入链接"; [cloud applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cloud];
+    self.aiFileTemplateCategoryPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(386,596,132,30) pullsDown:NO]; self.aiFileTemplateCategoryPopup.font=[NSFont systemFontOfSize:10]; self.aiFileTemplateCategoryPopup.target=self; self.aiFileTemplateCategoryPopup.action=@selector(aiFileTemplateCategoryChanged:); [cv addSubview:self.aiFileTemplateCategoryPopup];
+    self.aiFileTemplatePopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(524,596,372,30) pullsDown:NO]; self.aiFileTemplatePopup.font=[NSFont systemFontOfSize:10]; self.aiFileTemplatePopup.target=self; self.aiFileTemplatePopup.action=@selector(aiFileTemplateChanged:); [cv addSubview:self.aiFileTemplatePopup];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,420,872,166)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.aiFileTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
     NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"aifile"]; col.title=@"已导入文件"; col.width=850; [self.aiFileTable addTableColumn:col];
@@ -24594,6 +24661,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.aiFileWindow center];
   }
   [self reloadAIFileServices];
+  [self reloadAIFileTemplates];
   [self.aiFileTable reloadData];
   [self bringAuxiliaryWindowToFront:self.aiFileWindow];
 }
