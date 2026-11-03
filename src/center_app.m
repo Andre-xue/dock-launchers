@@ -1223,6 +1223,14 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *automationWindow, *automationRuleWindow, *privacyWindow;
 @property (strong) NSWindow *radialCustomWindow;
 @property (strong) NSMutableArray<NSNumber *> *radialCustomOrder;
+@property (strong) NSArray *radialPagesFull;
+@property (strong) NSWindow *radialItemsWindow;
+@property (strong) NSTableView *radialItemsTable;
+@property (strong) NSPopUpButton *radialItemsPagePopup;
+@property (strong) NSMutableArray *radialItemsCurrentItems;
+@property (copy) NSString *radialItemsCurrentKey;
+@property (strong) NSMutableDictionary *radialItemsOrderMap;
+@property (strong) NSMutableSet *radialItemsHiddenActions;
 @property (strong) NSMutableArray<NSButton *> *radialCustomChecks, *radialCustomUps, *radialCustomDowns;
 @property (strong) NSTableView *automationTable;
 @property (strong) NSMutableArray *automationRules;
@@ -9839,6 +9847,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.automationTable) return self.automationRules.count;
+  if (tableView == self.radialItemsTable) return self.radialItemsCurrentItems.count;
   if (tableView == self.aiVideoHistoryTable) return self.aiVideoHistoryItems.count;
   if (tableView == self.shelfTable) return self.shelfVisiblePaths.count;
   if (tableView == self.dupTable) return self.dupItems.count;
@@ -9915,6 +9924,22 @@ static BOOL ValidGroupName(NSString *raw) {
       NSTextField *l = [self label:t size:10.5 bold:NO color:[NSColor controlAccentColor]];
       l.lineBreakMode = NSLineBreakByTruncatingMiddle;
       l.frame = NSMakeRect(4, 10, col.width - 8, 18); [v addSubview:l];
+    }
+    return v;
+  }
+  if (tableView == self.radialItemsTable) {
+    if (row < 0 || row >= (NSInteger)self.radialItemsCurrentItems.count) return nil;
+    NSDictionary *it = self.radialItemsCurrentItems[row];
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,32)];
+    if ([col.identifier isEqualToString:@"ritem_enabled"]) {
+      NSButton *cb = [NSButton checkboxWithTitle:@"" target:self action:@selector(radialItemToggle:)];
+      cb.tag = row;
+      cb.state = [self.radialItemsHiddenActions containsObject:it[@"action"] ?: @""] ? NSControlStateValueOff : NSControlStateValueOn;
+      cb.frame = NSMakeRect(12,6,22,22); [v addSubview:cb];
+    } else {
+      NSString *title = it[@"title"] ?: it[@"action"];
+      NSTextField *l = [self label:title size:11 bold:NO color:nil];
+      l.frame = NSMakeRect(4,7,col.width-8,18); [v addSubview:l];
     }
     return v;
   }
@@ -15790,6 +15815,155 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [ordered addObject:self.radialPages[i]];
   }
   if (ordered.count) self.radialPages = ordered;
+  // 应用单个功能项的隐藏与排序
+  NSArray *hiddenActions = [ud arrayForKey:@"centerRadialItemHiddenActions"] ?: @[];
+  NSSet *itemHiddenSet = [NSSet setWithArray:hiddenActions];
+  NSDictionary *orderMap = [ud dictionaryForKey:@"centerRadialItemOrder"] ?: @{};
+  NSMutableArray *finalPages = [NSMutableArray array];
+  for (NSArray *page in self.radialPages) {
+    NSString *pageKey = [self radialPageKeyForItems:page];
+    NSArray *savedItemOrder = orderMap[pageKey];
+    NSMutableArray *items = [NSMutableArray array];
+    if (savedItemOrder.count) {
+      for (NSString *action in savedItemOrder) {
+        for (NSDictionary *it in page) if ([it[@"action"] isEqualToString:action] && ![items containsObject:it]) [items addObject:it];
+      }
+    }
+    for (NSDictionary *it in page) if (![items containsObject:it]) [items addObject:it];
+    NSMutableArray *shown = [NSMutableArray array];
+    for (NSDictionary *it in items) if (![itemHiddenSet containsObject:it[@"action"]]) [shown addObject:it];
+    if (!shown.count && items.count) [shown addObject:items.firstObject];
+    if (shown.count) [finalPages addObject:shown];
+  }
+  if (finalPages.count) self.radialPages = finalPages;
+}
+
+- (NSString *)radialPageKeyForItems:(NSArray *)items {
+  NSMutableArray *actions = [NSMutableArray array];
+  for (NSDictionary *it in items) if (it[@"action"]) [actions addObject:it[@"action"]];
+  [actions sortUsingSelector:@selector(compare:)];
+  return [actions componentsJoinedByString:@"|"];
+}
+
+- (void)openRadialItemsEditor:(id)sender {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  self.radialItemsHiddenActions = [NSMutableSet setWithArray:[ud arrayForKey:@"centerRadialItemHiddenActions"] ?: @[]];
+  self.radialItemsOrderMap = [[ud dictionaryForKey:@"centerRadialItemOrder"] ?: @{} mutableCopy];
+  NSArray *pages = self.radialPagesFull ?: self.radialPages;
+  if (!self.radialItemsWindow) {
+    self.radialItemsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,540,560) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.radialItemsWindow.title = @"菜单栏功能项自定义";
+    self.radialItemsWindow.releasedWhenClosed = NO;
+    NSView *cv = self.radialItemsWindow.contentView;
+    NSTextField *t = [self label:@"菜单栏功能项" size:18 bold:YES color:nil];
+    t.frame = NSMakeRect(24,516,320,24); [cv addSubview:t];
+    NSTextField *h = [self label:@"勾选显示功能项；用 ↑↓ 调整当前页顺序" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame = NSMakeRect(24,494,430,18); [cv addSubview:h];
+    self.radialItemsPagePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,454,300,28) pullsDown:NO];
+    self.radialItemsPagePopup.target=self; self.radialItemsPagePopup.action=@selector(radialItemsPageChanged:);
+    [cv addSubview:self.radialItemsPagePopup];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,96,492,348)];
+    sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.radialItemsTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *showCol = [[NSTableColumn alloc] initWithIdentifier:@"ritem_enabled"];
+    showCol.title=@"显示"; showCol.width=54; [self.radialItemsTable addTableColumn:showCol];
+    NSTableColumn *nameCol = [[NSTableColumn alloc] initWithIdentifier:@"ritem_name"];
+    nameCol.title=@"功能"; nameCol.width=430; [self.radialItemsTable addTableColumn:nameCol];
+    self.radialItemsTable.rowHeight=32;
+    self.radialItemsTable.dataSource=self; self.radialItemsTable.delegate=self;
+    self.radialItemsTable.target=self;
+    sv.documentView=self.radialItemsTable; [cv addSubview:sv];
+    ColorHoverButton *up = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,50,80,30)];
+    up.title=@"↑ 上移"; up.hoverColor=[NSColor systemBlueColor]; up.target=self; up.action=@selector(radialItemMoveUp:);
+    [up applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:up];
+    ColorHoverButton *down = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(112,50,80,30)];
+    down.title=@"↓ 下移"; down.hoverColor=[NSColor systemTealColor]; down.target=self; down.action=@selector(radialItemMoveDown:);
+    [down applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:down];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(352,50,80,30)];
+    save.title=@"保存"; save.hoverColor=[NSColor systemGreenColor]; save.target=self; save.action=@selector(saveRadialItems:);
+    [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(440,50,80,30)];
+    cancel.title=@"取消"; cancel.hoverColor=[NSColor systemGrayColor]; cancel.target=self; cancel.action=@selector(closeRadialItems:);
+    [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
+    [self.radialItemsWindow center];
+  }
+  [self.radialItemsPagePopup removeAllItems];
+  for (NSInteger i=0;i<(NSInteger)pages.count;i++) {
+    NSArray *page = pages[i];
+    NSString *label = page.count ? (page.firstObject[@"title"] ?: [NSString stringWithFormat:@"第 %ld 页", (long)(i+1)]) : [NSString stringWithFormat:@"第 %ld 页", (long)(i+1)];
+    [self.radialItemsPagePopup addItemWithTitle:[NSString stringWithFormat:@"%ld. %@", (long)(i+1), label]];
+    self.radialItemsPagePopup.lastItem.representedObject = @(i);
+  }
+  if (pages.count) { [self.radialItemsPagePopup selectItemAtIndex:0]; [self loadRadialItemsForPageIndex:0]; }
+  [self forceWindowToFront:self.radialItemsWindow];
+}
+
+- (void)closeRadialItems:(id)sender { [self.radialItemsWindow orderOut:nil]; }
+
+- (void)radialItemsPageChanged:(id)sender {
+  NSInteger idx = [self.radialItemsPagePopup.selectedItem.representedObject integerValue];
+  [self loadRadialItemsForPageIndex:idx];
+}
+
+- (void)loadRadialItemsForPageIndex:(NSInteger)idx {
+  NSArray *pages = self.radialPagesFull ?: self.radialPages;
+  if (idx < 0 || idx >= (NSInteger)pages.count) return;
+  NSArray *page = pages[idx];
+  NSString *key = [self radialPageKeyForItems:page];
+  self.radialItemsCurrentKey = key;
+  NSArray *savedOrder = self.radialItemsOrderMap[key];
+  NSMutableArray *items = [NSMutableArray array];
+  if (savedOrder.count) for (NSString *action in savedOrder) for (NSDictionary *it in page) if ([it[@"action"] isEqualToString:action] && ![items containsObject:it]) [items addObject:it];
+  for (NSDictionary *it in page) if (![items containsObject:it]) [items addObject:it];
+  self.radialItemsCurrentItems = items;
+  [self.radialItemsTable reloadData];
+}
+
+- (void)radialItemToggle:(NSButton *)sender {
+  NSInteger row = sender.tag;
+  if (row < 0 || row >= (NSInteger)self.radialItemsCurrentItems.count) return;
+  NSString *action = self.radialItemsCurrentItems[row][@"action"] ?: @"";
+  if (sender.state == NSControlStateValueOn) [self.radialItemsHiddenActions removeObject:action];
+  else [self.radialItemsHiddenActions addObject:action];
+}
+
+- (void)radialItemMoveUp:(id)sender {
+  NSInteger row = self.radialItemsTable.selectedRow;
+  if (row <= 0 || row >= (NSInteger)self.radialItemsCurrentItems.count) { [self showToast:@"请先选中一项"]; return; }
+  [self.radialItemsCurrentItems exchangeObjectAtIndex:row withObjectAtIndex:row-1];
+  [self updateRadialItemsOrder];
+  [self.radialItemsTable reloadData];
+  [self.radialItemsTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row-1] byExtendingSelection:NO];
+}
+
+- (void)radialItemMoveDown:(id)sender {
+  NSInteger row = self.radialItemsTable.selectedRow;
+  if (row < 0 || row+1 >= (NSInteger)self.radialItemsCurrentItems.count) { [self showToast:@"请先选中一项"]; return; }
+  [self.radialItemsCurrentItems exchangeObjectAtIndex:row withObjectAtIndex:row+1];
+  [self updateRadialItemsOrder];
+  [self.radialItemsTable reloadData];
+  [self.radialItemsTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row+1] byExtendingSelection:NO];
+}
+
+- (void)updateRadialItemsOrder {
+  if (!self.radialItemsCurrentKey.length) return;
+  NSMutableArray *actions = [NSMutableArray array];
+  for (NSDictionary *it in self.radialItemsCurrentItems) if (it[@"action"]) [actions addObject:it[@"action"]];
+  if (!self.radialItemsOrderMap) self.radialItemsOrderMap = [NSMutableDictionary dictionary];
+  self.radialItemsOrderMap[self.radialItemsCurrentKey] = actions;
+}
+
+- (void)saveRadialItems:(id)sender {
+  [self updateRadialItemsOrder];
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  [ud setObject:self.radialItemsHiddenActions.allObjects forKey:@"centerRadialItemHiddenActions"];
+  [ud setObject:self.radialItemsOrderMap ?: @{} forKey:@"centerRadialItemOrder"];
+  [ud synchronize];
+  [self.radialItemsWindow orderOut:nil];
+  [self.popover performClose:nil];
+  self.popover = nil;
+  [self buildPopover];
+  [self showToast:@"功能项已更新"];
 }
 
 - (void)openRadialPageCustomization:(id)sender {
@@ -15830,6 +16004,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [down applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:down];
       [self.radialCustomDowns addObject:down];
     }
+    ColorHoverButton *itemsBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 16, 100, 30)];
+    itemsBtn.title = @"功能项…"; itemsBtn.hoverColor = [NSColor systemPurpleColor]; itemsBtn.target = self; itemsBtn.action = @selector(openRadialItemsEditor:);
+    [itemsBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:itemsBtn];
     ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(236, 16, 80, 30)];
     save.title = @"保存"; save.hoverColor = [NSColor systemGreenColor]; save.target = self; save.action = @selector(saveRadialPageCustomization:);
     [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
@@ -16214,6 +16391,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       ]
     ];
     NSUserDefaults *radialUD = [NSUserDefaults standardUserDefaults];
+    self.radialPagesFull = self.radialPages;
     [self applyRadialPagePreferences];
     if ([radialUD integerForKey:@"centerRadialPagesVersion"] != 7) {
       [radialUD setInteger:0 forKey:@"centerRadialLastPage"];
