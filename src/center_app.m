@@ -7119,18 +7119,18 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)openLocalModelManager:(NSInteger)service {
   self.localModelService=service;
   if(!self.localModelWindow){
-    self.localModelWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.localModelWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.localModelWindow.releasedWhenClosed=NO;
     NSView *cv=self.localModelWindow.contentView;
     NSTextField *t=[self label:@"模型管理" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,456,400,24); [cv addSubview:t];
     NSTextField *h=[self label:@"更换、添加、删除模型；当前模型会用于 AI 功能" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,434,520,18); [cv addSubview:h];
-    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,100,572,320)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,100,712,320)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.localModelTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
-    NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"lm"]; col.title=@"模型"; col.width=550; [self.localModelTable addTableColumn:col];
+    NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"lm"]; col.title=@"模型"; col.width=690; [self.localModelTable addTableColumn:col];
     self.localModelTable.rowHeight=28; self.localModelTable.dataSource=self; self.localModelTable.delegate=self;
     sv.documentView=self.localModelTable; [cv addSubview:sv];
-    self.localModelAddField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,64,280,26)]; self.localModelAddField.placeholderString=@"输入模型名，例如 qwen2.5:3b"; [cv addSubview:self.localModelAddField];
-    self.localModelStatus=[self label:@"选择模型后操作" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.localModelStatus.frame=NSMakeRect(24,38,360,18); [cv addSubview:self.localModelStatus];
+    self.localModelAddField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,64,300,26)]; self.localModelAddField.placeholderString=@"输入模型名，例如 qwen2.5:3b"; [cv addSubview:self.localModelAddField];
+    self.localModelStatus=[self label:@"选择模型后操作" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.localModelStatus.frame=NSMakeRect(24,38,300,18); [cv addSubview:self.localModelStatus];
     NSArray *titles=@[@"添加",@"删除",@"设为当前",@"设置…",@"关闭"];
     NSArray *sels=@[@"localModelAdd:",@"localModelDelete:",@"localModelSetCurrent:",@"localModelSettings:",@"closeLocalModelManager:"];
     // 右侧按钮由布局函数设置
@@ -7141,8 +7141,8 @@ static BOOL ValidGroupName(NSString *raw) {
   NSView *cv=self.localModelWindow.contentView;
   for(NSView *v in cv.subviews) if([v isKindOfClass:[ColorHoverButton class]] && ((ColorHoverButton *)v).tag<=4){v.hidden=NO;}
   // 重新排布底部按钮
-  CGFloat x=312;
-  for(NSView *v in cv.subviews) if([v isKindOfClass:[ColorHoverButton class]] && ((ColorHoverButton *)v).tag<=4){CGFloat w=((ColorHoverButton *)v).tag==3?70:62; v.frame=NSMakeRect(x,64,w,28); x+=w+6;}
+  CGFloat x=336;
+  for(NSView *v in cv.subviews) if([v isKindOfClass:[ColorHoverButton class]] && ((ColorHoverButton *)v).tag<=4){CGFloat w=((ColorHoverButton *)v).tag==3?76:70; v.frame=NSMakeRect(x,64,w,28); x+=w+6;}
   self.localModelAddField.hidden=service!=0;
   [self localModelReload:nil];
   [self forceWindowToFront:self.localModelWindow];
@@ -7170,7 +7170,10 @@ static BOOL ValidGroupName(NSString *raw) {
         NSString *name=[t componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet].firstObject;
         if(name.length)[models addObject:name];
       }
-      dispatch_async(dispatch_get_main_queue(),^{ self.localModelItems=models; [self.localModelTable reloadData]; self.localModelStatus.stringValue=[NSString stringWithFormat:@"%ld 个 Ollama 模型",(long)models.count]; });
+      dispatch_async(dispatch_get_main_queue(),^{
+        self.localModelItems=models; [self.localModelTable reloadData];
+        self.localModelStatus.stringValue=models.count?[NSString stringWithFormat:@"%ld 个 Ollama 模型",(long)models.count]:@"没有模型；请先打开 Ollama 开关";
+      });
     });
     return;
   }
