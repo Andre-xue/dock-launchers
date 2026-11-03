@@ -1537,7 +1537,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiImageURLField, *aiImageStatus, *aiVideoURLField, *aiVideoStatus;
 @property (strong) NSImageView *aiImagePreview, *aiVideoPreview;
 @property (copy) NSString *aiImageResultPath, *aiVideoResultPath, *aiVideoTaskID, *aiVideoPollURL, *aiVideoFirstFramePath;
-@property (strong) NSWindow *aiImageBatchWindow, *aiGalleryWindow, *aiVideoBatchWindow, *aiVideoHistoryWindow;
+@property (strong) NSWindow *aiImageBatchWindow, *aiGalleryWindow, *aiVideoBatchWindow, *aiVideoHistoryWindow, *aiUsageWindow;
+@property (strong) NSTextField *aiUsageImagesLabel, *aiUsageEditsLabel, *aiUsageVideosLabel, *aiUsageAudioLabel, *aiUsageSizeLabel, *aiUsageTodayLabel, *aiUsagePathLabel;
 @property (strong) NSTableView *aiVideoHistoryTable;
 @property (strong) NSTextField *aiVideoHistoryPathLabel;
 @property (strong) NSMutableArray *aiVideoHistoryItems;
@@ -18983,6 +18984,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3077,@"cat":@1,@"title":@"系统隐私仪表盘",@"desc":@"查看并打开各项隐私权限",@"sel":@"openPrivacyDashboard:"},
     @{@"id":@3078,@"cat":@1,@"title":@"菜单栏页面自定义",@"desc":@"显示/隐藏和排序扇形页面",@"sel":@"openRadialPageCustomization:"},
     @{@"id":@3079,@"cat":@1,@"title":@"语音转写设置",@"desc":@"切换本机识别和第三方 Whisper",@"sel":@"openSpeechSettings:"},
+    @{@"id":@3081,@"cat":@1,@"title":@"AI 用量统计",@"desc":@"查看生成数量与占用空间",@"sel":@"showAIUsageStats:"},
     @{@"id":@3080,@"cat":@1,@"title":@"AI 配音",@"desc":@"文本转语音、音色试听与配音",@"sel":@"openAITTSWindow:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
@@ -19998,6 +20000,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"菜单栏页面自定义", @"subtitle": @"显示/隐藏和排序扇形页面", @"type": @"工具", @"tool": @"radialcustom", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"slider.horizontal.3" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"语音转写设置", @"subtitle": @"本机识别 / 第三方 Whisper", @"type": @"工具", @"tool": @"speechsettings", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"mic.badge.plus" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 配音 / 语音合成", @"subtitle": @"文本转语音、音色试听与配音", @"type": @"工具", @"tool": @"tts", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"speaker.wave.3" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"AI 用量统计", @"subtitle": @"生成数量、占用空间、今日统计", @"type": @"工具", @"tool": @"aiusage", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"chart.bar.fill" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 图片生成", @"subtitle": @"用 AI 服务生成图片", @"type": @"工具", @"tool": @"aiimage", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"photo.badge.plus" accessibilityDescription:nil] ?: recIcon}];
@@ -20141,6 +20144,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"radialcustom"]) [self openRadialPageCustomization:nil];
     else if ([tool isEqualToString:@"speechsettings"]) [self openSpeechSettings:nil];
     else if ([tool isEqualToString:@"tts"]) [self openAITTSWindow:nil];
+    else if ([tool isEqualToString:@"aiusage"]) [self showAIUsageStats:nil];
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
     else if ([tool isEqualToString:@"aitext"]) [self openAIAssistant:nil];
@@ -23357,6 +23361,83 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *dir = [custom stringByExpandingTildeInPath];
   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
   return dir;
+}
+
+- (void)showAIUsageStats:(id)sender {
+  if (!self.aiUsageWindow) {
+    self.aiUsageWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,600,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiUsageWindow.title = @"AI 用量统计";
+    self.aiUsageWindow.releasedWhenClosed = NO;
+    NSView *cv = self.aiUsageWindow.contentView;
+    NSTextField *t = [self label:@"AI 用量统计" size:20 bold:YES color:nil];
+    t.frame=NSMakeRect(24,456,300,28); [cv addSubview:t];
+    NSTextField *h = [self label:@"统计 AI 目录中的生成文件数量和占用空间" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame=NSMakeRect(24,434,520,18); [cv addSubview:h];
+    NSArray *titles = @[@"图片生成", @"图片编辑", @"视频", @"语音", @"总占用空间", @"今日生成"];
+    NSMutableArray *labels = [NSMutableArray array];
+    for (NSInteger i=0;i<6;i++) {
+      NSBox *card = [[NSBox alloc] initWithFrame:NSMakeRect(24 + (i%3)*184, 300 - (i/3)*94, 168, 78)];
+      card.boxType = NSBoxCustom; card.cornerRadius=10; card.borderWidth=1;
+      card.borderColor = [NSColor separatorColor]; card.fillColor = DLButtonBackground();
+      [cv addSubview:card];
+      NSTextField *tl = [self label:titles[i] size:10 bold:NO color:[NSColor secondaryLabelColor]];
+      tl.frame=NSMakeRect(12,50,144,16); [card addSubview:tl];
+      NSTextField *vl = [self label:@"—" size:16 bold:YES color:nil];
+      vl.frame=NSMakeRect(12,18,144,26); [card addSubview:vl];
+      [labels addObject:vl];
+    }
+    self.aiUsageImagesLabel=labels[0]; self.aiUsageEditsLabel=labels[1]; self.aiUsageVideosLabel=labels[2];
+    self.aiUsageAudioLabel=labels[3]; self.aiUsageSizeLabel=labels[4]; self.aiUsageTodayLabel=labels[5];
+    self.aiUsagePathLabel=[self label:@"" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    self.aiUsagePathLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;
+    self.aiUsagePathLabel.frame=NSMakeRect(24,100,552,18); [cv addSubview:self.aiUsagePathLabel];
+    ColorHoverButton *refresh=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,50,100,32)];
+    refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(refreshAIUsageStats:);
+    [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *open=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,50,120,32)];
+    open.title=@"打开 AI 目录"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openAIGeneratedFolder:);
+    [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(480,50,96,32)];
+    close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeAIUsageStats:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.aiUsageWindow center];
+  }
+  [self refreshAIUsageStats:nil];
+  [self forceWindowToFront:self.aiUsageWindow];
+}
+
+- (void)closeAIUsageStats:(id)sender { [self.aiUsageWindow orderOut:nil]; }
+
+- (void)openAIGeneratedFolder:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self aiGeneratedDirectory]]]; }
+
+- (void)refreshAIUsageStats:(id)sender {
+  NSMutableSet *dirs = [NSMutableSet setWithObjects:[self aiGeneratedDirectory], [self aiVideoOutputDirectory], [self aiEditOutputDirectory], [self aiTTSOutputDirectory], nil];
+  NSInteger images=0, edits=0, videos=0, audio=0, today=0;
+  unsigned long long bytes=0;
+  NSDate *start=[NSCalendar.currentCalendar startOfDayForDate:[NSDate date]];
+  for (NSString *dir in dirs) {
+    NSArray *files=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+    for (NSString *f in files) {
+      NSString *path=[dir stringByAppendingPathComponent:f];
+      NSDictionary *attr=[[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL] ?: @{};
+      if ([attr[NSFileType] isEqual:NSFileTypeDirectory]) continue;
+      bytes += [attr[NSFileSize] unsignedLongLongValue];
+      NSDate *date=attr[NSFileModificationDate];
+      if (date && [date compare:start] != NSOrderedAscending) today++;
+      NSString *ext=f.pathExtension.lowercaseString;
+      if ([f hasPrefix:@"AI图片-"] || [f hasPrefix:@"AI放大-"] || [f hasPrefix:@"AI增强-"]) images++;
+      else if ([f hasPrefix:@"AI编辑-"] || [f hasPrefix:@"AI局部重绘-"]) edits++;
+      else if ([@[@"mp4",@"mov",@"m4v"] containsObject:ext]) videos++;
+      else if ([@[@"mp3",@"m4a",@"wav"] containsObject:ext]) audio++;
+    }
+  }
+  self.aiUsageImagesLabel.stringValue=[NSString stringWithFormat:@"%ld 张",(long)images];
+  self.aiUsageEditsLabel.stringValue=[NSString stringWithFormat:@"%ld 张",(long)edits];
+  self.aiUsageVideosLabel.stringValue=[NSString stringWithFormat:@"%ld 个",(long)videos];
+  self.aiUsageAudioLabel.stringValue=[NSString stringWithFormat:@"%ld 个",(long)audio];
+  self.aiUsageSizeLabel.stringValue=[NSString stringWithFormat:@"%.1f MB",bytes/1024.0/1024.0];
+  self.aiUsageTodayLabel.stringValue=[NSString stringWithFormat:@"%ld 个",(long)today];
+  self.aiUsagePathLabel.stringValue=[NSString stringWithFormat:@"AI 目录：%@", [self aiGeneratedDirectory]];
 }
 
 - (void)showAIImageBatch:(id)sender {
