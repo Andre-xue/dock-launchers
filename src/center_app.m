@@ -1670,6 +1670,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *videoModelMarketWindow;
 @property (strong) NSTask *marketDownloadTask;
 @property (strong) NSString *marketDownloadName;
+@property (strong) NSDate *marketDownloadStart;
+@property double marketDownloadLastPercent;
+@property NSTimeInterval marketDownloadLastUpdate;
 @property NSInteger marketDownloadKind;
 @property (strong) NSTask *ollamaPullTask;
 @property (strong) NSURLSession *videoDownloadSession;
@@ -7370,6 +7373,7 @@ static BOOL ValidGroupName(NSString *raw) {
   unsigned long long free=[fs[NSFileSystemFreeSize] unsignedLongLongValue];
   if(free<1024ULL*1024*1024){[self showToast:@"磁盘剩余空间不足 1GB"];return;}
   self.marketDownloadName=name; self.marketDownloadKind=kind;
+  self.marketDownloadStart=[NSDate date]; self.marketDownloadLastPercent=0; self.marketDownloadLastUpdate=[[NSDate date] timeIntervalSince1970];
   NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/curl"; t.arguments=@[@"-L",@"--fail",@"--retry",@"2",@"--progress-bar",@"-C",@"-",@"-o",dst,url];
   NSPipe *err=[NSPipe pipe]; t.standardError=err; t.standardOutput=[NSFileHandle fileHandleWithNullDevice];
   __weak typeof(self) weakSelf=self;
@@ -7381,9 +7385,16 @@ static BOOL ValidGroupName(NSString *raw) {
       NSInteger start=MAX(0,(NSInteger)pct.location-4);
       NSString *num=[s substringWithRange:NSMakeRange(start,pct.location-start)];
       num=[num stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+      double pct=num.doubleValue; NSTimeInterval now=[[NSDate date] timeIntervalSince1970];
+      double elapsed=MAX(0.1,now-[weakSelf.marketDownloadStart timeIntervalSince1970]);
+      double rate=(pct-weakSelf.marketDownloadLastPercent)/MAX(0.1,now-weakSelf.marketDownloadLastUpdate);
+      weakSelf.marketDownloadLastPercent=pct; weakSelf.marketDownloadLastUpdate=now;
+      NSInteger eta=rate>0.05?(NSInteger)((100.0-pct)/rate):-1;
+      NSString *extra=eta>=0?[NSString stringWithFormat:@" · 剩余约 %ld:%02ld",(long)(eta/60),(long)(eta%60)]:[NSString stringWithFormat:@" · 已用 %ld 秒",(long)elapsed];
       dispatch_async(dispatch_get_main_queue(),^{
-        if(weakSelf.marketDownloadKind==1) self.comfyMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@ · %@%%",name,num];
-        else self.whisperMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@ · %@%%",name,num];
+        NSString *line=[NSString stringWithFormat:@"正在下载 %@ · %.1f%%%@",name,pct,extra];
+        if(weakSelf.marketDownloadKind==1) self.comfyMarketStatus.stringValue=line;
+        else self.whisperMarketStatus.stringValue=line;
       });
     }
   };
@@ -7994,7 +8005,10 @@ static BOOL ValidGroupName(NSString *raw) {
   if(downloadTask!=self.videoDownloadTask)return;
   if(totalBytesExpectedToWrite>0){
     double p=100.0*totalBytesWritten/totalBytesExpectedToWrite;
-    self.videoModelMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@ · %.1f%%（%.2f/%.2f GB）",self.videoDownloadName,p,totalBytesWritten/1073741824.0,totalBytesExpectedToWrite/1073741824.0];
+    double elapsed=MAX(0.1,[[NSDate date] timeIntervalSinceDate:self.videoDownloadStart ?: [NSDate date]]);
+    double speed=totalBytesWritten/elapsed; double remain=speed>1?(totalBytesExpectedToWrite-totalBytesWritten)/speed:-1;
+    NSString *eta=remain>=0?[NSString stringWithFormat:@" · 剩余约 %ld:%02ld",(long)((NSInteger)remain/60),(long)((NSInteger)remain%60)]:@"";
+    self.videoModelMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@ · %.1f%% · %.1f MB/s%@（%.2f/%.2f GB）",self.videoDownloadName,p,speed/1048576.0,eta,totalBytesWritten/1073741824.0,totalBytesExpectedToWrite/1073741824.0];
   } else self.videoModelMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@ · %.2f GB",self.videoDownloadName,totalBytesWritten/1073741824.0];
 }
 
@@ -19527,6 +19541,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (idx >= 0 && idx < (NSInteger)urls.count) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:urls[idx]]];
 }
 
+- (void)openCrashDiagnostics:(id)sender {
+  NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Logs/DiagnosticReports"];
+  NSArray *all=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+  NSMutableArray *logs=[NSMutableArray array];
+  for(NSString *f in all)if([f containsString:@"DockLaunchers"] && [f.pathExtension isEqualToString:@"ips"])[logs addObject:f];
+  [logs sortUsingComparator:^NSComparisonResult(NSString *a,NSString *b){return [b compare:a];}];
+  NSMutableString *text=[NSMutableString stringWithFormat:@"崩溃诊断\n\n报告目录：%@\n最近 %ld 份 DockLaunchers 崩溃报告\n\n",dir,(long)MIN((NSInteger)logs.count,20)];
+  for(NSInteger i=0;i<(NSInteger)logs.count && i<20;i++)[text appendFormat:@"%ld. %@\n",(long)(i+1),logs[i]];
+  if(!logs.count)[text appendString:@"没有发现 DockLaunchers 崩溃报告。\n"];
+  [text appendString:@"\n说明：EXC_GUARD / setIcon 崩溃通常是系统图标接口异常；已修复的版本会使用 128×128 位图生成角标。\n"];
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"崩溃诊断"; a.informativeText=text;
+  [a addButtonWithTitle:@"打开报告目录"]; [a addButtonWithTitle:@"关闭"];
+  if([a runModal]==NSAlertFirstButtonReturn)[[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dir]];
+}
+
 - (void)openDiagnosticsWindow:(id)sender {
   if (!self.diagnosticsWindow) {
     self.diagnosticsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,440) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
@@ -19566,6 +19595,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(360,22,90,30)];
     refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemTealColor]; refresh.target=self; refresh.action=@selector(refreshDiagnostics);
     [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *crash = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(456,22,86,30)];
+    crash.title=@"崩溃诊断…"; crash.hoverColor=[NSColor systemRedColor]; crash.font=[NSFont systemFontOfSize:9.5]; crash.target=self; crash.action=@selector(openCrashDiagnostics:);
+    [crash applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:crash];
     [self.diagnosticsWindow center];
   }
   [self refreshDiagnostics];
