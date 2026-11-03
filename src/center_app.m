@@ -21547,23 +21547,29 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSInteger running = [self.groupBadgeCounts[name][@"running"] integerValue];
     NSImage *base = [[NSImage alloc] initWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"]];
     if (!base) base = [[NSWorkspace sharedWorkspace] iconForFile:path];
-    if (!base) continue;
-    NSImage *icon = [[NSImage alloc] initWithSize:NSMakeSize(512,512)];
-    [icon lockFocus];
-    [base drawInRect:NSMakeRect(0,0,512,512) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
+    if (!base || base.size.width <= 0 || base.size.height <= 0) continue;
+    // 固定用 128x128 位图生成 ICNS，避免异常尺寸导致 NSWorkspace setIcon 崩溃
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:128 pixelsHigh:128 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+    if (!rep) continue;
+    NSGraphicsContext *ctx = [NSGraphicsContext graphicsContextWithBitmapImageRep:rep];
+    [NSGraphicsContext saveGraphicsState];
+    [NSGraphicsContext setCurrentContext:ctx];
+    [base drawInRect:NSMakeRect(0,0,128,128) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
     if (running > 0) {
       NSString *num = running > 99 ? @"99+" : [NSString stringWithFormat:@"%ld", (long)running];
-      NSRect br = NSMakeRect(330, 330, 162, 162);
+      NSRect br = NSMakeRect(82, 82, 40, 40);
       [[NSColor systemRedColor] setFill];
       [[NSBezierPath bezierPathWithOvalInRect:br] fill];
       [[NSColor whiteColor] setStroke];
-      NSBezierPath *border = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(br, 6, 6)];
-      border.lineWidth = 10; [border stroke];
+      NSBezierPath *border = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(br, 2, 2)];
+      border.lineWidth = 2.5; [border stroke];
       NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init]; ps.alignment = NSTextAlignmentCenter;
-      NSDictionary *attrs = @{NSFontAttributeName: [NSFont systemFontOfSize:(running > 9 ? 64 : 82) weight:NSFontWeightBold], NSForegroundColorAttributeName: [NSColor whiteColor], NSParagraphStyleAttributeName: ps};
-      [num drawInRect:NSMakeRect(br.origin.x, br.origin.y + 40, br.size.width, 90) withAttributes:attrs];
+      NSDictionary *attrs = @{NSFontAttributeName: [NSFont systemFontOfSize:(running > 9 ? 16 : 21) weight:NSFontWeightBold], NSForegroundColorAttributeName: [NSColor whiteColor], NSParagraphStyleAttributeName: ps};
+      [num drawInRect:NSMakeRect(br.origin.x, br.origin.y + 10, br.size.width, 22) withAttributes:attrs];
     }
-    [icon unlockFocus];
+    [NSGraphicsContext restoreGraphicsState];
+    NSImage *icon = [[NSImage alloc] initWithSize:NSMakeSize(128,128)];
+    [icon addRepresentation:rep];
     [[NSWorkspace sharedWorkspace] setIcon:icon forFile:path options:0];
   }
   [self reloadDockPreferences];
