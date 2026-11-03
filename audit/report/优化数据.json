@@ -10,7 +10,7 @@
     "fixed_p0": 5,
     "fixed_p1": 16,
     "fixed_p2": 10,
-    "open_risk": 3
+    "open_risk": 2
   },
   "tests": {
     "build": "PASS",
@@ -67,5 +67,5 @@
     "ollama_not_running",
     "tcc_ui_not_automated"
   ],
-  "commit_after": "264b675"
+  "commit_after": "eca5f84"
 }
