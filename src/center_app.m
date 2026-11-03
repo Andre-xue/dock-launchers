@@ -1619,6 +1619,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property BOOL localOllamaRunning, localComfyRunning;
 @property NSInteger localAIRunningOwner;
 @property BOOL localAIExclusiveAlertShown;
+@property (strong) NSWindow *localAIPolicyWindow;
 @property BOOL localOllamaAutoStarting, localComfyAutoStarting;
 @property NSTimeInterval localOllamaLastAutoStart, localComfyLastAutoStart;
 @property (strong) NSWindow *aiVisionWindow, *aiEditWindow;
@@ -7294,13 +7295,46 @@ static BOOL ValidGroupName(NSString *raw) {
   else {[ud setObject:f.stringValue forKey:@"centerWhisperExe"];[ud synchronize];self.localModelStatus.stringValue=@"已保存 Whisper 路径";}
 }
 
+- (BOOL)localAIDualAllowed {
+  return [[NSUserDefaults standardUserDefaults] boolForKey:@"centerLocalAIAllowDual"];
+}
+
+- (void)showLocalAIRunPolicy:(id)sender {
+  NSAlert *a=[[NSAlert alloc] init];
+  a.messageText=@"本地 AI 运行策略";
+  unsigned long long mem=[NSProcessInfo processInfo].physicalMemory;
+  double gb=mem/1073741824.0;
+  a.informativeText=[NSString stringWithFormat:@"当前内存约 %.0f GB。8GB 内存建议只单开一个服务；16GB 及以上可允许双开。",gb];
+  NSView *av=[[NSView alloc] initWithFrame:NSMakeRect(0,0,360,66)];
+  NSButton *single=[NSButton radioButtonWithTitle:@"只允许单开（推荐 8GB）" target:nil action:nil];
+  single.frame=NSMakeRect(4,38,330,20); [av addSubview:single];
+  NSButton *dual=[NSButton radioButtonWithTitle:@"允许双开（16GB 及以上）" target:nil action:nil];
+  dual.frame=NSMakeRect(4,10,330,20); [av addSubview:dual];
+  BOOL allow=[self localAIDualAllowed];
+  single.state=allow?NSControlStateValueOff:NSControlStateValueOn;
+  dual.state=allow?NSControlStateValueOn:NSControlStateValueOff;
+  a.accessoryView=av;
+  [a addButtonWithTitle:@"保存"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  BOOL newAllow=(dual.state==NSControlStateValueOn);
+  [[NSUserDefaults standardUserDefaults] setBool:newAllow forKey:@"centerLocalAIAllowDual"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  if(!newAllow){ [self enforceLocalAIExclusive]; [self showToast:@"已设为单开模式"]; }
+  else [self showToast:@"已允许双开，请确认内存足够"];
+}
+
 - (void)openLocalAIServices:(id)sender {
   if (!self.localAIWindow) {
     self.localAIWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.localAIWindow.title=@"本地 AI 服务"; self.localAIWindow.releasedWhenClosed=NO;
     NSView *cv=self.localAIWindow.contentView;
     NSTextField *t=[self label:@"本地 AI 服务" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,472,300,28); [cv addSubview:t];
-    NSTextField *h=[self label:@"打开开关启动服务，关闭开关停止；不加入 AI 服务列表" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,450,540,18); [cv addSubview:h];
+    NSTextField *h=[self label:@"打开开关启动服务，关闭开关停止；不加入 AI 服务列表" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,450,480,18); [cv addSubview:h];
+    ColorHoverButton *policy=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(470,470,126,30)];
+    policy.title=@"运行策略…"; policy.hoverColor=[NSColor systemPurpleColor]; policy.font=[NSFont systemFontOfSize:10];
+    policy.target=self; policy.action=@selector(showLocalAIRunPolicy:);
+    policy.toolTip=@"选择只允许单开，或按电脑性能允许双开";
+    [policy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:policy];
     NSArray *titles=@[@"Ollama",@"ComfyUI",@"Whisper.cpp"];
     NSArray *subs=@[@"本地对话模型服务",@"本地 SD1.5 生图服务",@"按需转写，不常驻"];
     for(NSInteger i=0;i<3;i++){
@@ -7423,6 +7457,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)enforceLocalAIExclusive {
+  if([self localAIDualAllowed]){self.localAIExclusiveAlertShown=NO;return;}
   if(!(self.localOllamaRunning&&self.localComfyRunning)){self.localAIExclusiveAlertShown=NO;return;}
   if(self.localAIRunningOwner==2){[self stopLocalOllamaForExclusive];[self showLocalAIExclusiveAlertForOllama:NO];}
   else {[self stopLocalComfyForExclusive];[self showLocalAIExclusiveAlertForOllama:YES];}
@@ -7525,7 +7560,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if(sender.state==NSControlStateValueOn){
     self.localOllamaWanted=YES;
     self.localAIRunningOwner=1;
-    if(self.localComfyRunning||self.localComfySwitch.state==NSControlStateValueOn){
+    if(![self localAIDualAllowed] && (self.localComfyRunning||self.localComfySwitch.state==NSControlStateValueOn)){
       [self stopLocalComfyForExclusive];
       [self showLocalAIExclusiveAlertForOllama:YES];
     }
@@ -7571,7 +7606,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if(sender.state==NSControlStateValueOn){
     self.localComfyWanted=YES;
     self.localAIRunningOwner=2;
-    if(self.localOllamaRunning||self.localOllamaSwitch.state==NSControlStateValueOn){
+    if(![self localAIDualAllowed] && (self.localOllamaRunning||self.localOllamaSwitch.state==NSControlStateValueOn)){
       [self stopLocalOllamaForExclusive];
       [self showLocalAIExclusiveAlertForOllama:NO];
     }
