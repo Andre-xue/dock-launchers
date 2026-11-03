@@ -1652,6 +1652,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSArray *videoModelMarketFiltered;
 @property (strong) NSString *videoGenPromptID;
 @property NSTimeInterval videoGenStart;
+@property BOOL videoGenAutoStartedComfy;
+@property (strong) NSTimer *videoGenComfyPollTimer;
+@property NSInteger videoGenComfyPollAttempts;
 @property BOOL localOllamaAutoStarting, localComfyAutoStarting;
 @property NSTimeInterval localOllamaLastAutoStart, localComfyLastAutoStart;
 @property NSTimeInterval localOllamaStartAt, localComfyStartAt;
@@ -7804,6 +7807,8 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)closeVideoGeneration:(id)sender {
+  [self.videoGenComfyPollTimer invalidate]; self.videoGenComfyPollTimer=nil;
+  if(self.videoGenAutoStartedComfy){[self stopComfyAfterVideoAuto];self.videoGenAutoStartedComfy=NO;}
   [self.videoGenPollTimer invalidate]; self.videoGenPollTimer=nil;
   [self.videoGenElapsedTimer invalidate]; self.videoGenElapsedTimer=nil;
   [self.videoGenWindow orderOut:nil];
@@ -7826,7 +7831,66 @@ static BOOL ValidGroupName(NSString *raw) {
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/output"]]];
 }
 
+- (void)checkComfyVideoReady:(void (^)(BOOL ready))completion {
+  [[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:@"http://127.0.0.1:8188/system_stats"] completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
+    completion(!e && [(NSHTTPURLResponse *)r statusCode]==200);
+  }] resume];
+}
+
+- (void)ensureComfyUIForVideo {
+  self.videoGenStatus.stringValue=@"正在检查 ComfyUI 服务…";
+  __weak typeof(self) weakSelf=self;
+  [self checkComfyVideoReady:^(BOOL ready){
+    dispatch_async(dispatch_get_main_queue(),^{
+      if(ready){ [weakSelf submitVideoGeneration:nil]; return; }
+      weakSelf.videoGenAutoStartedComfy=YES;
+      weakSelf.localComfyWanted=YES;
+      weakSelf.localComfyStartAt=[[NSDate date] timeIntervalSince1970];
+      [weakSelf startLocalComfyAuto];
+      weakSelf.videoGenComfyPollAttempts=0;
+      weakSelf.videoGenStatus.stringValue=@"ComfyUI 未运行，正在自动启动（首次约 10–30 秒）…";
+      [weakSelf.videoGenComfyPollTimer invalidate];
+      weakSelf.videoGenComfyPollTimer=[NSTimer scheduledTimerWithTimeInterval:2 repeats:YES block:^(NSTimer *t){
+        weakSelf.videoGenComfyPollAttempts++;
+        if(weakSelf.videoGenComfyPollAttempts>60){
+          [t invalidate]; weakSelf.videoGenComfyPollTimer=nil;
+          weakSelf.videoGenStatus.stringValue=@"ComfyUI 启动超时，请到本地服务页查看";
+          return;
+        }
+        [weakSelf checkComfyVideoReady:^(BOOL ok){
+          dispatch_async(dispatch_get_main_queue(),^{
+            if(!ok)return;
+            [weakSelf.videoGenComfyPollTimer invalidate]; weakSelf.videoGenComfyPollTimer=nil;
+            [weakSelf submitVideoGeneration:nil];
+          });
+        }];
+      }];
+    });
+  }];
+}
+
+- (void)stopComfyAfterVideoAuto {
+  self.localComfyWanted=NO;
+  self.localComfyAutoStarting=NO;
+  if(self.localComfyTask.isRunning)[self.localComfyTask terminate];
+  self.localComfyTask=nil;
+  NSTask *k=[[NSTask alloc] init]; k.launchPath=@"/usr/bin/pkill"; k.arguments=@[@"-f",@"main.py --listen 127.0.0.1 --port 8188"];
+  k.standardOutput=[NSFileHandle fileHandleWithNullDevice]; k.standardError=[NSFileHandle fileHandleWithNullDevice];
+  @try{[k launch];}@catch(NSException *e){}
+  self.localAISwitchUpdating=YES; self.localComfySwitch.state=NSControlStateValueOff; self.localAISwitchUpdating=NO;
+}
+
 - (void)generateVideo:(id)sender {
+  if(self.videoGenPromptID.length){self.videoGenStatus.stringValue=@"已有生成任务在进行";return;}
+  if(self.videoGenBackendPopup.indexOfSelectedItem != 0){
+    NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"该视频后端尚未安装";
+    a.informativeText=@"Stable Video Diffusion 和 HunyuanVideo 只提供模型市场信息和性能建议，不会自动下载到本机。当前可执行的是 AnimateDiff。";
+    [a addButtonWithTitle:@"好"]; [a runModal]; return;
+  }
+  [self ensureComfyUIForVideo];
+}
+
+- (void)submitVideoGeneration:(id)sender {
   if(self.videoGenPromptID.length){self.videoGenStatus.stringValue=@"已有生成任务在进行";return;}
   if(self.videoGenBackendPopup.indexOfSelectedItem != 0){
     NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"该视频后端尚未安装";
@@ -7874,7 +7938,7 @@ static BOOL ValidGroupName(NSString *raw) {
     dispatch_async(dispatch_get_main_queue(),^{
       id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
       NSString *pid=[o isKindOfClass:[NSDictionary class]]?o[@"prompt_id"]:nil;
-      if(!pid.length){weakSelf.videoGenStatus.stringValue=[NSString stringWithFormat:@"提交失败：%@",e.localizedDescription ?: @"请确认 ComfyUI 已启动"];return;}
+      if(!pid.length){weakSelf.videoGenStatus.stringValue=[NSString stringWithFormat:@"提交失败：%@",e.localizedDescription ?: @"请确认 ComfyUI 已启动"]; if(weakSelf.videoGenAutoStartedComfy){[weakSelf stopComfyAfterVideoAuto];weakSelf.videoGenAutoStartedComfy=NO;} return;}
       weakSelf.videoGenPromptID=pid; weakSelf.videoGenStart=[[NSDate date] timeIntervalSince1970];
       weakSelf.videoGenStatus.stringValue=@"正在生成视频…";
       weakSelf.videoGenElapsedTimer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t){
@@ -7902,6 +7966,7 @@ static BOOL ValidGroupName(NSString *raw) {
       weakSelf.videoGenPromptID=nil;
       if(found.length){weakSelf.videoGenStatus.stringValue=[NSString stringWithFormat:@"生成完成：%@",found.lastPathComponent]; [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:found]];}
       else weakSelf.videoGenStatus.stringValue=@"生成完成，但未找到输出文件";
+      if(weakSelf.videoGenAutoStartedComfy){[weakSelf stopComfyAfterVideoAuto];weakSelf.videoGenAutoStartedComfy=NO;weakSelf.videoGenStatus.stringValue=[weakSelf.videoGenStatus.stringValue stringByAppendingString:@" · 已释放 ComfyUI 内存"];}
     });
   }] resume];
 }
