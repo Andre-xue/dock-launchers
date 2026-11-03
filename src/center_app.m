@@ -1871,6 +1871,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSDate *diskDateFilter;
 @property BOOL diskPreviewMode;
 @property NSInteger diskSelectedIndex;
+@property (strong) NSWindow *diskPreviewWindow;
+@property (strong) NSImageView *diskPreviewImageView;
+@property (strong) NSTextField *diskPreviewTitle;
 @property (strong) id diskKeyMonitor;
 @property (strong) NSString *diskSelectedMount;
 @property NSInteger diskGeneration;
@@ -3310,8 +3313,13 @@ static void HideDockHoverTip(void) {
     });
   }
   self.diskKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    if (self.section == 3 && self.diskPreviewWindow.isVisible) {
+      if (e.keyCode == 49 || e.keyCode == 53) { [self closeDiskPreview]; return nil; }
+      if (e.keyCode == 123) { [self navigateDiskGalleryBy:-1]; return nil; }
+      if (e.keyCode == 124) { [self navigateDiskGalleryBy:1]; return nil; }
+    }
     if (self.section == 3 && self.diskCollectionScroll.hidden == NO) {
-      if (e.keyCode == 49) { if (![QLPreviewPanel sharedPreviewPanel].isVisible) { [self previewSelectedDiskFile]; return nil; } return e; }
+      if (e.keyCode == 49) { [self previewSelectedDiskFile]; return nil; }
       if (e.keyCode == 123) { [self navigateDiskGalleryBy:-1]; return nil; }
       if (e.keyCode == 124) { [self navigateDiskGalleryBy:1]; return nil; }
     }
@@ -9947,6 +9955,39 @@ static BOOL ValidGroupName(NSString *raw) {
   }
 }
 
+- (void)showDiskPreviewAtIndex:(NSInteger)index {
+  if(index<0||index>=(NSInteger)self.diskGalleryItems.count)return;
+  NSDictionary *item=self.diskGalleryItems[index];
+  NSString *path=item[@"path"];
+  if(!path.length)return;
+  if(!self.diskPreviewWindow){
+    self.diskPreviewWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,900,700) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.diskPreviewWindow.title=@"预览"; self.diskPreviewWindow.releasedWhenClosed=NO;
+    self.diskPreviewWindow.backgroundColor=[NSColor blackColor];
+    NSView *cv=self.diskPreviewWindow.contentView;
+    cv.wantsLayer=YES; cv.layer.backgroundColor=[NSColor blackColor].CGColor;
+    self.diskPreviewImageView=[[NSImageView alloc] initWithFrame:NSMakeRect(0,34,900,666)];
+    self.diskPreviewImageView.imageScaling=NSImageScaleProportionallyUpOrDown;
+    self.diskPreviewImageView.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
+    [cv addSubview:self.diskPreviewImageView];
+    self.diskPreviewTitle=[self label:@"" size:12 bold:YES color:[NSColor whiteColor]];
+    self.diskPreviewTitle.alignment=NSTextAlignmentCenter;
+    self.diskPreviewTitle.frame=NSMakeRect(20,8,860,20);
+    self.diskPreviewTitle.autoresizingMask=NSViewWidthSizable;
+    [cv addSubview:self.diskPreviewTitle];
+    [self.diskPreviewWindow center];
+  }
+  NSImage *img=[[NSImage alloc] initWithContentsOfFile:path];
+  if(!img){[self showToast:@"无法读取预览图片"];return;}
+  self.diskPreviewImageView.image=img;
+  self.diskPreviewTitle.stringValue=[NSString stringWithFormat:@"%@    ←/→ 切换    空格/Esc 关闭",path.lastPathComponent];
+  self.diskPreviewWindow.title=path.lastPathComponent;
+  [self.diskPreviewWindow makeKeyAndOrderFront:nil];
+  [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (void)closeDiskPreview { [self.diskPreviewWindow orderOut:nil]; }
+
 - (void)navigateDiskGalleryBy:(NSInteger)delta {
   NSInteger total=self.diskAllGalleryItems.count;
   if(total<=0||self.diskGalleryItems.count<=0)return;
@@ -9964,6 +10005,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.diskCollection deselectAll:nil];
   [self.diskCollection selectItemsAtIndexPaths:[NSSet setWithObject:ip] scrollPosition:NSCollectionViewScrollPositionNearestHorizontalEdge];
   self.diskSelectedIndex=local;
+  if(self.diskPreviewWindow.isVisible){[self showDiskPreviewAtIndex:local];return;}
   QLPreviewPanel *panel=[QLPreviewPanel sharedPreviewPanel];
   if(panel.isVisible){
     NSDictionary *item=self.diskGalleryItems[local];
@@ -9985,11 +10027,9 @@ static BOOL ValidGroupName(NSString *raw) {
       if (!exported.length) return;
       weakSelf.userFilesPreviewPath = exported;
       weakSelf.diskPreviewMode = NO;
-      QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
-      panel.dataSource = weakSelf;
-      panel.delegate = weakSelf;
-      [panel makeKeyAndOrderFront:nil];
-      [panel reloadData];
+      NSMutableArray *items=[weakSelf.diskGalleryItems mutableCopy];
+      if(weakSelf.diskSelectedIndex>=0&&weakSelf.diskSelectedIndex<(NSInteger)items.count){NSMutableDictionary *m=[items[weakSelf.diskSelectedIndex] mutableCopy];m[@"path"]=exported;items[weakSelf.diskSelectedIndex]=m;weakSelf.diskGalleryItems=items;}
+      [weakSelf showDiskPreviewAtIndex:weakSelf.diskSelectedIndex];
     }];
     return;
   }
@@ -9998,14 +10038,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [self openVideoPathWithPreferredOrChooser:path];
     return;
   }
-  self.userFilesPreviewPath = path;
-  self.diskPreviewMode = YES; self.shelfPreviewMode = NO;
-  QLPreviewPanel *panel = [QLPreviewPanel sharedPreviewPanel];
-  panel.dataSource = self;
-  panel.delegate = self;
-  [panel makeKeyAndOrderFront:nil];
-  [panel reloadData];
-  panel.currentPreviewItemIndex = self.diskSelectedIndex;
+  [self showDiskPreviewAtIndex:self.diskSelectedIndex];
 }
 - (void)diskGalleryDoubleClick:(id)sender {
   NSInteger row = self.diskSelectedIndex;
