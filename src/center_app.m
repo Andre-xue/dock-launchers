@@ -18218,7 +18218,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.automationWindow.contentView;
     NSTextField *title = [self label:@"自动化规则" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(24, 510, 260, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"应用启动/退出、每天时间或切换桌面时，自动执行场景、布局和应用操作" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *sub = [self label:@"应用启动/退出、每天时间或切换桌面时自动执行；列表从上到下为优先级" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(24, 488, 660, 18); [cv addSubview:sub];
 
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, 92, 712, 380)];
@@ -18249,6 +18249,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
     }
+    ColorHoverButton *up = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(470, 38, 70, 32)];
+    up.title = @"↑ 上移"; up.hoverColor = [NSColor systemBlueColor]; up.font=[NSFont systemFontOfSize:10];
+    up.target = self; up.action = @selector(automationMoveUp:);
+    [up applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:up];
+    ColorHoverButton *down = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(548, 38, 70, 32)];
+    down.title = @"↓ 下移"; down.hoverColor = [NSColor systemTealColor]; down.font=[NSFont systemFontOfSize:10];
+    down.target = self; down.action = @selector(automationMoveDown:);
+    [down applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:down];
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(624, 38, 112, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor];
     close.target = self; close.action = @selector(closeAutomationRules:);
@@ -18280,6 +18288,24 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger row = self.automationTable.selectedRow;
   if (row < 0) row = self.automationTable.clickedRow;
   return row;
+}
+
+- (void)automationMoveUp:(id)sender {
+  NSInteger row = self.automationTable.selectedRow;
+  if (row <= 0) { [self showToast:@"请先选中一条规则"]; return; }
+  [self.automationRules exchangeObjectAtIndex:row withObjectAtIndex:row-1];
+  [self saveAutomationRules];
+  [self.automationTable reloadData];
+  [self.automationTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row-1] byExtendingSelection:NO];
+}
+
+- (void)automationMoveDown:(id)sender {
+  NSInteger row = self.automationTable.selectedRow;
+  if (row < 0 || row+1 >= (NSInteger)self.automationRules.count) { [self showToast:@"请先选中一条规则"]; return; }
+  [self.automationRules exchangeObjectAtIndex:row withObjectAtIndex:row+1];
+  [self saveAutomationRules];
+  [self.automationTable reloadData];
+  [self.automationTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row+1] byExtendingSelection:NO];
 }
 
 - (void)editAutomationRule:(id)sender {
