@@ -21802,7 +21802,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:url] completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
     dispatch_async(dispatch_get_main_queue(), ^{
       if (err || !data.length) { weakSelf.aiVideoBusy=NO; weakSelf.aiVideoStatus.stringValue=err.localizedDescription ?: @"视频下载失败"; return; }
-      NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AIGenerated"];
+      NSString *dir=[self aiGeneratedDirectory];
       [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
       NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
       NSString *path=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"AI视频-%@.mp4",[df stringFromDate:[NSDate date]]]];
@@ -22300,7 +22300,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
     void (^finish)(NSData*)=^(NSData *data){
       if(!data.length){dispatch_async(dispatch_get_main_queue(),^{weakSelf.aiEditBusy=NO;weakSelf.aiEditStatus.stringValue=@"图片下载失败";});return;}
-      NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AIGenerated"];
+      NSString *dir=[self aiGeneratedDirectory];
       [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
       NSDateFormatter *df=[[NSDateFormatter alloc] init];df.dateFormat=@"yyyyMMdd-HHmmss";
       NSString *path=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"AI编辑-%@.png",[df stringFromDate:[NSDate date]]]];
@@ -22486,15 +22486,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,260,100,30)];
     open.title=@"打开图片"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openAIImage:);
     [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
-    ColorHoverButton *clearAll = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(244,20,110,28)];
+    ColorHoverButton *clearAll = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,20,100,28)];
     clearAll.title=@"清空全部"; clearAll.hoverColor=[NSColor systemRedColor]; clearAll.target=self; clearAll.action=@selector(clearAIImagePanel:);
     [clearAll applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearAll];
-    ColorHoverButton *batch = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(362,20,110,28)];
+    ColorHoverButton *batch = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,20,110,28)];
     batch.title=@"批量生成…"; batch.hoverColor=[NSColor systemPurpleColor]; batch.target=self; batch.action=@selector(showAIImageBatch:);
     [batch applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:batch];
-    ColorHoverButton *gallery = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(480,20,110,28)];
+    ColorHoverButton *gallery = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250,20,110,28)];
     gallery.title=@"历史图库…"; gallery.hoverColor=[NSColor systemOrangeColor]; gallery.target=self; gallery.action=@selector(showAIImageGallery:);
     [gallery applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gallery];
+    ColorHoverButton *saveDir = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(368,20,120,28)];
+    saveDir.title=@"保存位置…"; saveDir.hoverColor=[NSColor systemTealColor]; saveDir.target=self; saveDir.action=@selector(chooseAIGeneratedDirectory:);
+    saveDir.toolTip=@"修改 AI 图片/视频/语音保存目录";
+    [saveDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:saveDir];
     self.aiImageStatus = [self label:@"输入提示词后点击生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.aiImageStatus.frame=NSMakeRect(244,266,390,18); [cv addSubview:self.aiImageStatus];
     self.aiImagePreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,60,610,190)];
@@ -22528,7 +22532,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (NSString *)aiGeneratedDirectory {
-  NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AIGenerated"];
+  NSString *custom = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerAIGeneratedDirectory"];
+  NSString *dir = custom.length ? [custom stringByExpandingTildeInPath] : [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AIGenerated"];
   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
   return dir;
 }
@@ -22594,6 +22599,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.aiImageStatus.stringValue = [NSString stringWithFormat:@"批量生成：%@", prompt];
   [self generateAIImage:nil];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.2*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [self runNextAIImageBatch]; });
+}
+
+- (void)chooseAIGeneratedDirectory:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = NO; p.canChooseDirectories = YES; p.canCreateDirectories = YES; p.allowsMultipleSelection = NO;
+  p.prompt = @"选择 AI 生成文件保存目录";
+  if ([p runModal] != NSModalResponseOK) return;
+  [[NSUserDefaults standardUserDefaults] setObject:p.URL.path forKey:@"centerAIGeneratedDirectory"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self showToast:[NSString stringWithFormat:@"AI 文件保存到：%@", p.URL.path]];
 }
 
 - (void)showAIImageGallery:(id)sender {
@@ -22680,7 +22695,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
     void (^finish)(NSData *imgData)=^(NSData *imgData){
       if (!imgData.length) { dispatch_async(dispatch_get_main_queue(), ^{ weakSelf.aiImageBusy=NO; weakSelf.aiImageStatus.stringValue=@"图片下载失败"; }); return; }
-      NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AIGenerated"];
+      NSString *dir=[self aiGeneratedDirectory];
       [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
       NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
       NSString *path=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"AI图片-%@.png",[df stringFromDate:[NSDate date]]]];
@@ -23314,7 +23329,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
     dispatch_async(dispatch_get_main_queue(), ^{
       if (err || !data.length) { weakSelf.aiTTSStatus.stringValue=err.localizedDescription ?: @"语音合成失败"; return; }
-      NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AIGenerated"];
+      NSString *dir=[self aiGeneratedDirectory];
       [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
       NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
       NSString *path=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"AI语音-%@.mp3",[df stringFromDate:[NSDate date]]]];
