@@ -7128,6 +7128,11 @@ static BOOL ValidGroupName(NSString *raw) {
     ColorHoverButton *log=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,40,120,32)];
     log.title=@"打开 ComfyUI 日志"; log.hoverColor=[NSColor systemTealColor]; log.font=[NSFont systemFontOfSize:10]; log.target=self; log.action=@selector(openLocalAIComfyLog:);
     [log applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:log];
+    ColorHoverButton *quitOllamaUI=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(260,40,140,32)];
+    quitOllamaUI.title=@"关闭 Ollama 界面"; quitOllamaUI.hoverColor=[NSColor systemRedColor]; quitOllamaUI.font=[NSFont systemFontOfSize:10];
+    quitOllamaUI.target=self; quitOllamaUI.action=@selector(forceCloseOllamaUI:);
+    quitOllamaUI.toolTip=@"如果 Ollama 窗口卡住或停在欢迎页，强制关闭界面（不影响后台服务开关）";
+    [quitOllamaUI applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:quitOllamaUI];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(500,40,96,32)];
     close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeLocalAIServices:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
@@ -7139,6 +7144,17 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)closeLocalAIServices:(id)sender { [self.localAITimer invalidate]; self.localAITimer=nil; [self.localAIWindow orderOut:nil]; }
+
+- (void)forceCloseOllamaUI:(id)sender {
+  NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/osascript"; t.arguments=@[@"-e",@"tell application \"Ollama\" to quit"];
+  t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+  @try{[t launch];[t waitUntilExit];}@catch(NSException *e){}
+  NSTask *k=[[NSTask alloc] init]; k.launchPath=@"/usr/bin/pkill"; k.arguments=@[@"-f",@"Ollama.app/Contents/MacOS/Ollama"];
+  k.standardOutput=[NSFileHandle fileHandleWithNullDevice]; k.standardError=[NSFileHandle fileHandleWithNullDevice];
+  @try{[k launch];}@catch(NSException *e){}
+  self.localOllamaStatus.stringValue=@"已关闭 Ollama 界面";
+  [self showToast:@"已关闭 Ollama 界面"];
+}
 
 - (void)refreshLocalAIServicesSilent { [self refreshLocalAIServices:nil]; }
 
