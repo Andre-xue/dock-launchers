@@ -1646,7 +1646,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTimer *videoGenPollTimer, *videoGenElapsedTimer;
 @property (strong) NSWindow *videoModelMarketWindow;
 @property (strong) NSTableView *videoModelMarketTable;
-@property (strong) NSPopUpButton *videoModelMarketCategory;
+@property (strong) NSPopUpButton *videoModelMarketCategory, *videoModelMarketPlatformPopup;
 @property (strong) NSTextField *videoModelMarketStatus;
 @property (strong) NSArray *videoModelMarketModels;
 @property (strong) NSArray *videoModelMarketFiltered;
@@ -7728,9 +7728,19 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *dir=[self videoMarketDirectory];
   for(NSMutableDictionary *m in a){
     if([m[@"installed"] boolValue])continue;
-    NSString *p=[dir stringByAppendingPathComponent:[m[@"category"] stringByAppendingPathComponent:m[@"file"] ?: @""]];
+    NSString *catDir=m[@"category"] ?: @"其他"; NSString *fname=m[@"file"] ?: @"";
+    NSString *p=[dir stringByAppendingPathComponent:[catDir stringByAppendingPathComponent:fname]];
     if([[NSFileManager defaultManager] fileExistsAtPath:p])m[@"installed"]=@YES;
     if(m[@"repo"] && !m[@"url"])m[@"url"]=[NSString stringWithFormat:@"https://hf-mirror.com/%@/resolve/main/%@",m[@"repo"],m[@"file"]];
+    NSString *cat=m[@"category"] ?: @"";
+    if([cat isEqualToString:@"AnimateDiff"]){
+      if([m[@"file"] hasSuffix:@"mm_sd_v15_v2.ckpt"]){m[@"format"]=@"运动模块";m[@"platform"]=@"ComfyUI / A1111 扩展";}
+      else {m[@"format"]=@"SD1.5 底模";m[@"platform"]=@"通用：ComfyUI / A1111 / Forge";}
+    } else if([cat isEqualToString:@"Stable Video Diffusion"]){m[@"format"]=@"SVD 专用模型";m[@"platform"]=@"仅 ComfyUI / Diffusers 工作流";}
+    else if([cat isEqualToString:@"HunyuanVideo"]){m[@"format"]=@"Hunyuan 专用模型";m[@"platform"]=@"仅 ComfyUI / Diffusers 工作流";}
+    else if([cat isEqualToString:@"LTX-Video"]){m[@"format"]=@"LTX 专用模型";m[@"platform"]=@"仅 ComfyUI / Diffusers 工作流";}
+    if(!m[@"format"])m[@"format"]=@"视频模型";
+    if(!m[@"platform"])m[@"platform"]=@"需确认";
   }
   return a;
 }
@@ -7750,7 +7760,7 @@ static BOOL ValidGroupName(NSString *raw) {
       for(NSDictionary *x in arr){
         NSString *rid=x[@"id"]; if(!rid.length||[known containsObject:rid])continue;
         [known addObject:rid];
-        [models addObject:@{@"name":rid,@"repo":rid,@"file":@"",@"category":@"最新",@"size":@"未知",@"desc":[NSString stringWithFormat:@"Hugging Face 最新视频模型（%@，实验）",tag],@"recommended":@NO}];
+        [models addObject:@{@"name":rid,@"repo":rid,@"file":@"",@"category":@"最新",@"size":@"未知",@"desc":[NSString stringWithFormat:@"Hugging Face 最新视频模型（%@，实验）",tag],@"recommended":@NO,@"format":@"Hugging Face 模型",@"platform":@"需确认，可能不兼容 ComfyUI"}];
       }
     }
     dispatch_async(dispatch_get_main_queue(),^{
@@ -7798,23 +7808,26 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)showVideoModelMarket:(id)sender {
   if(!self.videoModelMarketWindow){
-    self.videoModelMarketWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,780,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.videoModelMarketWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,860,540) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.videoModelMarketWindow.title=@"视频模型市场"; self.videoModelMarketWindow.releasedWhenClosed=NO;
     NSView *cv=self.videoModelMarketWindow.contentView;
     NSTextField *t=[self label:@"视频模型市场" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,490,300,28); [cv addSubview:t];
     double gb=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
     NSTextField *h=[self label:[NSString stringWithFormat:@"当前内存约 %.0f GB；这里只展示兼容性和性能建议，不会自动下载模型",gb] size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,466,720,18); [cv addSubview:h];
-    self.videoModelMarketCategory=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,430,220,28) pullsDown:NO];
+    self.videoModelMarketCategory=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,430,210,28) pullsDown:NO];
     for(NSString *c in @[@"全部",@"推荐",@"AnimateDiff",@"Stable Video Diffusion",@"HunyuanVideo",@"LTX-Video",@"最新"])[self.videoModelMarketCategory addItemWithTitle:c];
     self.videoModelMarketCategory.target=self; self.videoModelMarketCategory.action=@selector(videoModelMarketFilterChanged:); [cv addSubview:self.videoModelMarketCategory];
-    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,76,732,340)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.videoModelMarketPlatformPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(246,430,220,28) pullsDown:NO];
+    for(NSString *p in @[@"全部平台",@"通用",@"ComfyUI",@"A1111 / Forge",@"仅专用工作流",@"需确认"])[self.videoModelMarketPlatformPopup addItemWithTitle:p];
+    self.videoModelMarketPlatformPopup.target=self; self.videoModelMarketPlatformPopup.action=@selector(videoModelMarketFilterChanged:); [cv addSubview:self.videoModelMarketPlatformPopup];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,76,812,340)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.videoModelMarketTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
-    for(NSArray *c in @[@[@"vmname",@"模型/方案",@380],@[@"vmtype",@"分类",@150],@[@"vmsize",@"大小",@90],@[@"vmstatus",@"当前电脑",@150]]){
+    for(NSArray *c in @[@[@"vmname",@"模型 / 通用性",@430],@[@"vmtype",@"分类",@130],@[@"vmsize",@"大小",@90],@[@"vmstatus",@"当前电脑",@150]]){
       NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:c[0]]; col.title=c[1]; col.width=[c[2] doubleValue]; [self.videoModelMarketTable addTableColumn:col];
     }
     self.videoModelMarketTable.rowHeight=44; self.videoModelMarketTable.dataSource=self; self.videoModelMarketTable.delegate=self;
     sv.documentView=self.videoModelMarketTable; [cv addSubview:sv];
-    self.videoModelMarketStatus=[self label:@"只展示，不下载到本地；AnimateDiff 已安装可执行" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.videoModelMarketStatus.frame=NSMakeRect(24,44,500,18); [cv addSubview:self.videoModelMarketStatus];
+    self.videoModelMarketStatus=[self label:@"只展示，不下载到本地；AnimateDiff 已安装可执行" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.videoModelMarketStatus.frame=NSMakeRect(24,44,390,18); [cv addSubview:self.videoModelMarketStatus];
     ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(420,34,120,32)]; dl.title=@"下载到本地"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(videoModelMarketDownload:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
     ColorHoverButton *latest=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(548,34,100,32)]; latest.title=@"获取最新"; latest.hoverColor=[NSColor systemBlueColor]; latest.target=self; latest.action=@selector(videoModelMarketRefreshLatest:); [latest applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:latest];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(656,34,100,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeVideoModelMarket:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
@@ -7836,11 +7849,20 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)videoModelMarketFilterChanged:(id)sender {
   NSString *cat=self.videoModelMarketCategory.titleOfSelectedItem ?: @"全部";
+  NSString *plat=self.videoModelMarketPlatformPopup.titleOfSelectedItem ?: @"全部平台";
   NSMutableArray *out=[NSMutableArray array];
   NSArray *source=self.videoModelMarketModels ?: [self videoBackendCatalog];
   for(NSDictionary *m in source){
     if([cat isEqualToString:@"推荐"] && ![m[@"recommended"] boolValue])continue;
     if(![cat isEqualToString:@"全部"] && ![cat isEqualToString:@"推荐"] && ![m[@"category"] isEqualToString:cat])continue;
+    NSString *mp=m[@"platform"] ?: @"";
+    if(![plat isEqualToString:@"全部平台"]){
+      if([plat isEqualToString:@"通用"] && ![mp containsString:@"通用"])continue;
+      if([plat isEqualToString:@"ComfyUI"] && ![mp containsString:@"ComfyUI"])continue;
+      if([plat isEqualToString:@"A1111 / Forge"] && ![mp containsString:@"A1111"])continue;
+      if([plat isEqualToString:@"仅专用工作流"] && ![mp containsString:@"仅"])continue;
+      if([plat isEqualToString:@"需确认"] && ![mp containsString:@"需确认"])continue;
+    }
     [out addObject:m];
   }
   self.videoModelMarketFiltered=out;
@@ -11630,7 +11652,8 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
     if ([col.identifier isEqualToString:@"vmname"]) {
       NSTextField *l=[self label:m[@"name"] ?: @"" size:11 bold:YES color:nil]; l.frame=NSMakeRect(4,20,col.width-8,18); [v addSubview:l];
-      NSTextField *d=[self label:m[@"desc"] ?: @"" size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(4,3,col.width-8,14); [v addSubview:d];
+      NSString *meta=[NSString stringWithFormat:@"%@ · %@",m[@"format"] ?: @"",m[@"platform"] ?: @""];
+      NSTextField *d=[self label:meta size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(4,3,col.width-8,14); [v addSubview:d];
     } else if ([col.identifier isEqualToString:@"vmtype"]) {
       NSTextField *l=[self label:m[@"category"] ?: @"" size:10 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
     } else if ([col.identifier isEqualToString:@"vmsize"]) {
