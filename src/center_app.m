@@ -23359,6 +23359,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.aiGalleryWindow.contentView;
     NSTextField *t = [self label:@"AI 图片历史图库" size:18 bold:YES color:nil];
     t.frame=NSMakeRect(24,516,300,24); [cv addSubview:t];
+    ColorHoverButton *openDir = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(512,514,110,28)];
+    openDir.title=@"打开文件夹"; openDir.hoverColor=[NSColor systemTealColor]; openDir.font=[NSFont systemFontOfSize:10]; openDir.target=self; openDir.action=@selector(openAIImageGalleryFolder:);
+    [openDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:openDir];
+    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(630,514,106,28)];
+    refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(showAIImageGallery:);
+    [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
   }
   NSView *cv = self.aiGalleryWindow.contentView;
   NSScrollView *oldScroll = objc_getAssociatedObject(cv, "GalleryScroll");
@@ -23380,11 +23386,46 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     b.toolTip=f;
     objc_setAssociatedObject(b,"GalleryPath",f,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     b.target=self; b.action=@selector(openGalleryImage:);
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+    NSMenuItem *openItem = [[NSMenuItem alloc] initWithTitle:@"打开" action:@selector(openGalleryImagePath:) keyEquivalent:@""];
+    openItem.target=self; openItem.representedObject=f; [menu addItem:openItem];
+    NSMenuItem *revealItem = [[NSMenuItem alloc] initWithTitle:@"在 Finder 显示" action:@selector(revealGalleryImagePath:) keyEquivalent:@""];
+    revealItem.target=self; revealItem.representedObject=f; [menu addItem:revealItem];
+    NSMenuItem *delItem = [[NSMenuItem alloc] initWithTitle:@"删除" action:@selector(deleteGalleryImagePath:) keyEquivalent:@""];
+    delItem.target=self; delItem.representedObject=f; [menu addItem:delItem];
+    b.menu = menu;
     [doc addSubview:b];
     x+=170; if (x>560) { x=8; y-=160; }
   }
   sv.documentView=doc; [cv addSubview:sv];
   [self forceWindowToFront:self.aiGalleryWindow];
+}
+
+- (void)openAIImageGalleryFolder:(id)sender {
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self aiGeneratedDirectory]]];
+}
+
+- (void)openGalleryImagePath:(NSMenuItem *)item {
+  NSString *f = item.representedObject;
+  if (f.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[[self aiGeneratedDirectory] stringByAppendingPathComponent:f]]];
+}
+
+- (void)revealGalleryImagePath:(NSMenuItem *)item {
+  NSString *f = item.representedObject;
+  if (f.length) [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:[[self aiGeneratedDirectory] stringByAppendingPathComponent:f]]]];
+}
+
+- (void)deleteGalleryImagePath:(NSMenuItem *)item {
+  NSString *f = item.representedObject;
+  if (!f.length) return;
+  NSURL *url = [NSURL fileURLWithPath:[[self aiGeneratedDirectory] stringByAppendingPathComponent:f]];
+  NSError *err = nil;
+  if ([[NSFileManager defaultManager] trashItemAtURL:url resultingItemURL:NULL error:&err]) {
+    [self showToast:@"已移到废纸篓"];
+    [self showAIImageGallery:nil];
+  } else {
+    [self showToast:err.localizedDescription ?: @"删除失败"];
+  }
 }
 
 - (void)openGalleryImage:(NSButton *)b {
