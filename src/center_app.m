@@ -3311,7 +3311,7 @@ static void HideDockHoverTip(void) {
   }
   self.diskKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
     if (self.section == 3 && self.diskCollectionScroll.hidden == NO) {
-      if (e.keyCode == 49) { [self previewSelectedDiskFile]; return nil; }
+      if (e.keyCode == 49) { if (![QLPreviewPanel sharedPreviewPanel].isVisible) { [self previewSelectedDiskFile]; return nil; } return e; }
       if (e.keyCode == 123) { [self navigateDiskGalleryBy:-1]; return nil; }
       if (e.keyCode == 124) { [self navigateDiskGalleryBy:1]; return nil; }
     }
@@ -11624,6 +11624,14 @@ static BOOL ValidGroupName(NSString *raw) {
   [panel makeKeyAndOrderFront:nil];
   [panel reloadData];
 }
+- (BOOL)previewPanel:(QLPreviewPanel *)panel handleEvent:(NSEvent *)event {
+  if (event.type == NSEventTypeKeyDown && self.section == 3 && self.diskCollectionScroll.hidden == NO) {
+    if (event.keyCode == 123) { [self navigateDiskGalleryBy:-1]; return YES; }
+    if (event.keyCode == 124) { [self navigateDiskGalleryBy:1]; return YES; }
+  }
+  return NO;
+}
+
 - (NSInteger)numberOfPreviewItemsInPreviewPanel:(QLPreviewPanel *)panel {
   if (self.shelfPreviewMode) return self.shelfPreviewPaths.count;
   if (self.diskPreviewMode) return self.diskGalleryItems.count;
