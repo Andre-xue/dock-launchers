@@ -1543,6 +1543,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) SCRecordingEditor *recordingEditor;
 @property (strong) NSTableView *captureHistoryTable;
 @property (strong) NSArray *captureHistoryItems;
+@property (strong) NSArray *captureHistoryAllItems;
+@property (strong) NSSearchField *captureHistorySearchField;
+@property (strong) NSMutableDictionary *captureHistoryTags;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
 @property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup, *captureRecordCountdownPopup, *captureMicGainPopup, *capturePresetPopup, *captureDisplayPopup;
@@ -1605,10 +1608,13 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTableView *videoEditorTable;
 @property (strong) NSMutableArray<NSString *> *videoEditorPaths;
 @property (strong) NSTextField *videoEditorStatus, *videoTrimStartField, *videoTrimEndField;
+@property (copy) NSString *videoEditorMusicPath, *videoEditorCoverPath;
 @property (strong) NSSearchField *aiGallerySearchField;
 @property (strong) NSPopUpButton *aiGalleryFilterPopup;
 @property (strong) NSMutableSet *aiGalleryFavorites;
-@property (strong) NSTextField *aiUsageImagesLabel, *aiUsageEditsLabel, *aiUsageVideosLabel, *aiUsageAudioLabel, *aiUsageSizeLabel, *aiUsageTodayLabel, *aiUsagePathLabel;
+@property (strong) NSTextField *aiUsageImagesLabel, *aiUsageEditsLabel, *aiUsageVideosLabel, *aiUsageAudioLabel, *aiUsageSizeLabel, *aiUsageTodayLabel, *aiUsagePathLabel, *aiUsageCostLabel;
+@property (strong) NSWindow *aiCostWindow;
+@property (strong) NSTextField *aiCostImageField, *aiCostEditField, *aiCostVideoField, *aiCostAudioField;
 @property (strong) NSTableView *aiVideoHistoryTable;
 @property (strong) NSTextField *aiVideoHistoryPathLabel;
 @property (strong) NSMutableArray *aiVideoHistoryItems;
@@ -1656,6 +1662,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (copy) NSString *voiceTextPath, *meetingPath;
 @property (strong) SFSpeechRecognitionTask *voiceRecognitionTask, *meetingRecognitionTask, *activeSpeechTask;
 @property (strong) SFSpeechRecognizer *speechRecognizer;
+@property (strong) NSWindow *whisperSettingsWindow;
+@property (strong) NSTextField *whisperExeField, *whisperModelField;
 @property (strong) NSPopUpButton *videoPostQualityPopup;
 @property (copy) NSString *videoPostPath;
 @property (strong) id windowSnapMonitor;
@@ -8275,6 +8283,7 @@ static BOOL ValidGroupName(NSString *raw) {
   dispatch_once(&once, ^{
     presets = @[
       @{@"name":@"Ollama 本地", @"aliases":@[@"ollama", @"本地模型", @"本地ai"], @"url":@"https://ollama.com/download", @"type":@"本地部署/离线/隐私推理"},
+      @{@"name":@"ComfyUI 本地", @"aliases":@[@"comfyui", @"comfy", @"本地生图"], @"url":@"https://www.comfy.org/download", @"type":@"本地生图/工作流/SD/Flux"},
       @{@"name":@"DeepSeek 深度求索", @"aliases":@[@"deepseek", @"深度求索", @"深度探索"], @"url":@"https://platform.deepseek.com/api_keys", @"type":@"通用对话/推理/代码"},
       @{@"name":@"OpenAI ChatGPT", @"aliases":@[@"openai", @"chatgpt", @"gpt", @"奥尔特曼"], @"url":@"https://platform.openai.com/api-keys", @"type":@"通用对话/多模态/推理"},
       @{@"name":@"Anthropic Claude", @"aliases":@[@"claude", @"anthropic", @"克劳德"], @"url":@"https://console.anthropic.com/settings/keys", @"type":@"长文本/推理/代码/多模态"},
@@ -8333,7 +8342,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (NSDictionary *)aiDefaultBaseAndModelForName:(NSString *)raw {
   NSString *name = [(raw ?: @"") lowercaseString];
   NSString *base = nil, *model = nil;
-  if ([name containsString:@"ollama"] || [name containsString:@"本地模型"]) { base = @"http://127.0.0.1:11434/v1"; model = @"llama3.2"; }
+  if ([name containsString:@"comfy"]) { base = @"http://127.0.0.1:8188"; model = @"v1-5-pruned-emaonly.safetensors"; }
+  else if ([name containsString:@"ollama"] || [name containsString:@"本地模型"]) { base = @"http://127.0.0.1:11434/v1"; model = @"llama3.2"; }
   else if ([name containsString:@"deepseek"] || [name containsString:@"深度求索"] || [name containsString:@"深度探索"]) { base = @"https://api.deepseek.com/v1"; model = @"deepseek-chat"; }
   else if ([name containsString:@"openai"] || [name containsString:@"chatgpt"]) { base = @"https://api.openai.com/v1"; model = @"gpt-4o-mini"; }
   else if ([name containsString:@"claude"] || [name containsString:@"anthropic"]) { base = @"https://api.anthropic.com/v1"; model = @"claude-3-5-sonnet-latest"; }
@@ -8404,7 +8414,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *base = [self.dialogAIBase.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
   NSString *key = [self.dialogAIApi.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
   if (!base.length) { self.dialogAIStatus.stringValue = @"请先填写 API 基础地址"; return; }
-  BOOL localBase = [base containsString:@"127.0.0.1"] || [base containsString:@"localhost"] || [base containsString:@"ollama"];
+  BOOL localBase = [base containsString:@"127.0.0.1"] || [base containsString:@"localhost"] || [base containsString:@"ollama"] || [base containsString:@"8188"];
   if (!key.length && localBase) key = @"ollama-local";
   if (!key.length) { self.dialogAIStatus.stringValue = @"请先填写 API Key"; return; }
   if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length - @"/chat/completions".length];
@@ -8506,7 +8516,7 @@ static BOOL ValidGroupName(NSString *raw) {
   for (NSInteger i = 0; i < keys.count; i++) entry[keys[i]] = ((NSTextField *)fields[i]).stringValue ?: @"";
   entry[@"modelCategory"] = self.dialogAIModelCategoryPopup.selectedItem.representedObject ?: @"text";
   NSString *entryBase = entry[@"apiBase"] ?: @"";
-  if (![entry[@"api"] length] && ([entryBase containsString:@"127.0.0.1"] || [entryBase containsString:@"localhost"] || [entryBase containsString:@"ollama"])) entry[@"api"] = @"ollama-local";
+  if (![entry[@"api"] length] && ([entryBase containsString:@"127.0.0.1"] || [entryBase containsString:@"localhost"] || [entryBase containsString:@"ollama"] || [entryBase containsString:@"8188"])) entry[@"api"] = @"local";
   if (![entry[@"name"] length]) { [self showToast:@"名称不能为空"]; return; }
   if (![entry[@"endpoint"] length]) {
     NSDictionary *preset = [self aiPresetForName:entry[@"name"]];
@@ -10210,6 +10220,12 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   if (tableView == self.captureHistoryTable) {
     if (row < 0 || row >= (NSInteger)self.captureHistoryItems.count) return nil;
+    NSDictionary *hit = self.captureHistoryItems[row];
+    if ([col.identifier isEqualToString:@"chtags"]) {
+      NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
+      NSTextField *l=[self label:hit[@"tags"] ?: @"" size:10.5 bold:NO color:[NSColor systemOrangeColor]];
+      l.lineBreakMode=NSLineBreakByTruncatingTail; l.frame=NSMakeRect(4,7,col.width-8,18); [v addSubview:l]; return v;
+    }
     NSDictionary *it = self.captureHistoryItems[row];
     NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
     NSString *text = nil;
@@ -16233,6 +16249,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.radialNewValueField = [[NSTextField alloc] initWithFrame:NSMakeRect(84,128,350,26)];
     self.radialNewValueField.placeholderString=@"应用路径 / 文件路径 / https://... / 命令";
     [cv addSubview:self.radialNewValueField];
+    NSTextField *il = [self label:@"图标" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+    il.frame=NSMakeRect(24,94,50,18); [cv addSubview:il];
+    NSPopUpButton *iconPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(84,88,350,26) pullsDown:NO];
+    NSArray *iconTitles=@[@"星标",@"应用",@"文件",@"网址",@"终端",@"文件夹",@"闪电",@"播放"];
+    NSArray *iconSymbols=@[@"star.fill",@"app.badge",@"doc.fill",@"globe",@"terminal.fill",@"folder.fill",@"bolt.fill",@"play.fill"];
+    for(NSInteger i=0;i<iconTitles.count;i++){[iconPopup addItemWithTitle:iconTitles[i]];iconPopup.lastItem.representedObject=iconSymbols[i];}
+    iconPopup.tag=202; [cv addSubview:iconPopup];
     ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(236,48,90,32)];
     save.title=@"添加"; save.hoverColor=[NSColor systemGreenColor]; save.target=self; save.action=@selector(saveRadialCustomItem:);
     [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
@@ -16244,6 +16267,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.radialNewTitleField.stringValue = @"";
   self.radialNewValueField.stringValue = @"";
   [self.radialNewTypePopup selectItemAtIndex:0];
+  NSPopUpButton *ip=[self.radialNewItemWindow.contentView viewWithTag:202];
+  if(ip)[ip selectItemAtIndex:0];
   [self forceWindowToFront:self.radialNewItemWindow];
 }
 
@@ -16257,7 +16282,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *uid = [[NSUUID UUID] UUIDString];
   NSString *action = [@"custom://" stringByAppendingString:uid];
   NSArray *typeKeys = @[@"app", @"file", @"url", @"shell"];
-  NSDictionary *item = @{@"title": title, @"symbol": @"star.fill", @"action": action,
+  NSPopUpButton *iconPopup = [self.radialNewItemWindow.contentView viewWithTag:202];
+  NSString *symbol = iconPopup.selectedItem.representedObject ?: @"star.fill";
+  NSDictionary *item = @{@"title": title, @"symbol": symbol, @"action": action,
                          @"custom": @YES, @"customType": typeKeys[[self.radialNewTypePopup indexOfSelectedItem]],
                          @"customValue": value, @"pageKey": self.radialItemsCurrentKey};
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
@@ -20648,12 +20675,20 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.captureHistoryWindow.contentView;
     NSTextField *title = [self label:@"最近截图 / 录屏" size:20 bold:YES color:nil];
     title.frame = NSMakeRect(20, 470, 300, 28); [cv addSubview:title];
-    NSTextField *sub = [self label:@"双击打开文件；右键在 Finder 中显示" size:10 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *sub = [self label:@"双击打开文件；可搜索文件名或标签；右键在 Finder 中显示" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(20, 448, 600, 18); [cv addSubview:sub];
+    self.captureHistorySearchField = [[NSSearchField alloc] initWithFrame:NSMakeRect(330,470,190,26)];
+    self.captureHistorySearchField.placeholderString=@"搜索文件名或标签";
+    self.captureHistorySearchField.target=self; self.captureHistorySearchField.action=@selector(refreshCaptureHistory:);
+    [self.captureHistorySearchField setContinuous:YES];
+    [cv addSubview:self.captureHistorySearchField];
+    ColorHoverButton *tagBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(528,470,110,28)];
+    tagBtn.title=@"标签…"; tagBtn.hoverColor=[NSColor systemOrangeColor]; tagBtn.target=self; tagBtn.action=@selector(tagCaptureHistoryRow:);
+    [tagBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:tagBtn];
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 668, 356)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.captureHistoryTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
-    NSArray *cols = @[@[@"chtype", @"类型", @70.0], @[@"chname", @"文件", @300.0], @[@"chtime", @"时间", @160.0], @[@"chpath", @"位置", @130.0]];
+    NSArray *cols = @[@[@"chtype", @"类型", @70.0], @[@"chname", @"文件", @230.0], @[@"chtags", @"标签", @130.0], @[@"chtime", @"时间", @140.0], @[@"chpath", @"位置", @120.0]];
     for (NSArray *c in cols) {
       NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
       col.title = c[1]; col.width = [c[2] doubleValue];
@@ -20668,6 +20703,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [menu addItemWithTitle:@"标注截图" action:@selector(annotateCaptureHistoryRow:) keyEquivalent:@""].target = self;
     [menu addItemWithTitle:@"OCR 识别文字" action:@selector(ocrCaptureHistoryRow:) keyEquivalent:@""].target = self;
     [menu addItemWithTitle:@"剪辑录屏" action:@selector(editCaptureHistoryVideo:) keyEquivalent:@""].target = self;
+    [menu addItemWithTitle:@"编辑标签…" action:@selector(tagCaptureHistoryRow:) keyEquivalent:@""].target = self;
     [menu addItemWithTitle:@"在 Finder 中显示" action:@selector(revealCaptureHistoryRow:) keyEquivalent:@""].target = self;
     self.captureHistoryTable.menu = menu;
     sv.documentView = self.captureHistoryTable; [cv addSubview:sv];
@@ -20702,6 +20738,26 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.captureHistoryWindow makeKeyAndOrderFront:nil];
 }
 
+- (void)tagCaptureHistoryRow:(id)sender {
+  NSInteger row = self.captureHistoryTable.selectedRow;
+  if (row < 0) row = self.captureHistoryTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.captureHistoryItems.count) { [self showToast:@"请先选择一条记录"]; return; }
+  NSDictionary *it=self.captureHistoryItems[row];
+  if (!self.captureHistoryTags) self.captureHistoryTags=[[[NSUserDefaults standardUserDefaults] dictionaryForKey:@"centerCaptureHistoryTags"] ?: @{} mutableCopy];
+  NSArray *existingTags = self.captureHistoryTags[it[@"path"]] ?: @[];
+  NSString *existing=[existingTags componentsJoinedByString:@", "];
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"编辑截图标签"; a.informativeText=@"多个标签用逗号分隔，留空表示清除";
+  NSTextField *tf=[[NSTextField alloc] initWithFrame:NSMakeRect(0,0,300,24)]; tf.stringValue=existing; a.accessoryView=tf;
+  [a addButtonWithTitle:@"保存"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  NSMutableArray *tags=[NSMutableArray array];
+  for(NSString *part in [tf.stringValue componentsSeparatedByString:@","]){NSString *v=[part stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(v.length)[tags addObject:v];}
+  if(tags.count)self.captureHistoryTags[it[@"path"]]=tags; else [self.captureHistoryTags removeObjectForKey:it[@"path"]];
+  [[NSUserDefaults standardUserDefaults] setObject:self.captureHistoryTags forKey:@"centerCaptureHistoryTags"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self refreshCaptureHistory:nil];
+}
+
 - (void)refreshCaptureHistory:(id)sender {
   NSFileManager *fm = [NSFileManager defaultManager];
   NSMutableArray *items = [NSMutableArray array];
@@ -20720,8 +20776,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
   }
   [items sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"date"] compare:a[@"date"]]; }];
-  if (items.count > 100) items = [[items subarrayWithRange:NSMakeRange(0, 100)] mutableCopy];
-  self.captureHistoryItems = items;
+  self.captureHistoryAllItems = items;
+  if (!self.captureHistoryTags) self.captureHistoryTags = [[[NSUserDefaults standardUserDefaults] dictionaryForKey:@"centerCaptureHistoryTags"] ?: @{} mutableCopy];
+  NSString *q = self.captureHistorySearchField.stringValue.lowercaseString ?: @"";
+  NSMutableArray *visible = [NSMutableArray array];
+  for (NSMutableDictionary *it in items) {
+    NSArray *tags = self.captureHistoryTags[it[@"path"]] ?: @[];
+    if (q.length) {
+      BOOL match = [[it[@"name"] lowercaseString] containsString:q];
+      for (NSString *tag in tags) if ([tag.lowercaseString containsString:q]) match = YES;
+      if (!match) continue;
+    }
+    NSMutableDictionary *m=[it mutableCopy]; m[@"tags"]=[tags componentsJoinedByString:@", "]; [visible addObject:m];
+  }
+  if (visible.count > 100) visible = [[visible subarrayWithRange:NSMakeRange(0, 100)] mutableCopy];
+  self.captureHistoryItems = visible;
   [self.captureHistoryTable reloadData];
 }
 
@@ -22510,6 +22579,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSArray *sels=@[@"videoEditorAdd:",@"videoEditorRemove:",@"videoEditorUp:",@"videoEditorDown:",@"videoEditorClear:"];
     CGFloat xs[5]={20,142,212,256,300}; CGFloat ws[5]={112,60,34,34,60};
     for(NSInteger i=0;i<5;i++){ColorHoverButton *b=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(xs[i],108,ws[i],30)];b.title=titles[i];b.hoverColor=[NSColor systemBlueColor];b.font=[NSFont systemFontOfSize:10];b.target=self;b.action=NSSelectorFromString(sels[i]);[b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:b];}
+    ColorHoverButton *music=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(370,108,120,30)]; music.title=@"背景音乐…"; music.hoverColor=[NSColor systemPurpleColor]; music.font=[NSFont systemFontOfSize:10]; music.target=self; music.action=@selector(videoEditorChooseMusic:); [music applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:music];
+    ColorHoverButton *cover=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(498,108,120,30)]; cover.title=@"封面图…"; cover.hoverColor=[NSColor systemOrangeColor]; cover.font=[NSFont systemFontOfSize:10]; cover.target=self; cover.action=@selector(videoEditorChooseCover:); [cover applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cover];
     NSTextField *sl=[self label:@"裁剪起点(秒)" size:10 bold:NO color:[NSColor secondaryLabelColor]]; sl.frame=NSMakeRect(20,74,90,18); [cv addSubview:sl];
     self.videoTrimStartField=[[NSTextField alloc] initWithFrame:NSMakeRect(112,68,70,24)]; self.videoTrimStartField.placeholderString=@"0"; [cv addSubview:self.videoTrimStartField];
     NSTextField *el=[self label:@"终点(0=结尾)" size:10 bold:NO color:[NSColor secondaryLabelColor]]; el.frame=NSMakeRect(192,74,80,18); [cv addSubview:el];
@@ -22535,6 +22606,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)videoEditorDown:(id)sender { NSInteger row=self.videoEditorTable.selectedRow; if(row>=0&&row+1<(NSInteger)self.videoEditorPaths.count){[self.videoEditorPaths exchangeObjectAtIndex:row withObjectAtIndex:row+1];[self.videoEditorTable reloadData];[self.videoEditorTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row+1] byExtendingSelection:NO];} }
 - (void)videoEditorClear:(id)sender { [self.videoEditorPaths removeAllObjects]; [self.videoEditorTable reloadData]; }
 
+- (void)videoEditorChooseMusic:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowedFileTypes=@[@"mp3",@"m4a",@"wav",@"aiff"]; if([p runModal]==NSModalResponseOK){self.videoEditorMusicPath=p.URL.path;self.videoEditorStatus.stringValue=[NSString stringWithFormat:@"背景音乐：%@",p.URL.lastPathComponent];} }
+- (void)videoEditorChooseCover:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowedFileTypes=@[@"png",@"jpg",@"jpeg"]; if([p runModal]==NSModalResponseOK){self.videoEditorCoverPath=p.URL.path;self.videoEditorStatus.stringValue=[NSString stringWithFormat:@"封面：%@",p.URL.lastPathComponent];} }
+
 - (void)videoEditorExport:(id)sender {
   if(!self.videoEditorPaths.count){[self showToast:@"请先添加视频"];return;}
   CGFloat start=[self.videoTrimStartField.stringValue doubleValue];
@@ -22542,6 +22616,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   AVMutableComposition *comp=[AVMutableComposition composition];
   [self appendVideoEditorPaths:self.videoEditorPaths index:0 composition:comp start:start end:end completion:^(NSString *error){
     if(error.length){self.videoEditorStatus.stringValue=error;return;}
+    if(self.videoEditorMusicPath.length){
+      AVURLAsset *ma=[AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:self.videoEditorMusicPath] options:nil];
+      [ma loadTracksWithMediaType:AVMediaTypeAudio completionHandler:^(NSArray<AVAssetTrack *> *mts,NSError *me){
+        dispatch_async(dispatch_get_main_queue(),^{
+          if(mts.count){AVMutableCompositionTrack *mt=[comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];CMTime md=ma.duration;CMTime cd=comp.duration;CMTime use=CMTimeCompare(md,cd)<0?md:cd;[mt insertTimeRange:CMTimeRangeMake(kCMTimeZero,use) ofTrack:mts[0] atTime:kCMTimeZero error:NULL];}
+          [self finishVideoEditorExport:comp];
+        });
+      }];
+    } else [self finishVideoEditorExport:comp];
+  }];
+}
+
+- (void)finishVideoEditorExport:(AVMutableComposition *)comp {
     NSSavePanel *sp=[NSSavePanel savePanel]; sp.allowedFileTypes=@[@"mp4"]; sp.nameFieldStringValue=@"视频剪辑.mp4";
     if([sp runModal]!=NSModalResponseOK)return;
     [[NSFileManager defaultManager] removeItemAtPath:sp.URL.path error:NULL];
@@ -22552,9 +22639,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       dispatch_async(dispatch_get_main_queue(),^{
         self.videoEditorStatus.stringValue = ex.status==AVAssetExportSessionStatusCompleted ? [NSString stringWithFormat:@"已导出：%@",sp.URL.lastPathComponent] : (ex.error.localizedDescription ?: @"导出失败");
         if(ex.status==AVAssetExportSessionStatusCompleted)[self showToast:@"视频导出完成"];
+        if(ex.status==AVAssetExportSessionStatusCompleted && self.videoEditorCoverPath.length){
+          NSString *coverOut=[[[sp.URL.path stringByDeletingLastPathComponent] stringByAppendingPathComponent:[sp.URL.lastPathComponent.stringByDeletingPathExtension stringByAppendingString:@"-封面.png"]] copy];
+          [[NSFileManager defaultManager] copyItemAtPath:self.videoEditorCoverPath toPath:coverOut error:NULL];
+        }
       });
     }];
-  }];
 }
 
 - (void)appendVideoEditorPaths:(NSArray<NSString *> *)paths index:(NSInteger)index composition:(AVMutableComposition *)comp start:(CGFloat)start end:(CGFloat)end completion:(void (^)(NSString *error))completion {
@@ -23567,7 +23657,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (BOOL)aiServiceSupportsImage:(NSString *)name {
   if ([self aiServiceName:name containsAny:@[@"deepseek",@"kimi",@"moonshot",@"claude",@"anthropic",@"mistral",@"qwen",@"千问",@"通义",@"智谱",@"glm",@"ernie",@"文心",@"百川",@"yi",@"零一",@"混元",@"hunyuan",@"groq"]]) return NO;
-  return [self aiServiceName:name containsAny:@[@"openai",@"chatgpt",@"gpt-image",@"dall",@"豆包",@"方舟",@"volcengine",@"doubao",@"seedream",@"siliconflow",@"硅基流动",@"flux",@"stable",@"image",@"图片"]];
+  return [self aiServiceName:name containsAny:@[@"openai",@"chatgpt",@"gpt-image",@"dall",@"豆包",@"方舟",@"volcengine",@"doubao",@"seedream",@"siliconflow",@"硅基流动",@"flux",@"stable",@"image",@"图片",@"comfy"]];
 }
 
 - (BOOL)aiServiceSupportsVideo:(NSString *)name {
@@ -23633,6 +23723,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *key = e[@"api"] ?: @"";
   NSString *defaultURL = @"", *defaultModel = @"";
   NSString *low = [name lowercaseString];
+  BOOL comfy = [low containsString:@"comfy"] || [base containsString:@":8188"];
+  if (comfy) {
+    self.aiImageModelField.editable = YES;
+    self.aiImageModelField.stringValue = e[@"imageModel"] ?: @"v1-5-pruned-emaonly.safetensors";
+    self.aiImageURLField.stringValue = base.length ? base : @"http://127.0.0.1:8188";
+    self.aiImageStatus.stringValue = @"ComfyUI 本地：模型填 checkpoint 名称，地址填 127.0.0.1:8188";
+    return;
+  }
+  self.aiImageModelField.editable = NO;
   if ([low containsString:@"openai"] || [low containsString:@"chatgpt"]) { defaultURL = @"https://api.openai.com/v1/images/generations"; defaultModel = @"gpt-image-1"; }
   else if ([low containsString:@"豆包"] || [low containsString:@"方舟"] || [low containsString:@"volcengine"] || [low containsString:@"doubao"]) { defaultURL = @"https://ark.cn-beijing.volces.com/api/v3/images/generations"; defaultModel = @"doubao-seedream-3-0-t2i-250415"; }
   else if ([low containsString:@"siliconflow"] || [low containsString:@"硅基流动"]) { defaultURL = @"https://api.siliconflow.cn/v1/images/generations"; defaultModel = @"Qwen/Qwen-Image"; }
@@ -23797,12 +23896,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiUsagePathLabel=[self label:@"" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
     self.aiUsagePathLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;
     self.aiUsagePathLabel.frame=NSMakeRect(24,100,552,18); [cv addSubview:self.aiUsagePathLabel];
+    self.aiUsageCostLabel=[self label:@"估算费用：¥0.00" size:11 bold:YES color:[NSColor systemOrangeColor]];
+    self.aiUsageCostLabel.frame=NSMakeRect(24,78,400,18); [cv addSubview:self.aiUsageCostLabel];
     ColorHoverButton *refresh=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,50,100,32)];
     refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(refreshAIUsageStats:);
     [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
     ColorHoverButton *open=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(132,50,120,32)];
     open.title=@"打开 AI 目录"; open.hoverColor=[NSColor systemTealColor]; open.target=self; open.action=@selector(openAIGeneratedFolder:);
     [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    ColorHoverButton *costBtn=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(354,50,118,32)];
+    costBtn.title=@"费用设置…"; costBtn.hoverColor=[NSColor systemOrangeColor]; costBtn.font=[NSFont systemFontOfSize:10]; costBtn.target=self; costBtn.action=@selector(openAICostSettings:);
+    [costBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:costBtn];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(480,50,96,32)];
     close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeAIUsageStats:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
@@ -23811,6 +23915,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self refreshAIUsageStats:nil];
   [self forceWindowToFront:self.aiUsageWindow];
 }
+
+- (void)openAICostSettings:(id)sender {
+  if(!self.aiCostWindow){
+    self.aiCostWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,420,300) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiCostWindow.title=@"AI 单价设置"; self.aiCostWindow.releasedWhenClosed=NO;
+    NSView *cv=self.aiCostWindow.contentView;
+    NSTextField *t=[self label:@"AI 单价设置" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,256,300,24); [cv addSubview:t];
+    NSTextField *h=[self label:@"按每张/每个/每秒估算，仅用于本地统计" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,234,380,18); [cv addSubview:h];
+    NSArray *labels=@[@"图片（元/张）",@"编辑（元/张）",@"视频（元/个）",@"语音（元/个）"];
+    NSArray *keys=@[@"centerAICostImage",@"centerAICostEdit",@"centerAICostVideo",@"centerAICostAudio"];
+    NSMutableArray *fields=[NSMutableArray array];
+    for(NSInteger i=0;i<4;i++){NSTextField *l=[self label:labels[i] size:11 bold:NO color:[NSColor secondaryLabelColor]];l.frame=NSMakeRect(24,196-i*38,140,18);[cv addSubview:l];NSTextField *f=[[NSTextField alloc] initWithFrame:NSMakeRect(170,190-i*38,120,26)];f.stringValue=[NSString stringWithFormat:@"%.2f",[[NSUserDefaults standardUserDefaults] doubleForKey:keys[i]]];[cv addSubview:f];[fields addObject:f];}
+    self.aiCostImageField=fields[0];self.aiCostEditField=fields[1];self.aiCostVideoField=fields[2];self.aiCostAudioField=fields[3];
+    ColorHoverButton *save=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(236,40,90,32)];save.title=@"保存";save.hoverColor=[NSColor systemGreenColor];save.target=self;save.action=@selector(saveAICostSettings:);[save applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:save];
+    ColorHoverButton *cancel=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(334,40,60,32)];cancel.title=@"关闭";cancel.hoverColor=[NSColor systemGrayColor];cancel.target=self;cancel.action=@selector(closeAICostSettings:);[cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:cancel];
+    [self.aiCostWindow center];
+  }
+  [self forceWindowToFront:self.aiCostWindow];
+}
+- (void)closeAICostSettings:(id)sender { [self.aiCostWindow orderOut:nil]; }
+- (void)saveAICostSettings:(id)sender { NSUserDefaults *ud=[NSUserDefaults standardUserDefaults]; [ud setDouble:self.aiCostImageField.doubleValue forKey:@"centerAICostImage"]; [ud setDouble:self.aiCostEditField.doubleValue forKey:@"centerAICostEdit"]; [ud setDouble:self.aiCostVideoField.doubleValue forKey:@"centerAICostVideo"]; [ud setDouble:self.aiCostAudioField.doubleValue forKey:@"centerAICostAudio"]; [ud synchronize]; [self.aiCostWindow orderOut:nil]; [self refreshAIUsageStats:nil]; [self showToast:@"单价已保存"]; }
 
 - (void)closeAIUsageStats:(id)sender { [self.aiUsageWindow orderOut:nil]; }
 
@@ -23844,6 +23969,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.aiUsageSizeLabel.stringValue=[NSString stringWithFormat:@"%.1f MB",bytes/1024.0/1024.0];
   self.aiUsageTodayLabel.stringValue=[NSString stringWithFormat:@"%ld 个",(long)today];
   self.aiUsagePathLabel.stringValue=[NSString stringWithFormat:@"AI 目录：%@", [self aiGeneratedDirectory]];
+  NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+  CGFloat pi=[ud doubleForKey:@"centerAICostImage"]; CGFloat pe=[ud doubleForKey:@"centerAICostEdit"];
+  CGFloat pv=[ud doubleForKey:@"centerAICostVideo"]; CGFloat pa=[ud doubleForKey:@"centerAICostAudio"];
+  CGFloat total=images*pi+edits*pe+videos*pv+audio*pa;
+  self.aiUsageCostLabel.stringValue=[NSString stringWithFormat:@"估算费用：¥%.2f（按自定义单价）",total];
 }
 
 - (void)showAIImageBatch:(id)sender {
@@ -24294,6 +24424,68 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return raw.length ? raw : (fallback ?: @"请求失败");
 }
 
+- (void)generateComfyUIImageWithPrompt:(NSString *)prompt url:(NSString *)url checkpoint:(NSString *)checkpoint imageSize:(NSString *)imageSize {
+  NSURLComponents *comp=[NSURLComponents componentsWithString:url];
+  NSString *base=comp ? [NSString stringWithFormat:@"%@://%@:%@",comp.scheme ?: @"http",comp.host ?: @"127.0.0.1",comp.port ?: @8188] : @"http://127.0.0.1:8188";
+  NSArray *wh=[imageSize.lowercaseString componentsSeparatedByString:@"x"];
+  NSInteger width=wh.count==2?[wh[0] integerValue]:1024;
+  NSInteger height=wh.count==2?[wh[1] integerValue]:1024;
+  width=MAX(256,MIN(2048,width)); height=MAX(256,MIN(2048,height));
+  NSDictionary *workflow=@{
+    @"3":@{@"class_type":@"KSampler",@"inputs":@{@"seed":@((NSInteger)(arc4random_uniform(100000000))),@"steps":@20,@"cfg":@7.0,@"sampler_name":@"euler",@"scheduler":@"normal",@"denoise":@1.0,@"model":@[@"4",@0],@"positive":@[@"6",@0],@"negative":@[@"7",@0],@"latent_image":@[@"5",@0]}},
+    @"4":@{@"class_type":@"CheckpointLoaderSimple",@"inputs":@{@"ckpt_name":checkpoint}},
+    @"5":@{@"class_type":@"EmptyLatentImage",@"inputs":@{@"width":@(width),@"height":@(height),@"batch_size":@1}},
+    @"6":@{@"class_type":@"CLIPTextEncode",@"inputs":@{@"text":prompt,@"clip":@[@"4",@1]}},
+    @"7":@{@"class_type":@"CLIPTextEncode",@"inputs":@{@"text":@"low quality, blurry, watermark, text",@"clip":@[@"4",@1]}},
+    @"8":@{@"class_type":@"VAEDecode",@"inputs":@{@"samples":@[@"3",@0],@"vae":@[@"4",@2]}},
+    @"9":@{@"class_type":@"SaveImage",@"inputs":@{@"filename_prefix":@"DockLaunchers",@"images":@[@"8",@0]}}
+  };
+  NSString *client=[[NSUUID UUID] UUIDString];
+  NSDictionary *body=@{@"prompt":workflow,@"client_id":client};
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[base stringByAppendingString:@"/prompt"]]];
+  req.HTTPMethod=@"POST"; req.timeoutInterval=20; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  req.HTTPBody=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+  self.aiImageBusy=YES; self.aiImageStatus.stringValue=@"正在提交 ComfyUI 任务…";
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data,NSURLResponse *rsp,NSError *err){
+    if(err||!data.length){dispatch_async(dispatch_get_main_queue(),^{weakSelf.aiImageBusy=NO;weakSelf.aiImageStatus.stringValue=@"无法连接 ComfyUI，请确认本地服务已启动";});return;}
+    id obj=[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+    NSString *pid=[obj isKindOfClass:[NSDictionary class]]?obj[@"prompt_id"]:nil;
+    if(!pid.length){dispatch_async(dispatch_get_main_queue(),^{weakSelf.aiImageBusy=NO;weakSelf.aiImageStatus.stringValue=[weakSelf friendlyAIErrorFromData:data fallback:@"ComfyUI 提交失败"];});return;}
+    dispatch_async(dispatch_get_main_queue(),^{weakSelf.aiImageStatus.stringValue=@"ComfyUI 正在生成…";});
+    [weakSelf pollComfyUIImage:base promptID:pid attempt:0];
+  }] resume];
+}
+
+- (void)pollComfyUIImage:(NSString *)base promptID:(NSString *)pid attempt:(NSInteger)attempt {
+  if (attempt > 180) { self.aiImageBusy=NO; self.aiImageStatus.stringValue=@"ComfyUI 生成超时"; return; }
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+    NSString *u=[NSString stringWithFormat:@"%@/history/%@",base,pid];
+    [[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:u] completionHandler:^(NSData *data,NSURLResponse *rsp,NSError *err){
+      id obj=data.length?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+      NSDictionary *hist=[obj isKindOfClass:[NSDictionary class]]?obj[pid]:nil;
+      NSDictionary *outputs=hist[@"outputs"];
+      NSString *filename=nil,*subfolder=@"";
+      if([outputs isKindOfClass:[NSDictionary class]]){
+        for(NSString *k in outputs){id imgs=outputs[k][@"images"];if([imgs isKindOfClass:[NSArray class]]&&[imgs count]){filename=imgs[0][@"filename"];subfolder=imgs[0][@"subfolder"]?:@"";break;}}
+      }
+      if(filename.length){
+        NSString *view=[NSString stringWithFormat:@"%@/view?filename=%@&subfolder=%@&type=output",base,[filename stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLQueryAllowedCharacterSet],[subfolder stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLQueryAllowedCharacterSet]];
+        [[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:view] completionHandler:^(NSData *img,NSURLResponse *r2,NSError *e2){
+          dispatch_async(dispatch_get_main_queue(),^{
+            if(!img.length){self.aiImageBusy=NO;self.aiImageStatus.stringValue=@"ComfyUI 图片下载失败";return;}
+            NSDateFormatter *df=[[NSDateFormatter alloc] init];df.dateFormat=@"yyyyMMdd-HHmmss";
+            NSString *path=[[self aiGeneratedDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"AI图片-%@.png",[df stringFromDate:[NSDate date]]]];
+            [img writeToFile:path atomically:YES]; self.aiImageBusy=NO; self.aiImageResultPath=path;
+            self.aiImagePreview.image=[[NSImage alloc] initWithData:img]; self.aiImageStatus.stringValue=[NSString stringWithFormat:@"已生成：%@",path.lastPathComponent];
+          });
+        }] resume]; return;
+      }
+      dispatch_async(dispatch_get_main_queue(),^{ [self pollComfyUIImage:base promptID:pid attempt:attempt+1]; });
+    }] resume];
+  });
+}
+
 - (void)generateAIImage:(id)sender {
   if (self.aiImageBusy) return;
   NSInteger idx=[self.aiImageServicePopup.selectedItem.representedObject integerValue];
@@ -24303,7 +24495,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *prompt=self.aiImagePrompt.string;
   NSString *url=self.aiImageURLField.stringValue;
   NSString *model=self.aiImageModelField.stringValue;
-  if (!key.length || !prompt.length || !url.length || !model.length) { self.aiImageStatus.stringValue=@"请填写 API Key、提示词、地址和模型"; return; }
+  if (!prompt.length || !url.length || !model.length) { self.aiImageStatus.stringValue=@"请填写提示词、地址和模型"; return; }
+  BOOL comfyService = [url containsString:@":8188"] || [[e[@"name"] ?: @"" lowercaseString] containsString:@"comfy"];
+  if (comfyService) { [self generateComfyUIImageWithPrompt:prompt url:url checkpoint:model imageSize:(self.aiImageSizePopup.titleOfSelectedItem ?: @"1024x1024")]; return; }
+  if (!key.length) { self.aiImageStatus.stringValue=@"请填写 API Key"; return; }
   NSMutableDictionary *entry=[e mutableCopy]; entry[@"imageModel"]=model; entry[@"imageAPI"]=url; self.aiEntries[idx]=entry; [self saveAIEntries];
   NSString *imageServiceName = [e[@"name"] ?: @"" lowercaseString];
   BOOL siliconImage = [url containsString:@"siliconflow"] || [imageServiceName containsString:@"siliconflow"] || [imageServiceName containsString:@"硅基流动"];
@@ -24556,6 +24751,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return [[NSUserDefaults standardUserDefaults] integerForKey:@"centerSTTEngine"] == 1;
 }
 
+- (BOOL)sttUseLocalWhisper {
+  return [[NSUserDefaults standardUserDefaults] integerForKey:@"centerSTTEngine"] == 2;
+}
+
 - (NSString *)chatCompletionsBaseForEntry:(NSDictionary *)entry {
   NSString *base = entry[@"apiBase"] ?: @"";
   while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
@@ -24634,6 +24833,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)transcribeMediaSmartAtPath:(NSString *)path update:(void (^)(NSString *text, BOOL final, NSError *error))update {
+  if ([self sttUseLocalWhisper]) { [self transcribeLocalWhisperAtPath:path update:update]; return; }
   if (![self sttUseThirdParty]) { [self transcribeMediaAtPath:path update:update]; return; }
   NSInteger idx = [self sttSelectedServiceIndex];
   NSString *model = [self sttModelName];
@@ -24642,6 +24842,69 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if (text.length) { update(text, final, error); return; }
     // 第三方失败时回退到本机识别
     [weakSelf transcribeMediaAtPath:path update:update];
+  }];
+}
+
+- (void)openWhisperSettings:(id)sender {
+  if (!self.whisperSettingsWindow) {
+    self.whisperSettingsWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,260) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.whisperSettingsWindow.title=@"本地 Whisper 设置"; self.whisperSettingsWindow.releasedWhenClosed=NO;
+    NSView *cv=self.whisperSettingsWindow.contentView;
+    NSTextField *t=[self label:@"本地 Whisper" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,216,300,24); [cv addSubview:t];
+    NSTextField *h=[self label:@"支持 whisper.cpp 的 whisper-cli，或 Python whisper 命令" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,194,500,18); [cv addSubview:h];
+    NSTextField *el=[self label:@"可执行文件" size:11 bold:NO color:[NSColor secondaryLabelColor]]; el.frame=NSMakeRect(24,156,80,18); [cv addSubview:el];
+    self.whisperExeField=[[NSTextField alloc] initWithFrame:NSMakeRect(108,150,400,26)]; self.whisperExeField.placeholderString=@"/opt/homebrew/bin/whisper-cli"; [cv addSubview:self.whisperExeField];
+    NSTextField *ml=[self label:@"模型文件" size:11 bold:NO color:[NSColor secondaryLabelColor]]; ml.frame=NSMakeRect(24,116,80,18); [cv addSubview:ml];
+    self.whisperModelField=[[NSTextField alloc] initWithFrame:NSMakeRect(108,110,400,26)]; self.whisperModelField.placeholderString=@"ggml-base.bin 或 Python 模型名"; [cv addSubview:self.whisperModelField];
+    ColorHoverButton *exe=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(516,150,30,26)]; exe.title=@"…"; exe.hoverColor=[NSColor systemBlueColor]; exe.target=self; exe.action=@selector(chooseWhisperExecutable:); [exe applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:exe];
+    ColorHoverButton *mdl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(516,110,30,26)]; mdl.title=@"…"; mdl.hoverColor=[NSColor systemBlueColor]; mdl.target=self; mdl.action=@selector(chooseWhisperModel:); [mdl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:mdl];
+    ColorHoverButton *save=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(340,48,90,32)]; save.title=@"保存"; save.hoverColor=[NSColor systemGreenColor]; save.target=self; save.action=@selector(saveWhisperSettings:); [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
+    ColorHoverButton *cancel=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(438,48,90,32)]; cancel.title=@"取消"; cancel.hoverColor=[NSColor systemGrayColor]; cancel.target=self; cancel.action=@selector(closeWhisperSettings:); [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
+    [self.whisperSettingsWindow center];
+  }
+  NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+  self.whisperExeField.stringValue=[ud stringForKey:@"centerWhisperExe"] ?: @"/opt/homebrew/bin/whisper-cli";
+  self.whisperModelField.stringValue=[ud stringForKey:@"centerWhisperModel"] ?: [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/Models/ggml-base.bin"];
+  [self forceWindowToFront:self.whisperSettingsWindow];
+}
+
+- (void)closeWhisperSettings:(id)sender { [self.whisperSettingsWindow orderOut:nil]; }
+- (void)chooseWhisperExecutable:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; if([p runModal]==NSModalResponseOK)self.whisperExeField.stringValue=p.URL.path; }
+- (void)chooseWhisperModel:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowedFileTypes=@[@"bin",@"gguf"]; if([p runModal]==NSModalResponseOK)self.whisperModelField.stringValue=p.URL.path; }
+- (void)saveWhisperSettings:(id)sender { NSUserDefaults *ud=[NSUserDefaults standardUserDefaults]; [ud setObject:self.whisperExeField.stringValue forKey:@"centerWhisperExe"]; [ud setObject:self.whisperModelField.stringValue forKey:@"centerWhisperModel"]; [ud synchronize]; [self.whisperSettingsWindow orderOut:nil]; [self showToast:@"本地 Whisper 路径已保存"]; }
+
+- (void)transcribeLocalWhisperAtPath:(NSString *)path update:(void (^)(NSString *text, BOOL final, NSError *error))update {
+  NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+  NSString *exe=[ud stringForKey:@"centerWhisperExe"] ?: @"/opt/homebrew/bin/whisper-cli";
+  NSString *model=[ud stringForKey:@"centerWhisperModel"] ?: [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/Models/ggml-base.bin"];
+  if (![[NSFileManager defaultManager] isExecutableFileAtPath:exe]) { update(nil,YES,[NSError errorWithDomain:@"DockLaunchers" code:70 userInfo:@{NSLocalizedDescriptionKey:@"没有找到本地 Whisper 可执行文件，请先在转写设置里配置"}]); return; }
+  if (!model.length) { update(nil,YES,[NSError errorWithDomain:@"DockLaunchers" code:71 userInfo:@{NSLocalizedDescriptionKey:@"请先配置 Whisper 模型文件"}]); return; }
+  [self extractAudioFromMediaAtPath:path completion:^(NSString *audio, NSError *err) {
+    if(!audio.length){update(nil,YES,err);return;}
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+      NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+      [[NSFileManager defaultManager] createDirectoryAtPath:tmp withIntermediateDirectories:YES attributes:nil error:NULL];
+      NSString *baseName=audio.lastPathComponent.stringByDeletingPathExtension;
+      NSTask *task=[[NSTask alloc] init]; task.launchPath=exe;
+      BOOL cpp=[exe.lastPathComponent containsString:@"whisper-cli"] || [exe.lastPathComponent isEqualToString:@"main"];
+      NSString *txtPath=nil;
+      if(cpp){
+        txtPath=[tmp stringByAppendingPathComponent:baseName];
+        task.arguments=@[@"-m",model,@"-f",audio,@"-otxt",@"-of",txtPath];
+        txtPath=[txtPath stringByAppendingString:@".txt"];
+      } else {
+        task.arguments=@[@"--model",model,@"--output_format",@"txt",@"--output_dir",tmp,audio];
+        txtPath=[tmp stringByAppendingPathComponent:[baseName stringByAppendingString:@".txt"]];
+      }
+      NSPipe *pipe=[NSPipe pipe]; task.standardError=pipe; task.standardOutput=pipe;
+      @try{[task launch];[task waitUntilExit];}@catch(NSException *e){dispatch_async(dispatch_get_main_queue(),^{update(nil,YES,[NSError errorWithDomain:@"DockLaunchers" code:72 userInfo:@{NSLocalizedDescriptionKey:@"本地 Whisper 启动失败"}]);});return;}
+      NSString *text=[[NSString alloc] initWithContentsOfFile:txtPath encoding:NSUTF8StringEncoding error:NULL];
+      if(!text.length){NSData *d=[pipe.fileHandleForReading readDataToEndOfFile];NSString *errText=[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];text=[errText stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(text.length>400)text=[text substringToIndex:400];}
+      dispatch_async(dispatch_get_main_queue(),^{
+        if(text.length)update([text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],YES,nil);
+        else update(nil,YES,[NSError errorWithDomain:@"DockLaunchers" code:73 userInfo:@{NSLocalizedDescriptionKey:@"本地 Whisper 没有返回文字"}]);
+      });
+    });
   }];
 }
 
@@ -24656,7 +24919,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *h = [self label:@"本机使用 Apple Speech；第三方使用 OpenAI 兼容 /audio/transcriptions 接口" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame = NSMakeRect(24, 264, 450, 18); [cv addSubview:h];
     self.speechEnginePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(150, 218, 320, 28) pullsDown:NO];
-    [self.speechEnginePopup addItemsWithTitles:@[@"本机 Apple Speech（离线）", @"第三方 Whisper / 兼容 API"]];
+    [self.speechEnginePopup addItemsWithTitles:@[@"本机 Apple Speech（离线）", @"第三方 Whisper / 兼容 API", @"本地 Whisper"]];
     self.speechEnginePopup.target = self; self.speechEnginePopup.action = @selector(speechSettingChanged:);
     [cv addSubview:self.speechEnginePopup];
     NSTextField *el = [self label:@"转写引擎" size:11 bold:NO color:[NSColor secondaryLabelColor]];
@@ -24676,6 +24939,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.speechServerCheck.frame = NSMakeRect(24, 78, 430, 22);
     self.speechServerCheck.toolTip = @"不勾选时强制本机离线识别；勾选后可使用 Apple 服务器提高准确率";
     [cv addSubview:self.speechServerCheck];
+    ColorHoverButton *whisperCfg = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 58, 150, 32)];
+    whisperCfg.title = @"本地 Whisper 配置…"; whisperCfg.hoverColor = [NSColor systemPurpleColor]; whisperCfg.font=[NSFont systemFontOfSize:10]; whisperCfg.target = self; whisperCfg.action = @selector(openWhisperSettings:);
+    [whisperCfg applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:whisperCfg];
     ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(286, 58, 90, 32)];
     save.title = @"保存"; save.hoverColor = [NSColor systemGreenColor]; save.target = self; save.action = @selector(saveSpeechSettings:);
     [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
@@ -24701,7 +24967,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger saved = [self sttSelectedServiceIndex];
   if (saved >= 0 && saved < (NSInteger)self.speechServicePopup.numberOfItems) [self.speechServicePopup selectItemAtIndex:saved];
   NSInteger engine = [[NSUserDefaults standardUserDefaults] integerForKey:@"centerSTTEngine"];
-  [self.speechEnginePopup selectItemAtIndex:(engine == 1 ? 1 : 0)];
+  if (engine < 0 || engine > 2) engine = 0;
+  [self.speechEnginePopup selectItemAtIndex:engine];
   self.speechModelField.stringValue = [self sttModelName];
   NSInteger sel = [self sttSelectedServiceIndex];
   NSArray *svc = [self sttServices];
@@ -24713,6 +24980,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   BOOL api = engine == 1;
   self.speechServicePopup.enabled = api;
   self.speechModelField.enabled = api;
+  self.speechServerCheck.enabled = engine == 0;
   [self speechSettingChanged:nil];
 }
 
@@ -24729,20 +24997,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)speechSettingChanged:(id)sender {
-  BOOL api = self.speechEnginePopup.indexOfSelectedItem == 1;
-  self.speechServicePopup.enabled = api;
-  self.speechModelField.enabled = api;
+  NSInteger engine = self.speechEnginePopup.indexOfSelectedItem;
+  self.speechServicePopup.enabled = engine == 1;
+  self.speechModelField.enabled = engine == 1;
+  self.speechServerCheck.enabled = engine == 0;
 }
 
 - (void)saveSpeechSettings:(id)sender {
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-  [ud setInteger:(self.speechEnginePopup.indexOfSelectedItem == 1 ? 1 : 0) forKey:@"centerSTTEngine"];
+  [ud setInteger:self.speechEnginePopup.indexOfSelectedItem forKey:@"centerSTTEngine"];
   if (self.speechServicePopup.selectedItem.representedObject) [ud setInteger:[self.speechServicePopup.selectedItem.representedObject integerValue] forKey:@"centerSTTServiceIndex"];
   [ud setObject:(self.speechModelField.stringValue.length ? self.speechModelField.stringValue : @"whisper-1") forKey:@"centerSTTModel"];
   [ud setBool:(self.speechServerCheck.state == NSControlStateValueOn) forKey:@"centerSTTAllowServer"];
   [ud synchronize];
   [self.speechSettingsWindow orderOut:nil];
-  [self showToast:(self.speechEnginePopup.indexOfSelectedItem == 1 ? @"已切换到第三方语音转写" : @"已切换到本机语音识别")];
+  NSInteger eng = self.speechEnginePopup.indexOfSelectedItem;
+  [self showToast:(eng == 1 ? @"已切换到第三方语音转写" : (eng == 2 ? @"已切换到本地 Whisper" : @"已切换到本机语音识别"))];
 }
 
 - (void)closeSpeechSettings:(id)sender { [self.speechSettingsWindow orderOut:nil]; }
