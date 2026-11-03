@@ -715,12 +715,30 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSMutableArray<NSDictionary *> *items;
 @property (strong) NSColor *strokeColor;
 @property CGFloat strokeWidth;
-@property NSInteger tool; // 0 pen, 1 rect, 2 arrow
+@property NSInteger tool; // 0 pen, 1 rect, 2 arrow, 3 mosaic, 4 text
 @property NSPoint startPoint;
 @property (strong) NSMutableArray<NSValue *> *penPoints;
+@property (strong) NSImage *mosaicCache;
 @end
 @implementation DLAnnotateView
 - (BOOL)isFlipped { return NO; }
+- (void)setImage:(NSImage *)image { _image = image; self.mosaicCache = nil; [self setNeedsDisplay:YES]; }
+- (NSImage *)mosaicImage {
+  if (self.mosaicCache) return self.mosaicCache;
+  NSRect proposed = NSMakeRect(0, 0, self.image.size.width, self.image.size.height);
+  CGImageRef cg = [self.image CGImageForProposedRect:&proposed context:nil hints:nil];
+  if (!cg) return self.image;
+  CIImage *ci = [CIImage imageWithCGImage:cg];
+  CIFilter *f = [CIFilter filterWithName:@"CIPixellate"];
+  [f setValue:ci forKey:kCIInputImageKey];
+  [f setValue:@(MAX(8, ci.extent.size.width / 70.0)) forKey:kCIInputScaleKey];
+  CIImage *out = f.outputImage;
+  CGImageRef outCG = [[CIContext contextWithOptions:nil] createCGImage:out fromRect:ci.extent];
+  NSImage *img = outCG ? [[NSImage alloc] initWithCGImage:outCG size:self.image.size] : self.image;
+  if (outCG) CGImageRelease(outCG);
+  self.mosaicCache = img;
+  return img;
+}
 - (void)drawRect:(NSRect)dirtyRect {
   [self.image drawInRect:self.bounds];
   for (NSDictionary *it in self.items) {
@@ -736,6 +754,18 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
         [path moveToPoint:[pts[0] pointValue]];
         for (NSInteger i = 1; i < (NSInteger)pts.count; i++) [path lineToPoint:[pts[i] pointValue]];
         [path stroke];
+      }
+    } else if (t == 3) {
+      NSPoint a = [it[@"start"] pointValue], b = [it[@"end"] pointValue];
+      NSRect r = NSMakeRect(MIN(a.x,b.x), MIN(a.y,b.y), fabs(b.x-a.x), fabs(b.y-a.y));
+      [[self mosaicImage] drawInRect:r fromRect:r operation:NSCompositingOperationCopy fraction:1.0];
+    } else if (t == 4) {
+      NSString *text = it[@"text"] ?: @"";
+      if (text.length) {
+        NSFont *font = [NSFont boldSystemFontOfSize:MAX(16, w * 4.5)];
+        NSDictionary *attrs = @{NSFontAttributeName: font, NSForegroundColorAttributeName: c};
+        NSPoint p = [it[@"start"] pointValue];
+        [text drawAtPoint:p withAttributes:attrs];
       }
     } else {
       NSPoint a = [it[@"start"] pointValue], b = [it[@"end"] pointValue];
@@ -778,6 +808,18 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
     if (fabs(p.x-self.startPoint.x) > 4 && fabs(p.y-self.startPoint.y) > 4) [self.items addObject:@{@"tool":@1, @"start":[NSValue valueWithPoint:self.startPoint], @"end":[NSValue valueWithPoint:p], @"color":c, @"width":@(self.strokeWidth)}];
   } else if (self.tool == 2) {
     if (hypot(p.x-self.startPoint.x, p.y-self.startPoint.y) > 8) [self.items addObject:@{@"tool":@2, @"start":[NSValue valueWithPoint:self.startPoint], @"end":[NSValue valueWithPoint:p], @"color":c, @"width":@(self.strokeWidth)}];
+  } else if (self.tool == 3) {
+    if (fabs(p.x-self.startPoint.x) > 4 && fabs(p.y-self.startPoint.y) > 4) [self.items addObject:@{@"tool":@3, @"start":[NSValue valueWithPoint:self.startPoint], @"end":[NSValue valueWithPoint:p], @"width":@(self.strokeWidth)}];
+  } else if (self.tool == 4) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"添加文字";
+    a.informativeText = @"输入要显示在截图上的文字";
+    NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,260,24)];
+    a.accessoryView = tf;
+    [a addButtonWithTitle:@"添加"]; [a addButtonWithTitle:@"取消"];
+    if ([a runModal] == NSAlertFirstButtonReturn && tf.stringValue.length) {
+      [self.items addObject:@{@"tool":@4, @"start":[NSValue valueWithPoint:self.startPoint], @"text":tf.stringValue, @"color":c, @"width":@(self.strokeWidth)}];
+    }
   }
   self.penPoints = nil;
   [self setNeedsDisplay:YES];
@@ -20055,27 +20097,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.annotateWindow.releasedWhenClosed = NO;
     self.annotateWindow.level = NSNormalWindowLevel;
     NSView *cv = self.annotateWindow.contentView;
-    self.annotateToolControl = [NSSegmentedControl segmentedControlWithLabels:@[@"画笔", @"矩形", @"箭头"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(annotateToolChanged:)];
-    self.annotateToolControl.frame = NSMakeRect(16, 618, 210, 28);
+    self.annotateToolControl = [NSSegmentedControl segmentedControlWithLabels:@[@"画笔", @"矩形", @"箭头", @"马赛克", @"文字"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(annotateToolChanged:)];
+    self.annotateToolControl.frame = NSMakeRect(16, 618, 360, 28);
     self.annotateToolControl.selectedSegment = 0;
     [cv addSubview:self.annotateToolControl];
-    self.annotateColorWell = [[NSColorWell alloc] initWithFrame:NSMakeRect(236, 618, 44, 28)];
+    self.annotateColorWell = [[NSColorWell alloc] initWithFrame:NSMakeRect(384, 618, 44, 28)];
     self.annotateColorWell.color = [NSColor systemRedColor];
     self.annotateColorWell.target = self; self.annotateColorWell.action = @selector(annotateColorChanged:);
     [cv addSubview:self.annotateColorWell];
-    self.annotateWidthPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(288, 618, 80, 28) pullsDown:NO];
+    self.annotateWidthPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(436, 618, 80, 28) pullsDown:NO];
     [self.annotateWidthPopup addItemsWithTitles:@[@"细", @"中", @"粗"]];
     self.annotateWidthPopup.target = self; self.annotateWidthPopup.action = @selector(annotateWidthChanged:);
     [cv addSubview:self.annotateWidthPopup];
-    ColorHoverButton *undo = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(380, 618, 70, 28)];
+    ColorHoverButton *undo = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524, 618, 70, 28)];
     undo.title = @"撤销"; undo.hoverColor = [NSColor systemOrangeColor];
     undo.target = self; undo.action = @selector(undoAnnotation:);
     [undo applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:undo];
-    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(458, 618, 80, 28)];
+    ColorHoverButton *copy = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(602, 618, 80, 28)];
     copy.title = @"复制"; copy.hoverColor = [NSColor systemBlueColor];
     copy.target = self; copy.action = @selector(copyAnnotation:);
     [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
-    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(546, 618, 90, 28)];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(690, 618, 80, 28)];
     save.title = @"保存 PNG"; save.hoverColor = [NSColor systemGreenColor];
     save.target = self; save.action = @selector(saveAnnotation:);
     [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
@@ -22075,22 +22117,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     col.title = @"视频文件"; col.width = 500;
     [self.aiVideoHistoryTable addTableColumn:col];
     self.aiVideoHistoryTable.rowHeight = 56;
+    self.aiVideoHistoryTable.allowsMultipleSelection = YES;
     self.aiVideoHistoryTable.dataSource = self; self.aiVideoHistoryTable.delegate = self;
     self.aiVideoHistoryTable.target = self; self.aiVideoHistoryTable.doubleAction = @selector(openAIVideoHistoryRow:);
     sv.documentView = self.aiVideoHistoryTable; [cv addSubview:sv];
-    ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20,24,100,30)];
+    ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20,24,90,30)];
     open.title=@"打开"; open.hoverColor=[NSColor systemGreenColor]; open.target=self; open.action=@selector(openAIVideoHistoryRow:);
     [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
-    ColorHoverButton *reveal = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(128,24,120,30)];
+    ColorHoverButton *reveal = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(118,24,120,30)];
     reveal.title=@"在 Finder 显示"; reveal.hoverColor=[NSColor systemTealColor]; reveal.target=self; reveal.action=@selector(revealAIVideoHistoryRow:);
     [reveal applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:reveal];
-    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(256,24,90,30)];
+    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(246,24,80,30)];
     refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(refreshAIVideoHistory:);
     [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
-    ColorHoverButton *saveDir = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(354,24,120,30)];
+    ColorHoverButton *del = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(334,24,90,30)];
+    del.title=@"删除"; del.hoverColor=[NSColor systemRedColor]; del.target=self; del.action=@selector(deleteAIVideoHistoryRows:);
+    [del applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:del];
+    ColorHoverButton *saveDir = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(432,24,110,30)];
     saveDir.title=@"保存位置…"; saveDir.hoverColor=[NSColor systemPurpleColor]; saveDir.target=self; saveDir.action=@selector(chooseAIVideoDirectory:);
+    saveDir.font=[NSFont systemFontOfSize:10];
     [saveDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:saveDir];
-    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524,24,96,30)];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(550,24,70,30)];
     close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeAIVideoHistory:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.aiVideoHistoryWindow center];
@@ -22155,6 +22202,21 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (row < 0) row = self.aiVideoHistoryTable.clickedRow;
   if (row < 0 || row >= (NSInteger)self.aiVideoHistoryItems.count) return;
   [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.aiVideoHistoryItems[row][@"path"]]]];
+}
+
+- (void)deleteAIVideoHistoryRows:(id)sender {
+  NSIndexSet *sel = self.aiVideoHistoryTable.selectedRowIndexes;
+  if (!sel.count) { [self showToast:@"请先选择视频"]; return; }
+  NSMutableArray *paths = [NSMutableArray array];
+  [sel enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
+    if (idx < self.aiVideoHistoryItems.count) [paths addObject:self.aiVideoHistoryItems[idx][@"path"]];
+  }];
+  NSInteger removed = 0;
+  for (NSString *p in paths) {
+    if ([[NSFileManager defaultManager] trashItemAtURL:[NSURL fileURLWithPath:p] resultingItemURL:NULL error:NULL]) removed++;
+  }
+  [self refreshAIVideoHistory:nil];
+  [self showToast:[NSString stringWithFormat:@"已移入废纸篓：%ld 个", (long)removed]];
 }
 
 - (void)showAIVideoBatch:(id)sender {
@@ -23391,6 +23453,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     openItem.target=self; openItem.representedObject=f; [menu addItem:openItem];
     NSMenuItem *revealItem = [[NSMenuItem alloc] initWithTitle:@"在 Finder 显示" action:@selector(revealGalleryImagePath:) keyEquivalent:@""];
     revealItem.target=self; revealItem.representedObject=f; [menu addItem:revealItem];
+    NSMenuItem *infoItem = [[NSMenuItem alloc] initWithTitle:@"显示信息" action:@selector(showGalleryImageInfo:) keyEquivalent:@""];
+    infoItem.target=self; infoItem.representedObject=f; [menu addItem:infoItem];
+    [menu addItem:[NSMenuItem separatorItem]];
     NSMenuItem *delItem = [[NSMenuItem alloc] initWithTitle:@"删除" action:@selector(deleteGalleryImagePath:) keyEquivalent:@""];
     delItem.target=self; delItem.representedObject=f; [menu addItem:delItem];
     b.menu = menu;
@@ -23413,6 +23478,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)revealGalleryImagePath:(NSMenuItem *)item {
   NSString *f = item.representedObject;
   if (f.length) [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:[[self aiGeneratedDirectory] stringByAppendingPathComponent:f]]]];
+}
+
+- (void)showGalleryImageInfo:(NSMenuItem *)item {
+  NSString *f = item.representedObject;
+  if (!f.length) return;
+  NSString *path = [[self aiGeneratedDirectory] stringByAppendingPathComponent:f];
+  NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+  NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL] ?: @{};
+  NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyy-MM-dd HH:mm:ss";
+  unsigned long long bytes = [attr[NSFileSize] unsignedLongLongValue];
+  NSString *size = bytes > 1024*1024 ? [NSString stringWithFormat:@"%.2f MB", bytes/1024.0/1024.0] : [NSString stringWithFormat:@"%.0f KB", bytes/1024.0];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.messageText = f;
+  a.informativeText = [NSString stringWithFormat:@"尺寸：%.0f × %.0f\n大小：%@\n修改时间：%@\n路径：%@", img.size.width, img.size.height, size, [df stringFromDate:attr[NSFileModificationDate] ?: [NSDate date]], path];
+  [a addButtonWithTitle:@"好"];
+  [a runModal];
 }
 
 - (void)deleteGalleryImagePath:(NSMenuItem *)item {
