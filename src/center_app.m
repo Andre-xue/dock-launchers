@@ -1230,7 +1230,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property NSInteger automationEditingIndex;
 @property (strong) NSTextField *automationNameField, *automationTriggerValueField, *automationActionValueField;
 @property (strong) NSPopUpButton *automationTriggerPopup, *automationActionPopup;
-@property (strong) NSButton *automationEnabledCheck;
+@property (strong) NSButton *automationEnabledCheck, *automationWeekdayCheck;
+@property (strong) NSTextField *automationConditionAppField;
 @property (strong) NSTextField *cloudSyncPathLabel, *cloudSyncStatus;
 @property (strong) NSButton *cloudAutoSyncCheck, *cloudAutoRestoreCheck;
 @property (strong) NSTableView *shelfTable;
@@ -17867,7 +17868,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self loadAutomationRules];
   NSArray *examples = @[
     @{@"id": [[NSUUID UUID] UUIDString], @"name": @"打开工作应用 → 工作场景", @"enabled": @YES, @"trigger": @"app_launch", @"triggerValue": @"com.apple.dt.Xcode", @"action": @"scene", @"actionValue": @"工作"},
-    @{@"id": [[NSUUID UUID] UUIDString], @"name": @"每天 09:00 → 工作场景", @"enabled": @NO, @"trigger": @"time", @"triggerValue": @"09:00", @"action": @"scene", @"actionValue": @"工作"},
+    @{@"id": [[NSUUID UUID] UUIDString], @"name": @"工作日 09:00 → 工作场景", @"enabled": @NO, @"weekdayOnly": @YES, @"trigger": @"time", @"triggerValue": @"09:00", @"action": @"scene", @"actionValue": @"工作"},
     @{@"id": [[NSUUID UUID] UUIDString], @"name": @"切换到桌面 1 → 工作场景", @"enabled": @NO, @"trigger": @"space", @"triggerValue": @"1", @"action": @"scene", @"actionValue": @"工作"},
   ];
   for (NSDictionary *e in examples) [self.automationRules addObject:e];
@@ -17878,7 +17879,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)showAutomationRuleEditorWithRule:(NSDictionary *)rule {
   if (!self.automationRuleWindow) {
-    self.automationRuleWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,540,430)
+    self.automationRuleWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,540,480)
                                                                styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable)
                                                                  backing:NSBackingStoreBuffered defer:NO];
     self.automationRuleWindow.title = @"编辑自动化规则";
@@ -17914,11 +17915,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     hint.frame = NSMakeRect(24, 206, 490, 44); hint.maximumNumberOfLines = 3; [cv addSubview:hint];
     self.automationEnabledCheck = [NSButton checkboxWithTitle:@"启用此规则" target:nil action:nil];
     self.automationEnabledCheck.frame = NSMakeRect(24, 170, 180, 22); [cv addSubview:self.automationEnabledCheck];
+    self.automationWeekdayCheck = [NSButton checkboxWithTitle:@"仅工作日（周一至周五）" target:nil action:nil];
+    self.automationWeekdayCheck.frame = NSMakeRect(24, 142, 220, 22); [cv addSubview:self.automationWeekdayCheck];
+    NSTextField *condLabel = [self label:@"附加条件" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    condLabel.frame = NSMakeRect(24, 112, 70, 18); [cv addSubview:condLabel];
+    self.automationConditionAppField = [[NSTextField alloc] initWithFrame:NSMakeRect(96, 106, 420, 26)];
+    self.automationConditionAppField.placeholderString = @"可选：应用运行中才执行（Bundle ID/路径）";
+    [cv addSubview:self.automationConditionAppField];
 
-    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(340, 116, 100, 34)];
+    ColorHoverButton *save = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(340, 56, 100, 34)];
     save.title = @"保存"; save.hoverColor = [NSColor systemGreenColor]; save.target = self; save.action = @selector(saveAutomationRule:);
     [save applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:save];
-    ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(450, 116, 80, 34)];
+    ColorHoverButton *cancel = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(450, 56, 80, 34)];
     cancel.title = @"取消"; cancel.hoverColor = [NSColor systemGrayColor]; cancel.target = self; cancel.action = @selector(closeAutomationRuleEditor:);
     [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
     [self.automationRuleWindow center];
@@ -17934,6 +17942,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.automationTriggerPopup selectItemAtIndex:(ti == NSNotFound ? 0 : ti)];
   [self.automationActionPopup selectItemAtIndex:(ai == NSNotFound ? 0 : ai)];
   self.automationEnabledCheck.state = [r[@"enabled"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.automationWeekdayCheck.state = [r[@"weekdayOnly"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.automationConditionAppField.stringValue = r[@"conditionApp"] ?: @"";
   [self automationTriggerChanged:nil];
   [self automationActionChanged:nil];
   [NSApp activateIgnoringOtherApps:YES];
@@ -17965,6 +17975,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSMutableDictionary *r = [@{@"name": name, @"trigger": triggerKeys[ti], @"triggerValue": tv,
                               @"action": actionKeys[ai], @"actionValue": av,
                               @"enabled": @(self.automationEnabledCheck.state == NSControlStateValueOn),
+                              @"weekdayOnly": @(self.automationWeekdayCheck.state == NSControlStateValueOn),
+                              @"conditionApp": self.automationConditionAppField.stringValue ?: @"",
                               @"id": [[NSUUID UUID] UUIDString]} mutableCopy];
   if (self.automationEditingIndex >= 0 && self.automationEditingIndex < (NSInteger)self.automationRules.count) {
     NSDictionary *old = self.automationRules[self.automationEditingIndex];
@@ -18015,6 +18027,18 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (BOOL)automationRule:(NSDictionary *)rule matchesTrigger:(NSString *)trigger value:(NSString *)value {
   if (![rule[@"enabled"] boolValue]) return NO;
+  if ([rule[@"weekdayOnly"] boolValue]) {
+    NSInteger weekday = [[NSCalendar currentCalendar] component:NSCalendarUnitWeekday fromDate:[NSDate date]];
+    if (weekday == 1 || weekday == 7) return NO;
+  }
+  NSString *conditionApp = [rule[@"conditionApp"] ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (conditionApp.length) {
+    BOOL running = NO;
+    for (NSRunningApplication *app in [[NSWorkspace sharedWorkspace] runningApplications]) {
+      if ([self automationValue:conditionApp matchesApp:app.bundleIdentifier ?: @""] || [self automationValue:conditionApp matchesApp:app.bundleURL.path ?: @""]) { running = YES; break; }
+    }
+    if (!running) return NO;
+  }
   if (![rule[@"trigger"] isEqualToString:trigger]) return NO;
   NSString *tv = [rule[@"triggerValue"] ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
   if (!tv.length) return NO;
