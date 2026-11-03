@@ -10775,6 +10775,10 @@ static BOOL ValidGroupName(NSString *raw) {
     if (row < 0 || row >= (NSInteger)self.radialSearchResults.count) return nil;
     NSDictionary *r=self.radialSearchResults[row];
     NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
+    if ([r[@"type"] isEqualToString:@"recentHeader"]) {
+      NSTextField *l=[self label:@"最近使用" size:10 bold:YES color:[NSColor systemOrangeColor]];
+      l.frame=NSMakeRect(6,8,col.width-12,18); [v addSubview:l]; return v;
+    }
     if ([r[@"type"] isEqualToString:@"module"]) {
       BOOL expanded=[r[@"expanded"] boolValue];
       NSButton *arrow=[NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:(expanded?@"chevron.down":@"chevron.right") accessibilityDescription:nil] target:self action:@selector(radialSearchToggleRow:)];
@@ -17199,6 +17203,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [rows addObject:@{@"type":@"module",@"title":[self radialModuleTitleForPage:page],@"page":@(page),@"expanded":@(expanded),@"count":@(matches.count)}];
     if(expanded)for(NSDictionary *it in matches)[rows addObject:@{@"type":@"item",@"title":it[@"title"] ?: @"",@"action":it[@"action"] ?: @"",@"page":@(page)}];
   }
+  if(!q.length && filter<0){
+    NSArray *recent=[[NSUserDefaults standardUserDefaults] arrayForKey:@"centerRadialRecent"] ?: @[];
+    if(recent.count){
+      [rows insertObject:@{@"type":@"recentHeader",@"title":@"最近使用"} atIndex:0];
+      NSInteger i=1;
+      for(NSDictionary *r in recent){
+        if(i>5)break;
+        [rows insertObject:@{@"type":@"item",@"title":r[@"title"] ?: @"",@"action":r[@"action"] ?: @"",@"page":r[@"page"] ?: @0} atIndex:i++];
+      }
+    }
+  }
   self.radialSearchResults=rows;
   [self.radialSearchTable reloadData];
   if(rows.count)[self.radialSearchTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
@@ -17229,7 +17244,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger row=self.radialSearchTable.selectedRow;
   if(row<0||row>=(NSInteger)self.radialSearchResults.count)return;
   NSDictionary *r=self.radialSearchResults[row];
-  if([r[@"type"] isEqualToString:@"module"]){[self radialSearchToggleSelectedExpanded:YES];return;}
+  if([r[@"type"] isEqualToString:@"module"]||[r[@"type"] isEqualToString:@"recentHeader"]){[self radialSearchToggleSelectedExpanded:YES];return;}
+  NSMutableArray *recent=[[[NSUserDefaults standardUserDefaults] arrayForKey:@"centerRadialRecent"] mutableCopy] ?: [NSMutableArray array];
+  [recent filterUsingPredicate:[NSPredicate predicateWithFormat:@"action != %@", r[@"action"] ?: @""]];
+  [recent insertObject:@{@"title":r[@"title"] ?: @"",@"action":r[@"action"] ?: @"",@"page":r[@"page"] ?: @0} atIndex:0];
+  if(recent.count>5)recent=[recent subarrayWithRange:NSMakeRange(0,5)].mutableCopy;
+  [[NSUserDefaults standardUserDefaults] setObject:recent forKey:@"centerRadialRecent"];
   self.radialPage=[r[@"page"] integerValue];
   [self radialApplyPage];
   [self closeRadialSearch:nil];
