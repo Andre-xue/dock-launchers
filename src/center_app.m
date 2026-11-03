@@ -7715,7 +7715,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (NSArray *)videoBackendCatalog {
   double mem=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
   BOOL svd=mem>=16, hunyuan=mem>=24, ltx=mem>=12;
-  NSMutableArray *a=[NSMutableArray arrayWithArray:@[
+  NSMutableArray *a=[NSMutableArray array];
+  for(NSDictionary *x in @[
     @{@"name":@"AnimateDiff + SD1.5",@"file":@"mm_sd_v15_v2.ckpt",@"category":@"AnimateDiff",@"size":@"3.8 GB",@"desc":@"文生视频/图生视频，8GB 唯一稳定方案",@"recommended":@YES,@"installed":@YES},
     @{@"name":@"mm_sd_v15_v2.ckpt",@"file":@"mm_sd_v15_v2.ckpt",@"category":@"AnimateDiff",@"size":@"1.7 GB",@"desc":@"已安装的运动模块",@"recommended":@YES,@"installed":@YES},
     @{@"name":@"Stable Video Diffusion",@"file":@"svd.safetensors",@"repo":@"stabilityai/stable-video-diffusion-img2vid",@"category":@"Stable Video Diffusion",@"size":@"9.5 GB",@"desc":@"图片转视频，建议 16GB 以上",@"recommended":@(svd)},
@@ -7723,7 +7724,7 @@ static BOOL ValidGroupName(NSString *raw) {
     @{@"name":@"HunyuanVideo BF16",@"file":@"hunyuan_video_t2v_720p_bf16.safetensors",@"repo":@"tencent/HunyuanVideo",@"category":@"HunyuanVideo",@"size":@"约 25 GB",@"desc":@"高质量文生视频，建议 24GB 以上",@"recommended":@(hunyuan)},
     @{@"name":@"HunyuanVideo FP8",@"file":@"hunyuan_video_t2v_720p_fp8_e4m3fn.safetensors",@"repo":@"tencent/HunyuanVideo",@"category":@"HunyuanVideo",@"size":@"约 15 GB",@"desc":@"HunyuanVideo 量化版，24GB 以上",@"recommended":@(hunyuan)},
     @{@"name":@"LTX-Video 2B",@"file":@"ltx-video-2b-v0.9.5.safetensors",@"repo":@"Lightricks/LTX-Video",@"category":@"LTX-Video",@"size":@"约 4.5 GB",@"desc":@"快速文生视频，建议 12GB 以上",@"recommended":@(ltx)}
-  ]];
+  ]) [a addObject:[x mutableCopy]];
   NSString *dir=[self videoMarketDirectory];
   for(NSMutableDictionary *m in a){
     if([m[@"installed"] boolValue])continue;
