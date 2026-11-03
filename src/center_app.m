@@ -7698,7 +7698,9 @@ static BOOL ValidGroupName(NSString *raw) {
     self.videoGenWindow.title=@"本地视频生成 · AnimateDiff"; self.videoGenWindow.releasedWhenClosed=NO;
     NSView *cv=self.videoGenWindow.contentView;
     NSTextField *t=[self label:@"本地视频生成" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,606,300,28); [cv addSubview:t];
-    NSTextField *h=[self label:@"AnimateDiff + SD1.5；8GB 建议 512×512、16 帧、低步数" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,582,700,18); [cv addSubview:h];
+    double mem=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
+    NSString *hint=mem<12?@"AnimateDiff + SD1.5；8GB 建议 256×256、8 帧、4 步" : @"AnimateDiff + SD1.5；建议 512×512、16 帧";
+    NSTextField *h=[self label:hint size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,582,700,18); [cv addSubview:h];
     self.videoGenStatus=[self label:@"就绪" size:10.5 bold:YES color:[NSColor systemGreenColor]]; self.videoGenStatus.frame=NSMakeRect(24,558,720,18); [cv addSubview:self.videoGenStatus];
     NSTextField *lb=[self label:@"后端" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lb.frame=NSMakeRect(24,532,60,16); [cv addSubview:lb];
     self.videoGenBackendPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,504,200,26) pullsDown:NO];
@@ -7715,7 +7717,8 @@ static BOOL ValidGroupName(NSString *raw) {
     self.videoGenNegativeField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,394,732,26)]; self.videoGenNegativeField.stringValue=@"blurry, low quality, distorted, watermark"; [cv addSubview:self.videoGenNegativeField];
     NSArray *names=@[@"宽",@"高",@"帧数",@"步数",@"种子",@"FPS"];
     CGFloat xs[6]={24,140,256,372,488,604};
-    NSArray *vals=@[@"512",@"512",@"16",@"6",@"42",@"8"];
+    double mem2=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
+    NSArray *vals=mem2<12?@[@"256",@"256",@"8",@"4",@"42",@"8"]:@[@"512",@"512",@"16",@"6",@"42",@"8"];
     NSMutableArray *fields=[NSMutableArray array];
     for(NSInteger i=0;i<6;i++){
       NSTextField *l=[self label:names[i] size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(xs[i],356,80,16); [cv addSubview:l];
@@ -7764,6 +7767,13 @@ static BOOL ValidGroupName(NSString *raw) {
     [self showToast:@"已停止 Ollama，为视频生成释放内存"];
   }
   NSInteger width=MAX(256,self.videoGenWidthField.integerValue);
+  double memGB=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
+  if(memGB<12 && (width>320 || self.videoGenHeightField.integerValue>320 || self.videoGenFramesField.integerValue>10)){
+    NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"8GB 内存可能不足";
+    a.informativeText=@"建议降到 256×256、8 帧；继续使用更高参数可能生成失败或系统卡顿。";
+    [a addButtonWithTitle:@"继续"]; [a addButtonWithTitle:@"取消"];
+    if([a runModal]!=NSAlertFirstButtonReturn)return;
+  }
   NSInteger height=MAX(256,self.videoGenHeightField.integerValue);
   NSInteger frames=MAX(4,MIN(32,self.videoGenFramesField.integerValue));
   NSInteger steps=MAX(2,MIN(30,self.videoGenStepsField.integerValue));
