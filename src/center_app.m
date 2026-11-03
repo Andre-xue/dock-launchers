@@ -10,6 +10,7 @@
 #import <IOKit/ps/IOPSKeys.h>
 #import <Quartz/Quartz.h>
 #import <PDFKit/PDFKit.h>
+#import <WebKit/WebKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <CoreServices/CoreServices.h>
@@ -1646,6 +1647,13 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSMutableArray *aiCloudDocs;
 @property (strong) NSWindow *cloudDocsWindow;
 @property (strong) NSTableView *cloudProviderTable;
+@property (strong) NSWindow *cloudLoginWindow;
+@property (strong) WKWebView *cloudLoginWebView;
+@property (strong) NSTableView *cloudLoginFileTable;
+@property (strong) NSArray *cloudLoginFiles;
+@property (strong) NSTextField *cloudLoginStatus;
+@property (strong) NSTimer *cloudLoginScanTimer;
+@property (strong) NSString *cloudLoginProvider;
 @property (strong) NSArray *cloudProviders;
 @property (strong) NSTextField *aiFilePromptField, *aiFileStatus;
 @property (strong) NSTextView *aiFileOutput;
@@ -11663,6 +11671,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (tableView == self.radialItemsTable) return self.radialItemsCurrentItems.count;
   if (tableView == self.videoEditorTable) return self.videoEditorPaths.count;
   if (tableView == self.convertTable) return self.convertPaths.count;
+  if (tableView == self.cloudLoginFileTable) return self.cloudLoginFiles.count;
   if (tableView == self.cloudProviderTable) return self.cloudProviders.count;
   if (tableView == self.aiFileTable) return self.aiFiles.count + self.aiCloudDocs.count;
   if (tableView == self.aiVideoHistoryTable) return self.aiVideoHistoryItems.count;
@@ -11841,13 +11850,21 @@ static BOOL ValidGroupName(NSString *raw) {
     }
     return v;
   }
+  if (tableView == self.cloudLoginFileTable) {
+    if (row < 0 || row >= (NSInteger)self.cloudLoginFiles.count) return nil;
+    NSDictionary *f=self.cloudLoginFiles[row];
+    NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,34)];
+    NSTextField *l=[self label:f[@"title"] ?: @"" size:11 bold:YES color:nil]; l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,15,col.width-8,17); [v addSubview:l];
+    NSTextField *d=[self label:f[@"url"] ?: @"" size:8.5 bold:NO color:[NSColor secondaryLabelColor]]; d.lineBreakMode=NSLineBreakByTruncatingMiddle; d.frame=NSMakeRect(4,2,col.width-8,13); [v addSubview:d];
+    return v;
+  }
   if (tableView == self.cloudProviderTable) {
     if (row < 0 || row >= (NSInteger)self.cloudProviders.count) return nil;
     NSDictionary *p=self.cloudProviders[row];
     NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,54)];
     NSTextField *l=[self label:p[@"name"] ?: @"" size:12 bold:YES color:nil]; l.frame=NSMakeRect(8,28,col.width-190,18); [v addSubview:l];
     NSTextField *d=[self label:p[@"desc"] ?: @"" size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(8,9,col.width-190,14); [v addSubview:d];
-    ColorHoverButton *login=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(col.width-172,13,76,28)]; login.title=@"扫码登录"; login.tag=row; login.font=[NSFont systemFontOfSize:9.5]; login.hoverColor=[NSColor systemBlueColor]; login.target=self; login.action=@selector(cloudProviderLogin:); [login applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:login];
+    ColorHoverButton *login=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(col.width-172,13,76,28)]; login.title=@"应用内登录"; login.tag=row; login.font=[NSFont systemFontOfSize:9.5]; login.hoverColor=[NSColor systemBlueColor]; login.target=self; login.action=@selector(cloudProviderWebLogin:); [login applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:login];
     ColorHoverButton *imp=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(col.width-90,13,76,28)]; imp.title=@"导入链接"; imp.tag=row; imp.font=[NSFont systemFontOfSize:9.5]; imp.hoverColor=[NSColor systemGreenColor]; imp.target=self; imp.action=@selector(cloudProviderImport:); [imp applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [v addSubview:imp];
     return v;
   }
@@ -24609,6 +24626,97 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)closeCloudDocsList:(id)sender { [self.cloudDocsWindow orderOut:nil]; }
+
+- (void)cloudProviderWebLogin:(NSButton *)sender {
+  NSInteger row=sender.tag; if(row<0||row>=(NSInteger)self.cloudProviders.count)return;
+  NSDictionary *p=self.cloudProviders[row];
+  self.cloudLoginProvider=p[@"name"] ?: @"云文档";
+  if(!self.cloudLoginWindow){
+    self.cloudLoginWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,980,800) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.cloudLoginWindow.releasedWhenClosed=NO;
+    NSView *cv=self.cloudLoginWindow.contentView;
+    NSTextField *t=[self label:@"云文档登录" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,764,400,24); [cv addSubview:t];
+    self.cloudLoginStatus=[self label:@"请在下方官方页面扫码登录；登录后会自动扫描文档列表" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.cloudLoginStatus.frame=NSMakeRect(24,742,760,18); [cv addSubview:self.cloudLoginStatus];
+    WKWebViewConfiguration *cfg=[[WKWebViewConfiguration alloc] init];
+    cfg.websiteDataStore=[WKWebsiteDataStore defaultDataStore];
+    self.cloudLoginWebView=[[WKWebView alloc] initWithFrame:NSMakeRect(20,220,940,500) configuration:cfg];
+    self.cloudLoginWebView.navigationDelegate=(id)self;
+    [cv addSubview:self.cloudLoginWebView];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(20,54,940,140)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.cloudLoginFileTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"cloudfile"]; col.title=@"页面中发现的文档/文件"; col.width=918; [self.cloudLoginFileTable addTableColumn:col];
+    self.cloudLoginFileTable.headerView=nil; self.cloudLoginFileTable.rowHeight=34; self.cloudLoginFileTable.dataSource=self; self.cloudLoginFileTable.delegate=self; self.cloudLoginFileTable.target=self; self.cloudLoginFileTable.doubleAction=@selector(cloudLoginOpenSelected:);
+    sv.documentView=self.cloudLoginFileTable; [cv addSubview:sv];
+    ColorHoverButton *refresh=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(20,16,110,28)]; refresh.title=@"刷新列表"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(scanCloudLoginPage:); [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *import=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(140,16,140,28)]; import.title=@"导入当前正文"; import.hoverColor=[NSColor systemGreenColor]; import.font=[NSFont systemFontOfSize:10]; import.target=self; import.action=@selector(importCloudCurrentPage:); [import applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:import];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(868,16,92,28)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeCloudLogin:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.cloudLoginWindow center];
+  }
+  self.cloudLoginWindow.title=[NSString stringWithFormat:@"%@ · 登录并扫描文档",self.cloudLoginProvider];
+  self.cloudLoginFiles=@[]; [self.cloudLoginFileTable reloadData];
+  self.cloudLoginStatus.stringValue=@"请在下方官方页面完成扫码登录；登录后会自动扫描页面中的文档列表";
+  NSURL *url=[NSURL URLWithString:p[@"url"] ?: @""];
+  if(url)[self.cloudLoginWebView loadRequest:[NSURLRequest requestWithURL:url]];
+  [self.cloudLoginScanTimer invalidate]; self.cloudLoginScanTimer=[NSTimer scheduledTimerWithTimeInterval:4 repeats:YES block:^(NSTimer *t){[self scanCloudLoginPage:nil];}];
+  [self bringAuxiliaryWindowToFront:self.cloudLoginWindow];
+}
+
+- (void)closeCloudLogin:(id)sender {
+  [self.cloudLoginScanTimer invalidate]; self.cloudLoginScanTimer=nil;
+  [self.cloudLoginWindow orderOut:nil];
+}
+
+- (void)scanCloudLoginPage:(id)sender {
+  if(!self.cloudLoginWebView)return;
+  NSString *script=@"JSON.stringify([...document.querySelectorAll('a')].map(a=>({title:(a.innerText||a.title||'').trim().replace(/\\s+/g,' '),url:a.href||''})).filter(x=>x.title.length>0&&x.url.length>0).slice(0,400))";
+  __weak typeof(self) weakSelf=self;
+  [self.cloudLoginWebView evaluateJavaScript:script completionHandler:^(id result,NSError *err){
+    if(![result isKindOfClass:[NSString class]])return;
+    NSData *d=[(NSString *)result dataUsingEncoding:NSUTF8StringEncoding];
+    id arr=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    if(![arr isKindOfClass:[NSArray class]])return;
+    NSMutableArray *files=[NSMutableArray array]; NSMutableSet *seen=[NSMutableSet set];
+    NSString *provider=weakSelf.cloudLoginProvider ?: @"";
+    for(NSDictionary *x in arr){
+      NSString *u=x[@"url"] ?: @""; NSString *title=x[@"title"] ?: @"";
+      if(!u.length||[seen containsObject:u])continue;
+      BOOL docs=NO;
+      if([provider containsString:@"腾讯"]) docs=[u containsString:@"docs.qq.com/"];
+      else if([provider containsString:@"飞书"]) docs=[u containsString:@"feishu.cn/"]||[u containsString:@"larksuite.com/"];
+      else if([provider containsString:@"语雀"]) docs=[u containsString:@"yuque.com/"];
+      else if([provider containsString:@"Notion"]) docs=[u containsString:@"notion.so/"]||[u containsString:@"notion.site/"];
+      else if([provider containsString:@"Google"]) docs=[u containsString:@"/document/d/"]||[u containsString:@"/spreadsheets/d/"]||[u containsString:@"/presentation/d/"];
+      else if([provider containsString:@"WPS"]) docs=[u containsString:@"kdocs.cn/"];
+      else if([provider containsString:@"钉钉"]) docs=[u containsString:@"alidocs.dingtalk.com/"];
+      if(!docs)continue;
+      if([title.lowercaseString containsString:@"登录"]||[title.lowercaseString containsString:@"帮助"]||[title.lowercaseString containsString:@"下载客户端"])continue;
+      [seen addObject:u]; [files addObject:@{@"title":title,@"url":u}];
+    }
+    dispatch_async(dispatch_get_main_queue(),^{
+      weakSelf.cloudLoginFiles=files; [weakSelf.cloudLoginFileTable reloadData];
+      weakSelf.cloudLoginStatus.stringValue=files.count?[NSString stringWithFormat:@"发现 %ld 个文档/文件链接；点击可打开，或进入文档后点「导入当前正文」",(long)files.count]:@"尚未发现文档列表；请完成登录并进入文档首页后点「刷新列表」";
+    });
+  }];
+}
+
+- (void)cloudLoginOpenSelected:(id)sender {
+  NSInteger row=self.cloudLoginFileTable.selectedRow;
+  if(row<0||row>=(NSInteger)self.cloudLoginFiles.count)return;
+  NSString *u=self.cloudLoginFiles[row][@"url"]; if(u.length)[self.cloudLoginWebView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:u]]];
+}
+
+- (void)importCloudCurrentPage:(id)sender {
+  [self.cloudLoginWebView evaluateJavaScript:@"document.body.innerText" completionHandler:^(id result,NSError *err){
+    NSString *text=[result isKindOfClass:[NSString class]]?result:@"";
+    if(text.length<20){self.cloudLoginStatus.stringValue=@"当前页面没有可读取的正文";return;}
+    if(!self.aiCloudDocs)self.aiCloudDocs=[NSMutableArray array];
+    NSString *title=[self.cloudLoginWebView title] ?: @"云文档";
+    [self.aiCloudDocs addObject:@{@"title":title,@"provider":self.cloudLoginProvider ?: @"云文档",@"url":self.cloudLoginWebView.URL.absoluteString ?: @"",@"content":[text substringToIndex:MIN(text.length,(NSUInteger)30000)]}];
+    [self.aiFileTable reloadData];
+    self.aiFileStatus.stringValue=[NSString stringWithFormat:@"已从 %@ 导入当前文档",self.cloudLoginProvider ?: @"云文档"];
+    self.cloudLoginStatus.stringValue=@"已导入当前文档正文到 AI 文件，可关闭此窗口";
+  }];
+}
 
 - (void)cloudProviderLogin:(NSButton *)sender {
   NSInteger row=sender.tag; if(row<0||row>=(NSInteger)self.cloudProviders.count)return;
