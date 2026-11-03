@@ -7160,7 +7160,7 @@ static BOOL ValidGroupName(NSString *raw) {
   for(NSView *v in cv.subviews) if([v isKindOfClass:[ColorHoverButton class]] && ((ColorHoverButton *)v).tag<=4){CGFloat w=((ColorHoverButton *)v).tag==3?76:70; v.frame=NSMakeRect(x,64,w,28); x+=w+6;}
   self.localModelAddField.hidden=service!=0;
   [self localModelReload:nil];
-  [self forceWindowToFront:self.localModelWindow];
+  [self bringAuxiliaryWindowToFront:self.localModelWindow];
 }
 
 - (void)closeLocalModelManager:(id)sender { [self.localModelWindow orderOut:nil]; }
@@ -7308,7 +7308,7 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   [self refreshLocalAIServices:nil];
   if(!self.localAITimer) self.localAITimer=[NSTimer scheduledTimerWithTimeInterval:3.0 repeats:YES block:^(NSTimer *t){ [self refreshLocalAIServicesSilent]; }];
-  [self forceWindowToFront:self.localAIWindow];
+  [self bringAuxiliaryWindowToFront:self.localAIWindow];
 }
 
 - (void)closeLocalAIServices:(id)sender { [self.localAITimer invalidate]; self.localAITimer=nil; [self.localAIWindow orderOut:nil]; }
@@ -27649,6 +27649,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)openQuickPanelFromPopover:(id)sender {
   [self.popover performClose:nil];
   dispatch_async(dispatch_get_main_queue(), ^{ [self showQuickPanel]; });
+}
+
+- (void)bringAuxiliaryWindowToFront:(NSWindow *)w {
+  if (!w) return;
+  [[NSRunningApplication currentApplication] activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+  [NSApp activateIgnoringOtherApps:YES];
+  [w makeKeyAndOrderFront:nil];
+  [w orderFrontRegardless];
 }
 
 - (void)forceWindowToFront:(NSWindow *)w {
