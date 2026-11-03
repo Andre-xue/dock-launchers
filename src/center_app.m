@@ -16157,7 +16157,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"截屏/录屏", @"symbol": @"camera.viewfinder", @"action": @"capture"},
         @{@"title": @"会议助手", @"symbol": @"person.2.wave.2", @"action": @"meeting"},
         @{@"title": @"语音转文字", @"symbol": @"waveform.badge.mic", @"action": @"voicetext"},
-        @{@"title": @"语音合成", @"symbol": @"speaker.wave.3", @"action": @"tts"}
+        @{@"title": @"AI 配音", @"symbol": @"speaker.wave.3", @"action": @"tts"}
       ],
       @[
         @{@"title": @"重命名", @"symbol": @"square.and.pencil", @"action": @"rename"},
@@ -18552,7 +18552,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3077,@"cat":@1,@"title":@"系统隐私仪表盘",@"desc":@"查看并打开各项隐私权限",@"sel":@"openPrivacyDashboard:"},
     @{@"id":@3078,@"cat":@1,@"title":@"菜单栏页面自定义",@"desc":@"显示/隐藏和排序扇形页面",@"sel":@"openRadialPageCustomization:"},
     @{@"id":@3079,@"cat":@1,@"title":@"语音转写设置",@"desc":@"切换本机识别和第三方 Whisper",@"sel":@"openSpeechSettings:"},
-    @{@"id":@3080,@"cat":@1,@"title":@"AI 语音合成",@"desc":@"文本转语音与配音",@"sel":@"openAITTSWindow:"},
+    @{@"id":@3080,@"cat":@1,@"title":@"AI 配音",@"desc":@"文本转语音、音色试听与配音",@"sel":@"openAITTSWindow:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
     @{@"id":@3031,@"cat":@2,@"title":@"快速面板",@"desc":@"全局搜索面板",@"sel":@"showQuickPanel"},
@@ -19566,7 +19566,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"系统隐私仪表盘", @"subtitle": @"查看并打开各项隐私权限", @"type": @"工具", @"tool": @"privacy", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"lock.shield" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"菜单栏页面自定义", @"subtitle": @"显示/隐藏和排序扇形页面", @"type": @"工具", @"tool": @"radialcustom", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"slider.horizontal.3" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"语音转写设置", @"subtitle": @"本机识别 / 第三方 Whisper", @"type": @"工具", @"tool": @"speechsettings", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"mic.badge.plus" accessibilityDescription:nil] ?: recIcon}];
-  [out addObject:@{@"title": @"AI 语音合成", @"subtitle": @"文本转语音与配音", @"type": @"工具", @"tool": @"tts", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"speaker.wave.3" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"AI 配音 / 语音合成", @"subtitle": @"文本转语音、音色试听与配音", @"type": @"工具", @"tool": @"tts", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"speaker.wave.3" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 图片生成", @"subtitle": @"用 AI 服务生成图片", @"type": @"工具", @"tool": @"aiimage", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"photo.badge.plus" accessibilityDescription:nil] ?: recIcon}];
@@ -21710,6 +21710,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *batch = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(494,20,110,28)];
     batch.title=@"批量生成…"; batch.hoverColor=[NSColor systemPurpleColor]; batch.target=self; batch.action=@selector(showAIVideoBatch:);
     [batch applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:batch];
+    ColorHoverButton *dub = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(612,20,44,28)];
+    dub.title=@"配音"; dub.hoverColor=[NSColor systemOrangeColor]; dub.target=self; dub.action=@selector(openAITTSWindow:);
+    dub.toolTip=@"打开 AI 配音 / 语音合成";
+    [dub applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dub];
     self.aiVideoStatus = [self label:@"输入提示词后点击生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.aiVideoStatus.frame=NSMakeRect(360,266,274,18); [cv addSubview:self.aiVideoStatus];
     self.aiVideoPreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,60,610,190)];
@@ -23307,10 +23311,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)openAITTSWindow:(id)sender {
   if (!self.aiTTSWindow) {
     self.aiTTSWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,660,600) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
-    self.aiTTSWindow.title = @"AI 语音合成";
+    self.aiTTSWindow.title = @"AI 配音 / 语音合成";
     self.aiTTSWindow.releasedWhenClosed = NO;
     NSView *cv = self.aiTTSWindow.contentView;
-    NSTextField *t = [self label:@"AI 语音合成" size:20 bold:YES color:nil];
+    NSTextField *t = [self label:@"AI 配音 / 语音合成" size:20 bold:YES color:nil];
     t.frame = NSMakeRect(24,556,300,28); [cv addSubview:t];
     NSTextField *h = [self label:@"文本转语音；支持硅基流动 CosyVoice/MOSS 和 OpenAI 兼容 /audio/speech" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame = NSMakeRect(24,534,600,18); [cv addSubview:h];
