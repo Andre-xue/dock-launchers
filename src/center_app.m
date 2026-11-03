@@ -21669,6 +21669,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *clearAll = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(244,20,110,28)];
     clearAll.title=@"清空全部"; clearAll.hoverColor=[NSColor systemRedColor]; clearAll.target=self; clearAll.action=@selector(clearAIVideoPanel:);
     [clearAll applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearAll];
+    ColorHoverButton *videoDir = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(366,20,120,28)];
+    videoDir.title=@"保存位置…"; videoDir.hoverColor=[NSColor systemTealColor]; videoDir.target=self; videoDir.action=@selector(chooseAIVideoDirectory:);
+    videoDir.toolTip=@"单独设置 AI 视频保存目录";
+    [videoDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:videoDir];
     self.aiVideoStatus = [self label:@"输入提示词后点击生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.aiVideoStatus.frame=NSMakeRect(360,266,274,18); [cv addSubview:self.aiVideoStatus];
     self.aiVideoPreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,60,610,190)];
@@ -21802,7 +21806,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:url] completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
     dispatch_async(dispatch_get_main_queue(), ^{
       if (err || !data.length) { weakSelf.aiVideoBusy=NO; weakSelf.aiVideoStatus.stringValue=err.localizedDescription ?: @"视频下载失败"; return; }
-      NSString *dir=[self aiGeneratedDirectory];
+      NSString *dir=[self aiVideoOutputDirectory];
       [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
       NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
       NSString *path=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"AI视频-%@.mp4",[df stringFromDate:[NSDate date]]]];
@@ -22538,6 +22542,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return dir;
 }
 
+- (NSString *)aiVideoOutputDirectory {
+  NSString *custom = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerAIVideoDirectory"];
+  if (!custom.length) return [self aiGeneratedDirectory];
+  NSString *dir = [custom stringByExpandingTildeInPath];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return dir;
+}
+
 - (void)showAIImageBatch:(id)sender {
   if (!self.aiImageBatchWindow) {
     self.aiImageBatchWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,440) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
@@ -22599,6 +22611,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.aiImageStatus.stringValue = [NSString stringWithFormat:@"批量生成：%@", prompt];
   [self generateAIImage:nil];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.2*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [self runNextAIImageBatch]; });
+}
+
+- (void)chooseAIVideoDirectory:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = NO; p.canChooseDirectories = YES; p.canCreateDirectories = YES; p.allowsMultipleSelection = NO;
+  p.prompt = @"选择 AI 视频保存目录";
+  if ([p runModal] != NSModalResponseOK) return;
+  [[NSUserDefaults standardUserDefaults] setObject:p.URL.path forKey:@"centerAIVideoDirectory"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self showToast:[NSString stringWithFormat:@"AI 视频保存到：%@", p.URL.path]];
 }
 
 - (void)chooseAIGeneratedDirectory:(id)sender {
