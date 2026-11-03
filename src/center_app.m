@@ -3306,9 +3306,10 @@ static void HideDockHoverTip(void) {
     });
   }
   self.diskKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
-    if (e.keyCode == 49 && self.section == 3 && self.diskCollectionScroll.hidden == NO) {
-      [self previewSelectedDiskFile];
-      return nil;
+    if (self.section == 3 && self.diskCollectionScroll.hidden == NO) {
+      if (e.keyCode == 49) { [self previewSelectedDiskFile]; return nil; }
+      if (e.keyCode == 123) { [self navigateDiskGalleryBy:-1]; return nil; }
+      if (e.keyCode == 124) { [self navigateDiskGalleryBy:1]; return nil; }
     }
     return e;
   }];
@@ -9936,6 +9937,30 @@ static BOOL ValidGroupName(NSString *raw) {
     [[NSWorkspace sharedWorkspace] openURLs:@[[NSURL fileURLWithPath:path]] withApplicationAtURL:[NSURL fileURLWithPath:preferred] configuration:[NSWorkspaceOpenConfiguration configuration] completionHandler:nil];
   } else {
     [self showPlayerChooserForPath:path];
+  }
+}
+
+- (void)navigateDiskGalleryBy:(NSInteger)delta {
+  NSInteger total=self.diskAllGalleryItems.count;
+  if(total<=0||self.diskGalleryItems.count<=0)return;
+  NSInteger current=self.diskSelectedIndex;
+  if(current<0)current=0;
+  NSInteger pageSize=6;
+  NSInteger pageStart=self.diskGalleryPage*pageSize;
+  NSInteger global=pageStart+current+delta;
+  if(global<0)global=0; if(global>=total)global=total-1;
+  NSInteger newPage=global/pageSize;
+  if(newPage!=self.diskGalleryPage){self.diskGalleryPage=newPage;[self applyDiskGalleryPage];}
+  NSInteger local=global-newPage*pageSize;
+  if(local<0||local>=(NSInteger)self.diskGalleryItems.count)return;
+  NSIndexPath *ip=[NSIndexPath indexPathForItem:local inSection:0];
+  [self.diskCollection selectItemsAtIndexPaths:[NSSet setWithObject:ip] scrollPosition:NSCollectionViewScrollPositionNearestHorizontalEdge];
+  self.diskSelectedIndex=local;
+  QLPreviewPanel *panel=[QLPreviewPanel sharedPreviewPanel];
+  if(panel.isVisible){
+    NSDictionary *item=self.diskGalleryItems[local];
+    NSString *path=item[@"path"];
+    if(path.length){self.userFilesPreviewPath=path;self.diskPreviewMode=YES;self.shelfPreviewMode=NO;[panel reloadData];panel.currentPreviewItemIndex=local;}
   }
 }
 
