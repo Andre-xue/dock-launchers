@@ -7169,22 +7169,25 @@ static BOOL ValidGroupName(NSString *raw) {
 - (void)localAIToggleOllama:(NSSwitch *)sender {
   if(sender.state==NSControlStateValueOn){
     self.localOllamaStatus.stringValue=@"正在启动…";
-    NSString *app=@"/Applications/Ollama.app";
-    if([[NSFileManager defaultManager] fileExistsAtPath:app]) [[NSWorkspace sharedWorkspace] openApplicationAtURL:[NSURL fileURLWithPath:app] configuration:[NSWorkspaceOpenConfiguration configuration] completionHandler:nil];
-    else if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/ollama"]){
-      NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/opt/homebrew/bin/ollama"; t.arguments=@[@"serve"];
-      t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
-      @try{[t launch];self.localOllamaTask=t;}@catch(NSException *e){self.localOllamaStatus.stringValue=@"启动失败";sender.state=NSControlStateValueOff;}
-    } else { self.localOllamaStatus.stringValue=@"未安装 Ollama"; sender.state=NSControlStateValueOff; }
+    NSString *cli=@"/Applications/Ollama.app/Contents/Resources/ollama";
+    if(![[NSFileManager defaultManager] isExecutableFileAtPath:cli]) cli=@"/opt/homebrew/bin/ollama";
+    if(![[NSFileManager defaultManager] isExecutableFileAtPath:cli]) { self.localOllamaStatus.stringValue=@"未安装 Ollama"; sender.state=NSControlStateValueOff; return; }
+    // 直接启动后台 serve，不打开 Ollama GUI/欢迎页
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=cli; t.arguments=@[@"serve"];
+    NSString *log=[NSTemporaryDirectory() stringByAppendingPathComponent:@"docklaunchers-ollama.log"];
+    [[NSFileManager defaultManager] createFileAtPath:log contents:nil attributes:nil];
+    NSFileHandle *fh=[NSFileHandle fileHandleForWritingAtPath:log]; [fh seekToEndOfFile];
+    t.standardOutput=fh; t.standardError=fh;
+    @try{[t launch];self.localOllamaTask=t;self.localOllamaStatus.stringValue=@"正在启动后台服务…";}
+    @catch(NSException *e){self.localOllamaStatus.stringValue=@"启动失败";sender.state=NSControlStateValueOff;}
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{[self refreshLocalAIServices:nil];});
   } else {
     self.localOllamaStatus.stringValue=@"正在停止…";
-    [[NSWorkspace sharedWorkspace] runningApplications];
-    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/osascript"; t.arguments=@[@"-e",@"tell application \"Ollama\" to quit"];
-    t.standardOutput=[NSFileHandle fileHandleWithNullDevice];t.standardError=[NSFileHandle fileHandleWithNullDevice];
-    @try{[t launch];[t waitUntilExit];}@catch(NSException *e){}
     if(self.localOllamaTask.isRunning)[self.localOllamaTask terminate];
     self.localOllamaTask=nil;
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/pkill"; t.arguments=@[@"-f",@"Ollama.app/Contents/Resources/ollama serve"];
+    t.standardOutput=[NSFileHandle fileHandleWithNullDevice];t.standardError=[NSFileHandle fileHandleWithNullDevice];
+    @try{[t launch];}@catch(NSException *e){}
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.5*NSEC_PER_SEC)),dispatch_get_main_queue(),^{[self refreshLocalAIServices:nil];});
   }
 }
@@ -7395,6 +7398,14 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.aiNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:self.aiNextButton];
 
+  if (getenv("DL_DUMP_AI")) {
+    NSMutableString *out=[NSMutableString string];
+    for (NSView *sv in v.subviews) {
+      if ([sv isKindOfClass:[NSButton class]]) [out appendFormat:@"button title=%@ frame=%@\n", ((NSButton *)sv).title ?: @"", NSStringFromRect(sv.frame)];
+      else [out appendFormat:@"%@ frame=%@\n", NSStringFromClass(sv.class), NSStringFromRect(sv.frame)];
+    }
+    [out writeToFile:@"/tmp/dl_ai_subviews.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  }
   self.aiView = v;
 }
 
