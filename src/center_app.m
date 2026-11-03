@@ -1739,6 +1739,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSPopUpButton *imageFormatPopup;
 @property (strong) NSPopUpButton *imageResolutionPopup, *imageRotatePopup;
 @property (strong) NSWindow *pdfWindow;
+@property (strong) NSTextField *pdfStatus;
+@property (strong) NSProgressIndicator *pdfSpinner;
 @property (strong) NSTextField *pdfStartField, *pdfEndField;
 @property (strong) id pdfFinderMonitor;
 @property (strong) id imageFinderMonitor;
@@ -14575,6 +14577,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     exportImg.toolTip = @"把选中 PDF 的指定页码导出为 PNG";
     [exportImg applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:exportImg];
 
+    self.pdfStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    self.pdfStatus.frame = NSMakeRect(20,364,520,18); [cv addSubview:self.pdfStatus];
+    self.pdfSpinner = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(600,362,18,18)];
+    self.pdfSpinner.style = NSProgressIndicatorStyleSpinning;
+    self.pdfSpinner.displayedWhenStopped = NO;
+    [cv addSubview:self.pdfSpinner];
     DLDropScrollView *sv = [[DLDropScrollView alloc] initWithFrame:NSMakeRect(16, 70, 628, 300)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     sv.allowedExtensions = [NSSet setWithObject:@"pdf"];
@@ -14711,18 +14719,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   sp.nameFieldStringValue = @"合并.pdf";
   sp.allowedFileTypes = @[@"pdf"];
   if ([sp runModal] != NSModalResponseOK) return;
-  PDFDocument *out = [[PDFDocument alloc] init];
-  for (NSString *path in self.pdfItems) {
-    PDFDocument *doc = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
-    if (!doc) continue;
-    for (NSUInteger i = 0; i < doc.pageCount; i++) {
-      PDFPage *page = [doc pageAtIndex:i];
-      if (page) [out insertPage:page atIndex:[out pageCount]];
+  NSArray *paths=[self.pdfItems copy]; NSURL *outURL=sp.URL;
+  [self.pdfSpinner startAnimation:nil]; self.pdfStatus.stringValue=@"正在合并 PDF…";
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+    PDFDocument *out = [[PDFDocument alloc] init];
+    for (NSString *path in paths) {
+      PDFDocument *doc = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
+      if (!doc) continue;
+      for (NSUInteger i = 0; i < doc.pageCount; i++) { PDFPage *page = [doc pageAtIndex:i]; if (page) [out insertPage:page atIndex:[out pageCount]]; }
     }
-  }
-  if (![out writeToURL:sp.URL]) { [self showToast:@"合并失败"]; return; }
-  [self showToast:[NSString stringWithFormat:@"已合并 %ld 个 PDF", (long)self.pdfItems.count]];
-  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[sp.URL]];
+    BOOL ok=[out writeToURL:outURL];
+    dispatch_async(dispatch_get_main_queue(),^{
+      [self.pdfSpinner stopAnimation:nil];
+      self.pdfStatus.stringValue=ok?[NSString stringWithFormat:@"已合并 %ld 个 PDF",(long)paths.count]:@"合并失败";
+      if(ok){[self showToast:@"PDF 合并完成"];[[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[outURL]];}
+    });
+  });
 }
 
 - (void)pdfSplit:(id)sender {
@@ -14731,24 +14743,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   p.canChooseFiles = NO; p.canChooseDirectories = YES; p.allowsMultipleSelection = NO;
   p.message = @"选择拆分后 PDF 的保存文件夹";
   if ([p runModal] != NSModalResponseOK) return;
-  NSFileManager *fm = [NSFileManager defaultManager];
-  NSInteger made = 0;
-  for (NSString *path in self.pdfItems) {
-    PDFDocument *doc = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
-    if (!doc) continue;
-    NSString *base = path.lastPathComponent.stringByDeletingPathExtension;
-    for (NSUInteger i = 0; i < doc.pageCount; i++) {
-      PDFDocument *one = [[PDFDocument alloc] init];
-      PDFPage *page = [doc pageAtIndex:i];
-      if (!page) continue;
-      [one insertPage:page atIndex:0];
-      NSString *name = [NSString stringWithFormat:@"%@_第%ld页.pdf", base, (long)(i + 1)];
-      NSURL *url = [p.URL URLByAppendingPathComponent:name];
-      if ([one writeToURL:url]) made++;
+  NSArray *paths=[self.pdfItems copy]; NSURL *outDir=p.URL;
+  [self.pdfSpinner startAnimation:nil]; self.pdfStatus.stringValue=@"正在拆分 PDF…";
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+    NSInteger made = 0;
+    for (NSString *path in paths) {
+      PDFDocument *doc = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
+      if (!doc) continue;
+      NSString *base = path.lastPathComponent.stringByDeletingPathExtension;
+      for (NSUInteger i = 0; i < doc.pageCount; i++) {
+        PDFDocument *one = [[PDFDocument alloc] init];
+        PDFPage *page = [doc pageAtIndex:i]; if (!page) continue;
+        [one insertPage:page atIndex:0];
+        NSString *name = [NSString stringWithFormat:@"%@_第%ld页.pdf", base, (long)(i + 1)];
+        if ([one writeToURL:[outDir URLByAppendingPathComponent:name]]) made++;
+      }
     }
-  }
-  [self showToast:[NSString stringWithFormat:@"已拆分生成 %ld 个 PDF", (long)made]];
-  if (made > 0) [[NSWorkspace sharedWorkspace] openURL:p.URL];
+    dispatch_async(dispatch_get_main_queue(),^{
+      [self.pdfSpinner stopAnimation:nil]; self.pdfStatus.stringValue=[NSString stringWithFormat:@"已拆分生成 %ld 个 PDF",(long)made];
+      if(made>0){[self showToast:@"PDF 拆分完成"];[[NSWorkspace sharedWorkspace] openURL:outDir];}
+    });
+  });
 }
 
 - (id<NSPasteboardWriting>)tableView:(NSTableView *)tableView pasteboardWriterForRow:(NSInteger)row {
