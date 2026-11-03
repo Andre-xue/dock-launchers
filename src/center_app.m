@@ -24990,6 +24990,36 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
 }
 
+- (void)cloudNotionAppendBlocks:(NSString *)blockID token:(NSString *)token depth:(NSInteger)depth text:(NSMutableString *)text completion:(void (^)(void))completion {
+  if(depth>4){ if(completion)completion(); return; }
+  NSString *url=[NSString stringWithFormat:@"https://api.notion.com/v1/blocks/%@/children?page_size=100",blockID];
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  [req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
+  [req setValue:@"2022-06-28" forHTTPHeaderField:@"Notion-Version"];
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    NSArray *results=[o isKindOfClass:[NSDictionary class]]?o[@"results"]:@[];
+    dispatch_async(dispatch_get_main_queue(),^{
+      __block NSInteger idx=0;
+      __block void (^next)(void); next=^{
+        if(idx>=(NSInteger)results.count){if(completion)completion();return;}
+        NSDictionary *b=results[idx++];
+        NSString *type=b[@"type"] ?: @"";
+        NSDictionary *payload=[b[type] isKindOfClass:[NSDictionary class]]?b[type]:nil;
+        id rich=payload[@"rich_text"];
+        if([rich isKindOfClass:[NSArray class]]){
+          for(NSDictionary *rt in rich) if([rt[@"plain_text"] isKindOfClass:[NSString class]])[text appendString:rt[@"plain_text"]];
+          [text appendString:@"\n"];
+        }
+        BOOL hasChild=[b[@"has_children"] boolValue];
+        if(hasChild && depth<4){[self cloudNotionAppendBlocks:b[@"id"] token:token depth:depth+1 text:text completion:next];}
+        else next();
+      };
+      next();
+    });
+  }] resume];
+}
+
 - (void)cloudAPIImportSelected:(id)sender {
   NSInteger row=self.cloudApiTable.selectedRow;
   if(row<0||row>=(NSInteger)self.cloudApiItems.count)return;
@@ -25021,20 +25051,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   if([it[@"kind"] isEqualToString:@"notion"]){
     NSString *token=AIKeychainGet(@"cloud.notion.token");
-    NSString *url=[NSString stringWithFormat:@"https://api.notion.com/v1/blocks/%@/children?page_size=100",it[@"id"]];
-    NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
-    [req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"]; [req setValue:@"2022-06-28" forHTTPHeaderField:@"Notion-Version"];
-    [self cloudAPIRequest:req completion:^(id o,NSError *err){
-      NSMutableString *text=[NSMutableString string];
-      for(NSDictionary *b in ([o isKindOfClass:[NSDictionary class]]?o[@"results"]:@[])){
-        NSDictionary *type=b[b[@"type"] ?: @""]; id rich=type[@"rich_text"];
-        if([rich isKindOfClass:[NSArray class]])for(NSDictionary *r in rich){if(r[@"plain_text"])[text appendString:r[@"plain_text"]];}
-        [text appendString:@"\n"];
-      }
+    NSMutableString *text=[NSMutableString string];
+    self.cloudApiStatus.stringValue=@"正在读取 Notion 页面内容（含子块）…";
+    [self cloudNotionAppendBlocks:it[@"id"] token:token depth:0 text:text completion:^{
       if(!text.length){self.cloudApiStatus.stringValue=@"Notion 页面正文为空";return;}
       if(!self.aiCloudDocs)self.aiCloudDocs=[NSMutableArray array];
       [self.aiCloudDocs addObject:@{@"title":it[@"title"] ?: @"Notion 页面",@"provider":@"Notion",@"url":@"",@"content":text}];
-      [self.aiFileTable reloadData]; self.cloudApiStatus.stringValue=@"已导入 Notion 页面";
+      [self.aiFileTable reloadData]; self.cloudApiStatus.stringValue=@"已导入 Notion 页面（含子块）";
     }];
   }
 }
