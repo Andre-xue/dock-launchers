@@ -1668,6 +1668,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *videoGenPromptField, *videoGenNegativeField, *videoGenStatus, *videoGenWidthField, *videoGenHeightField, *videoGenFramesField, *videoGenStepsField, *videoGenSeedField, *videoGenFpsField;
 @property (strong) NSTimer *videoGenPollTimer, *videoGenElapsedTimer;
 @property (strong) NSWindow *videoModelMarketWindow;
+@property (strong) NSTask *marketDownloadTask;
+@property (strong) NSString *marketDownloadName;
+@property NSInteger marketDownloadKind;
+@property (strong) NSTask *ollamaPullTask;
 @property (strong) NSURLSession *videoDownloadSession;
 @property (strong) NSURLSessionDownloadTask *videoDownloadTask;
 @property (strong) NSString *videoDownloadName, *videoDownloadDest;
@@ -7273,8 +7277,9 @@ static BOOL ValidGroupName(NSString *raw) {
     self.whisperMarketTable.rowHeight=34; self.whisperMarketTable.dataSource=self; self.whisperMarketTable.delegate=self; self.whisperMarketTable.target=self; self.whisperMarketTable.doubleAction=@selector(whisperMarketInstall:);
     sv.documentView=self.whisperMarketTable; [cv addSubview:sv];
     self.whisperMarketStatus=[self label:@"选择模型下载到 Models 目录" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.whisperMarketStatus.frame=NSMakeRect(24,50,380,18); [cv addSubview:self.whisperMarketStatus];
-    ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(410,40,110,30)]; dl.title=@"下载安装"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(whisperMarketInstall:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
-    ColorHoverButton *latest=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(492,40,100,30)]; latest.title=@"获取最新"; latest.hoverColor=[NSColor systemBlueColor]; latest.target=self; latest.action=@selector(whisperMarketReload:); [latest applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:latest];
+    ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(300,40,110,30)]; dl.title=@"下载安装"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(whisperMarketInstall:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
+    ColorHoverButton *latest=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(418,40,100,30)]; latest.title=@"获取最新"; latest.hoverColor=[NSColor systemBlueColor]; latest.target=self; latest.action=@selector(whisperMarketReload:); [latest applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:latest];
+    ColorHoverButton *cancel=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(524,40,64,30)]; cancel.title=@"取消"; cancel.hoverColor=[NSColor systemRedColor]; cancel.font=[NSFont systemFontOfSize:10]; cancel.target=self; cancel.action=@selector(cancelMarketDownload:); [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(606,40,90,30)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeWhisperModelMarket:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.whisperMarketWindow center];
   }
@@ -7342,15 +7347,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *dir=[self localModelDir]; [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
   NSString *dst=[dir stringByAppendingPathComponent:name];
   self.whisperMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@…",name];
-  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/curl"; t.arguments=@[@"-L",@"--fail",@"--retry",@"2",@"-o",dst,url];
-    t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
-    BOOL ok=NO; @try{[t launch];[t waitUntilExit];ok=(t.terminationStatus==0);}@catch(NSException *e){}
-    dispatch_async(dispatch_get_main_queue(),^{
-      self.whisperMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",name]:[NSString stringWithFormat:@"%@ 下载失败",name];
-      [self whisperMarketReload:nil];
-    });
-  });
+  [self startMarketDownloadURL:url name:name dest:dst kind:2];
 }
 
 - (NSArray *)comfyCuratedModels {
@@ -7364,6 +7361,48 @@ static BOOL ValidGroupName(NSString *raw) {
     @{@"name":@"sd_xl_refiner_1.0.safetensors",@"category":@"SDXL",@"size":@"6.1 GB",@"desc":@"SDXL 精修模型",@"url":@"https://hf-mirror.com/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors",@"recommended":@NO},
     @{@"name":@"sd_xl_turbo_1.0_fp16.safetensors",@"category":@"快速",@"size":@"6.9 GB",@"desc":@"SDXL Turbo，少步出图",@"url":@"https://hf-mirror.com/stabilityai/sdxl-turbo/resolve/main/sd_xl_turbo_1.0_fp16.safetensors",@"recommended":@NO}
   ];
+}
+
+- (void)startMarketDownloadURL:(NSString *)url name:(NSString *)name dest:(NSString *)dst kind:(NSInteger)kind {
+  if(self.marketDownloadTask){[self showToast:@"已有模型下载在进行"];return;}
+  if(!url.length||!name.length||!dst.length)return;
+  NSDictionary *fs=[[NSFileManager defaultManager] attributesOfFileSystemForPath:[dst stringByDeletingLastPathComponent] error:NULL];
+  unsigned long long free=[fs[NSFileSystemFreeSize] unsignedLongLongValue];
+  if(free<1024ULL*1024*1024){[self showToast:@"磁盘剩余空间不足 1GB"];return;}
+  self.marketDownloadName=name; self.marketDownloadKind=kind;
+  NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/curl"; t.arguments=@[@"-L",@"--fail",@"--retry",@"2",@"--progress-bar",@"-o",dst,url];
+  NSPipe *err=[NSPipe pipe]; t.standardError=err; t.standardOutput=[NSFileHandle fileHandleWithNullDevice];
+  __weak typeof(self) weakSelf=self;
+  err.fileHandleForReading.readabilityHandler=^(NSFileHandle *h){
+    NSData *d=h.availableData; if(!d.length)return;
+    NSString *s=[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
+    NSRange pct=[s rangeOfString:@"%" options:NSBackwardsSearch];
+    if(pct.location!=NSNotFound){
+      NSInteger start=MAX(0,(NSInteger)pct.location-4);
+      NSString *num=[s substringWithRange:NSMakeRange(start,pct.location-start)];
+      num=[num stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+      dispatch_async(dispatch_get_main_queue(),^{
+        if(weakSelf.marketDownloadKind==1) self.comfyMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@ · %@%%",name,num];
+        else self.whisperMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@ · %@%%",name,num];
+      });
+    }
+  };
+  t.terminationHandler=^(NSTask *task){
+    err.fileHandleForReading.readabilityHandler=nil;
+    BOOL ok=(task.terminationStatus==0);
+    dispatch_async(dispatch_get_main_queue(),^{
+      weakSelf.marketDownloadTask=nil;
+      if(weakSelf.marketDownloadKind==1){weakSelf.comfyMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",name]:@"下载失败/已取消"; [weakSelf comfyMarketReload:nil];}
+      else {weakSelf.whisperMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",name]:@"下载失败/已取消"; [weakSelf whisperMarketReload:nil];}
+    });
+  };
+  @try{[t launch];self.marketDownloadTask=t;}@catch(NSException *e){self.marketDownloadTask=nil;[self showToast:@"下载启动失败"];}
+}
+
+- (void)cancelMarketDownload:(id)sender {
+  if(!self.marketDownloadTask){[self showToast:@"没有正在进行的下载"];return;}
+  [self.marketDownloadTask terminate]; self.marketDownloadTask=nil;
+  if(self.marketDownloadKind==1)self.comfyMarketStatus.stringValue=@"已取消下载"; else self.whisperMarketStatus.stringValue=@"已取消下载";
 }
 
 - (void)showComfyModelMarket:(id)sender {
@@ -7386,6 +7425,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.comfyMarketStatus=[self label:@"选择模型下载到 checkpoints 目录" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.comfyMarketStatus.frame=NSMakeRect(24,50,430,18); [cv addSubview:self.comfyMarketStatus];
     ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(470,40,110,30)]; dl.title=@"下载安装"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(comfyMarketInstall:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
     ColorHoverButton *refresh=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(590,40,90,30)]; refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(comfyMarketReload:); [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *cancel=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(686,40,54,30)]; cancel.title=@"取消"; cancel.hoverColor=[NSColor systemRedColor]; cancel.font=[NSFont systemFontOfSize:10]; cancel.target=self; cancel.action=@selector(cancelMarketDownload:); [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(746,40,90,30)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeComfyModelMarket:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.comfyMarketWindow center];
   }
@@ -7468,16 +7508,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [a addButtonWithTitle:@"下载"]; [a addButtonWithTitle:@"取消"];
   if([a runModal]!=NSAlertFirstButtonReturn)return;
   self.comfyMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@…",name];
-  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/curl"; t.arguments=@[@"-L",@"--fail",@"--retry",@"3",@"-o",dst,url];
-    t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
-    BOOL ok=NO;
-    @try{[t launch];[t waitUntilExit];ok=(t.terminationStatus==0);}@catch(NSException *e){}
-    dispatch_async(dispatch_get_main_queue(),^{
-      self.comfyMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",name]:[NSString stringWithFormat:@"%@ 下载失败，请检查网络",name];
-      [self comfyMarketReload:nil];
-    });
-  });
+  [self startMarketDownloadURL:url name:name dest:dst kind:1];
 }
 
 - (void)showOllamaModelMarket:(id)sender {
@@ -7500,6 +7531,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.ollamaMarketStatus=[self label:@"点击下载安装到 Ollama" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.ollamaMarketStatus.frame=NSMakeRect(24,50,430,18); [cv addSubview:self.ollamaMarketStatus];
     ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(470,40,110,30)]; dl.title=@"下载安装"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(ollamaMarketInstall:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
     ColorHoverButton *refresh=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(590,40,90,30)]; refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(ollamaMarketReload:); [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *cancel=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(686,40,54,30)]; cancel.title=@"取消"; cancel.hoverColor=[NSColor systemRedColor]; cancel.font=[NSFont systemFontOfSize:10]; cancel.target=self; cancel.action=@selector(cancelOllamaPull:); [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(746,40,90,30)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeOllamaModelMarket:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.ollamaMarketWindow center];
   }
@@ -7576,25 +7608,47 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.ollamaMarketTable reloadData];
 }
 
+- (void)cancelOllamaPull:(id)sender {
+  if(!self.ollamaPullTask){self.ollamaMarketStatus.stringValue=@"没有正在进行的下载";return;}
+  [self.ollamaPullTask terminate]; self.ollamaPullTask=nil;
+  self.ollamaMarketStatus.stringValue=@"已取消下载";
+}
+
 - (void)ollamaMarketInstall:(id)sender {
   NSInteger row=self.ollamaMarketTable.selectedRow;
   if(row<0||row>=(NSInteger)self.ollamaMarketFiltered.count){self.ollamaMarketStatus.stringValue=@"请先选择模型";return;}
   NSDictionary *m=self.ollamaMarketFiltered[row];
   if([m[@"installed"] boolValue]){self.ollamaMarketStatus.stringValue=@"该模型已安装";return;}
-  NSString *name=m[@"name"];
+  NSString *name=m[@"name"] ?: @""; if(!name.length)return;
   NSAlert *a=[[NSAlert alloc] init]; a.messageText=[NSString stringWithFormat:@"下载 %@？",name];
-  a.informativeText=@"将从 Ollama 官方模型库下载，可能需要几分钟，请保持网络连接。";
+  a.informativeText=@"从 Ollama 官方模型库下载；支持取消。";
   [a addButtonWithTitle:@"下载"]; [a addButtonWithTitle:@"取消"];
   if([a runModal]!=NSAlertFirstButtonReturn)return;
-  self.ollamaMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@…",name];
-  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-    NSString *out=[self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"pull",name]];
-    BOOL ok=[[out lowercaseString] containsString:@"success"];
+  if(self.ollamaPullTask){self.ollamaMarketStatus.stringValue=@"已有下载任务在进行";return;}
+  self.ollamaMarketStatus.stringValue=[NSString stringWithFormat:@"正在拉取 %@…",name];
+  NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/opt/homebrew/bin/ollama"; t.arguments=@[@"pull",name];
+  NSPipe *err=[NSPipe pipe]; t.standardError=err; t.standardOutput=[NSFileHandle fileHandleWithNullDevice];
+  __weak typeof(self) weakSelf=self;
+  err.fileHandleForReading.readabilityHandler=^(NSFileHandle *h){
+    NSData *d=h.availableData; if(!d.length)return;
+    NSString *s=[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
+    NSRange pct=[s rangeOfString:@"%" options:NSBackwardsSearch];
+    if(pct.location!=NSNotFound){
+      NSInteger st=MAX(0,(NSInteger)pct.location-4);
+      NSString *num=[s substringWithRange:NSMakeRange(st,pct.location-st)];
+      num=[num stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+      dispatch_async(dispatch_get_main_queue(),^{weakSelf.ollamaMarketStatus.stringValue=[NSString stringWithFormat:@"正在拉取 %@ · %@%%",name,num];});
+    }
+  };
+  t.terminationHandler=^(NSTask *task){
+    err.fileHandleForReading.readabilityHandler=nil;
     dispatch_async(dispatch_get_main_queue(),^{
-      self.ollamaMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",name]:[NSString stringWithFormat:@"%@ 下载失败，请检查网络",name];
-      [self ollamaMarketReload:nil];
+      weakSelf.ollamaPullTask=nil;
+      weakSelf.ollamaMarketStatus.stringValue=(task.terminationStatus==0)?[NSString stringWithFormat:@"%@ 下载完成",name]:@"下载失败/已取消";
+      [weakSelf ollamaMarketReload:nil];
     });
-  });
+  };
+  @try{[t launch];self.ollamaPullTask=t;}@catch(NSException *e){self.ollamaPullTask=nil;self.ollamaMarketStatus.stringValue=@"启动失败";}
 }
 
 - (void)openLocalModelManager:(NSInteger)service {
