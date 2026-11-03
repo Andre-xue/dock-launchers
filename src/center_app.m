@@ -7503,7 +7503,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTextField *t=[self label:@"模型管理" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,456,400,24); [cv addSubview:t];
     NSTextField *h=[self label:@"更换、添加、删除模型；当前模型会用于 AI 功能" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,434,520,18); [cv addSubview:h];
     ColorHoverButton *market=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(604,456,132,26)];
-    market.title=@"模型市场…"; market.hoverColor=[NSColor systemOrangeColor]; market.font=[NSFont systemFontOfSize:10];
+    market.title=@"模型市场…"; market.tag=5; market.hoverColor=[NSColor systemOrangeColor]; market.font=[NSFont systemFontOfSize:10];
     market.target=self; market.action=@selector(showOllamaModelMarket:);
     self.localModelMarketButton=market;
     [market applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:market];
