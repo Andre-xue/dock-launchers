@@ -19090,6 +19090,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @{@"id":@3078,@"cat":@1,@"title":@"菜单栏页面自定义",@"desc":@"显示/隐藏和排序扇形页面",@"sel":@"openRadialPageCustomization:"},
     @{@"id":@3079,@"cat":@1,@"title":@"语音转写设置",@"desc":@"切换本机识别和第三方 Whisper",@"sel":@"openSpeechSettings:"},
     @{@"id":@3081,@"cat":@1,@"title":@"AI 用量统计",@"desc":@"查看生成数量与占用空间",@"sel":@"showAIUsageStats:"},
+    @{@"id":@3082,@"cat":@2,@"title":@"录屏实时标注",@"desc":@"打开屏幕画笔标注层",@"sel":@"toggleLiveAnnotation:"},
     @{@"id":@3080,@"cat":@1,@"title":@"AI 配音",@"desc":@"文本转语音、音色试听与配音",@"sel":@"openAITTSWindow:"},
 
     @{@"id":@3030,@"cat":@2,@"title":@"打开控制台",@"desc":@"显示主控制台窗口",@"sel":@"showWindow:"},
@@ -20106,6 +20107,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [out addObject:@{@"title": @"语音转写设置", @"subtitle": @"本机识别 / 第三方 Whisper", @"type": @"工具", @"tool": @"speechsettings", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"mic.badge.plus" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 配音 / 语音合成", @"subtitle": @"文本转语音、音色试听与配音", @"type": @"工具", @"tool": @"tts", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"speaker.wave.3" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 用量统计", @"subtitle": @"生成数量、占用空间、今日统计", @"type": @"工具", @"tool": @"aiusage", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"chart.bar.fill" accessibilityDescription:nil] ?: recIcon}];
+  [out addObject:@{@"title": @"录屏实时标注", @"subtitle": @"屏幕画笔、箭头标注层", @"type": @"工具", @"tool": @"liveanno", @"category": @2, @"icon": [NSImage imageWithSystemSymbolName:@"pencil.and.outline" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"录屏后期", @"subtitle": @"裁剪、压缩、GIF、提取音频", @"type": @"工具", @"tool": @"videopost", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"scissors" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 助手", @"subtitle": @"总结、润色、翻译文本", @"type": @"工具", @"tool": @"aitext", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil] ?: recIcon}];
   [out addObject:@{@"title": @"AI 图片生成", @"subtitle": @"用 AI 服务生成图片", @"type": @"工具", @"tool": @"aiimage", @"category": @3, @"icon": [NSImage imageWithSystemSymbolName:@"photo.badge.plus" accessibilityDescription:nil] ?: recIcon}];
@@ -20250,6 +20252,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     else if ([tool isEqualToString:@"speechsettings"]) [self openSpeechSettings:nil];
     else if ([tool isEqualToString:@"tts"]) [self openAITTSWindow:nil];
     else if ([tool isEqualToString:@"aiusage"]) [self showAIUsageStats:nil];
+    else if ([tool isEqualToString:@"liveanno"]) [self toggleLiveAnnotation:nil];
     else if ([tool isEqualToString:@"updatecheck"]) [self checkForUpdates:nil];
     else if ([tool isEqualToString:@"videopost"]) [self openVideoPostWindow:nil];
     else if ([tool isEqualToString:@"aitext"]) [self openAIAssistant:nil];
@@ -21273,8 +21276,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     // Compact the window: pull the content up and add two folder shortcuts.
     [self.captureWindow setContentSize:NSMakeSize(940, 520)];
     for (NSView *v in cv.subviews) if (v.frame.origin.y > 30) v.frame = NSOffsetRect(v.frame, 0, -80);
-    ColorHoverButton *liveAnnoBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(180, 58, 120, 32)];
-    liveAnnoBtn.title = @"实时标注"; liveAnnoBtn.hoverColor = [NSColor systemOrangeColor];
+    ColorHoverButton *liveAnnoBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(812, 58, 104, 32)];
+    liveAnnoBtn.title = @"实时标注"; liveAnnoBtn.hoverColor = [NSColor systemOrangeColor]; liveAnnoBtn.font=[NSFont systemFontOfSize:10];
     liveAnnoBtn.target = self; liveAnnoBtn.action = @selector(toggleLiveAnnotation:);
     [liveAnnoBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:liveAnnoBtn];
     ColorHoverButton *imgFolderBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 58, 140, 32)];
