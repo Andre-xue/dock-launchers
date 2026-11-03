@@ -21301,17 +21301,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!self.captureMicCheck || self.captureMicCheck.state != NSControlStateValueOn) return;
   BOOL highlight = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCaptureMicBoost"];
   if (!highlight) return;
-  NSInteger old = [self systemInputVolume];
-  if (old < 0) return;
-  self.micBoostOldVolume = old;
-  self.micBoostActive = YES;
-  if (old < 100) [self setSystemInputVolume:100];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
+    NSInteger old = [self systemInputVolume];
+    if (old < 0) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      self.micBoostOldVolume = old;
+      self.micBoostActive = YES;
+      if (old < 100) dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{ [self setSystemInputVolume:100]; });
+    });
+  });
 }
 
 - (void)restoreMicBoost {
   if (!self.micBoostActive) return;
   self.micBoostActive = NO;
-  [self setSystemInputVolume:self.micBoostOldVolume];
+  NSInteger old = self.micBoostOldVolume;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{ [self setSystemInputVolume:old]; });
 }
 
 - (void)captureMicGainChanged:(id)sender {
@@ -21808,12 +21813,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)captureRegion:(NSRect)region toPath:(NSString *)path completion:(void (^)(BOOL ok))completion {
-  NSScreen *screen = [NSScreen mainScreen];
-  CGFloat screenH = screen.frame.size.height;
-  CGFloat topY = screenH - (region.origin.y + region.size.height);
+  NSScreen *primary = [NSScreen screens].firstObject ?: [NSScreen mainScreen];
+  NSRect pf = primary.frame;
+  CGFloat x = region.origin.x - pf.origin.x;
+  CGFloat topY = pf.size.height - (region.origin.y - pf.origin.y + region.size.height);
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = @"/usr/sbin/screencapture";
-  t.arguments = @[@"-x", @"-R", [NSString stringWithFormat:@"%ld,%ld,%ld,%ld", (long)llround(region.origin.x), (long)llround(topY), (long)llround(region.size.width), (long)llround(region.size.height)], path];
+  t.arguments = @[@"-x", @"-R", [NSString stringWithFormat:@"%ld,%ld,%ld,%ld", (long)llround(x), (long)llround(topY), (long)llround(region.size.width), (long)llround(region.size.height)], path];
   t.terminationHandler = ^(NSTask *task) {
     dispatch_async(dispatch_get_main_queue(), ^{
       BOOL ok = task.terminationStatus == 0 && [[NSFileManager defaultManager] fileExistsAtPath:path];
@@ -21868,11 +21874,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)pinScreenshotInteractive:(id)sender {
   if (![self ensureScreenCapturePermission]) return;
+  [self hideCapturePanelForCapture];
   __weak typeof(self) weakSelf = self;
   [self beginCaptureRegion:^(NSRect region) {
     NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"pin-%lld.png", (long long)[[NSDate date] timeIntervalSince1970]]];
     [weakSelf captureRegion:region toPath:path completion:^(BOOL ok) {
-      if (ok) [weakSelf pinImageAtPath:path];
+      if (ok) { [weakSelf pinImageAtPath:path]; [[NSFileManager defaultManager] removeItemAtPath:path error:NULL]; }
       else [weakSelf showToast:@"钉屏截图失败"];
     }];
   }];
@@ -22030,8 +22037,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)beginCaptureRegion:(void (^)(NSRect region))completion {
-  NSScreen *screen = [NSScreen mainScreen];
-  NSRect frame = screen.frame;
+  NSRect frame = NSZeroRect;
+  for (NSScreen *sc in [NSScreen screens]) frame = NSUnionRect(frame, sc.frame);
+  if (NSIsEmptyRect(frame)) frame = [NSScreen mainScreen].frame;
   NSWindow *w = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
   w.opaque = NO;
   w.backgroundColor = [NSColor colorWithCalibratedWhite:0 alpha:0.18];
@@ -27327,23 +27335,25 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)installUpdateDMG:(NSString *)dmgPath {
   if (!dmgPath.length || ![[NSFileManager defaultManager] fileExistsAtPath:dmgPath]) { [self showToast:@"更新文件不存在"]; return; }
   NSString *appPath = [[NSBundle mainBundle] bundlePath];
-  NSString *escApp = [appPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
-  NSString *escDmg = [dmgPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
-  NSString *script = [NSString stringWithFormat:
-    @"sleep 1; MNT=$(mktemp -d /tmp/dl-update-mnt.XXXXXX); STAGE=$(mktemp -d /tmp/dl-update-stage.XXXXXX); BAK=\"%@.bak\"; "
-    @"cleanup(){ hdiutil detach \"$MNT\" -quiet 2>/dev/null; rm -rf \"$STAGE\"; }; trap cleanup EXIT; "
-    @"hdiutil attach \"%@\" -nobrowse -quiet -mountpoint \"$MNT\" || exit 1; "
-    @"APP=$(find \"$MNT\" -maxdepth 2 -name '*.app' -print -quit); [ -z \"$APP\" ] && exit 2; "
-    @"codesign --verify --deep --strict \"$APP\" 2>/dev/null || exit 3; "
-    @"rm -rf \"$STAGE/App.app\"; ditto \"$APP\" \"$STAGE/App.app\" || exit 4; "
-    @"codesign --verify --deep --strict \"$STAGE/App.app\" 2>/dev/null || exit 3; "
-    @"rm -rf \"$BAK\"; mv \"%@\" \"$BAK\" || exit 5; "
-    @"if ditto \"$STAGE/App.app\" \"%@\"; then rm -rf \"$BAK\"; else rm -rf \"%@\"; mv \"$BAK\" \"%@\"; exit 6; fi; "
-    @"open -a \"%@\"",
-    escApp, escDmg, escApp, escApp, escApp, escApp, escApp];
+  NSString *script = @"exec >/tmp/dl-update.log 2>&1\n"
+    "sleep 1\n"
+    "DMG=\"$1\"; APP_PATH=\"$2\"; MNT=$(mktemp -d /tmp/dl-update-mnt.XXXXXX); STAGE=$(mktemp -d /tmp/dl-update-stage.XXXXXX); BAK=\"$APP_PATH.bak\"\n"
+    "cleanup(){ hdiutil detach \"$MNT\" -quiet 2>/dev/null; rm -rf \"$STAGE\"; }\n"
+    "trap cleanup EXIT\n"
+    "hdiutil attach \"$DMG\" -nobrowse -quiet -mountpoint \"$MNT\" || exit 1\n"
+    "APP=$(find \"$MNT\" -maxdepth 2 -name '*.app' -print -quit); [ -z \"$APP\" ] && exit 2\n"
+    "codesign --verify --deep --strict \"$APP\" 2>/dev/null || exit 3\n"
+    "rm -rf \"$STAGE/App.app\"; ditto \"$APP\" \"$STAGE/App.app\" || exit 4\n"
+    "codesign --verify --deep --strict \"$STAGE/App.app\" 2>/dev/null || exit 3\n"
+    "rm -rf \"$BAK\"; mv \"$APP_PATH\" \"$BAK\" || exit 5\n"
+    "if ditto \"$STAGE/App.app\" \"$APP_PATH\"; then rm -rf \"$BAK\"; else rm -rf \"$APP_PATH\"; mv \"$BAK\" \"$APP_PATH\"; exit 6; fi\n"
+    "open -a \"$APP_PATH\"\n";
+  NSString *scriptPath=[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dl-update-%@.sh",[[NSUUID UUID] UUIDString]]];
+  [script writeToFile:scriptPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions:@(0700)} ofItemAtPath:scriptPath error:NULL];
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = @"/bin/sh";
-  t.arguments = @[@"-c", [NSString stringWithFormat:@"( %@ ) >/tmp/dl-update.log 2>&1 &", script]];
+  t.arguments = @[scriptPath, dmgPath, appPath];
   @try { [t launch]; } @catch (NSException *e) { [self showToast:@"启动安装失败"]; return; }
   [self showToast:@"正在安装更新，应用会自动重启"];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
