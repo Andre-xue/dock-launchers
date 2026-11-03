@@ -718,8 +718,11 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property NSPoint startPoint;
 @property (strong) NSColor *color;
 @property CGFloat lineWidth;
+@property (copy) void (^onEscape)(void);
 @end
 @implementation DLLiveAnnotationView
+- (BOOL)acceptsFirstResponder { return YES; }
+- (void)keyDown:(NSEvent *)event { if (event.keyCode == 53) { if (self.onEscape) self.onEscape(); return; } [super keyDown:event]; }
 - (BOOL)isOpaque { return NO; }
 - (BOOL)isFlipped { return NO; }
 - (void)drawRect:(NSRect)dirtyRect {
@@ -1399,6 +1402,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (copy) NSString *radialItemsCurrentKey;
 @property (strong) NSMutableDictionary *radialItemsOrderMap;
 @property (strong) NSMutableSet *radialItemsHiddenActions;
+@property (strong) NSMutableArray<NSNumber *> *radialCustomHiddenPending;
 @property (strong) NSMutableArray *radialCustomItems;
 @property (strong) NSWindow *radialNewItemWindow;
 @property (strong) NSTextField *radialNewTitleField, *radialNewValueField;
@@ -1407,6 +1411,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTableView *automationTable;
 @property (strong) NSMutableArray *automationRules;
 @property (strong) NSMutableDictionary *automationLastFired;
+@property (copy) NSString *automationLastTimeMinute;
 @property (strong) NSTimer *automationTimer;
 @property NSInteger automationEditingIndex;
 @property (strong) NSTextField *automationNameField, *automationTriggerValueField, *automationActionValueField;
@@ -1609,6 +1614,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSMutableArray<NSString *> *videoEditorPaths;
 @property (strong) NSTextField *videoEditorStatus, *videoTrimStartField, *videoTrimEndField;
 @property (copy) NSString *videoEditorMusicPath, *videoEditorCoverPath;
+@property (strong) AVMutableCompositionTrack *videoEditorVideoTrack, *videoEditorAudioTrack;
 @property (strong) NSSearchField *aiGallerySearchField;
 @property (strong) NSPopUpButton *aiGalleryFilterPopup;
 @property (strong) NSMutableSet *aiGalleryFavorites;
@@ -1625,6 +1631,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSMutableArray<NSString *> *aiImageBatchQueue;
 @property BOOL aiImageBatchRunning;
 @property NSInteger aiVideoPollCount;
+@property NSInteger aiVideoPollErrors;
 @property BOOL aiVideoSiliconFlow;
 @property (strong) NSTimer *aiVideoPollTimer;
 @property BOOL aiImageBusy, aiVideoBusy;
@@ -3823,7 +3830,9 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 - (BOOL)registerHotKeyForAction:(NSInteger)action code:(UInt32)code modifiers:(UInt32)mods display:(NSString *)display {
   EventHotKeyRef old = action == 0 ? self.translationHotKey : (action == 1 ? self.selectionHotKey : (action == 2 ? self.translateHotKey : (action == 3 ? self.appSearchHotKey : (action == 4 ? self.quickPanelHotKey : (action == 5 ? self.clipboardHotKey : (action == 6 ? self.consoleHotKey : (action == 7 ? self.screenshotHotKey : self.recordHotKey)))))));
   if (old) UnregisterEventHotKey(old);
-  EventHotKeyID hid = {'DLTR', (UInt32)(action == 3 ? 5 : (action == 4 ? 4 : (action == 5 ? 6 : (action == 6 ? 7 : (action == 7 ? 8 : 9)))))};
+  NSArray *hotIDs = @[@1,@2,@3,@5,@4,@6,@7,@8,@9];
+  if (action < 0 || action >= (NSInteger)hotIDs.count) return NO;
+  EventHotKeyID hid = {'DLTR', (UInt32)[hotIDs[action] unsignedIntValue]};
   EventHotKeyRef ref = NULL;
   OSStatus st = RegisterEventHotKey(code, mods, hid, GetApplicationEventTarget(), 0, &ref);
   if (st != noErr) return NO;
@@ -6409,6 +6418,20 @@ static BOOL ValidGroupName(NSString *raw) {
   });
 }
 
+- (void)clearClipboardHistory:(id)sender { [self clearAllClipboardHistory:nil]; }
+- (void)toggleClipboardPause:(id)sender { self.clipboardPaused = !self.clipboardPaused; self.clipboardPauseBtn.title = self.clipboardPaused ? @"继续监听" : @"暂停监听"; [self showToast:self.clipboardPaused ? @"已暂停剪贴板记录" : @"已恢复剪贴板记录"]; }
+- (void)toggleClipboardFavorite:(id)sender { [self toggleClipboardFavoriteAtRow:self.clipboardTable.selectedRow]; }
+- (void)toggleClipboardFavoriteAtRow:(NSInteger)row {
+  if (row < 0 || row >= (NSInteger)self.clipboardVisibleItems.count) { [self showToast:@"请先选择一条记录"]; return; }
+  NSDictionary *vis=self.clipboardVisibleItems[row];
+  for (NSInteger i=0;i<(NSInteger)self.clipboardItems.count;i++) {
+    NSDictionary *it=self.clipboardItems[i];
+    if ((vis[@"text"] && [it[@"text"] isEqual:vis[@"text"]]) || (vis[@"file"] && [it[@"file"] isEqual:vis[@"file"]])) {
+      NSMutableDictionary *m=[it mutableCopy]; m[@"favorite"]=@(![it[@"favorite"] boolValue]); self.clipboardItems[i]=m; break;
+    }
+  }
+  [self saveClipboardHistory]; [self reloadClipboardVisibleItems];
+}
 - (void)clipboardSearchChanged:(id)sender { [self reloadClipboardVisibleItems]; }
 
 - (NSInteger)clipboardRetentionDays {
@@ -16074,15 +16097,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (NSArray *page in self.radialPages) {
     NSString *pageKey = [self radialPageKeyForItems:page];
     NSArray *savedItemOrder = orderMap[pageKey];
+    NSMutableArray *allItems = [NSMutableArray arrayWithArray:page];
+    NSArray *customItems = [ud arrayForKey:@"centerRadialCustomItems"] ?: @[];
+    for (NSDictionary *ci in customItems) if ([ci[@"pageKey"] isEqualToString:pageKey]) [allItems addObject:ci];
     NSMutableArray *items = [NSMutableArray array];
     if (savedItemOrder.count) {
       for (NSString *action in savedItemOrder) {
-        for (NSDictionary *it in page) if ([it[@"action"] isEqualToString:action] && ![items containsObject:it]) [items addObject:it];
+        for (NSDictionary *it in allItems) if ([it[@"action"] isEqualToString:action] && ![items containsObject:it]) [items addObject:it];
       }
     }
-    for (NSDictionary *it in page) if (![items containsObject:it]) [items addObject:it];
-    NSArray *customItems = [ud arrayForKey:@"centerRadialCustomItems"] ?: @[];
-    for (NSDictionary *ci in customItems) if ([ci[@"pageKey"] isEqualToString:pageKey]) [items addObject:ci];
+    for (NSDictionary *it in allItems) if (![items containsObject:it]) [items addObject:it];
     NSMutableArray *shown = [NSMutableArray array];
     for (NSDictionary *it in items) if (![itemHiddenSet containsObject:it[@"action"]]) [shown addObject:it];
     if (!shown.count && items.count) [shown addObject:items.firstObject];
@@ -16172,10 +16196,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *key = [self radialPageKeyForItems:page];
   self.radialItemsCurrentKey = key;
   NSArray *savedOrder = self.radialItemsOrderMap[key];
+  NSMutableArray *allItems = [NSMutableArray arrayWithArray:page];
+  for (NSDictionary *ci in self.radialCustomItems ?: @[]) if ([ci[@"pageKey"] isEqualToString:key]) [allItems addObject:ci];
   NSMutableArray *items = [NSMutableArray array];
-  if (savedOrder.count) for (NSString *action in savedOrder) for (NSDictionary *it in page) if ([it[@"action"] isEqualToString:action] && ![items containsObject:it]) [items addObject:it];
-  for (NSDictionary *it in page) if (![items containsObject:it]) [items addObject:it];
-  for (NSDictionary *ci in self.radialCustomItems ?: @[]) if ([ci[@"pageKey"] isEqualToString:key]) [items addObject:ci];
+  if (savedOrder.count) for (NSString *action in savedOrder) for (NSDictionary *it in allItems) if ([it[@"action"] isEqualToString:action] && ![items containsObject:it]) [items addObject:it];
+  for (NSDictionary *it in allItems) if (![items containsObject:it]) [items addObject:it];
   self.radialItemsCurrentItems = items;
   [self.radialItemsTable reloadData];
 }
@@ -16284,11 +16309,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSArray *typeKeys = @[@"app", @"file", @"url", @"shell"];
   NSPopUpButton *iconPopup = [self.radialNewItemWindow.contentView viewWithTag:202];
   NSString *symbol = iconPopup.selectedItem.representedObject ?: @"star.fill";
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSMutableArray *items = [[ud arrayForKey:@"centerRadialCustomItems"] ?: @[] mutableCopy];
+  NSInteger pageCount = 0; for (NSDictionary *ci in items) if ([ci[@"pageKey"] isEqualToString:self.radialItemsCurrentKey]) pageCount++;
+  if (pageCount >= 8) { [self showToast:@"每页最多 8 个功能项"]; return; }
   NSDictionary *item = @{@"title": title, @"symbol": symbol, @"action": action,
                          @"custom": @YES, @"customType": typeKeys[[self.radialNewTypePopup indexOfSelectedItem]],
                          @"customValue": value, @"pageKey": self.radialItemsCurrentKey};
-  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-  NSMutableArray *items = [[ud arrayForKey:@"centerRadialCustomItems"] ?: @[] mutableCopy];
   [items addObject:item];
   [ud setObject:items forKey:@"centerRadialCustomItems"];
   [ud synchronize];
@@ -16325,6 +16352,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.radialCustomOrder = order;
   NSArray *names = @[@"AI 工具", @"图片 / 文档", @"截图工具", @"录屏工具", @"文件工具", @"分组 / 场景", @"系统工具"];
   NSArray *hidden = [ud arrayForKey:@"centerRadialHiddenPages"] ?: @[];
+  self.radialCustomHiddenPending = [hidden mutableCopy];
   if (!self.radialCustomWindow) {
     self.radialCustomWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,430,410) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.radialCustomWindow.title = @"菜单栏页面自定义";
@@ -16375,7 +16403,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (NSInteger i=0;i<self.radialCustomChecks.count;i++) {
     if (self.radialCustomChecks[i].state != NSControlStateValueOn) [hidden addObject:self.radialCustomOrder[i]];
   }
-  [[NSUserDefaults standardUserDefaults] setObject:hidden forKey:@"centerRadialHiddenPages"];
+  self.radialCustomHiddenPending = hidden;
 }
 - (void)radialPageMoveUp:(NSButton *)sender {
   NSInteger i = sender.tag;
@@ -16391,8 +16419,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 - (void)refreshRadialCustomChecks {
   NSArray *names = @[@"AI 工具", @"图片 / 文档", @"截图工具", @"录屏工具", @"文件工具", @"分组 / 场景", @"系统工具"];
-  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-  NSArray *hidden = [ud arrayForKey:@"centerRadialHiddenPages"] ?: @[];
+  NSArray *hidden = self.radialCustomHiddenPending ?: @[];
   for (NSInteger i=0;i<self.radialCustomChecks.count;i++) {
     NSInteger idx = [self.radialCustomOrder[i] integerValue];
     NSButton *b = self.radialCustomChecks[i];
@@ -16407,6 +16434,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (NSInteger i=0;i<self.radialCustomChecks.count;i++) if (self.radialCustomChecks[i].state == NSControlStateValueOn) [shown addObject:@(i)];
   if (!shown.count) { [self showToast:@"至少保留一页"]; return; }
   [self updateRadialCustomCheckStates];
+  [[NSUserDefaults standardUserDefaults] setObject:self.radialCustomHiddenPending ?: @[] forKey:@"centerRadialHiddenPages"];
   [[NSUserDefaults standardUserDefaults] setObject:self.radialCustomOrder forKey:@"centerRadialPageOrder"];
   [[NSUserDefaults standardUserDefaults] synchronize];
   [self.radialCustomWindow orderOut:nil];
@@ -17937,8 +17965,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSDictionary *domain = [[NSUserDefaults standardUserDefaults] persistentDomainForName:@"com.docklaunchers.center"] ?: @{};
   [domain writeToFile:[outDir stringByAppendingPathComponent:@"settings.plist"] atomically:YES];
   NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
-  NSString *shortcuts = [support stringByAppendingPathComponent:@"app_shortcuts.json"];
-  if ([fm fileExistsAtPath:shortcuts]) [fm copyItemAtPath:shortcuts toPath:[outDir stringByAppendingPathComponent:@"app_shortcuts.json"] error:NULL];
+  for (NSString *name in @[@"app_shortcuts.json",@"scenes.json",@"window_layouts.json",@"automation_rules.json",@"prompts.json"]) {
+    NSString *src = [support stringByAppendingPathComponent:name];
+    if ([fm fileExistsAtPath:src]) [fm copyItemAtPath:src toPath:[outDir stringByAppendingPathComponent:name] error:NULL];
+  }
   [[NSString stringWithFormat:@"DockLaunchers 配置备份\n导出时间：%@\n包含：分组列表、快捷键、应用设置\n注意：settings.plist 可能包含 AI API Key，请妥善保管。\n", [NSDate date]] writeToFile:[outDir stringByAppendingPathComponent:@"README.txt"] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
   [[NSUserDefaults standardUserDefaults] setObject:outDir forKey:@"centerLastConfigExportPath"];
   [[NSUserDefaults standardUserDefaults] synchronize];
@@ -17973,6 +18003,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if ([fm fileExistsAtPath:liveLists]) [fm copyItemAtPath:liveLists toPath:[backupDir stringByAppendingPathComponent:@"lists"] error:NULL];
   NSDictionary *oldDomain = [[NSUserDefaults standardUserDefaults] persistentDomainForName:@"com.docklaunchers.center"] ?: @{};
   [oldDomain writeToFile:[backupDir stringByAppendingPathComponent:@"settings.plist"] atomically:YES];
+  NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  for (NSString *name in @[@"app_shortcuts.json",@"scenes.json",@"window_layouts.json",@"automation_rules.json",@"prompts.json"]) {
+    NSString *src = [support stringByAppendingPathComponent:name];
+    if ([fm fileExistsAtPath:src]) [fm copyItemAtPath:src toPath:[backupDir stringByAppendingPathComponent:name] error:NULL];
+  }
   NSString *incomingLists = [tmp stringByAppendingPathComponent:@"lists"];
   if ([fm fileExistsAtPath:incomingLists]) {
     [fm removeItemAtPath:liveLists error:NULL];
@@ -17985,11 +18020,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     t.arguments = @[@"import", @"com.docklaunchers.center", incomingSettings];
     @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
   }
-  NSString *incomingShortcuts = [tmp stringByAppendingPathComponent:@"app_shortcuts.json"];
-  if ([fm fileExistsAtPath:incomingShortcuts]) {
-    NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
-    [fm createDirectoryAtPath:support withIntermediateDirectories:YES attributes:nil error:NULL];
-    [fm copyItemAtPath:incomingShortcuts toPath:[support stringByAppendingPathComponent:@"app_shortcuts.json"] error:NULL];
+  [fm createDirectoryAtPath:support withIntermediateDirectories:YES attributes:nil error:NULL];
+  for (NSString *name in @[@"app_shortcuts.json",@"scenes.json",@"window_layouts.json",@"automation_rules.json",@"prompts.json"]) {
+    NSString *incoming = [tmp stringByAppendingPathComponent:name];
+    if ([fm fileExistsAtPath:incoming]) [fm copyItemAtPath:incoming toPath:[support stringByAppendingPathComponent:name] error:NULL];
   }
   if (!isDir) [fm removeItemAtPath:tmp error:NULL];
   [self refreshGroups];
@@ -18039,7 +18073,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSString *p = [[self configBackupDirectory] stringByAppendingPathComponent:n];
     if ([fm fileExistsAtPath:p isDirectory:&isDir] && isDir) [dirs addObject:p];
   }
-  [dirs sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) { return [b compare:a]; }];
+  [dirs sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+    NSDate *da = [[NSFileManager defaultManager] attributesOfItemAtPath:a error:NULL][NSFileModificationDate] ?: [NSDate distantPast];
+    NSDate *db = [[NSFileManager defaultManager] attributesOfItemAtPath:b error:NULL][NSFileModificationDate] ?: [NSDate distantPast];
+    return [db compare:da];
+  }];
   return dirs;
 }
 
@@ -18060,10 +18098,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if ([fm fileExistsAtPath:liveLists]) [fm copyItemAtPath:liveLists toPath:[backupDir stringByAppendingPathComponent:@"lists"] error:NULL];
   NSDictionary *currentDomain = [[NSUserDefaults standardUserDefaults] persistentDomainForName:@"com.docklaunchers.center"] ?: @{};
   [currentDomain writeToFile:[backupDir stringByAppendingPathComponent:@"settings.plist"] atomically:YES];
+  NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  for (NSString *name in @[@"app_shortcuts.json",@"scenes.json",@"window_layouts.json",@"automation_rules.json",@"prompts.json"]) {
+    NSString *src = [support stringByAppendingPathComponent:name];
+    if ([fm fileExistsAtPath:src]) [fm copyItemAtPath:src toPath:[backupDir stringByAppendingPathComponent:name] error:NULL];
+  }
   NSString *incomingLists = [latest stringByAppendingPathComponent:@"lists"];
   if ([fm fileExistsAtPath:incomingLists]) {
     [fm removeItemAtPath:liveLists error:NULL];
     [fm copyItemAtPath:incomingLists toPath:liveLists error:NULL];
+  }
+  for (NSString *name in @[@"app_shortcuts.json",@"scenes.json",@"window_layouts.json",@"automation_rules.json",@"prompts.json"]) {
+    NSString *incoming = [latest stringByAppendingPathComponent:name];
+    if ([fm fileExistsAtPath:incoming]) [fm copyItemAtPath:incoming toPath:[support stringByAppendingPathComponent:name] error:NULL];
   }
   NSString *incomingSettings = [latest stringByAppendingPathComponent:@"settings.plist"];
   if ([fm fileExistsAtPath:incomingSettings]) {
@@ -18591,7 +18638,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)automationTimeTick:(NSTimer *)timer {
-  NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"HH:mm";
+  NSDateFormatter *df = [[NSDateFormatter alloc] init]; df.dateFormat = @"yyyyMMddHH:mm";
+  NSString *minute=[df stringFromDate:[NSDate date]];
+  if (self.automationLastTimeMinute && [self.automationLastTimeMinute isEqualToString:minute]) return;
+  self.automationLastTimeMinute = minute;
+  df.dateFormat = @"HH:mm";
   [self evaluateAutomationTrigger:@"time" value:[df stringFromDate:[NSDate date]]];
 }
 
@@ -18650,6 +18701,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       if (!self.automationLastFired) self.automationLastFired = [NSMutableDictionary dictionary];
       self.automationLastFired[key] = now;
       [self performAutomationAction:rule[@"action"] ?: @"" value:rule[@"actionValue"] ?: @""];
+      if ([trigger isEqualToString:@"time"]) break;
     } @catch (NSException *e) {}
   }
 }
@@ -18970,6 +19022,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if(!self.convertOutDir.length){[self showToast:@"请选择输出目录"];return;}
   [[NSFileManager defaultManager] createDirectoryAtPath:self.convertOutDir withIntermediateDirectories:YES attributes:nil error:NULL];
   NSInteger fmt=self.convertFormatPopup.indexOfSelectedItem;
+  NSArray *jobs=[self.convertPaths copy];
+  NSString *outDir=[self.convertOutDir copy];
   self.convertStatus.stringValue=@"正在转换…";
   if (fmt == 2) {
     PDFDocument *pdf=[[PDFDocument alloc] init];
@@ -18982,7 +19036,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       PDFPage *page=[[PDFPage alloc] initWithImage:img];
       if(page){[pdf insertPage:page atIndex:pdf.pageCount];pages++;}
     }
-    NSString *out=[self.convertOutDir stringByAppendingPathComponent:@"图片合集.pdf"];
+    NSString *out=[outDir stringByAppendingPathComponent:@"图片合集.pdf"];
     BOOL ok=pages>0&&[pdf writeToURL:[NSURL fileURLWithPath:out]];
     self.convertStatus.stringValue=ok?[NSString stringWithFormat:@"已生成 PDF：%ld 页",(long)pages]:@"没有可合并的图片";
     if(ok)[self showToast:@"图片已合并为 PDF"];
@@ -18990,7 +19044,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
     NSInteger ok=0,fail=0;
-    for(NSString *path in self.convertPaths){
+    for(NSString *path in jobs){
       NSString *base=path.lastPathComponent.stringByDeletingPathExtension;
       NSString *ext=path.pathExtension.lowercaseString;
       BOOL isImage=[@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"] containsObject:ext];
@@ -18998,11 +19052,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       BOOL isVideo=[@[@"mp4",@"mov",@"m4v"] containsObject:ext];
       BOOL isPDF=[ext isEqualToString:@"pdf"];
       BOOL done=NO;
-      if(fmt==0&&isImage){done=[self runConvertTask:@"/usr/bin/sips" args:@[@"-s",@"format",@"png",path,@"--out",[self.convertOutDir stringByAppendingPathComponent:[base stringByAppendingString:@".png"]]]];}
-      else if(fmt==1&&isImage){done=[self runConvertTask:@"/usr/bin/sips" args:@[@"-s",@"format",@"jpeg",path,@"--out",[self.convertOutDir stringByAppendingPathComponent:[base stringByAppendingString:@".jpg"]]]];}
-      else if(fmt==3&&isAudio){done=[self runConvertTask:@"/usr/bin/afconvert" args:@[@"-f",@"m4af",@"-d",@"aac",path,[self.convertOutDir stringByAppendingPathComponent:[base stringByAppendingString:@".m4a"]]]];}
-      else if(fmt==4&&isAudio){done=[self runConvertTask:@"/usr/bin/afconvert" args:@[@"-f",@"WAVE",@"-d",@"LEI16",path,[self.convertOutDir stringByAppendingPathComponent:[base stringByAppendingString:@".wav"]]]];}
-      else if(fmt==5&&isVideo){done=[self runConvertTask:@"/usr/bin/avconvert" args:@[@"-p",@"PresetHighestQuality",@"-s",path,@"-o",[self.convertOutDir stringByAppendingPathComponent:[base stringByAppendingString:@".mp4"]]]];}
+      if(fmt==0&&isImage){done=[self runConvertTask:@"/usr/bin/sips" args:@[@"-s",@"format",@"png",path,@"--out",[outDir stringByAppendingPathComponent:[base stringByAppendingString:@".png"]]]];}
+      else if(fmt==1&&isImage){done=[self runConvertTask:@"/usr/bin/sips" args:@[@"-s",@"format",@"jpeg",path,@"--out",[outDir stringByAppendingPathComponent:[base stringByAppendingString:@".jpg"]]]];}
+      else if(fmt==3&&isAudio){done=[self runConvertTask:@"/usr/bin/afconvert" args:@[@"-f",@"m4af",@"-d",@"aac",path,[outDir stringByAppendingPathComponent:[base stringByAppendingString:@".m4a"]]]];}
+      else if(fmt==4&&isAudio){done=[self runConvertTask:@"/usr/bin/afconvert" args:@[@"-f",@"WAVE",@"-d",@"LEI16",path,[outDir stringByAppendingPathComponent:[base stringByAppendingString:@".wav"]]]];}
+      else if(fmt==5&&isVideo){done=[self runConvertTask:@"/usr/bin/avconvert" args:@[@"-p",@"PresetHighestQuality",@"-s",path,@"-o",[outDir stringByAppendingPathComponent:[base stringByAppendingString:@".mp4"]]]];}
       else if(fmt==6&&isPDF){
         PDFDocument *doc=[[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
         for(NSInteger pg=0;pg<(NSInteger)doc.pageCount;pg++){
@@ -19014,7 +19068,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
           CGContextScaleCTM(g.CGContext,scale,scale); [page drawWithBox:kPDFDisplayBoxMediaBox toContext:g.CGContext];
           [NSGraphicsContext restoreGraphicsState];
           NSData *png=[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
-          NSString *out=[self.convertOutDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-第%ld页.png",base,(long)(pg+1)]];
+          NSString *out=[outDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-第%ld页.png",base,(long)(pg+1)]];
           if([png writeToFile:out atomically:YES])done=YES;
         }
       }
@@ -19922,7 +19976,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
             content = m;
           }
         }
-        if (!content) errMsg = obj[@"error"][@"message"] ?: @"API 返回格式异常";
+        if (!content) { id er=obj[@"error"]; if([er isKindOfClass:[NSDictionary class]]) errMsg=er[@"message"]; else if([er isKindOfClass:[NSString class]]) errMsg=er; if(!errMsg.length) errMsg=obj[@"message"] ?: @"API 返回格式异常"; }
       }
     }
     if (!content.length) errMsg = errMsg ?: (err.localizedDescription ?: @"翻译请求失败");
@@ -20141,12 +20195,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if (dir) t.currentDirectoryURL = [NSURL fileURLWithPath:dir];
     NSPipe *err = [NSPipe pipe];
     t.standardError = err;
-    t.standardOutput = [NSPipe pipe];
-    @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {
+    t.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+    @try { [t launch]; } @catch (NSException *e) {
       dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(NO, e.reason ?: @"启动失败"); });
       return;
     }
     NSData *ed = [err.fileHandleForReading readDataToEndOfFile];
+    [t waitUntilExit];
     NSString *msg = [[NSString alloc] initWithData:ed encoding:NSUTF8StringEncoding] ?: @"";
     dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(t.terminationStatus == 0, msg); });
   });
@@ -20202,10 +20257,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   t.arguments = tar ? @[@"-tzf", archive] : @[@"-Z1", archive];
   NSPipe *out = [NSPipe pipe];
   t.standardOutput = out;
-  t.standardError = [NSPipe pipe];
-  @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) { return NO; }
+  t.standardError = [NSFileHandle fileHandleWithNullDevice];
+  @try { [t launch]; } @catch (NSException *e) { return NO; }
+  NSData *outData = [out.fileHandleForReading readDataToEndOfFile];
+  [t waitUntilExit];
   if (t.terminationStatus != 0) return NO;
-  NSString *s = [[NSString alloc] initWithData:[out.fileHandleForReading readDataToEndOfFile] encoding:NSUTF8StringEncoding] ?: @"";
+  NSString *s = [[NSString alloc] initWithData:outData encoding:NSUTF8StringEncoding] ?: @"";
   for (NSString *line in [s componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
     if (line.length && ![self isSafeArchiveEntry:line]) return NO;
   }
@@ -20392,7 +20449,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
     [self showSection:page];
-  } else if ([type isEqualToString:@"分组"] || [type isEqualToString:@"应用"]) {
+  } else if ([type isEqualToString:@"分组"] || [type isEqualToString:@"分组应用"] || [type isEqualToString:@"应用"]) {
     NSString *path = item[@"path"];
     if (path.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
   } else if ([type isEqualToString:@"录制"]) {
@@ -20688,7 +20745,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 76, 668, 356)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
     self.captureHistoryTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
-    NSArray *cols = @[@[@"chtype", @"类型", @70.0], @[@"chname", @"文件", @230.0], @[@"chtags", @"标签", @130.0], @[@"chtime", @"时间", @140.0], @[@"chpath", @"位置", @120.0]];
+    NSArray *cols = @[@[@"chtype", @"类型", @60.0], @[@"chname", @"文件", @200.0], @[@"chtags", @"标签", @110.0], @[@"chtime", @"时间", @120.0], @[@"chpath", @"位置", @150.0]];
     for (NSArray *c in cols) {
       NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
       col.title = c[1]; col.width = [c[2] doubleValue];
@@ -20766,6 +20823,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (NSString *dir in dirs) {
     for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[]) {
       if ([f hasPrefix:@"."]) continue;
+      NSString *lower=f.lowercaseString;
+      if ([lower containsString:@"-part"] || [lower containsString:@"-composed"] || [lower containsString:@"camera-"] || [f containsString:@"音轨"] || [lower containsString:@"-nr-"] || [lower containsString:@"-audio"]) continue;
+      NSString *ext=f.pathExtension.lowercaseString;
+      BOOL isShot=[@[@"png",@"jpg",@"jpeg",@"heic",@"tiff"] containsObject:ext];
+      BOOL isVid=[@[@"mov",@"mp4",@"m4v"] containsObject:ext];
+      if(!isShot&&!isVid) continue;
       NSString *path = [dir stringByAppendingPathComponent:f];
       if ([seen containsObject:path]) continue;
       [seen addObject:path];
@@ -21630,6 +21693,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.liveAnnotationView.color = [NSColor systemRedColor];
   self.liveAnnotationView.lineWidth = 5;
   self.liveAnnotationView.items = [NSMutableArray array];
+  __weak typeof(self) weakSelf=self;
+  self.liveAnnotationView.onEscape = ^{ [weakSelf.liveAnnotationWindow orderOut:nil]; };
   self.liveAnnotationWindow.contentView = self.liveAnnotationView;
   NSArray *titles = @[@"画笔", @"箭头", @"清除", @"关闭"];
   NSArray *sels = @[@"liveAnnoPen:", @"liveAnnoArrow:", @"liveAnnoClear:", @"liveAnnoClose:"];
@@ -21641,7 +21706,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.liveAnnotationView addSubview:b];
   }
   [self.liveAnnotationWindow makeKeyAndOrderFront:nil];
-  [self showToast:@"实时标注已开启；点顶部工具栏关闭"];
+  [self.liveAnnotationWindow makeFirstResponder:self.liveAnnotationView];
+  [self showToast:@"实时标注已开启；Esc 或顶部工具栏关闭"];
 }
 
 - (void)liveAnnoPen:(id)sender { self.liveAnnotationView.tool = 0; }
@@ -22614,6 +22680,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   CGFloat start=[self.videoTrimStartField.stringValue doubleValue];
   CGFloat end=[self.videoTrimEndField.stringValue doubleValue];
   AVMutableComposition *comp=[AVMutableComposition composition];
+  self.videoEditorVideoTrack=nil; self.videoEditorAudioTrack=nil;
   [self appendVideoEditorPaths:self.videoEditorPaths index:0 composition:comp start:start end:end completion:^(NSString *error){
     if(error.length){self.videoEditorStatus.stringValue=error;return;}
     if(self.videoEditorMusicPath.length){
@@ -22660,10 +22727,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
           if(CMTimeCompare(e,s)<=0||CMTimeCompare(s,dur)>=0){completion([NSString stringWithFormat:@"裁剪范围无效：%@",paths[index].lastPathComponent]);return;}
           if(CMTimeCompare(e,dur)>0)e=dur;
           CMTimeRange range=CMTimeRangeFromTimeToTime(s,e);
-          AVMutableCompositionTrack *vt=[comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
-          NSError *err=nil; [vt insertTimeRange:range ofTrack:vts[0] atTime:kCMTimeZero error:&err];
+          if(!self.videoEditorVideoTrack) self.videoEditorVideoTrack=[comp addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+          CMTime cursor=comp.duration; NSError *err=nil;
+          [self.videoEditorVideoTrack insertTimeRange:range ofTrack:vts[0] atTime:cursor error:&err];
           if(err){completion(err.localizedDescription);return;}
-          for(AVAssetTrack *at in ats){AVMutableCompositionTrack *ct=[comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];[ct insertTimeRange:range ofTrack:at atTime:kCMTimeZero error:NULL];}
+          if(ats.count){if(!self.videoEditorAudioTrack) self.videoEditorAudioTrack=[comp addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];[self.videoEditorAudioTrack insertTimeRange:range ofTrack:ats[0] atTime:cursor error:NULL];}
           [self appendVideoEditorPaths:paths index:index+1 composition:comp start:start end:end completion:completion];
         });
       }];
@@ -22915,7 +22983,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
   [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
   req.HTTPBody=data; req.timeoutInterval=60;
-  self.aiVideoBusy=YES; self.aiVideoStatus.stringValue=@"正在提交视频任务…"; self.aiVideoPollCount=0;
+  self.aiVideoBusy=YES; self.aiVideoStatus.stringValue=@"正在提交视频任务…"; self.aiVideoPollCount=0; self.aiVideoPollErrors=0;
   self.aiVideoTaskID=nil; self.aiVideoPollURL=nil;
   __weak typeof(self) weakSelf=self;
   [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *respData, NSURLResponse *resp, NSError *err) {
@@ -22929,7 +22997,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         if (!taskID) { id d=obj[@"data"]; if ([d isKindOfClass:[NSDictionary class]]) taskID=d[@"id"] ?: d[@"task_id"] ?: d[@"requestId"]; }
       }
       if (videoURL.length) { [weakSelf downloadAIVideoURL:videoURL]; return; }
-      if (!taskID.length) { weakSelf.aiVideoBusy=NO; weakSelf.aiVideoStatus.stringValue=[[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding] ?: @"没有解析到任务"; return; }
+      if (!taskID.length) { weakSelf.aiVideoBusy=NO; weakSelf.aiVideoStatus.stringValue=[weakSelf friendlyAIErrorFromData:respData fallback:@"没有解析到任务"]; return; }
       weakSelf.aiVideoTaskID=taskID;
       if (silicon) weakSelf.aiVideoPollURL=[url stringByReplacingOccurrencesOfString:@"/video/submit" withString:@"/video/status"];
       else weakSelf.aiVideoPollURL=[url stringByAppendingFormat:@"/%@", taskID];
@@ -22957,10 +23025,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   __weak typeof(self) weakSelf=self;
   [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
     dispatch_async(dispatch_get_main_queue(), ^{
-      if (err || !data.length) return;
+      if (err || !data.length) {
+        weakSelf.aiVideoPollErrors++;
+        if (weakSelf.aiVideoPollErrors >= 3) { [weakSelf.aiVideoPollTimer invalidate]; weakSelf.aiVideoBusy=NO; weakSelf.aiVideoStatus.stringValue=err.localizedDescription ?: @"视频轮询失败，请检查网络或任务"; }
+        return;
+      }
+      weakSelf.aiVideoPollErrors=0;
       id obj=[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
       NSString *status = ([obj isKindOfClass:[NSDictionary class]] ? obj[@"status"] : nil);
-      if ([status isKindOfClass:[NSString class]] && ([status isEqualToString:@"Failed"] || [status isEqualToString:@"failed"] || [status isEqualToString:@"Error"])) {
+      NSString *statusLow = [status isKindOfClass:[NSString class]] ? status.lowercaseString : @"";
+      if ([@[@"failed",@"error",@"cancel",@"cancelled",@"timeout"] containsObject:statusLow]) {
         [weakSelf.aiVideoPollTimer invalidate]; weakSelf.aiVideoBusy=NO;
         NSString *reason = ([obj isKindOfClass:[NSDictionary class]] ? obj[@"reason"] : nil) ?: @"视频生成失败";
         weakSelf.aiVideoStatus.stringValue=reason; return;
@@ -23300,7 +23374,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         if([choices isKindOfClass:[NSArray class]]&&choices.count){
           id msg=choices[0][@"message"]; if([msg isKindOfClass:[NSDictionary class]]) content=msg[@"content"];
         }
-        if(!content.length) content=obj[@"error"][@"message"];
+        if(!content.length){id er=obj[@"error"];if([er isKindOfClass:[NSDictionary class]])content=er[@"message"];else if([er isKindOfClass:[NSString class]])content=er;}
       }
       if(content.length){weakSelf.aiVisionOutput.string=content;weakSelf.aiVisionStatus.stringValue=@"完成";}
       else{weakSelf.aiVisionStatus.stringValue=@"没有解析到回答";}
@@ -24305,9 +24379,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [imgs addObject:f];
   }
   [imgs sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b){ return [b compare:a]; }];
-  CGFloat x=8,y=300;
+  NSInteger rowCount=(imgs.count+3)/4;
+  CGFloat docH=MAX(440, rowCount*160.0+20.0);
+  doc.frame=NSMakeRect(0,0,700,docH);
+  CGFloat x=8,y=docH-160;
   for (NSString *f in imgs) {
-    if (y < 8) break;
     NSImage *img=[[NSImage alloc] initWithContentsOfFile:[[self aiGeneratedDirectory] stringByAppendingPathComponent:f]];
     NSButton *b=[[NSButton alloc] initWithFrame:NSMakeRect(x,y,160,150)];
     b.bordered=NO; b.image=img; b.imageScaling=NSImageScaleProportionallyUpOrDown;
@@ -24504,10 +24580,23 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   BOOL siliconImage = [url containsString:@"siliconflow"] || [imageServiceName containsString:@"siliconflow"] || [imageServiceName containsString:@"硅基流动"];
   NSString *imageSize = self.aiImageSizePopup.titleOfSelectedItem ?: @"1024x1024";
   NSMutableDictionary *body;
+  BOOL openaiImage = [imageServiceName containsString:@"openai"] || [imageServiceName containsString:@"chatgpt"];
   if (siliconImage) body=[@{@"model":model,@"prompt":prompt,@"image_size":imageSize} mutableCopy];
-  else body=[@{@"model":model,@"prompt":prompt,@"n":@1,@"size":imageSize,@"response_format":@"url"} mutableCopy];
-  NSString *reasonImg = [self reasoningEffortForPopup:self.aiImageReasoningPopup];
-  if (reasonImg.length) body[@"reasoning_effort"] = reasonImg;
+  else {
+    NSString *mappedSize=imageSize;
+    if (openaiImage && [model containsString:@"gpt-image"]) {
+      if ([imageSize isEqualToString:@"1792x1024"]) mappedSize=@"1536x1024";
+      else if ([imageSize isEqualToString:@"1024x1792"]) mappedSize=@"1024x1536";
+      else if ([imageSize isEqualToString:@"512x512"]) mappedSize=@"1024x1024";
+      body=[@{@"model":model,@"prompt":prompt,@"n":@1,@"size":mappedSize} mutableCopy];
+    } else {
+      body=[@{@"model":model,@"prompt":prompt,@"n":@1,@"size":imageSize,@"response_format":@"url"} mutableCopy];
+    }
+  }
+  if (!openaiImage) {
+    NSString *reasonImg = [self reasoningEffortForPopup:self.aiImageReasoningPopup];
+    if (reasonImg.length) body[@"reasoning_effort"] = reasonImg;
+  }
   NSData *data=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
   NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
   req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
@@ -24688,7 +24777,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
           NSDictionary *msg = choices[0][@"message"];
           if ([msg isKindOfClass:[NSDictionary class]]) content = msg[@"content"];
         }
-        if (!content.length) content = obj[@"error"][@"message"];
+        if (!content.length) { id er=obj[@"error"]; if([er isKindOfClass:[NSDictionary class]]) content=er[@"message"]; else if([er isKindOfClass:[NSString class]]) content=er; }
       }
       if (content.length) { weakSelf.aiAssistantOutput.string = content; weakSelf.aiAssistantStatus.stringValue = @"完成"; }
       else { weakSelf.aiAssistantStatus.stringValue = @"没有解析到返回内容"; weakSelf.aiAssistantOutput.string = [[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding] ?: @""; }
@@ -24807,7 +24896,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
           id raw = obj[@"text"];
           if ([raw isKindOfClass:[NSString class]]) { hasTextKey = YES; text = raw; }
           if (!text.length) {
-            NSString *apiErr = obj[@"error"][@"message"] ?: obj[@"message"];
+            id er=obj[@"error"]; NSString *apiErr=nil; if([er isKindOfClass:[NSDictionary class]])apiErr=er[@"message"]; else if([er isKindOfClass:[NSString class]])apiErr=er; if(!apiErr)apiErr=obj[@"message"];
             if (apiErr.length) {
               update(nil, YES, [NSError errorWithDomain:@"DockLaunchers" code:13 userInfo:@{NSLocalizedDescriptionKey: apiErr}]);
               return;
@@ -24878,7 +24967,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *exe=[ud stringForKey:@"centerWhisperExe"] ?: @"/opt/homebrew/bin/whisper-cli";
   NSString *model=[ud stringForKey:@"centerWhisperModel"] ?: [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/Models/ggml-base.bin"];
   if (![[NSFileManager defaultManager] isExecutableFileAtPath:exe]) { update(nil,YES,[NSError errorWithDomain:@"DockLaunchers" code:70 userInfo:@{NSLocalizedDescriptionKey:@"没有找到本地 Whisper 可执行文件，请先在转写设置里配置"}]); return; }
-  if (!model.length) { update(nil,YES,[NSError errorWithDomain:@"DockLaunchers" code:71 userInfo:@{NSLocalizedDescriptionKey:@"请先配置 Whisper 模型文件"}]); return; }
+  BOOL cppExe=[exe.lastPathComponent containsString:@"whisper-cli"] || [exe.lastPathComponent isEqualToString:@"main"];
+  if (cppExe && ![[NSFileManager defaultManager] isReadableFileAtPath:model]) { update(nil,YES,[NSError errorWithDomain:@"DockLaunchers" code:71 userInfo:@{NSLocalizedDescriptionKey:@"Whisper 模型文件不存在或不可读"}]); return; }
   [self extractAudioFromMediaAtPath:path completion:^(NSString *audio, NSError *err) {
     if(!audio.length){update(nil,YES,err);return;}
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
@@ -24896,13 +24986,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         task.arguments=@[@"--model",model,@"--output_format",@"txt",@"--output_dir",tmp,audio];
         txtPath=[tmp stringByAppendingPathComponent:[baseName stringByAppendingString:@".txt"]];
       }
-      NSPipe *pipe=[NSPipe pipe]; task.standardError=pipe; task.standardOutput=pipe;
+      task.standardError=[NSFileHandle fileHandleWithNullDevice]; task.standardOutput=[NSFileHandle fileHandleWithNullDevice];
       @try{[task launch];[task waitUntilExit];}@catch(NSException *e){dispatch_async(dispatch_get_main_queue(),^{update(nil,YES,[NSError errorWithDomain:@"DockLaunchers" code:72 userInfo:@{NSLocalizedDescriptionKey:@"本地 Whisper 启动失败"}]);});return;}
-      NSString *text=[[NSString alloc] initWithContentsOfFile:txtPath encoding:NSUTF8StringEncoding error:NULL];
-      if(!text.length){NSData *d=[pipe.fileHandleForReading readDataToEndOfFile];NSString *errText=[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];text=[errText stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(text.length>400)text=[text substringToIndex:400];}
+      NSString *text=nil;
+      if(task.terminationStatus==0) text=[[NSString alloc] initWithContentsOfFile:txtPath encoding:NSUTF8StringEncoding error:NULL];
       dispatch_async(dispatch_get_main_queue(),^{
         if(text.length)update([text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],YES,nil);
-        else update(nil,YES,[NSError errorWithDomain:@"DockLaunchers" code:73 userInfo:@{NSLocalizedDescriptionKey:@"本地 Whisper 没有返回文字"}]);
+        else update(nil,YES,[NSError errorWithDomain:@"DockLaunchers" code:73 userInfo:@{NSLocalizedDescriptionKey:(task.terminationStatus==0?@"本地 Whisper 没有返回文字":@"本地 Whisper 执行失败，请检查模型和音频格式")}]);
       });
     });
   }];
@@ -25786,7 +25876,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       if ([obj isKindOfClass:[NSDictionary class]]) {
         NSArray *choices = obj[@"choices"];
         if ([choices isKindOfClass:[NSArray class]] && choices.count) out = choices[0][@"message"][@"content"];
-        if (!out.length) out = obj[@"error"][@"message"];
+        if (!out.length) { id er=obj[@"error"]; if([er isKindOfClass:[NSDictionary class]]) out=er[@"message"]; else if([er isKindOfClass:[NSString class]]) out=er; }
       }
       if (out.length) { weakSelf.meetingSummary.string = out; weakSelf.meetingStatus.stringValue = @"会议纪要已生成"; }
       else weakSelf.meetingStatus.stringValue = err.localizedDescription ?: @"生成失败";
@@ -27193,15 +27283,20 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)installUpdateDMG:(NSString *)dmgPath {
   if (!dmgPath.length || ![[NSFileManager defaultManager] fileExistsAtPath:dmgPath]) { [self showToast:@"更新文件不存在"]; return; }
   NSString *appPath = [[NSBundle mainBundle] bundlePath];
+  NSString *escApp = [appPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+  NSString *escDmg = [dmgPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
   NSString *script = [NSString stringWithFormat:
-    @"sleep 1; MNT=$(mktemp -d /tmp/dl-update.XXXXXX); hdiutil attach \\\"%@\\\" -nobrowse -quiet -mountpoint \\\"$MNT\\\" || exit 1; "
-    @"APP=$(find \\\"$MNT\\\" -maxdepth 2 -name '*.app' -print -quit); "
-    @"[ -z \\\"$APP\\\" ] && { hdiutil detach \\\"$MNT\\\" -quiet; exit 2; }; "
-    @"rm -rf \\\"%@\\\"; ditto \\\"$APP\\\" \\\"%@\\\"; hdiutil detach \\\"$MNT\\\" -quiet; open -a \\\"%@\\\"",
-    [dmgPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""],
-    [appPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""],
-    [appPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""],
-    [appPath stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""]];
+    @"sleep 1; MNT=$(mktemp -d /tmp/dl-update-mnt.XXXXXX); STAGE=$(mktemp -d /tmp/dl-update-stage.XXXXXX); BAK=\"%@.bak\"; "
+    @"cleanup(){ hdiutil detach \"$MNT\" -quiet 2>/dev/null; rm -rf \"$STAGE\"; }; trap cleanup EXIT; "
+    @"hdiutil attach \"%@\" -nobrowse -quiet -mountpoint \"$MNT\" || exit 1; "
+    @"APP=$(find \"$MNT\" -maxdepth 2 -name '*.app' -print -quit); [ -z \"$APP\" ] && exit 2; "
+    @"codesign --verify --deep --strict \"$APP\" 2>/dev/null || exit 3; "
+    @"rm -rf \"$STAGE/App.app\"; ditto \"$APP\" \"$STAGE/App.app\" || exit 4; "
+    @"codesign --verify --deep --strict \"$STAGE/App.app\" 2>/dev/null || exit 3; "
+    @"rm -rf \"$BAK\"; mv \"%@\" \"$BAK\" || exit 5; "
+    @"if ditto \"$STAGE/App.app\" \"%@\"; then rm -rf \"$BAK\"; else rm -rf \"%@\"; mv \"$BAK\" \"%@\"; exit 6; fi; "
+    @"open -a \"%@\"",
+    escApp, escDmg, escApp, escApp, escApp, escApp, escApp];
   NSTask *t = [[NSTask alloc] init];
   t.launchPath = @"/bin/sh";
   t.arguments = @[@"-c", [NSString stringWithFormat:@"( %@ ) >/tmp/dl-update.log 2>&1 &", script]];
