@@ -25005,6 +25005,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.cloudLoginWindow orderOut:nil];
 }
 
+- (void)refreshCloudLoginAccount {
+  if(!self.cloudLoginWebView)return;
+  NSString *js=@"(()=>{let t=(document.title||'').trim();let el=document.querySelector('[class*=account],[class*=userName],[class*=user-name],[class*=avatar],[data-testid*=user]');let n=el?(el.innerText||el.getAttribute('aria-label')||'').trim():'';return JSON.stringify({title:t,account:n.replace(/\s+/g,' ')});})()";
+  __weak typeof(self) weakSelf=self;
+  [self.cloudLoginWebView evaluateJavaScript:js completionHandler:^(id result,NSError *err){
+    if(![result isKindOfClass:[NSString class]])return;
+    id o=[NSJSONSerialization JSONObjectWithData:[(NSString *)result dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+    if(![o isKindOfClass:[NSDictionary class]])return;
+    NSString *account=o[@"account"] ?: @""; NSString *title=o[@"title"] ?: @"";
+    dispatch_async(dispatch_get_main_queue(),^{
+      NSString *name=account.length?account:(title.length?title:@"");
+      if(name.length)weakSelf.cloudLoginWindow.title=[NSString stringWithFormat:@"%@ · %@",weakSelf.cloudLoginProvider ?: @"云文档",name];
+    });
+  }];
+}
+
 - (void)scanCloudLoginPage:(id)sender {
   if(!self.cloudLoginWebView)return;
   NSString *script=@"JSON.stringify([...document.querySelectorAll('a')].map(a=>({title:(a.innerText||a.title||'').trim().replace(/\\s+/g,' '),url:a.href||''})).filter(x=>x.title.length>0&&x.url.length>0).slice(0,400))";
@@ -25034,6 +25050,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     dispatch_async(dispatch_get_main_queue(),^{
       weakSelf.cloudLoginFiles=files; [weakSelf.cloudLoginFileTable reloadData];
       weakSelf.cloudLoginStatus.stringValue=files.count?[NSString stringWithFormat:@"发现 %ld 个文档/文件链接；点击可打开，或进入文档后点「导入当前正文」",(long)files.count]:@"尚未发现文档列表；请完成登录并进入文档首页后点「刷新列表」";
+      [weakSelf refreshCloudLoginAccount];
     });
   }];
 }
