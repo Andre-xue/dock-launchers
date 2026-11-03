@@ -2313,6 +2313,17 @@ static NSImage *DiskVideoFrameForPath(NSString *path) {
   return img;
 }
 
+@interface DLGalleryCollectionView : NSCollectionView
+@property (copy) BOOL (^keyHandler)(NSEvent *);
+@end
+@implementation DLGalleryCollectionView
+- (BOOL)acceptsFirstResponder { return YES; }
+- (void)keyDown:(NSEvent *)event {
+  if (self.keyHandler && self.keyHandler(event)) return;
+  [super keyDown:event];
+}
+@end
+
 @interface DiskGalleryItem : NSCollectionViewItem
 @property (strong) NSImageView *thumbView;
 @property (strong) NSTextField *nameLabel;
@@ -3313,16 +3324,7 @@ static void HideDockHoverTip(void) {
     });
   }
   self.diskKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
-    if (self.section == 3 && self.diskPreviewWindow.isVisible) {
-      if (e.keyCode == 49 || e.keyCode == 53) { [self closeDiskPreview]; return nil; }
-      if (e.keyCode == 123) { [self navigateDiskGalleryBy:-1]; return nil; }
-      if (e.keyCode == 124) { [self navigateDiskGalleryBy:1]; return nil; }
-    }
-    if (self.section == 3 && self.diskCollectionScroll.hidden == NO) {
-      if (e.keyCode == 49) { [self previewSelectedDiskFile]; return nil; }
-      if (e.keyCode == 123) { [self navigateDiskGalleryBy:-1]; return nil; }
-      if (e.keyCode == 124) { [self navigateDiskGalleryBy:1]; return nil; }
-    }
+    if ([self handleDiskGalleryKeyEvent:e]) return nil;
     return e;
   }];
   // 静默启动：不把控制台固定到 Dock，只维护分组图标
@@ -9197,7 +9199,9 @@ static BOOL ValidGroupName(NSString *raw) {
   layout.minimumLineSpacing = 10;
   layout.sectionInset = NSEdgeInsetsMake(10, 10, 10, 10);
   self.diskFlowLayout = layout;
-  self.diskCollection = [[NSCollectionView alloc] initWithFrame:NSMakeRect(0, 0, 668, 388)];
+  self.diskCollection = [[DLGalleryCollectionView alloc] initWithFrame:NSMakeRect(0, 0, 668, 388)];
+  __weak typeof(self) weakGallery = self;
+  ((DLGalleryCollectionView *)self.diskCollection).keyHandler = ^BOOL(NSEvent *event) { return [weakGallery handleDiskGalleryKeyEvent:event]; };
   self.diskCollection.collectionViewLayout = layout;
   self.diskCollection.dataSource = self;
   self.diskCollection.delegate = self;
@@ -9993,6 +9997,21 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)closeDiskPreview { [self.diskPreviewWindow orderOut:nil]; }
 
+- (BOOL)handleDiskGalleryKeyEvent:(NSEvent *)event {
+  if (event.type != NSEventTypeKeyDown || self.section != 3) return NO;
+  if (self.diskPreviewWindow.isVisible) {
+    if (event.keyCode == 49 || event.keyCode == 53) { [self closeDiskPreview]; return YES; }
+    if (event.keyCode == 123) { [self navigateDiskGalleryBy:-1]; return YES; }
+    if (event.keyCode == 124) { [self navigateDiskGalleryBy:1]; return YES; }
+    return NO;
+  }
+  if (self.diskCollectionScroll.hidden != NO) return NO;
+  if (event.keyCode == 49) { [self previewSelectedDiskFile]; return YES; }
+  if (event.keyCode == 123) { [self navigateDiskGalleryBy:-1]; return YES; }
+  if (event.keyCode == 124) { [self navigateDiskGalleryBy:1]; return YES; }
+  return NO;
+}
+
 - (void)navigateDiskGalleryBy:(NSInteger)delta {
   NSInteger total=self.diskAllGalleryItems.count;
   if(total<=0||self.diskGalleryItems.count<=0)return;
@@ -10020,6 +10039,10 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)previewSelectedDiskFile {
+  if (self.diskSelectedIndex < 0 || self.diskSelectedIndex >= (NSInteger)self.diskGalleryItems.count) {
+    NSIndexPath *ip = self.diskCollection.selectionIndexPaths.anyObject;
+    self.diskSelectedIndex = ip ? ip.item : (self.diskGalleryItems.count ? 0 : -1);
+  }
   if (self.diskSelectedIndex < 0 || self.diskSelectedIndex >= (NSInteger)self.diskGalleryItems.count) return;
   NSDictionary *item = self.diskGalleryItems[self.diskSelectedIndex];
   NSString *path = item[@"path"];
