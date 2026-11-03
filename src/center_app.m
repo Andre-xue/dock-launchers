@@ -7708,17 +7708,91 @@ static BOOL ValidGroupName(NSString *raw) {
   else self.videoGenStatus.stringValue=@"HunyuanVideo 未安装；仅展示市场，不会下载";
 }
 
+- (NSString *)videoMarketDirectory {
+  return [NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/models/video_market"];
+}
+
 - (NSArray *)videoBackendCatalog {
   double mem=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
-  BOOL svd=mem>=16, hunyuan=mem>=24;
-  return @[
-    @{@"name":@"AnimateDiff + SD1.5",@"category":@"AnimateDiff",@"size":@"3.8 GB",@"desc":@"文生视频/图生视频，8GB 唯一稳定方案",@"recommended":@YES},
-    @{@"name":@"mm_sd_v15_v2.ckpt",@"category":@"AnimateDiff",@"size":@"1.7 GB",@"desc":@"当前已安装的运动模块",@"recommended":@YES},
-    @{@"name":@"Stable Video Diffusion",@"category":@"Stable Video Diffusion",@"size":@"9.5 GB",@"desc":@"图片转视频，建议 16GB 以上",@"recommended":@(svd)},
-    @{@"name":@"SVD-XT",@"category":@"Stable Video Diffusion",@"size":@"9.5 GB",@"desc":@"更长帧数图生视频",@"recommended":@(svd)},
-    @{@"name":@"HunyuanVideo",@"category":@"HunyuanVideo",@"size":@"约 25 GB",@"desc":@"高质量文生视频，建议 24GB 以上",@"recommended":@(hunyuan)},
-    @{@"name":@"LTX-Video 2B",@"category":@"LTX-Video",@"size":@"约 4.5 GB",@"desc":@"快速文生视频，建议 12GB 以上",@"recommended":@(mem>=12)}
-  ];
+  BOOL svd=mem>=16, hunyuan=mem>=24, ltx=mem>=12;
+  NSMutableArray *a=[NSMutableArray arrayWithArray:@[
+    @{@"name":@"AnimateDiff + SD1.5",@"file":@"mm_sd_v15_v2.ckpt",@"category":@"AnimateDiff",@"size":@"3.8 GB",@"desc":@"文生视频/图生视频，8GB 唯一稳定方案",@"recommended":@YES,@"installed":@YES},
+    @{@"name":@"mm_sd_v15_v2.ckpt",@"file":@"mm_sd_v15_v2.ckpt",@"category":@"AnimateDiff",@"size":@"1.7 GB",@"desc":@"已安装的运动模块",@"recommended":@YES,@"installed":@YES},
+    @{@"name":@"Stable Video Diffusion",@"file":@"svd.safetensors",@"repo":@"stabilityai/stable-video-diffusion-img2vid",@"category":@"Stable Video Diffusion",@"size":@"9.5 GB",@"desc":@"图片转视频，建议 16GB 以上",@"recommended":@(svd)},
+    @{@"name":@"SVD-XT",@"file":@"svd_xt.safetensors",@"repo":@"stabilityai/stable-video-diffusion-img2vid-xt",@"category":@"Stable Video Diffusion",@"size":@"9.5 GB",@"desc":@"更长帧数图生视频",@"recommended":@(svd)},
+    @{@"name":@"HunyuanVideo BF16",@"file":@"hunyuan_video_t2v_720p_bf16.safetensors",@"repo":@"tencent/HunyuanVideo",@"category":@"HunyuanVideo",@"size":@"约 25 GB",@"desc":@"高质量文生视频，建议 24GB 以上",@"recommended":@(hunyuan)},
+    @{@"name":@"HunyuanVideo FP8",@"file":@"hunyuan_video_t2v_720p_fp8_e4m3fn.safetensors",@"repo":@"tencent/HunyuanVideo",@"category":@"HunyuanVideo",@"size":@"约 15 GB",@"desc":@"HunyuanVideo 量化版，24GB 以上",@"recommended":@(hunyuan)},
+    @{@"name":@"LTX-Video 2B",@"file":@"ltx-video-2b-v0.9.5.safetensors",@"repo":@"Lightricks/LTX-Video",@"category":@"LTX-Video",@"size":@"约 4.5 GB",@"desc":@"快速文生视频，建议 12GB 以上",@"recommended":@(ltx)}
+  ]];
+  NSString *dir=[self videoMarketDirectory];
+  for(NSMutableDictionary *m in a){
+    if([m[@"installed"] boolValue])continue;
+    NSString *p=[dir stringByAppendingPathComponent:[m[@"category"] stringByAppendingPathComponent:m[@"file"] ?: @""]];
+    if([[NSFileManager defaultManager] fileExistsAtPath:p])m[@"installed"]=@YES;
+    if(m[@"repo"] && !m[@"url"])m[@"url"]=[NSString stringWithFormat:@"https://hf-mirror.com/%@/resolve/main/%@",m[@"repo"],m[@"file"]];
+  }
+  return a;
+}
+
+- (void)videoModelMarketRefreshLatest:(id)sender {
+  self.videoModelMarketStatus.stringValue=@"正在从 Hugging Face 获取最新视频模型…";
+  __weak typeof(self) weakSelf=self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSMutableArray *models=[[weakSelf videoBackendCatalog] mutableCopy];
+    NSMutableSet *known=[NSMutableSet set];
+    for(NSDictionary *m in models) if(m[@"repo"])[known addObject:m[@"repo"]];
+    for(NSString *tag in @[@"text-to-video",@"image-to-video"]){
+      NSString *url=[NSString stringWithFormat:@"https://huggingface.co/api/models?search=%@&sort=lastModified&direction=-1&limit=12",tag];
+      NSData *d=[NSData dataWithContentsOfURL:[NSURL URLWithString:url]];
+      id arr=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+      if(![arr isKindOfClass:[NSArray class]])continue;
+      for(NSDictionary *x in arr){
+        NSString *rid=x[@"id"]; if(!rid.length||[known containsObject:rid])continue;
+        [known addObject:rid];
+        [models addObject:@{@"name":rid,@"repo":rid,@"file":@"",@"category":@"最新",@"size":@"未知",@"desc":[NSString stringWithFormat:@"Hugging Face 最新视频模型（%@，实验）",tag],@"recommended":@NO}];
+      }
+    }
+    dispatch_async(dispatch_get_main_queue(),^{
+      weakSelf.videoModelMarketModels=models;
+      [weakSelf videoModelMarketFilterChanged:nil];
+      weakSelf.videoModelMarketStatus.stringValue=[NSString stringWithFormat:@"已同步 %ld 个视频模型（含 Hugging Face 最新）",(long)models.count];
+    });
+  });
+}
+
+- (void)videoModelMarketDownload:(id)sender {
+  NSInteger row=self.videoModelMarketTable.selectedRow;
+  if(row<0||row>=(NSInteger)self.videoModelMarketFiltered.count){self.videoModelMarketStatus.stringValue=@"请先选择模型";return;}
+  NSDictionary *m=self.videoModelMarketFiltered[row];
+  if([m[@"installed"] boolValue]){self.videoModelMarketStatus.stringValue=@"该模型已下载";return;}
+  NSString *url=m[@"url"] ?: @"";
+  if(!url.length && m[@"repo"]){
+    NSString *api=[NSString stringWithFormat:@"https://huggingface.co/api/models/%@?blobs=true",m[@"repo"]];
+    NSData *d=[NSData dataWithContentsOfURL:[NSURL URLWithString:api]];
+    id o=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    NSArray *sib=[o isKindOfClass:[NSDictionary class]]?o[@"siblings"]:nil;
+    for(NSDictionary *x in sib){NSString *fn=x[@"rfilename"];if([fn.pathExtension.lowercaseString isEqualToString:@"safetensors"]){url=[NSString stringWithFormat:@"https://hf-mirror.com/%@/resolve/main/%@",m[@"repo"],fn];break;}}
+  }
+  if(!url.length){self.videoModelMarketStatus.stringValue=@"未找到可下载的 safetensors 文件";return;}
+  NSString *name=m[@"file"]; if(!name.length)name=url.lastPathComponent;
+  NSString *dir=[[self videoMarketDirectory] stringByAppendingPathComponent:m[@"category"] ?: @"其他"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *dst=[dir stringByAppendingPathComponent:name];
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=[NSString stringWithFormat:@"下载 %@？",name];
+  a.informativeText=[NSString stringWithFormat:@"大小约 %@，会保存到：\n%@\n\n视频模型体积很大，请确认磁盘空间。",m[@"size"] ?: @"未知",dir];
+  [a addButtonWithTitle:@"下载"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  self.videoModelMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@…",name];
+  __weak typeof(self) weakSelf=self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/curl"; t.arguments=@[@"-L",@"--fail",@"--retry",@"2",@"-o",dst,url];
+    t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+    BOOL ok=NO; @try{[t launch];[t waitUntilExit];ok=(t.terminationStatus==0);}@catch(NSException *e){}
+    dispatch_async(dispatch_get_main_queue(),^{
+      weakSelf.videoModelMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",name]:@"下载失败，请检查网络或磁盘空间";
+      if(ok)[weakSelf videoModelMarketReload]; else [weakSelf videoModelMarketFilterChanged:nil];
+    });
+  });
 }
 
 - (void)showVideoModelMarket:(id)sender {
@@ -7730,7 +7804,7 @@ static BOOL ValidGroupName(NSString *raw) {
     double gb=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
     NSTextField *h=[self label:[NSString stringWithFormat:@"当前内存约 %.0f GB；这里只展示兼容性和性能建议，不会自动下载模型",gb] size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,466,720,18); [cv addSubview:h];
     self.videoModelMarketCategory=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,430,220,28) pullsDown:NO];
-    for(NSString *c in @[@"全部",@"推荐",@"AnimateDiff",@"Stable Video Diffusion",@"HunyuanVideo",@"LTX-Video"])[self.videoModelMarketCategory addItemWithTitle:c];
+    for(NSString *c in @[@"全部",@"推荐",@"AnimateDiff",@"Stable Video Diffusion",@"HunyuanVideo",@"LTX-Video",@"最新"])[self.videoModelMarketCategory addItemWithTitle:c];
     self.videoModelMarketCategory.target=self; self.videoModelMarketCategory.action=@selector(videoModelMarketFilterChanged:); [cv addSubview:self.videoModelMarketCategory];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,76,732,340)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.videoModelMarketTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
@@ -7740,19 +7814,30 @@ static BOOL ValidGroupName(NSString *raw) {
     self.videoModelMarketTable.rowHeight=44; self.videoModelMarketTable.dataSource=self; self.videoModelMarketTable.delegate=self;
     sv.documentView=self.videoModelMarketTable; [cv addSubview:sv];
     self.videoModelMarketStatus=[self label:@"只展示，不下载到本地；AnimateDiff 已安装可执行" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.videoModelMarketStatus.frame=NSMakeRect(24,44,500,18); [cv addSubview:self.videoModelMarketStatus];
+    ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(420,34,120,32)]; dl.title=@"下载到本地"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(videoModelMarketDownload:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
+    ColorHoverButton *latest=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(548,34,100,32)]; latest.title=@"获取最新"; latest.hoverColor=[NSColor systemBlueColor]; latest.target=self; latest.action=@selector(videoModelMarketRefreshLatest:); [latest applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:latest];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(656,34,100,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeVideoModelMarket:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.videoModelMarketWindow center];
   }
+  if(!self.videoModelMarketModels)self.videoModelMarketModels=[self videoBackendCatalog];
   [self videoModelMarketFilterChanged:nil];
   [self bringAuxiliaryWindowToFront:self.videoModelMarketWindow];
 }
 
 - (void)closeVideoModelMarket:(id)sender { [self.videoModelMarketWindow orderOut:nil]; }
 
+- (void)videoModelMarketReload {
+  NSMutableArray *base=[[self videoBackendCatalog] mutableCopy];
+  for(NSDictionary *m in self.videoModelMarketModels ?: @[]) if([m[@"category"] isEqualToString:@"最新"])[base addObject:m];
+  self.videoModelMarketModels=base;
+  [self videoModelMarketFilterChanged:nil];
+}
+
 - (void)videoModelMarketFilterChanged:(id)sender {
   NSString *cat=self.videoModelMarketCategory.titleOfSelectedItem ?: @"全部";
   NSMutableArray *out=[NSMutableArray array];
-  for(NSDictionary *m in [self videoBackendCatalog]){
+  NSArray *source=self.videoModelMarketModels ?: [self videoBackendCatalog];
+  for(NSDictionary *m in source){
     if([cat isEqualToString:@"推荐"] && ![m[@"recommended"] boolValue])continue;
     if(![cat isEqualToString:@"全部"] && ![cat isEqualToString:@"推荐"] && ![m[@"category"] isEqualToString:cat])continue;
     [out addObject:m];
