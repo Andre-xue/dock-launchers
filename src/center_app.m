@@ -17556,7 +17556,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     closeBtn.action = @selector(closePopover:);
     closeBtn.toolTip = @"关闭菜单";
     [root addSubview:closeBtn];
-    NSButton *radialSearchBtn = [[NSButton alloc] initWithFrame:NSMakeRect(272, 326, 28, 28)];
+    NSButton *radialSearchBtn = [[NSButton alloc] initWithFrame:NSMakeRect(306, 326, 28, 28)];
     radialSearchBtn.bordered = NO; radialSearchBtn.bezelStyle = NSBezelStyleInline;
     radialSearchBtn.image = [NSImage imageWithSystemSymbolName:@"magnifyingglass" accessibilityDescription:@"搜索功能"];
     radialSearchBtn.imageScaling = NSImageScaleProportionallyDown;
@@ -17564,7 +17564,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     radialSearchBtn.target = self; radialSearchBtn.action = @selector(showRadialSearch:);
     radialSearchBtn.toolTip = @"搜索菜单栏功能";
     [root addSubview:radialSearchBtn];
-    NSButton *quickPanelBtn = [[NSButton alloc] initWithFrame:NSMakeRect(306, 326, 28, 28)];
+    NSButton *quickPanelBtn = [[NSButton alloc] initWithFrame:NSMakeRect(304, 4, 28, 28)];
     quickPanelBtn.bordered = NO;
     quickPanelBtn.bezelStyle = NSBezelStyleInline;
     quickPanelBtn.image = [NSImage imageWithSystemSymbolName:@"command" accessibilityDescription:@"快速面板"];
