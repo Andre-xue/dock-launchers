@@ -1,0 +1,1515 @@
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:636:70: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+  636 |   if (self) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType]];
+      |                                                                      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:644:69: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+  644 |     NSArray *names = [[info draggingPasteboard] propertyListForType:NSFilenamesPboardType];
+      |                                                                     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:789:1: warning: writable atomic property 'image' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+  789 | - (void)setImage:(NSImage *)image { _image = image; self.mosaicCache = nil; [self setNeedsDisplay:YES]; }
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:778:29: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+  778 | @property (strong) NSImage *image;
+      |                             ^
+      |            nonatomic, 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:778:29: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:922:1: warning: writable atomic property 'image' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+  922 | - (void)setImage:(NSImage *)image { _image = image; self.selectedRect = NSZeroRect; [self setNeedsDisplay:YES]; }
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:913:29: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+  913 | @property (strong) NSImage *image;
+      |                             ^
+      |            nonatomic, 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:913:29: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1225:30: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 1225 |     AVAssetTrack *v = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+      |                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1226:30: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 1226 |     NSArray *audios = [asset tracksWithMediaType:AVMediaTypeAudio];
+      |                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2011:27: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2011 |     if (sel) [self.target performSelector:sel withObject:self.letters[i]];
+      |                           ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2011:43: note: used here
+ 2011 |     if (sel) [self.target performSelector:sel withObject:self.letters[i]];
+      |                                           ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1995:1: warning: writable atomic property 'letters' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 1995 | - (void)setLetters:(NSArray<NSString *> *)letters { _letters = letters; self.hovered = -1; [self setNeedsDisplay:YES]; }
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1974:41: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 1974 | @property (strong) NSArray<NSString *> *letters;
+      |                                         ^
+      |            nonatomic, 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1974:41: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2183:48: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2183 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self.metricKey];
+      |                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2183:64: note: used here
+ 2183 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self.metricKey];
+      |                                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2281:24: warning: 'copyCGImageAtTime:actualTime:error:' is deprecated: first deprecated in macOS 15.0 - Use generateCGImageAsynchronouslyForTime:completionHandler: instead [-Wdeprecated-declarations]
+ 2281 |   CGImageRef cg = [gen copyCGImageAtTime:t actualTime:NULL error:&err];
+      |                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetImageGenerator.h:197:1: note: 'copyCGImageAtTime:actualTime:error:' has been explicitly marked deprecated here
+  197 | - (nullable CGImageRef)copyCGImageAtTime:(CMTime)requestedTime actualTime:(nullable CMTime *)actualTime error:(NSError * _Nullable * _Nullable)outError CF_RETURNS_RETAINED API_DEPRECATED("Use generateCGImageAsynchronouslyForTime:completionHandler: instead", macos(10.7, 15.0), ios(4.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2284:15: warning: 'copyCGImageAtTime:actualTime:error:' is deprecated: first deprecated in macOS 15.0 - Use generateCGImageAsynchronouslyForTime:completionHandler: instead [-Wdeprecated-declarations]
+ 2284 |     cg = [gen copyCGImageAtTime:t actualTime:NULL error:&err];
+      |               ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetImageGenerator.h:197:1: note: 'copyCGImageAtTime:actualTime:error:' has been explicitly marked deprecated here
+  197 | - (nullable CGImageRef)copyCGImageAtTime:(CMTime)requestedTime actualTime:(nullable CMTime *)actualTime error:(NSError * _Nullable * _Nullable)outError CF_RETURNS_RETAINED API_DEPRECATED("Use generateCGImageAsynchronouslyForTime:completionHandler: instead", macos(10.7, 15.0), ios(4.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2354:1: warning: writable atomic property 'file' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 2354 | - (void)setFile:(NSDictionary *)file {
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2295:34: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 2295 | @property (strong) NSDictionary *file;
+      |                                  ^
+      |            nonatomic, 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2295:34: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2515:1: warning: writable atomic property 'value' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 2515 | - (void)setValue:(double)value { _value = value; [self setNeedsDisplay:YES]; }
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2498:18: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 2498 | @property double value;
+      |                  ^
+      |           (nonatomic) 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2498:18: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2646:1: warning: writable atomic property 'segmentSelected' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 2646 | - (void)setSegmentSelected:(BOOL)sel { _segmentSelected = sel; [self applyLook:NO]; }
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2625:16: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 2625 | @property BOOL segmentSelected;
+      |                ^
+      |           (nonatomic) 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2625:16: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2678:48: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2678 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self];
+      |                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2678:64: note: used here
+ 2678 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self];
+      |                                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2680:1: warning: writable atomic property 'selectedSegment' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 2680 | - (void)setSelectedSegment:(NSInteger)seg {
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2650:21: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 2650 | @property NSInteger selectedSegment;
+      |                     ^
+      |           (nonatomic) 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2650:21: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2715:48: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2715 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self];
+      |                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2715:64: note: used here
+ 2715 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self];
+      |                                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2717:1: warning: writable atomic property 'selectedSegment' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 2717 | - (void)setSelectedSegment:(NSInteger)seg {
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2690:21: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 2690 | @property NSInteger selectedSegment;
+      |                     ^
+      |           (nonatomic) 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2690:21: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2733:37: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 2733 |     [self registerForDraggedTypes:@[NSFilenamesPboardType, NSPasteboardTypeFileURL]];
+      |                                     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2741:46: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 2741 |     NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
+      |                                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2769:22: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2769 |     [self.dropTarget performSelector:self.dropAction withObject:urls];
+      |                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2769:38: note: used here
+ 2769 |     [self.dropTarget performSelector:self.dropAction withObject:urls];
+      |                                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2824:37: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 2824 |     [self registerForDraggedTypes:@[NSFilenamesPboardType, NSPasteboardTypeFileURL]];
+      |                                     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2831:67: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 2831 |     NSArray *paths = [info.draggingPasteboard propertyListForType:NSFilenamesPboardType];
+      |                                                                   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2852:22: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2852 |     [self.dropTarget performSelector:self.dropAction withObject:urls];
+      |                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2852:38: note: used here
+ 2852 |     [self.dropTarget performSelector:self.dropAction withObject:urls];
+      |                                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:3085:1: warning: conflicting return type in implementation of 'control:textView:doCommandBySelector:': 'BOOL' (aka 'bool') vs 'void' [-Wmismatched-return-types]
+ 3085 | - (void)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)sel {
+      | ^  ~~~~
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSControl.h:111:1: note: previous definition is here
+  111 | - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)commandSelector NS_SWIFT_UI_ACTOR;
+      | ^  ~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:3132:22: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 3132 |     [self.dropTarget performSelector:self.dropAction withObject:info];
+      |                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:3132:38: note: used here
+ 3132 |     [self.dropTarget performSelector:self.dropAction withObject:info];
+      |                                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11554:33: warning: 'NSUserNotificationCenter' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11554 | - (BOOL)userNotificationCenter:(NSUserNotificationCenter *)center shouldPresentNotification:(NSUserNotification *)notification { return YES; }
+       |                                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:231:12: note: 'NSUserNotificationCenter' has been explicitly marked deprecated here
+  231 | @interface NSUserNotificationCenter : NSObject {
+      |            ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11554:94: warning: 'NSUserNotification' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11554 | - (BOOL)userNotificationCenter:(NSUserNotificationCenter *)center shouldPresentNotification:(NSUserNotification *)notification { return YES; }
+       |                                                                                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:40:12: note: 'NSUserNotification' has been explicitly marked deprecated here
+   40 | @interface NSUserNotification : NSObject <NSCopying> {
+      |            ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:3226:33: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 3226 |         [ra activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+      |                                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4057:61: warning: 'NSSwitchButton' is deprecated: first deprecated in macOS 10.14 [-Wdeprecated-declarations]
+ 4057 |       if (b.bezelStyle == NSBezelStyleRounded && bc.type != NSSwitchButton && bc.type != NSRadioButton) {
+      |                                                             ^~~~~~~~~~~~~~
+      |                                                             NSButtonTypeSwitch
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSButtonCell.h:143:27: note: 'NSSwitchButton' has been explicitly marked deprecated here
+  143 | static const NSButtonType NSSwitchButton API_DEPRECATED_WITH_REPLACEMENT("NSButtonTypeSwitch", macos(10.0,10.14)) = NSButtonTypeSwitch;
+      |                           ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4057:58: warning: comparison of different enumeration types ('NSCellType' (aka 'enum NSCellType') and 'NSButtonType' (aka 'enum NSButtonType')) [-Wenum-compare]
+ 4057 |       if (b.bezelStyle == NSBezelStyleRounded && bc.type != NSSwitchButton && bc.type != NSRadioButton) {
+      |                                                  ~~~~~~~ ^  ~~~~~~~~~~~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4057:90: warning: 'NSRadioButton' is deprecated: first deprecated in macOS 10.14 [-Wdeprecated-declarations]
+ 4057 |       if (b.bezelStyle == NSBezelStyleRounded && bc.type != NSSwitchButton && bc.type != NSRadioButton) {
+      |                                                                                          ^~~~~~~~~~~~~
+      |                                                                                          NSButtonTypeRadio
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSButtonCell.h:144:27: note: 'NSRadioButton' has been explicitly marked deprecated here
+  144 | static const NSButtonType NSRadioButton API_DEPRECATED_WITH_REPLACEMENT("NSButtonTypeRadio", macos(10.0,10.14)) = NSButtonTypeRadio;
+      |                           ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4057:87: warning: comparison of different enumeration types ('NSCellType' (aka 'enum NSCellType') and 'NSButtonType' (aka 'enum NSButtonType')) [-Wenum-compare]
+ 4057 |       if (b.bezelStyle == NSBezelStyleRounded && bc.type != NSSwitchButton && bc.type != NSRadioButton) {
+      |                                                                               ~~~~~~~ ^  ~~~~~~~~~~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4524:36: warning: 'launchApplication:' is deprecated: first deprecated in macOS 11.0 - Use -[NSWorkspace openApplicationAtURL:configuration:completionHandler:] instead. [-Wdeprecated-declarations]
+ 4524 |     [[NSWorkspace sharedWorkspace] launchApplication:@"Activity Monitor"];
+      |                                    ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSWorkspace.h:379:1: note: 'launchApplication:' has been explicitly marked deprecated here
+  379 | - (BOOL)launchApplication:(NSString *)appName API_DEPRECATED("Use -[NSWorkspace openApplicationAtURL:configuration:completionHandler:] instead.", macos(10.0, 11.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4533:36: warning: 'launchApplication:' is deprecated: first deprecated in macOS 11.0 - Use -[NSWorkspace openApplicationAtURL:configuration:completionHandler:] instead. [-Wdeprecated-declarations]
+ 4533 |     [[NSWorkspace sharedWorkspace] launchApplication:@"Activity Monitor"];
+      |                                    ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSWorkspace.h:379:1: note: 'launchApplication:' has been explicitly marked deprecated here
+  379 | - (BOOL)launchApplication:(NSString *)appName API_DEPRECATED("Use -[NSWorkspace openApplicationAtURL:configuration:completionHandler:] instead.", macos(10.0, 11.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:5501:9: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 5501 |   panel.allowedFileTypes = @[@"icns", @"png", @"jpg", @"jpeg", @"tiff"];
+      |         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:6396:31: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 6396 |   [target activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+      |                               ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:7956:41: warning: 'sharingServicesForItems:' is deprecated: first deprecated in macOS 13.0 - Use -[NSSharingServicePicker standardShareMenuItem] instead. [-Wdeprecated-declarations]
+ 7956 |   NSArray *services = [NSSharingService sharingServicesForItems:@[bodyText]];
+      |                                         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSharingService.h:105:1: note: 'sharingServicesForItems:' has been explicitly marked deprecated here
+  105 | + (NSArray<NSSharingService *> *)sharingServicesForItems:(NSArray *)items API_DEPRECATED("Use -[NSSharingServicePicker standardShareMenuItem] instead.", macos(10.8, 13.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:8166:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 8166 |   sp.allowedFileTypes = @[@"json", @"csv"];
+      |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:8218:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 8218 |   op.allowedFileTypes = @[@"json", @"csv", @"txt"];
+      |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:9086:17: warning: 'originalFilename' is deprecated: first deprecated in macOS 27 - Use filename instead [-Wdeprecated-declarations]
+ 9086 |         if (res.originalFilename.length) name = res.originalFilename;
+      |                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Photos.framework/Headers/PHAssetResource.h:29:49: note: 'originalFilename' has been explicitly marked deprecated here
+   29 | @property (nonatomic, copy, readonly) NSString *originalFilename API_DEPRECATED("Use filename instead", ios(9, 27), macos(10.15, 27), tvos(10, 27), visionos(1, 27));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:9086:53: warning: 'originalFilename' is deprecated: first deprecated in macOS 27 - Use filename instead [-Wdeprecated-declarations]
+ 9086 |         if (res.originalFilename.length) name = res.originalFilename;
+      |                                                     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Photos.framework/Headers/PHAssetResource.h:29:49: note: 'originalFilename' has been explicitly marked deprecated here
+   29 | @property (nonatomic, copy, readonly) NSString *originalFilename API_DEPRECATED("Use filename instead", ios(9, 27), macos(10.15, 27), tvos(10, 27), visionos(1, 27));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:9372:24: warning: 'originalFilename' is deprecated: first deprecated in macOS 27 - Use filename instead [-Wdeprecated-declarations]
+ 9372 |   NSString *name = res.originalFilename.length ? res.originalFilename : [assetID stringByAppendingString:@".jpg"];
+      |                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Photos.framework/Headers/PHAssetResource.h:29:49: note: 'originalFilename' has been explicitly marked deprecated here
+   29 | @property (nonatomic, copy, readonly) NSString *originalFilename API_DEPRECATED("Use filename instead", ios(9, 27), macos(10.15, 27), tvos(10, 27), visionos(1, 27));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:9372:54: warning: 'originalFilename' is deprecated: first deprecated in macOS 27 - Use filename instead [-Wdeprecated-declarations]
+ 9372 |   NSString *name = res.originalFilename.length ? res.originalFilename : [assetID stringByAppendingString:@".jpg"];
+      |                                                      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Photos.framework/Headers/PHAssetResource.h:29:49: note: 'originalFilename' has been explicitly marked deprecated here
+   29 | @property (nonatomic, copy, readonly) NSString *originalFilename API_DEPRECATED("Use filename instead", ios(9, 27), macos(10.15, 27), tvos(10, 27), visionos(1, 27));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:10938:3: warning: 'FSEventStreamScheduleWithRunLoop' is deprecated: first deprecated in macOS 13.0 - Use FSEventStreamSetDispatchQueue instead. [-Wdeprecated-declarations]
+ 10938 |   FSEventStreamScheduleWithRunLoop(self.activityStream, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+       |   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/CoreServices.framework/Frameworks/FSEvents.framework/Headers/FSEvents.h:1159:1: note: 'FSEventStreamScheduleWithRunLoop' has been explicitly marked deprecated here
+ 1159 | FSEventStreamScheduleWithRunLoop(
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11476:3: warning: 'NSUserNotification' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11476 |   NSUserNotification *n = [[NSUserNotification alloc] init];
+       |   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:40:12: note: 'NSUserNotification' has been explicitly marked deprecated here
+   40 | @interface NSUserNotification : NSObject <NSCopying> {
+      |            ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11476:48: warning: 'NSUserNotification' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11476 |   NSUserNotification *n = [[NSUserNotification alloc] init];
+       |                                                ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:40:12: note: 'NSUserNotification' has been explicitly marked deprecated here
+   40 | @interface NSUserNotification : NSObject <NSCopying> {
+      |            ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11479:17: warning: 'NSUserNotificationDefaultSoundName' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11479 |   n.soundName = NSUserNotificationDefaultSoundName;
+       |                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:203:36: note: 'NSUserNotificationDefaultSoundName' has been explicitly marked deprecated here
+  203 | FOUNDATION_EXPORT NSString * const NSUserNotificationDefaultSoundName API_DEPRECATED("All NSUserNotifications API should be replaced with UserNotifications.frameworks API", macos(10.8, 11.0)) API_UNAVAILABLE(ios, watchos, tvos);
+      |                                    ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11480:30: warning: 'NSUserNotificationCenter' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11480 |   [[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification:n];
+       |                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:231:12: note: 'NSUserNotificationCenter' has been explicitly marked deprecated here
+  231 | @interface NSUserNotificationCenter : NSObject {
+      |            ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:12338:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 12338 |   sp.allowedFileTypes = @[@"csv"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:13052:5: warning: collection expression type 'NSIndexSet *' may not respond to 'countByEnumeratingWithState:objects:count:'
+ 13052 |     for (NSNumber *n in self.promptTable.selectedRowIndexes) {
+       |     ^                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:13356:51: warning: 'sharingServicesForItems:' is deprecated: first deprecated in macOS 13.0 - Use -[NSSharingServicePicker standardShareMenuItem] instead. [-Wdeprecated-declarations]
+ 13356 |   for (NSSharingService *svc in [NSSharingService sharingServicesForItems:@[body]]) {
+       |                                                   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSharingService.h:105:1: note: 'sharingServicesForItems:' has been explicitly marked deprecated here
+  105 | + (NSArray<NSSharingService *> *)sharingServicesForItems:(NSArray *)items API_DEPRECATED("Use -[NSSharingServicePicker standardShareMenuItem] instead.", macos(10.8, 13.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:13380:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 13380 |   p.allowedFileTypes = @[@"json", @"md", @"markdown", @"txt", @"csv", @"doc", @"docx", @"rtf", @"rtfd", @"html", @"htm", @"odt", @"xlsx", @"xls", @"pdf"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:13447:26: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 13447 |   self.promptExportPanel.allowedFileTypes = @[exts[idx]];
+       |                          ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:13464:26: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 13464 |   self.promptExportPanel.allowedFileTypes = @[@"json"];
+       |                          ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14387:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 14387 |   p.allowedFileTypes = @[@"jpg", @"jpeg", @"png", @"heic", @"tiff", @"gif"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14630:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 14630 |   p.allowedFileTypes = @[@"pdf"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14644:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 14644 |   sp.allowedFileTypes = @[@"pdf"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14702:84: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 14702 |   if ([[info draggingPasteboard] availableTypeFromArray:@[NSPasteboardTypeFileURL, NSFilenamesPboardType]]) return NSDragOperationCopy;
+       |                                                                                    ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14714:46: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 14714 |     NSArray *names = [pb propertyListForType:NSFilenamesPboardType];
+       |                                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14838:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 14838 |   sp.allowedFileTypes = @[@"pdf"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:15649:32: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 15649 |       [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+       |                                ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:16423:16: warning: assigning to 'id<NSPopoverDelegate> _Nullable' from incompatible type 'Controller *const __strong'
+ 16423 |   pop.delegate = self;
+       |                ^ ~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:18685:72: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 18685 |       if ([action isEqualToString:@"launch"]) [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+       |                                                                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:18957:161: warning: 'setAllowedFileTypes:' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 18957 | - (void)convertAddFiles:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=YES; [p setAllowedFileTypes:@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp",@"mp3",@"wav",@"m4a",@"aiff",@"mp4",@"mov",@"m4v",@"pdf"]]; if([p runModal]!=NSModalResponseOK)return; if(!self.convertPaths)self.convertPaths=[NSMutableArray array]; for(NSURL *u in p.URLs)[self.convertPaths addObject:u.path]; [self.convertTable reloadData]; }
+       |                                                                                                                                                                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: property 'allowedFileTypes' is declared deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'setAllowedFileTypes:' has been explicitly marked deprecated here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:19314:14: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 19314 |   else [self performSelector:s withObject:nil];
+       |              ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:19314:30: note: used here
+ 19314 |   else [self performSelector:s withObject:nil];
+       |                              ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:19524:46: warning: null passed to a callee that requires a non-null argument [-Wnonnull]
+ 19524 |     self.statusItem.button.attributedTitle = nil;
+       |                                              ^~~
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/MacTypes.h:96:19: note: expanded from macro 'nil'
+   96 |       #define nil __DARWIN_NULL
+      |                   ^~~~~~~~~~~~~
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/sys/_types.h:64:23: note: expanded from macro '__DARWIN_NULL'
+   64 | #define __DARWIN_NULL ((void *)0)
+      |                       ^~~~~~~~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:20161:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 20161 |   p.allowedFileTypes = @[@"zip"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:20181:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 20181 |   p.allowedFileTypes = @[@"gz"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:20218:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 20218 |   p.allowedFileTypes = @[@"zip", @"gz", @"tgz", @"tar"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:21045:44: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 21045 |   AVAssetTrack *screenVideo = [screenAsset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+       |                                            ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:21046:44: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 21046 |   AVAssetTrack *screenAudio = [screenAsset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+       |                                            ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:21056:40: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 21056 |   NSArray *screenAudios = [screenAsset tracksWithMediaType:AVMediaTypeAudio];
+       |                                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:21069:40: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 21069 |     AVAssetTrack *camTrack = [camAsset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+       |                                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22032:17: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22032 |   return [asset tracksWithMediaType:AVMediaTypeAudio].count > 1;
+       |                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22078:11: warning: 'connect:to:format:' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 22078 |   [engine connect:player to:eq format:inFile.processingFormat];
+       |           ^~~~~~~
+       |           connect:to:format:error:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioEngine.h:281:1: note: 'connect:to:format:' has been explicitly marked deprecated here
+  281 | - (void)connect:(AVAudioNode *)node1 to:(AVAudioNode *)node2 format:(AVAudioFormat * __nullable)format API_DEPRECATED_WITH_REPLACEMENT("connect:to:format:error:", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22081:13: warning: 'connect:to:format:' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 22081 |     [engine connect:eq to:gate format:inFile.processingFormat];
+       |             ^~~~~~~
+       |             connect:to:format:error:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioEngine.h:281:1: note: 'connect:to:format:' has been explicitly marked deprecated here
+  281 | - (void)connect:(AVAudioNode *)node1 to:(AVAudioNode *)node2 format:(AVAudioFormat * __nullable)format API_DEPRECATED_WITH_REPLACEMENT("connect:to:format:error:", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22082:13: warning: 'connect:to:format:' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 22082 |     [engine connect:gate to:engine.mainMixerNode format:inFile.processingFormat];
+       |             ^~~~~~~
+       |             connect:to:format:error:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioEngine.h:281:1: note: 'connect:to:format:' has been explicitly marked deprecated here
+  281 | - (void)connect:(AVAudioNode *)node1 to:(AVAudioNode *)node2 format:(AVAudioFormat * __nullable)format API_DEPRECATED_WITH_REPLACEMENT("connect:to:format:error:", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22084:13: warning: 'connect:to:format:' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 22084 |     [engine connect:eq to:engine.mainMixerNode format:inFile.processingFormat];
+       |             ^~~~~~~
+       |             connect:to:format:error:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioEngine.h:281:1: note: 'connect:to:format:' has been explicitly marked deprecated here
+  281 | - (void)connect:(AVAudioNode *)node1 to:(AVAudioNode *)node2 format:(AVAudioFormat * __nullable)format API_DEPRECATED_WITH_REPLACEMENT("connect:to:format:error:", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22094:11: warning: 'play' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 22094 |   [player play];
+       |           ^~~~
+       |           playAndReturnError:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioPlayerNode.h:312:1: note: 'play' has been explicitly marked deprecated here
+  312 | - (void)play API_DEPRECATED_WITH_REPLACEMENT("playAndReturnError:", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22113:32: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22113 |   AVAssetTrack *video = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+       |                                ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22114:28: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22114 |   NSArray *audios = [asset tracksWithMediaType:AVMediaTypeAudio];
+       |                            ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22136:42: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22136 |       AVAssetTrack *micTrack = [micAsset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+       |                                          ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22151:48: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22151 |         AVAssetTrack *mixedAudio = [mixedAsset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+       |                                                ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22185:32: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22185 |   AVAssetTrack *video = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+       |                                ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22186:28: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22186 |   NSArray *audios = [asset tracksWithMediaType:AVMediaTypeAudio];
+       |                            ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22225:51: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22225 |       AVAssetTrack *mixedAudioTrack = [mixedAsset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+       |                                                   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22598:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22598 |   p.allowedFileTypes=@[@"mp4",@"mov",@"m4v"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22609:136: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22609 | - (void)videoEditorChooseMusic:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowedFileTypes=@[@"mp3",@"m4a",@"wav",@"aiff"]; if([p runModal]==NSModalResponseOK){self.videoEditorMusicPath=p.URL.path;self.videoEditorStatus.stringValue=[NSString stringWithFormat:@"背景音乐：%@",p.URL.lastPathComponent];} }
+       |                                                                                                                                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22610:136: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22610 | - (void)videoEditorChooseCover:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowedFileTypes=@[@"png",@"jpg",@"jpeg"]; if([p runModal]==NSModalResponseOK){self.videoEditorCoverPath=p.URL.path;self.videoEditorStatus.stringValue=[NSString stringWithFormat:@"封面：%@",p.URL.lastPathComponent];} }
+       |                                                                                                                                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22632:49: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22632 |     NSSavePanel *sp=[NSSavePanel savePanel]; sp.allowedFileTypes=@[@"mp4"]; sp.nameFieldStringValue=@"视频剪辑.mp4";
+       |                                                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22754:28: warning: 'copyCGImageAtTime:actualTime:error:' is deprecated: first deprecated in macOS 15.0 - Use generateCGImageAsynchronouslyForTime:completionHandler: instead [-Wdeprecated-declarations]
+ 22754 |       CGImageRef cg = [gen copyCGImageAtTime:CMTimeMakeWithSeconds(0.5, 600) actualTime:NULL error:&err];
+       |                            ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetImageGenerator.h:197:1: note: 'copyCGImageAtTime:actualTime:error:' has been explicitly marked deprecated here
+  197 | - (nullable CGImageRef)copyCGImageAtTime:(CMTime)requestedTime actualTime:(nullable CMTime *)actualTime error:(NSError * _Nullable * _Nullable)outError CF_RETURNS_RETAINED API_DEPRECATED("Use generateCGImageAsynchronouslyForTime:completionHandler: instead", macos(10.7, 15.0), ios(4.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22864:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22864 |   p.allowedFileTypes = @[@"png", @"jpg", @"jpeg", @"webp", @"heic", @"tiff"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22991:27: warning: 'copyCGImageAtTime:actualTime:error:' is deprecated: first deprecated in macOS 15.0 - Use generateCGImageAsynchronouslyForTime:completionHandler: instead [-Wdeprecated-declarations]
+ 22991 |       CGImageRef img=[gen copyCGImageAtTime:CMTimeMake(0,1) actualTime:NULL error:NULL];
+       |                           ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetImageGenerator.h:197:1: note: 'copyCGImageAtTime:actualTime:error:' has been explicitly marked deprecated here
+  197 | - (nullable CGImageRef)copyCGImageAtTime:(CMTime)requestedTime actualTime:(nullable CMTime *)actualTime error:(NSError * _Nullable * _Nullable)outError CF_RETURNS_RETAINED API_DEPRECATED("Use generateCGImageAsynchronouslyForTime:completionHandler: instead", macos(10.7, 15.0), ios(4.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22999:47: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22999 |   NSSavePanel *sp=[NSSavePanel savePanel]; sp.allowedFileTypes=@[@"mp4"];
+       |                                               ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:23041:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 23041 |   p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"webp"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:23314:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 23314 |   p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"webp"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:23448:7: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 23448 |     p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"];
+       |       ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:23627:46: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 23627 |   NSSavePanel *sp=[NSSavePanel savePanel];sp.allowedFileTypes=@[@"png"];sp.nameFieldStringValue=self.aiEditResultPath.lastPathComponent;
+       |                                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24169:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 24169 |   sp.allowedFileTypes = @[@"png"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24202:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 24202 |   p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24554:47: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 24554 |   NSSavePanel *sp=[NSSavePanel savePanel]; sp.allowedFileTypes=@[@"png"];
+       |                                               ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24702:14: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 24702 |   if ([asset tracksWithMediaType:AVMediaTypeAudio].count == 0) {
+       |              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24706:14: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 24706 |   if ([asset tracksWithMediaType:AVMediaTypeVideo].count == 0) { completion(path, nil); return; }
+       |              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24873:132: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 24873 | - (void)chooseWhisperModel:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowedFileTypes=@[@"bin",@"gguf"]; if([p runModal]==NSModalResponseOK)self.whisperModelField.stringValue=p.URL.path; }
+       |                                                                                                                                    ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25065:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25065 |   p.allowedFileTypes = @[@"mp4", @"mov", @"m4v", @"m4a", @"mp3", @"wav", @"aiff", @"caf"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25241:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25241 |   p.allowedFileTypes = @[@"mp4", @"mov", @"m4v"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25343:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25343 |   sp.allowedFileTypes = @[@"mp3"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25452:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25452 |   sp.allowedFileTypes = @[@"txt"]; sp.nameFieldStringValue = @"语音转文字.txt";
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25593:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25593 |   sp.allowedFileTypes = @[@"mp4"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25632:62: warning: 'videoCompositionWithPropertiesOfAsset:' is deprecated: first deprecated in macOS 15.0 - Use videoCompositionWithPropertiesOfAsset:completionHandler: instead [-Wdeprecated-declarations]
+ 25632 |   AVMutableVideoComposition *vc = [AVMutableVideoComposition videoCompositionWithPropertiesOfAsset:asset];
+       |                                                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVVideoComposition.h:292:1: note: 'videoCompositionWithPropertiesOfAsset:' has been explicitly marked deprecated here
+  292 | + (AVMutableVideoComposition *)videoCompositionWithPropertiesOfAsset:(AVAsset *)asset API_DEPRECATED("Use videoCompositionWithPropertiesOfAsset:completionHandler: instead", macos(10.9, 15.0), ios(6.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25709:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25709 |   sp.allowedFileTypes = @[ext];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25852:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25852 |   p.allowedFileTypes=@[@"mp4",@"mov",@"m4v"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25863:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25863 |   sp.allowedFileTypes = @[ext];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25881:38: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 25881 |   for (AVAssetTrack *track in [asset tracksWithMediaType:AVMediaTypeVideo]) {
+       |                                      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25885:38: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 25885 |   for (AVAssetTrack *track in [asset tracksWithMediaType:AVMediaTypeAudio]) {
+       |                                      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25948:29: warning: 'copyCGImageAtTime:actualTime:error:' is deprecated: first deprecated in macOS 15.0 - Use generateCGImageAsynchronouslyForTime:completionHandler: instead [-Wdeprecated-declarations]
+ 25948 |       CGImageRef img = [gen copyCGImageAtTime:CMTimeMakeWithSeconds(start + i/10.0, 600) actualTime:NULL error:NULL];
+       |                             ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetImageGenerator.h:197:1: note: 'copyCGImageAtTime:actualTime:error:' has been explicitly marked deprecated here
+  197 | - (nullable CGImageRef)copyCGImageAtTime:(CMTime)requestedTime actualTime:(nullable CMTime *)actualTime error:(NSError * _Nullable * _Nullable)outError CF_RETURNS_RETAINED API_DEPRECATED("Use generateCGImageAsynchronouslyForTime:completionHandler: instead", macos(10.7, 15.0), ios(4.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25954:73: warning: 'kUTTypeGIF' is deprecated: first deprecated in macOS 12.0 - Use UTTypeGIF or UTType.gif (swift) instead. [-Wdeprecated-declarations]
+ 25954 |       CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, kUTTypeGIF, images.count, NULL);
+       |                                                                         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Headers/UTCoreTypes.h:729:26: note: 'kUTTypeGIF' has been explicitly marked deprecated here
+  729 | extern const CFStringRef kUTTypeGIF                                  API_DEPRECATED("Use UTTypeGIF or UTType.gif (swift) instead.", ios(3.0, 15.0), macos(10.4, 12.0), tvos(9.0, 15.0), watchos(1.0, 8.0));
+      |                          ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:26193:77: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 26193 |     NSArray<AVAssetTrack *> *audios = st == AVKeyValueStatusLoaded ? [asset tracksWithMediaType:AVMediaTypeAudio] : @[];
+       |                                                                             ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:26444:10: warning: 'installTapOnBus:bufferSize:format:block:' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 26444 |   [input installTapOnBus:0 bufferSize:1024 format:fmt block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
+       |          ^~~~~~~~~~~~~~~
+       |          installTapOnBus:bufferSize:format:error:block
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioNode.h:117:1: note: 'installTapOnBus:bufferSize:format:block:' has been explicitly marked deprecated here
+  117 | - (void)installTapOnBus:(AVAudioNodeBus)bus bufferSize:(AVAudioFrameCount)bufferSize format:(AVAudioFormat * __nullable)format block:(AVAudioNodeTapBlock)tapBlock API_DEPRECATED_WITH_REPLACEMENT("installTapOnBus:bufferSize:format:error:block", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:26982:101: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 26982 |   [[NSRunningApplication currentApplication] activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
+       |                                                                                                     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:26989:103: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 26989 |     [[NSRunningApplication currentApplication] activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
+       |                                                                                                       ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:5638:1: warning: writable atomic property 'dialogIconButtons' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 5638 | - (void)setDialogIconButtons:(NSArray *)buttons {
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1876:36: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 1876 | @property (strong) NSMutableArray *dialogIconButtons;
+      |                                    ^
+      |            nonatomic, 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1876:36: note: property declared here
+123 warnings generated.
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:636:70: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+  636 |   if (self) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType]];
+      |                                                                      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:644:69: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+  644 |     NSArray *names = [[info draggingPasteboard] propertyListForType:NSFilenamesPboardType];
+      |                                                                     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:789:1: warning: writable atomic property 'image' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+  789 | - (void)setImage:(NSImage *)image { _image = image; self.mosaicCache = nil; [self setNeedsDisplay:YES]; }
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:778:29: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+  778 | @property (strong) NSImage *image;
+      |                             ^
+      |            nonatomic, 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:778:29: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:922:1: warning: writable atomic property 'image' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+  922 | - (void)setImage:(NSImage *)image { _image = image; self.selectedRect = NSZeroRect; [self setNeedsDisplay:YES]; }
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:913:29: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+  913 | @property (strong) NSImage *image;
+      |                             ^
+      |            nonatomic, 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:913:29: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1225:30: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 1225 |     AVAssetTrack *v = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+      |                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1226:30: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 1226 |     NSArray *audios = [asset tracksWithMediaType:AVMediaTypeAudio];
+      |                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2011:27: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2011 |     if (sel) [self.target performSelector:sel withObject:self.letters[i]];
+      |                           ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2011:43: note: used here
+ 2011 |     if (sel) [self.target performSelector:sel withObject:self.letters[i]];
+      |                                           ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1995:1: warning: writable atomic property 'letters' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 1995 | - (void)setLetters:(NSArray<NSString *> *)letters { _letters = letters; self.hovered = -1; [self setNeedsDisplay:YES]; }
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1974:41: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 1974 | @property (strong) NSArray<NSString *> *letters;
+      |                                         ^
+      |            nonatomic, 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1974:41: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2183:48: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2183 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self.metricKey];
+      |                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2183:64: note: used here
+ 2183 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self.metricKey];
+      |                                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2281:24: warning: 'copyCGImageAtTime:actualTime:error:' is deprecated: first deprecated in macOS 15.0 - Use generateCGImageAsynchronouslyForTime:completionHandler: instead [-Wdeprecated-declarations]
+ 2281 |   CGImageRef cg = [gen copyCGImageAtTime:t actualTime:NULL error:&err];
+      |                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetImageGenerator.h:197:1: note: 'copyCGImageAtTime:actualTime:error:' has been explicitly marked deprecated here
+  197 | - (nullable CGImageRef)copyCGImageAtTime:(CMTime)requestedTime actualTime:(nullable CMTime *)actualTime error:(NSError * _Nullable * _Nullable)outError CF_RETURNS_RETAINED API_DEPRECATED("Use generateCGImageAsynchronouslyForTime:completionHandler: instead", macos(10.7, 15.0), ios(4.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2284:15: warning: 'copyCGImageAtTime:actualTime:error:' is deprecated: first deprecated in macOS 15.0 - Use generateCGImageAsynchronouslyForTime:completionHandler: instead [-Wdeprecated-declarations]
+ 2284 |     cg = [gen copyCGImageAtTime:t actualTime:NULL error:&err];
+      |               ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetImageGenerator.h:197:1: note: 'copyCGImageAtTime:actualTime:error:' has been explicitly marked deprecated here
+  197 | - (nullable CGImageRef)copyCGImageAtTime:(CMTime)requestedTime actualTime:(nullable CMTime *)actualTime error:(NSError * _Nullable * _Nullable)outError CF_RETURNS_RETAINED API_DEPRECATED("Use generateCGImageAsynchronouslyForTime:completionHandler: instead", macos(10.7, 15.0), ios(4.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2354:1: warning: writable atomic property 'file' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 2354 | - (void)setFile:(NSDictionary *)file {
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2295:34: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 2295 | @property (strong) NSDictionary *file;
+      |                                  ^
+      |            nonatomic, 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2295:34: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2515:1: warning: writable atomic property 'value' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 2515 | - (void)setValue:(double)value { _value = value; [self setNeedsDisplay:YES]; }
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2498:18: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 2498 | @property double value;
+      |                  ^
+      |           (nonatomic) 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2498:18: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2646:1: warning: writable atomic property 'segmentSelected' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 2646 | - (void)setSegmentSelected:(BOOL)sel { _segmentSelected = sel; [self applyLook:NO]; }
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2625:16: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 2625 | @property BOOL segmentSelected;
+      |                ^
+      |           (nonatomic) 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2625:16: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2678:48: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2678 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self];
+      |                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2678:64: note: used here
+ 2678 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self];
+      |                                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2680:1: warning: writable atomic property 'selectedSegment' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 2680 | - (void)setSelectedSegment:(NSInteger)seg {
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2650:21: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 2650 | @property NSInteger selectedSegment;
+      |                     ^
+      |           (nonatomic) 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2650:21: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2715:48: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2715 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self];
+      |                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2715:64: note: used here
+ 2715 |   if (self.target && self.action) [self.target performSelector:self.action withObject:self];
+      |                                                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2717:1: warning: writable atomic property 'selectedSegment' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 2717 | - (void)setSelectedSegment:(NSInteger)seg {
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2690:21: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 2690 | @property NSInteger selectedSegment;
+      |                     ^
+      |           (nonatomic) 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2690:21: note: property declared here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2733:37: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 2733 |     [self registerForDraggedTypes:@[NSFilenamesPboardType, NSPasteboardTypeFileURL]];
+      |                                     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2741:46: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 2741 |     NSArray *paths = [pb propertyListForType:NSFilenamesPboardType];
+      |                                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2769:22: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2769 |     [self.dropTarget performSelector:self.dropAction withObject:urls];
+      |                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2769:38: note: used here
+ 2769 |     [self.dropTarget performSelector:self.dropAction withObject:urls];
+      |                                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2824:37: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 2824 |     [self registerForDraggedTypes:@[NSFilenamesPboardType, NSPasteboardTypeFileURL]];
+      |                                     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2831:67: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 2831 |     NSArray *paths = [info.draggingPasteboard propertyListForType:NSFilenamesPboardType];
+      |                                                                   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2852:22: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 2852 |     [self.dropTarget performSelector:self.dropAction withObject:urls];
+      |                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:2852:38: note: used here
+ 2852 |     [self.dropTarget performSelector:self.dropAction withObject:urls];
+      |                                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:3085:1: warning: conflicting return type in implementation of 'control:textView:doCommandBySelector:': 'BOOL' (aka 'signed char') vs 'void' [-Wmismatched-return-types]
+ 3085 | - (void)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)sel {
+      | ^  ~~~~
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSControl.h:111:1: note: previous definition is here
+  111 | - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)commandSelector NS_SWIFT_UI_ACTOR;
+      | ^  ~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:3132:22: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 3132 |     [self.dropTarget performSelector:self.dropAction withObject:info];
+      |                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:3132:38: note: used here
+ 3132 |     [self.dropTarget performSelector:self.dropAction withObject:info];
+      |                                      ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11554:33: warning: 'NSUserNotificationCenter' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11554 | - (BOOL)userNotificationCenter:(NSUserNotificationCenter *)center shouldPresentNotification:(NSUserNotification *)notification { return YES; }
+       |                                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:231:12: note: 'NSUserNotificationCenter' has been explicitly marked deprecated here
+  231 | @interface NSUserNotificationCenter : NSObject {
+      |            ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11554:94: warning: 'NSUserNotification' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11554 | - (BOOL)userNotificationCenter:(NSUserNotificationCenter *)center shouldPresentNotification:(NSUserNotification *)notification { return YES; }
+       |                                                                                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:40:12: note: 'NSUserNotification' has been explicitly marked deprecated here
+   40 | @interface NSUserNotification : NSObject <NSCopying> {
+      |            ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:3226:33: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 3226 |         [ra activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+      |                                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4057:61: warning: 'NSSwitchButton' is deprecated: first deprecated in macOS 10.14 [-Wdeprecated-declarations]
+ 4057 |       if (b.bezelStyle == NSBezelStyleRounded && bc.type != NSSwitchButton && bc.type != NSRadioButton) {
+      |                                                             ^~~~~~~~~~~~~~
+      |                                                             NSButtonTypeSwitch
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSButtonCell.h:143:27: note: 'NSSwitchButton' has been explicitly marked deprecated here
+  143 | static const NSButtonType NSSwitchButton API_DEPRECATED_WITH_REPLACEMENT("NSButtonTypeSwitch", macos(10.0,10.14)) = NSButtonTypeSwitch;
+      |                           ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4057:58: warning: comparison of different enumeration types ('NSCellType' (aka 'enum NSCellType') and 'NSButtonType' (aka 'enum NSButtonType')) [-Wenum-compare]
+ 4057 |       if (b.bezelStyle == NSBezelStyleRounded && bc.type != NSSwitchButton && bc.type != NSRadioButton) {
+      |                                                  ~~~~~~~ ^  ~~~~~~~~~~~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4057:90: warning: 'NSRadioButton' is deprecated: first deprecated in macOS 10.14 [-Wdeprecated-declarations]
+ 4057 |       if (b.bezelStyle == NSBezelStyleRounded && bc.type != NSSwitchButton && bc.type != NSRadioButton) {
+      |                                                                                          ^~~~~~~~~~~~~
+      |                                                                                          NSButtonTypeRadio
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSButtonCell.h:144:27: note: 'NSRadioButton' has been explicitly marked deprecated here
+  144 | static const NSButtonType NSRadioButton API_DEPRECATED_WITH_REPLACEMENT("NSButtonTypeRadio", macos(10.0,10.14)) = NSButtonTypeRadio;
+      |                           ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4057:87: warning: comparison of different enumeration types ('NSCellType' (aka 'enum NSCellType') and 'NSButtonType' (aka 'enum NSButtonType')) [-Wenum-compare]
+ 4057 |       if (b.bezelStyle == NSBezelStyleRounded && bc.type != NSSwitchButton && bc.type != NSRadioButton) {
+      |                                                                               ~~~~~~~ ^  ~~~~~~~~~~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4524:36: warning: 'launchApplication:' is deprecated: first deprecated in macOS 11.0 - Use -[NSWorkspace openApplicationAtURL:configuration:completionHandler:] instead. [-Wdeprecated-declarations]
+ 4524 |     [[NSWorkspace sharedWorkspace] launchApplication:@"Activity Monitor"];
+      |                                    ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSWorkspace.h:379:1: note: 'launchApplication:' has been explicitly marked deprecated here
+  379 | - (BOOL)launchApplication:(NSString *)appName API_DEPRECATED("Use -[NSWorkspace openApplicationAtURL:configuration:completionHandler:] instead.", macos(10.0, 11.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:4533:36: warning: 'launchApplication:' is deprecated: first deprecated in macOS 11.0 - Use -[NSWorkspace openApplicationAtURL:configuration:completionHandler:] instead. [-Wdeprecated-declarations]
+ 4533 |     [[NSWorkspace sharedWorkspace] launchApplication:@"Activity Monitor"];
+      |                                    ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSWorkspace.h:379:1: note: 'launchApplication:' has been explicitly marked deprecated here
+  379 | - (BOOL)launchApplication:(NSString *)appName API_DEPRECATED("Use -[NSWorkspace openApplicationAtURL:configuration:completionHandler:] instead.", macos(10.0, 11.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:5501:9: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 5501 |   panel.allowedFileTypes = @[@"icns", @"png", @"jpg", @"jpeg", @"tiff"];
+      |         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:6396:31: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 6396 |   [target activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+      |                               ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:7956:41: warning: 'sharingServicesForItems:' is deprecated: first deprecated in macOS 13.0 - Use -[NSSharingServicePicker standardShareMenuItem] instead. [-Wdeprecated-declarations]
+ 7956 |   NSArray *services = [NSSharingService sharingServicesForItems:@[bodyText]];
+      |                                         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSharingService.h:105:1: note: 'sharingServicesForItems:' has been explicitly marked deprecated here
+  105 | + (NSArray<NSSharingService *> *)sharingServicesForItems:(NSArray *)items API_DEPRECATED("Use -[NSSharingServicePicker standardShareMenuItem] instead.", macos(10.8, 13.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:8166:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 8166 |   sp.allowedFileTypes = @[@"json", @"csv"];
+      |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:8218:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 8218 |   op.allowedFileTypes = @[@"json", @"csv", @"txt"];
+      |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:9086:17: warning: 'originalFilename' is deprecated: first deprecated in macOS 27 - Use filename instead [-Wdeprecated-declarations]
+ 9086 |         if (res.originalFilename.length) name = res.originalFilename;
+      |                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Photos.framework/Headers/PHAssetResource.h:29:49: note: 'originalFilename' has been explicitly marked deprecated here
+   29 | @property (nonatomic, copy, readonly) NSString *originalFilename API_DEPRECATED("Use filename instead", ios(9, 27), macos(10.15, 27), tvos(10, 27), visionos(1, 27));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:9086:53: warning: 'originalFilename' is deprecated: first deprecated in macOS 27 - Use filename instead [-Wdeprecated-declarations]
+ 9086 |         if (res.originalFilename.length) name = res.originalFilename;
+      |                                                     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Photos.framework/Headers/PHAssetResource.h:29:49: note: 'originalFilename' has been explicitly marked deprecated here
+   29 | @property (nonatomic, copy, readonly) NSString *originalFilename API_DEPRECATED("Use filename instead", ios(9, 27), macos(10.15, 27), tvos(10, 27), visionos(1, 27));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:9372:24: warning: 'originalFilename' is deprecated: first deprecated in macOS 27 - Use filename instead [-Wdeprecated-declarations]
+ 9372 |   NSString *name = res.originalFilename.length ? res.originalFilename : [assetID stringByAppendingString:@".jpg"];
+      |                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Photos.framework/Headers/PHAssetResource.h:29:49: note: 'originalFilename' has been explicitly marked deprecated here
+   29 | @property (nonatomic, copy, readonly) NSString *originalFilename API_DEPRECATED("Use filename instead", ios(9, 27), macos(10.15, 27), tvos(10, 27), visionos(1, 27));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:9372:54: warning: 'originalFilename' is deprecated: first deprecated in macOS 27 - Use filename instead [-Wdeprecated-declarations]
+ 9372 |   NSString *name = res.originalFilename.length ? res.originalFilename : [assetID stringByAppendingString:@".jpg"];
+      |                                                      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Photos.framework/Headers/PHAssetResource.h:29:49: note: 'originalFilename' has been explicitly marked deprecated here
+   29 | @property (nonatomic, copy, readonly) NSString *originalFilename API_DEPRECATED("Use filename instead", ios(9, 27), macos(10.15, 27), tvos(10, 27), visionos(1, 27));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:10938:3: warning: 'FSEventStreamScheduleWithRunLoop' is deprecated: first deprecated in macOS 13.0 - Use FSEventStreamSetDispatchQueue instead. [-Wdeprecated-declarations]
+ 10938 |   FSEventStreamScheduleWithRunLoop(self.activityStream, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+       |   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/CoreServices.framework/Frameworks/FSEvents.framework/Headers/FSEvents.h:1159:1: note: 'FSEventStreamScheduleWithRunLoop' has been explicitly marked deprecated here
+ 1159 | FSEventStreamScheduleWithRunLoop(
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11476:3: warning: 'NSUserNotification' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11476 |   NSUserNotification *n = [[NSUserNotification alloc] init];
+       |   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:40:12: note: 'NSUserNotification' has been explicitly marked deprecated here
+   40 | @interface NSUserNotification : NSObject <NSCopying> {
+      |            ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11476:48: warning: 'NSUserNotification' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11476 |   NSUserNotification *n = [[NSUserNotification alloc] init];
+       |                                                ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:40:12: note: 'NSUserNotification' has been explicitly marked deprecated here
+   40 | @interface NSUserNotification : NSObject <NSCopying> {
+      |            ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11479:17: warning: 'NSUserNotificationDefaultSoundName' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11479 |   n.soundName = NSUserNotificationDefaultSoundName;
+       |                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:203:36: note: 'NSUserNotificationDefaultSoundName' has been explicitly marked deprecated here
+  203 | FOUNDATION_EXPORT NSString * const NSUserNotificationDefaultSoundName API_DEPRECATED("All NSUserNotifications API should be replaced with UserNotifications.frameworks API", macos(10.8, 11.0)) API_UNAVAILABLE(ios, watchos, tvos);
+      |                                    ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:11480:30: warning: 'NSUserNotificationCenter' is deprecated: first deprecated in macOS 11.0 - All NSUserNotifications API should be replaced with UserNotifications.frameworks API [-Wdeprecated-declarations]
+ 11480 |   [[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification:n];
+       |                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSUserNotification.h:231:12: note: 'NSUserNotificationCenter' has been explicitly marked deprecated here
+  231 | @interface NSUserNotificationCenter : NSObject {
+      |            ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:12338:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 12338 |   sp.allowedFileTypes = @[@"csv"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:13052:5: warning: collection expression type 'NSIndexSet *' may not respond to 'countByEnumeratingWithState:objects:count:'
+ 13052 |     for (NSNumber *n in self.promptTable.selectedRowIndexes) {
+       |     ^                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:13356:51: warning: 'sharingServicesForItems:' is deprecated: first deprecated in macOS 13.0 - Use -[NSSharingServicePicker standardShareMenuItem] instead. [-Wdeprecated-declarations]
+ 13356 |   for (NSSharingService *svc in [NSSharingService sharingServicesForItems:@[body]]) {
+       |                                                   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSharingService.h:105:1: note: 'sharingServicesForItems:' has been explicitly marked deprecated here
+  105 | + (NSArray<NSSharingService *> *)sharingServicesForItems:(NSArray *)items API_DEPRECATED("Use -[NSSharingServicePicker standardShareMenuItem] instead.", macos(10.8, 13.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:13380:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 13380 |   p.allowedFileTypes = @[@"json", @"md", @"markdown", @"txt", @"csv", @"doc", @"docx", @"rtf", @"rtfd", @"html", @"htm", @"odt", @"xlsx", @"xls", @"pdf"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:13447:26: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 13447 |   self.promptExportPanel.allowedFileTypes = @[exts[idx]];
+       |                          ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:13464:26: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 13464 |   self.promptExportPanel.allowedFileTypes = @[@"json"];
+       |                          ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14387:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 14387 |   p.allowedFileTypes = @[@"jpg", @"jpeg", @"png", @"heic", @"tiff", @"gif"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14630:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 14630 |   p.allowedFileTypes = @[@"pdf"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14644:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 14644 |   sp.allowedFileTypes = @[@"pdf"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14702:84: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 14702 |   if ([[info draggingPasteboard] availableTypeFromArray:@[NSPasteboardTypeFileURL, NSFilenamesPboardType]]) return NSDragOperationCopy;
+       |                                                                                    ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14714:46: warning: 'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead [-Wdeprecated-declarations]
+ 14714 |     NSArray *names = [pb propertyListForType:NSFilenamesPboardType];
+       |                                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSPasteboard.h:505:32: note: 'NSFilenamesPboardType' has been explicitly marked deprecated here
+  505 | APPKIT_EXTERN NSPasteboardType NSFilenamesPboardType API_DEPRECATED("Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead", macos(10.0,10.14));
+      |                                ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:14838:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 14838 |   sp.allowedFileTypes = @[@"pdf"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:15649:32: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 15649 |       [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+       |                                ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:16423:16: warning: assigning to 'id<NSPopoverDelegate> _Nullable' from incompatible type 'Controller *const __strong'
+ 16423 |   pop.delegate = self;
+       |                ^ ~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:18685:72: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 18685 |       if ([action isEqualToString:@"launch"]) [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+       |                                                                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:18957:161: warning: 'setAllowedFileTypes:' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 18957 | - (void)convertAddFiles:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=YES; [p setAllowedFileTypes:@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp",@"mp3",@"wav",@"m4a",@"aiff",@"mp4",@"mov",@"m4v",@"pdf"]]; if([p runModal]!=NSModalResponseOK)return; if(!self.convertPaths)self.convertPaths=[NSMutableArray array]; for(NSURL *u in p.URLs)[self.convertPaths addObject:u.path]; [self.convertTable reloadData]; }
+       |                                                                                                                                                                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: property 'allowedFileTypes' is declared deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'setAllowedFileTypes:' has been explicitly marked deprecated here
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:19314:14: warning: performSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks]
+ 19314 |   else [self performSelector:s withObject:nil];
+       |              ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:19314:30: note: used here
+ 19314 |   else [self performSelector:s withObject:nil];
+       |                              ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:19524:46: warning: null passed to a callee that requires a non-null argument [-Wnonnull]
+ 19524 |     self.statusItem.button.attributedTitle = nil;
+       |                                              ^~~
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/MacTypes.h:96:19: note: expanded from macro 'nil'
+   96 |       #define nil __DARWIN_NULL
+      |                   ^~~~~~~~~~~~~
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/sys/_types.h:64:23: note: expanded from macro '__DARWIN_NULL'
+   64 | #define __DARWIN_NULL ((void *)0)
+      |                       ^~~~~~~~~~~
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:20161:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 20161 |   p.allowedFileTypes = @[@"zip"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:20181:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 20181 |   p.allowedFileTypes = @[@"gz"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:20218:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 20218 |   p.allowedFileTypes = @[@"zip", @"gz", @"tgz", @"tar"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:21045:44: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 21045 |   AVAssetTrack *screenVideo = [screenAsset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+       |                                            ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:21046:44: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 21046 |   AVAssetTrack *screenAudio = [screenAsset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+       |                                            ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:21056:40: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 21056 |   NSArray *screenAudios = [screenAsset tracksWithMediaType:AVMediaTypeAudio];
+       |                                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:21069:40: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 21069 |     AVAssetTrack *camTrack = [camAsset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+       |                                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22032:17: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22032 |   return [asset tracksWithMediaType:AVMediaTypeAudio].count > 1;
+       |                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22078:11: warning: 'connect:to:format:' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 22078 |   [engine connect:player to:eq format:inFile.processingFormat];
+       |           ^~~~~~~
+       |           connect:to:format:error:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioEngine.h:281:1: note: 'connect:to:format:' has been explicitly marked deprecated here
+  281 | - (void)connect:(AVAudioNode *)node1 to:(AVAudioNode *)node2 format:(AVAudioFormat * __nullable)format API_DEPRECATED_WITH_REPLACEMENT("connect:to:format:error:", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22081:13: warning: 'connect:to:format:' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 22081 |     [engine connect:eq to:gate format:inFile.processingFormat];
+       |             ^~~~~~~
+       |             connect:to:format:error:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioEngine.h:281:1: note: 'connect:to:format:' has been explicitly marked deprecated here
+  281 | - (void)connect:(AVAudioNode *)node1 to:(AVAudioNode *)node2 format:(AVAudioFormat * __nullable)format API_DEPRECATED_WITH_REPLACEMENT("connect:to:format:error:", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22082:13: warning: 'connect:to:format:' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 22082 |     [engine connect:gate to:engine.mainMixerNode format:inFile.processingFormat];
+       |             ^~~~~~~
+       |             connect:to:format:error:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioEngine.h:281:1: note: 'connect:to:format:' has been explicitly marked deprecated here
+  281 | - (void)connect:(AVAudioNode *)node1 to:(AVAudioNode *)node2 format:(AVAudioFormat * __nullable)format API_DEPRECATED_WITH_REPLACEMENT("connect:to:format:error:", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22084:13: warning: 'connect:to:format:' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 22084 |     [engine connect:eq to:engine.mainMixerNode format:inFile.processingFormat];
+       |             ^~~~~~~
+       |             connect:to:format:error:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioEngine.h:281:1: note: 'connect:to:format:' has been explicitly marked deprecated here
+  281 | - (void)connect:(AVAudioNode *)node1 to:(AVAudioNode *)node2 format:(AVAudioFormat * __nullable)format API_DEPRECATED_WITH_REPLACEMENT("connect:to:format:error:", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22094:11: warning: 'play' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 22094 |   [player play];
+       |           ^~~~
+       |           playAndReturnError:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioPlayerNode.h:312:1: note: 'play' has been explicitly marked deprecated here
+  312 | - (void)play API_DEPRECATED_WITH_REPLACEMENT("playAndReturnError:", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22113:32: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22113 |   AVAssetTrack *video = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+       |                                ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22114:28: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22114 |   NSArray *audios = [asset tracksWithMediaType:AVMediaTypeAudio];
+       |                            ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22136:42: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22136 |       AVAssetTrack *micTrack = [micAsset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+       |                                          ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22151:48: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22151 |         AVAssetTrack *mixedAudio = [mixedAsset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+       |                                                ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22185:32: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22185 |   AVAssetTrack *video = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+       |                                ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22186:28: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22186 |   NSArray *audios = [asset tracksWithMediaType:AVMediaTypeAudio];
+       |                            ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22225:51: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 22225 |       AVAssetTrack *mixedAudioTrack = [mixedAsset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+       |                                                   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22598:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22598 |   p.allowedFileTypes=@[@"mp4",@"mov",@"m4v"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22609:136: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22609 | - (void)videoEditorChooseMusic:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowedFileTypes=@[@"mp3",@"m4a",@"wav",@"aiff"]; if([p runModal]==NSModalResponseOK){self.videoEditorMusicPath=p.URL.path;self.videoEditorStatus.stringValue=[NSString stringWithFormat:@"背景音乐：%@",p.URL.lastPathComponent];} }
+       |                                                                                                                                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22610:136: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22610 | - (void)videoEditorChooseCover:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowedFileTypes=@[@"png",@"jpg",@"jpeg"]; if([p runModal]==NSModalResponseOK){self.videoEditorCoverPath=p.URL.path;self.videoEditorStatus.stringValue=[NSString stringWithFormat:@"封面：%@",p.URL.lastPathComponent];} }
+       |                                                                                                                                        ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22632:49: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22632 |     NSSavePanel *sp=[NSSavePanel savePanel]; sp.allowedFileTypes=@[@"mp4"]; sp.nameFieldStringValue=@"视频剪辑.mp4";
+       |                                                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22754:28: warning: 'copyCGImageAtTime:actualTime:error:' is deprecated: first deprecated in macOS 15.0 - Use generateCGImageAsynchronouslyForTime:completionHandler: instead [-Wdeprecated-declarations]
+ 22754 |       CGImageRef cg = [gen copyCGImageAtTime:CMTimeMakeWithSeconds(0.5, 600) actualTime:NULL error:&err];
+       |                            ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetImageGenerator.h:197:1: note: 'copyCGImageAtTime:actualTime:error:' has been explicitly marked deprecated here
+  197 | - (nullable CGImageRef)copyCGImageAtTime:(CMTime)requestedTime actualTime:(nullable CMTime *)actualTime error:(NSError * _Nullable * _Nullable)outError CF_RETURNS_RETAINED API_DEPRECATED("Use generateCGImageAsynchronouslyForTime:completionHandler: instead", macos(10.7, 15.0), ios(4.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22864:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22864 |   p.allowedFileTypes = @[@"png", @"jpg", @"jpeg", @"webp", @"heic", @"tiff"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22991:27: warning: 'copyCGImageAtTime:actualTime:error:' is deprecated: first deprecated in macOS 15.0 - Use generateCGImageAsynchronouslyForTime:completionHandler: instead [-Wdeprecated-declarations]
+ 22991 |       CGImageRef img=[gen copyCGImageAtTime:CMTimeMake(0,1) actualTime:NULL error:NULL];
+       |                           ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetImageGenerator.h:197:1: note: 'copyCGImageAtTime:actualTime:error:' has been explicitly marked deprecated here
+  197 | - (nullable CGImageRef)copyCGImageAtTime:(CMTime)requestedTime actualTime:(nullable CMTime *)actualTime error:(NSError * _Nullable * _Nullable)outError CF_RETURNS_RETAINED API_DEPRECATED("Use generateCGImageAsynchronouslyForTime:completionHandler: instead", macos(10.7, 15.0), ios(4.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:22999:47: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 22999 |   NSSavePanel *sp=[NSSavePanel savePanel]; sp.allowedFileTypes=@[@"mp4"];
+       |                                               ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:23041:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 23041 |   p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"webp"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:23314:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 23314 |   p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"webp"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:23448:7: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 23448 |     p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"];
+       |       ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:23627:46: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 23627 |   NSSavePanel *sp=[NSSavePanel savePanel];sp.allowedFileTypes=@[@"png"];sp.nameFieldStringValue=self.aiEditResultPath.lastPathComponent;
+       |                                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24169:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 24169 |   sp.allowedFileTypes = @[@"png"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24202:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 24202 |   p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24554:47: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 24554 |   NSSavePanel *sp=[NSSavePanel savePanel]; sp.allowedFileTypes=@[@"png"];
+       |                                               ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24702:14: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 24702 |   if ([asset tracksWithMediaType:AVMediaTypeAudio].count == 0) {
+       |              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24706:14: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 24706 |   if ([asset tracksWithMediaType:AVMediaTypeVideo].count == 0) { completion(path, nil); return; }
+       |              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:24873:132: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 24873 | - (void)chooseWhisperModel:(id)sender { NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowedFileTypes=@[@"bin",@"gguf"]; if([p runModal]==NSModalResponseOK)self.whisperModelField.stringValue=p.URL.path; }
+       |                                                                                                                                    ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25065:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25065 |   p.allowedFileTypes = @[@"mp4", @"mov", @"m4v", @"m4a", @"mp3", @"wav", @"aiff", @"caf"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25241:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25241 |   p.allowedFileTypes = @[@"mp4", @"mov", @"m4v"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25343:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25343 |   sp.allowedFileTypes = @[@"mp3"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25452:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25452 |   sp.allowedFileTypes = @[@"txt"]; sp.nameFieldStringValue = @"语音转文字.txt";
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25593:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25593 |   sp.allowedFileTypes = @[@"mp4"];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25632:62: warning: 'videoCompositionWithPropertiesOfAsset:' is deprecated: first deprecated in macOS 15.0 - Use videoCompositionWithPropertiesOfAsset:completionHandler: instead [-Wdeprecated-declarations]
+ 25632 |   AVMutableVideoComposition *vc = [AVMutableVideoComposition videoCompositionWithPropertiesOfAsset:asset];
+       |                                                              ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVVideoComposition.h:292:1: note: 'videoCompositionWithPropertiesOfAsset:' has been explicitly marked deprecated here
+  292 | + (AVMutableVideoComposition *)videoCompositionWithPropertiesOfAsset:(AVAsset *)asset API_DEPRECATED("Use videoCompositionWithPropertiesOfAsset:completionHandler: instead", macos(10.9, 15.0), ios(6.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25709:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25709 |   sp.allowedFileTypes = @[ext];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25852:5: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25852 |   p.allowedFileTypes=@[@"mp4",@"mov",@"m4v"];
+       |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25863:6: warning: 'allowedFileTypes' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead [-Wdeprecated-declarations]
+ 25863 |   sp.allowedFileTypes = @[ext];
+       |      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSSavePanel.h:289:49: note: 'allowedFileTypes' has been explicitly marked deprecated here
+  289 | @property (nullable, copy) NSArray<NSString *> *allowedFileTypes API_DEPRECATED("Use -allowedContentTypes instead", macos(10.3,12.0));
+      |                                                 ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25881:38: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 25881 |   for (AVAssetTrack *track in [asset tracksWithMediaType:AVMediaTypeVideo]) {
+       |                                      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25885:38: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 25885 |   for (AVAssetTrack *track in [asset tracksWithMediaType:AVMediaTypeAudio]) {
+       |                                      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25948:29: warning: 'copyCGImageAtTime:actualTime:error:' is deprecated: first deprecated in macOS 15.0 - Use generateCGImageAsynchronouslyForTime:completionHandler: instead [-Wdeprecated-declarations]
+ 25948 |       CGImageRef img = [gen copyCGImageAtTime:CMTimeMakeWithSeconds(start + i/10.0, 600) actualTime:NULL error:NULL];
+       |                             ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetImageGenerator.h:197:1: note: 'copyCGImageAtTime:actualTime:error:' has been explicitly marked deprecated here
+  197 | - (nullable CGImageRef)copyCGImageAtTime:(CMTime)requestedTime actualTime:(nullable CMTime *)actualTime error:(NSError * _Nullable * _Nullable)outError CF_RETURNS_RETAINED API_DEPRECATED("Use generateCGImageAsynchronouslyForTime:completionHandler: instead", macos(10.7, 15.0), ios(4.0, 18.0), tvos(9.0, 18.0)) API_UNAVAILABLE(watchos, visionos);
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:25954:73: warning: 'kUTTypeGIF' is deprecated: first deprecated in macOS 12.0 - Use UTTypeGIF or UTType.gif (swift) instead. [-Wdeprecated-declarations]
+ 25954 |       CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, kUTTypeGIF, images.count, NULL);
+       |                                                                         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Headers/UTCoreTypes.h:729:26: note: 'kUTTypeGIF' has been explicitly marked deprecated here
+  729 | extern const CFStringRef kUTTypeGIF                                  API_DEPRECATED("Use UTTypeGIF or UTType.gif (swift) instead.", ios(3.0, 15.0), macos(10.4, 12.0), tvos(9.0, 15.0), watchos(1.0, 8.0));
+      |                          ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:26193:77: warning: 'tracksWithMediaType:' is deprecated: first deprecated in macOS 15.0 - Use loadTracksWithMediaType:completionHandler: instead [-Wdeprecated-declarations]
+ 26193 |     NSArray<AVAssetTrack *> *audios = st == AVKeyValueStatusLoaded ? [asset tracksWithMediaType:AVMediaTypeAudio] : @[];
+       |                                                                             ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAsset.h:191:1: note: 'tracksWithMediaType:' has been explicitly marked deprecated here
+  191 | - (NSArray<AVAssetTrack *> *)tracksWithMediaType:(AVMediaType)mediaType
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:26444:10: warning: 'installTapOnBus:bufferSize:format:block:' is deprecated: first deprecated in macOS 27.0 [-Wdeprecated-declarations]
+ 26444 |   [input installTapOnBus:0 bufferSize:1024 format:fmt block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
+       |          ^~~~~~~~~~~~~~~
+       |          installTapOnBus:bufferSize:format:error:block
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AVFAudio.framework/Headers/AVAudioNode.h:117:1: note: 'installTapOnBus:bufferSize:format:block:' has been explicitly marked deprecated here
+  117 | - (void)installTapOnBus:(AVAudioNodeBus)bus bufferSize:(AVAudioFrameCount)bufferSize format:(AVAudioFormat * __nullable)format block:(AVAudioNodeTapBlock)tapBlock API_DEPRECATED_WITH_REPLACEMENT("installTapOnBus:bufferSize:format:error:block", ios(8.0, 27.0), watchos(2.0, 27.0), macos(10.10, 27.0), tvos(9.0, 27.0));
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:26982:101: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 26982 |   [[NSRunningApplication currentApplication] activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
+       |                                                                                                     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:26989:103: warning: 'NSApplicationActivateIgnoringOtherApps' is deprecated: first deprecated in macOS 14.0 - ignoringOtherApps is deprecated in macOS 14 and will have no effect. [-Wdeprecated-declarations]
+ 26989 |     [[NSRunningApplication currentApplication] activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
+       |                                                                                                       ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/AppKit.framework/Headers/NSRunningApplication.h:27:5: note: 'NSApplicationActivateIgnoringOtherApps' has been explicitly marked deprecated here
+   27 |     NSApplicationActivateIgnoringOtherApps API_DEPRECATED("ignoringOtherApps is deprecated in macOS 14 and will have no effect.", macos(10.6, 14.0)) = 1 << 1
+      |     ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:5638:1: warning: writable atomic property 'dialogIconButtons' cannot pair a synthesized getter with a user defined setter [-Watomic-property-with-user-defined-accessor]
+ 5638 | - (void)setDialogIconButtons:(NSArray *)buttons {
+      | ^
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1876:36: note: setter and getter must both be synthesized, or both be user defined, or the property must be nonatomic
+ 1876 | @property (strong) NSMutableArray *dialogIconButtons;
+      |                                    ^
+      |            nonatomic, 
+/Users/andre/deepseek/github/dock-launchers/src/center_app.m:1876:36: note: property declared here
+123 warnings generated.
+built /Users/andre/deepseek/github/dock-launchers/build/DockLaunchers控制台.app

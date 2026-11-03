@@ -8,18 +8,44 @@
     "audited_modules": 18,
     "audit_findings": 32,
     "fixed_p0": 5,
-    "fixed_p1": 9,
-    "fixed_p2": 4,
-    "open_risk": 14
+    "fixed_p1": 12,
+    "fixed_p2": 8,
+    "open_risk": 7
   },
   "tests": {
     "build": "PASS",
     "selftest": "PASS",
-    "api_tts": {"status": 200, "bytes": 15487, "format": "audio/mpeg"},
-    "api_image": {"status": 200, "bytes": 1063341, "width": 1024, "height": 1024},
-    "conversion": {"image": 2, "audio": 2, "video": 1, "failed": 0},
-    "video_merge": {"input_seconds": 4.066, "clips": 2, "output_seconds": 8.133},
-    "subtitle_burn": {"status": "PASS", "output_bytes": 3145728}
+    "api_tts": {
+      "status": 200,
+      "bytes": 15487,
+      "format": "audio/mpeg"
+    },
+    "api_image": {
+      "status": 200,
+      "bytes": 1063341,
+      "width": 1024,
+      "height": 1024
+    },
+    "conversion": {
+      "image": 2,
+      "audio": 2,
+      "video": 1,
+      "failed": 0
+    },
+    "video_merge": {
+      "input_seconds": 4.066,
+      "clips": 2,
+      "output_seconds": 8.133
+    },
+    "subtitle_burn": {
+      "status": "PASS",
+      "output_bytes": 3145728
+    },
+    "subtitle_burn_round2": {
+      "status": "PASS",
+      "output_bytes": 1363149
+    },
+    "video_merge_round2_seconds": 8.133
   },
   "optimizations": [
     "全局快捷键 ID 显式映射，修复翻译快捷键误触发录屏",
@@ -35,5 +61,11 @@
     "图库支持超过 8 张滚动显示",
     "图片编辑/视频/图库等错误提示中文化"
   ],
-  "blocked_tests": ["local_whisper_binary_missing", "comfyui_not_running", "ollama_not_running", "tcc_ui_not_automated"]
+  "blocked_tests": [
+    "local_whisper_binary_missing",
+    "comfyui_not_running",
+    "ollama_not_running",
+    "tcc_ui_not_automated"
+  ],
+  "commit_after": "e342719"
 }
