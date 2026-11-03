@@ -8066,6 +8066,7 @@ static BOOL ValidGroupName(NSString *raw) {
   static dispatch_once_t once;
   dispatch_once(&once, ^{
     presets = @[
+      @{@"name":@"Ollama 本地", @"aliases":@[@"ollama", @"本地模型", @"本地ai"], @"url":@"https://ollama.com/download", @"type":@"本地部署/离线/隐私推理"},
       @{@"name":@"DeepSeek 深度求索", @"aliases":@[@"deepseek", @"深度求索", @"深度探索"], @"url":@"https://platform.deepseek.com/api_keys", @"type":@"通用对话/推理/代码"},
       @{@"name":@"OpenAI ChatGPT", @"aliases":@[@"openai", @"chatgpt", @"gpt", @"奥尔特曼"], @"url":@"https://platform.openai.com/api-keys", @"type":@"通用对话/多模态/推理"},
       @{@"name":@"Anthropic Claude", @"aliases":@[@"claude", @"anthropic", @"克劳德"], @"url":@"https://console.anthropic.com/settings/keys", @"type":@"长文本/推理/代码/多模态"},
@@ -8124,7 +8125,8 @@ static BOOL ValidGroupName(NSString *raw) {
 - (NSDictionary *)aiDefaultBaseAndModelForName:(NSString *)raw {
   NSString *name = [(raw ?: @"") lowercaseString];
   NSString *base = nil, *model = nil;
-  if ([name containsString:@"deepseek"] || [name containsString:@"深度求索"] || [name containsString:@"深度探索"]) { base = @"https://api.deepseek.com/v1"; model = @"deepseek-chat"; }
+  if ([name containsString:@"ollama"] || [name containsString:@"本地模型"]) { base = @"http://127.0.0.1:11434/v1"; model = @"llama3.2"; }
+  else if ([name containsString:@"deepseek"] || [name containsString:@"深度求索"] || [name containsString:@"深度探索"]) { base = @"https://api.deepseek.com/v1"; model = @"deepseek-chat"; }
   else if ([name containsString:@"openai"] || [name containsString:@"chatgpt"]) { base = @"https://api.openai.com/v1"; model = @"gpt-4o-mini"; }
   else if ([name containsString:@"claude"] || [name containsString:@"anthropic"]) { base = @"https://api.anthropic.com/v1"; model = @"claude-3-5-sonnet-latest"; }
   else if ([name containsString:@"gemini"] || [name containsString:@"谷歌"]) { base = @"https://generativelanguage.googleapis.com/v1beta/openai"; model = @"gemini-1.5-flash"; }
@@ -8194,6 +8196,8 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *base = [self.dialogAIBase.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
   NSString *key = [self.dialogAIApi.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
   if (!base.length) { self.dialogAIStatus.stringValue = @"请先填写 API 基础地址"; return; }
+  BOOL localBase = [base containsString:@"127.0.0.1"] || [base containsString:@"localhost"] || [base containsString:@"ollama"];
+  if (!key.length && localBase) key = @"ollama-local";
   if (!key.length) { self.dialogAIStatus.stringValue = @"请先填写 API Key"; return; }
   if ([base hasSuffix:@"/chat/completions"]) base = [base substringToIndex:base.length - @"/chat/completions".length];
   while ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
@@ -8293,6 +8297,8 @@ static BOOL ValidGroupName(NSString *raw) {
   NSMutableDictionary *entry = editing ? [old mutableCopy] : [NSMutableDictionary dictionary];
   for (NSInteger i = 0; i < keys.count; i++) entry[keys[i]] = ((NSTextField *)fields[i]).stringValue ?: @"";
   entry[@"modelCategory"] = self.dialogAIModelCategoryPopup.selectedItem.representedObject ?: @"text";
+  NSString *entryBase = entry[@"apiBase"] ?: @"";
+  if (![entry[@"api"] length] && ([entryBase containsString:@"127.0.0.1"] || [entryBase containsString:@"localhost"] || [entryBase containsString:@"ollama"])) entry[@"api"] = @"ollama-local";
   if (![entry[@"name"] length]) { [self showToast:@"名称不能为空"]; return; }
   if (![entry[@"endpoint"] length]) {
     NSDictionary *preset = [self aiPresetForName:entry[@"name"]];
