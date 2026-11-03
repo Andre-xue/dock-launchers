@@ -7353,9 +7353,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.comfyMarketCategory.target=self; self.comfyMarketCategory.action=@selector(comfyMarketFilterChanged:); [cv addSubview:self.comfyMarketCategory];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,86,812,392)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.comfyMarketTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
-    for(NSArray *c in @[@[@"cmname",@"模型",@400],@[@"cmcat",@"分类",@100],@[@"cmsize",@"大小",@100],@[@"cmstatus",@"状态",@120]]){
-      NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:c[0]]; col.title=c[1]; col.width=[c[2] doubleValue]; [self.comfyMarketTable addTableColumn:col];
-    }
+    NSTableColumn *comfyCol=[[NSTableColumn alloc] initWithIdentifier:@"cmname"]; comfyCol.title=@"模型"; comfyCol.width=790; [self.comfyMarketTable addTableColumn:comfyCol];
     self.comfyMarketTable.rowHeight=44; self.comfyMarketTable.dataSource=self; self.comfyMarketTable.delegate=self; self.comfyMarketTable.target=self; self.comfyMarketTable.doubleAction=@selector(comfyMarketInstall:);
     sv.documentView=self.comfyMarketTable; [cv addSubview:sv];
     self.comfyMarketStatus=[self label:@"选择模型下载到 checkpoints 目录" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.comfyMarketStatus.frame=NSMakeRect(24,50,430,18); [cv addSubview:self.comfyMarketStatus];
@@ -7469,9 +7467,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.ollamaMarketCategory.target=self; self.ollamaMarketCategory.action=@selector(ollamaMarketFilterChanged:); [cv addSubview:self.ollamaMarketCategory];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,86,812,392)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.ollamaMarketTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
-    for(NSArray *c in @[@[@"omname",@"模型",@360],@[@"omcat",@"分类",@100],@[@"omsize",@"大小",@100],@[@"omrec",@"状态",@150]]){
-      NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:c[0]]; col.title=c[1]; col.width=[c[2] doubleValue]; [self.ollamaMarketTable addTableColumn:col];
-    }
+    NSTableColumn *ollamaCol=[[NSTableColumn alloc] initWithIdentifier:@"omname"]; ollamaCol.title=@"模型"; ollamaCol.width=790; [self.ollamaMarketTable addTableColumn:ollamaCol];
     self.ollamaMarketTable.rowHeight=44; self.ollamaMarketTable.dataSource=self; self.ollamaMarketTable.delegate=self; self.ollamaMarketTable.target=self; self.ollamaMarketTable.doubleAction=@selector(ollamaMarketInstall:);
     sv.documentView=self.ollamaMarketTable; [cv addSubview:sv];
     self.ollamaMarketStatus=[self label:@"点击下载安装到 Ollama" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.ollamaMarketStatus.frame=NSMakeRect(24,50,430,18); [cv addSubview:self.ollamaMarketStatus];
@@ -7923,9 +7919,7 @@ static BOOL ValidGroupName(NSString *raw) {
     self.videoModelMarketPlatformPopup.target=self; self.videoModelMarketPlatformPopup.action=@selector(videoModelMarketFilterChanged:); [cv addSubview:self.videoModelMarketPlatformPopup];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,76,812,340)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.videoModelMarketTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
-    for(NSArray *c in @[@[@"vmname",@"模型 / 通用性",@430],@[@"vmtype",@"分类",@130],@[@"vmsize",@"大小",@90],@[@"vmstatus",@"当前电脑",@150]]){
-      NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:c[0]]; col.title=c[1]; col.width=[c[2] doubleValue]; [self.videoModelMarketTable addTableColumn:col];
-    }
+    NSTableColumn *videoCol=[[NSTableColumn alloc] initWithIdentifier:@"vmname"]; videoCol.title=@"模型"; videoCol.width=790; [self.videoModelMarketTable addTableColumn:videoCol];
     self.videoModelMarketTable.rowHeight=44; self.videoModelMarketTable.dataSource=self; self.videoModelMarketTable.delegate=self;
     sv.documentView=self.videoModelMarketTable; [cv addSubview:sv];
     self.videoModelMarketStatus=[self label:@"只展示，不下载到本地；AnimateDiff 已安装可执行" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.videoModelMarketStatus.frame=NSMakeRect(24,44,390,18); [cv addSubview:self.videoModelMarketStatus];
@@ -11756,18 +11750,10 @@ static BOOL ValidGroupName(NSString *raw) {
     if (row < 0 || row >= (NSInteger)self.videoModelMarketFiltered.count) return nil;
     NSDictionary *m=self.videoModelMarketFiltered[row];
     NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
-    if ([col.identifier isEqualToString:@"vmname"]) {
-      NSTextField *l=[self label:m[@"name"] ?: @"" size:11 bold:YES color:nil]; l.frame=NSMakeRect(4,20,col.width-8,18); [v addSubview:l];
-      NSString *meta=[NSString stringWithFormat:@"%@ · %@",m[@"format"] ?: @"",m[@"platform"] ?: @""];
-      NSTextField *d=[self label:meta size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(4,3,col.width-8,14); [v addSubview:d];
-    } else if ([col.identifier isEqualToString:@"vmtype"]) {
-      NSTextField *l=[self label:m[@"category"] ?: @"" size:10 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
-    } else if ([col.identifier isEqualToString:@"vmsize"]) {
-      NSTextField *l=[self label:m[@"size"] ?: @"未知" size:10 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
-    } else {
-      BOOL rec=[m[@"recommended"] boolValue];
-      NSTextField *l=[self label:rec?@"★ 适合当前电脑":@"不适合 / 未安装" size:9.5 bold:YES color:rec?[NSColor systemGreenColor]:[NSColor systemOrangeColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
-    }
+    BOOL rec=[m[@"recommended"] boolValue]; BOOL inst=[m[@"installed"] boolValue];
+    NSTextField *l=[self label:m[@"name"] ?: @"" size:11.5 bold:YES color:nil]; l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,20,col.width-8,18); [v addSubview:l];
+    NSString *meta=[NSString stringWithFormat:@"%@ · %@ · %@ · %@",m[@"format"] ?: @"",m[@"platform"] ?: @"",m[@"size"] ?: @"未知",inst?@"已安装":(rec?@"★ 适合当前电脑":@"不适合 / 未安装")];
+    NSTextField *d=[self label:meta size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(4,3,col.width-8,14); [v addSubview:d];
     return v;
   }
   if (tableView == self.whisperMarketTable) {
@@ -11782,37 +11768,20 @@ static BOOL ValidGroupName(NSString *raw) {
     if (row < 0 || row >= (NSInteger)self.comfyMarketFiltered.count) return nil;
     NSDictionary *m=self.comfyMarketFiltered[row];
     NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
-    if ([col.identifier isEqualToString:@"cmname"]) {
-      NSTextField *l=[self label:m[@"name"] ?: @"" size:11 bold:YES color:nil]; l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,20,col.width-8,18); [v addSubview:l];
-      NSTextField *d=[self label:m[@"desc"] ?: @"" size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(4,3,col.width-8,14); [v addSubview:d];
-    } else if ([col.identifier isEqualToString:@"cmcat"]) {
-      NSTextField *l=[self label:m[@"category"] ?: @"" size:10 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
-    } else if ([col.identifier isEqualToString:@"cmsize"]) {
-      NSTextField *l=[self label:m[@"size"] ?: @"未知" size:10 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
-    } else {
-      BOOL installed=[m[@"installed"] boolValue]; BOOL rec=[m[@"recommended"] boolValue];
-      NSTextField *l=[self label:installed?@"已安装":(rec?@"★ 推荐":@"") size:10 bold:YES color:installed?[NSColor systemGreenColor]:[NSColor systemOrangeColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
-    }
+    BOOL rec=[m[@"recommended"] boolValue]; BOOL inst=[m[@"installed"] boolValue];
+    NSTextField *l=[self label:m[@"name"] ?: @"" size:11.5 bold:YES color:nil]; l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,20,col.width-8,18); [v addSubview:l];
+    NSString *meta=[NSString stringWithFormat:@"%@ · %@ · %@ · %@",m[@"category"] ?: @"",m[@"size"] ?: @"未知",m[@"desc"] ?: @"",inst?@"已安装":(rec?@"★ 推荐":@"")];
+    NSTextField *d=[self label:meta size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(4,3,col.width-8,14); [v addSubview:d];
     return v;
   }
   if (tableView == self.ollamaMarketTable) {
     if (row < 0 || row >= (NSInteger)self.ollamaMarketFiltered.count) return nil;
     NSDictionary *m=self.ollamaMarketFiltered[row];
     NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,44)];
-    if ([col.identifier isEqualToString:@"omname"]) {
-      NSTextField *l=[self label:m[@"name"] ?: @"" size:11.5 bold:YES color:nil];
-      l.frame=NSMakeRect(4,20,col.width-8,18); [v addSubview:l];
-      NSTextField *d=[self label:m[@"desc"] ?: @"" size:9 bold:NO color:[NSColor secondaryLabelColor]];
-      d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(4,3,col.width-8,14); [v addSubview:d];
-    } else if ([col.identifier isEqualToString:@"omcat"]) {
-      NSTextField *l=[self label:m[@"category"] ?: @"" size:10 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
-    } else if ([col.identifier isEqualToString:@"omsize"]) {
-      NSTextField *l=[self label:m[@"size"] ?: @"未知" size:10 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
-    } else {
-      BOOL installed=[m[@"installed"] boolValue]; BOOL rec=[m[@"recommended"] boolValue];
-      NSTextField *l=[self label:installed?@"已安装":(rec?@"★ 推荐":@"") size:10 bold:YES color:installed?[NSColor systemGreenColor]:[NSColor systemOrangeColor]];
-      l.frame=NSMakeRect(4,13,col.width-8,18); [v addSubview:l];
-    }
+    BOOL rec=[m[@"recommended"] boolValue]; BOOL inst=[m[@"installed"] boolValue];
+    NSTextField *l=[self label:m[@"name"] ?: @"" size:11.5 bold:YES color:nil]; l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,20,col.width-8,18); [v addSubview:l];
+    NSString *meta=[NSString stringWithFormat:@"%@ · %@ · %@ · %@",m[@"category"] ?: @"",m[@"size"] ?: @"未知",m[@"desc"] ?: @"",inst?@"已安装":(rec?@"★ 推荐":@"")];
+    NSTextField *d=[self label:meta size:9 bold:NO color:[NSColor secondaryLabelColor]]; d.lineBreakMode=NSLineBreakByTruncatingTail; d.frame=NSMakeRect(4,3,col.width-8,14); [v addSubview:d];
     return v;
   }
   if (tableView == self.radialSearchTable) {
