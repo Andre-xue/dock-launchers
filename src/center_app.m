@@ -1323,7 +1323,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 }
 @end
 
-@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate, AVCaptureFileOutputRecordingDelegate>
+@interface Controller : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSTextViewDelegate, NSComboBoxDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSUserNotificationCenterDelegate, AVCaptureFileOutputRecordingDelegate, NSURLSessionDownloadDelegate>
 - (void)hideClipboardPreview;
 - (void)installClipboardHoverMonitor;
 - (void)scheduleDockLiveApply;
@@ -1666,6 +1666,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *videoGenPromptField, *videoGenNegativeField, *videoGenStatus, *videoGenWidthField, *videoGenHeightField, *videoGenFramesField, *videoGenStepsField, *videoGenSeedField, *videoGenFpsField;
 @property (strong) NSTimer *videoGenPollTimer, *videoGenElapsedTimer;
 @property (strong) NSWindow *videoModelMarketWindow;
+@property (strong) NSURLSession *videoDownloadSession;
+@property (strong) NSURLSessionDownloadTask *videoDownloadTask;
+@property (strong) NSString *videoDownloadName, *videoDownloadDest;
+@property (strong) NSDate *videoDownloadStart;
 @property (strong) NSTableView *videoModelMarketTable;
 @property (strong) NSPopUpButton *videoModelMarketCategory, *videoModelMarketPlatformPopup;
 @property (strong) NSTextField *videoModelMarketStatus;
@@ -7890,6 +7894,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)videoModelMarketDownload:(id)sender {
+  if(self.videoDownloadTask){self.videoModelMarketStatus.stringValue=@"已有下载任务在进行";return;}
   NSInteger row=self.videoModelMarketTable.selectedRow;
   if(row<0||row>=(NSInteger)self.videoModelMarketFiltered.count){self.videoModelMarketStatus.stringValue=@"请先选择模型";return;}
   NSDictionary *m=self.videoModelMarketFiltered[row];
@@ -7907,21 +7912,50 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *dir=[[self videoMarketDirectory] stringByAppendingPathComponent:m[@"category"] ?: @"其他"];
   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
   NSString *dst=[dir stringByAppendingPathComponent:name];
+  NSDictionary *fs=[[NSFileManager defaultManager] attributesOfFileSystemForPath:dir error:NULL];
+  unsigned long long free=[fs[NSFileSystemFreeSize] unsignedLongLongValue];
   NSAlert *a=[[NSAlert alloc] init]; a.messageText=[NSString stringWithFormat:@"下载 %@？",name];
-  a.informativeText=[NSString stringWithFormat:@"大小约 %@，会保存到：\n%@\n\n视频模型体积很大，请确认磁盘空间。",m[@"size"] ?: @"未知",dir];
+  a.informativeText=[NSString stringWithFormat:@"大小约 %@，剩余磁盘约 %.1f GB，保存到：\n%@",m[@"size"] ?: @"未知",free/1073741824.0,dir];
   [a addButtonWithTitle:@"下载"]; [a addButtonWithTitle:@"取消"];
   if([a runModal]!=NSAlertFirstButtonReturn)return;
+  if(free<2ULL*1024*1024*1024){self.videoModelMarketStatus.stringValue=@"磁盘剩余空间不足 2GB";return;}
+  self.videoDownloadName=name; self.videoDownloadDest=dst; self.videoDownloadStart=[NSDate date];
   self.videoModelMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@…",name];
-  __weak typeof(self) weakSelf=self;
-  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/curl"; t.arguments=@[@"-L",@"--fail",@"--retry",@"2",@"-o",dst,url];
-    t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
-    BOOL ok=NO; @try{[t launch];[t waitUntilExit];ok=(t.terminationStatus==0);}@catch(NSException *e){}
-    dispatch_async(dispatch_get_main_queue(),^{
-      weakSelf.videoModelMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",name]:@"下载失败，请检查网络或磁盘空间";
-      if(ok)[weakSelf videoModelMarketReload]; else [weakSelf videoModelMarketFilterChanged:nil];
-    });
-  });
+  NSURLSessionConfiguration *cfg=[NSURLSessionConfiguration defaultSessionConfiguration];
+  self.videoDownloadSession=[NSURLSession sessionWithConfiguration:cfg delegate:self delegateQueue:[NSOperationQueue mainQueue]];
+  self.videoDownloadTask=[self.videoDownloadSession downloadTaskWithURL:[NSURL URLWithString:url]];
+  [self.videoDownloadTask resume];
+}
+
+- (void)cancelVideoModelDownload:(id)sender {
+  if(!self.videoDownloadTask){self.videoModelMarketStatus.stringValue=@"没有正在进行的下载";return;}
+  [self.videoDownloadTask cancel]; self.videoDownloadTask=nil;
+  [self.videoDownloadSession invalidateAndCancel]; self.videoDownloadSession=nil;
+  self.videoModelMarketStatus.stringValue=@"已取消下载";
+}
+
+- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didWriteData:(int64_t)bytesWritten totalBytesWritten:(int64_t)totalBytesWritten totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite {
+  if(downloadTask!=self.videoDownloadTask)return;
+  if(totalBytesExpectedToWrite>0){
+    double p=100.0*totalBytesWritten/totalBytesExpectedToWrite;
+    self.videoModelMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@ · %.1f%%（%.2f/%.2f GB）",self.videoDownloadName,p,totalBytesWritten/1073741824.0,totalBytesExpectedToWrite/1073741824.0];
+  } else self.videoModelMarketStatus.stringValue=[NSString stringWithFormat:@"正在下载 %@ · %.2f GB",self.videoDownloadName,totalBytesWritten/1073741824.0];
+}
+
+- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didFinishDownloadingToURL:(NSURL *)location {
+  if(downloadTask!=self.videoDownloadTask){return;}
+  NSString *dst=self.videoDownloadDest;
+  [[NSFileManager defaultManager] removeItemAtPath:dst error:NULL];
+  NSError *mv=nil; BOOL ok=[[NSFileManager defaultManager] moveItemAtURL:location toURL:[NSURL fileURLWithPath:dst] error:&mv];
+  self.videoDownloadTask=nil; [self.videoDownloadSession finishTasksAndInvalidate]; self.videoDownloadSession=nil;
+  self.videoModelMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",self.videoDownloadName]:[NSString stringWithFormat:@"保存失败：%@",mv.localizedDescription ?: @""];
+  if(ok)[self videoModelMarketReload];
+}
+
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
+  if(task!=self.videoDownloadTask)return;
+  self.videoDownloadTask=nil; [self.videoDownloadSession finishTasksAndInvalidate]; self.videoDownloadSession=nil;
+  if(error) self.videoModelMarketStatus.stringValue=[NSString stringWithFormat:@"下载失败：%@",error.localizedDescription ?: @"已取消"];
 }
 
 - (void)showVideoModelMarket:(id)sender {
@@ -7945,6 +7979,7 @@ static BOOL ValidGroupName(NSString *raw) {
     sv.documentView=self.videoModelMarketTable; [cv addSubview:sv];
     self.videoModelMarketStatus=[self label:@"只展示，不下载到本地；AnimateDiff 已安装可执行" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.videoModelMarketStatus.frame=NSMakeRect(24,44,390,18); [cv addSubview:self.videoModelMarketStatus];
     ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(420,34,120,32)]; dl.title=@"下载到本地"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(videoModelMarketDownload:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
+    ColorHoverButton *cancel=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(670,34,64,32)]; cancel.title=@"取消"; cancel.hoverColor=[NSColor systemRedColor]; cancel.font=[NSFont systemFontOfSize:10]; cancel.target=self; cancel.action=@selector(cancelVideoModelDownload:); [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
     ColorHoverButton *latest=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(548,34,100,32)]; latest.title=@"获取最新"; latest.hoverColor=[NSColor systemBlueColor]; latest.target=self; latest.action=@selector(videoModelMarketRefreshLatest:); [latest applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:latest];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(656,34,100,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeVideoModelMarket:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.videoModelMarketWindow center];
@@ -17799,7 +17834,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self showToast:(self.loginCheck.state == NSControlStateValueOn ? @"已开启开机自启" : @"已关闭开机自启")];
 }
 
-- (void)quitApp:(id)sender { self.allowTerminate = YES; [self unloadLoginAgent]; [NSApp terminate:nil]; }
+- (void)stopAllLocalAIServicesForExit {
+  [self.localAITimer invalidate]; self.localAITimer=nil;
+  if(self.localOllamaWanted || self.localOllamaTask.isRunning){
+    if([[NSFileManager defaultManager] isExecutableFileAtPath:@"/opt/homebrew/bin/brew"]){
+      NSTask *bt=[[NSTask alloc] init]; bt.launchPath=@"/opt/homebrew/bin/brew"; bt.arguments=@[@"services",@"stop",@"ollama"];
+      bt.standardOutput=[NSFileHandle fileHandleWithNullDevice]; bt.standardError=[NSFileHandle fileHandleWithNullDevice];
+      @try{[bt launch];[bt waitUntilExit];}@catch(NSException *e){}
+    }
+    if(self.localOllamaTask.isRunning)[self.localOllamaTask terminate];
+    self.localOllamaTask=nil;
+  }
+  if(self.localComfyWanted || self.localComfyTask.isRunning){
+    if(self.localComfyTask.isRunning)[self.localComfyTask terminate];
+    self.localComfyTask=nil;
+    NSTask *k=[[NSTask alloc] init]; k.launchPath=@"/usr/bin/pkill"; k.arguments=@[@"-f",@"main.py --listen 127.0.0.1 --port 8188"];
+    k.standardOutput=[NSFileHandle fileHandleWithNullDevice]; k.standardError=[NSFileHandle fileHandleWithNullDevice];
+    @try{[k launch];}@catch(NSException *e){}
+  }
+}
+
+- (void)quitApp:(id)sender { self.allowTerminate = YES; [self stopAllLocalAIServicesForExit]; [self unloadLoginAgent]; [NSApp terminate:nil]; }
 
 - (void)applyRadialPagePreferences {
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
@@ -20742,6 +20797,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
+  [self stopAllLocalAIServicesForExit];
   [self restoreMicBoost];
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudAutoSync"]) {
     NSString *dir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCloudSyncDirectory"];
@@ -24720,11 +24776,33 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.cloudProviderTable.headerView=nil; self.cloudProviderTable.rowHeight=54; self.cloudProviderTable.dataSource=self; self.cloudProviderTable.delegate=self;
     sv.documentView=self.cloudProviderTable; [cv addSubview:sv];
     ColorHoverButton *import=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,36,130,32)]; import.title=@"导入分享链接…"; import.hoverColor=[NSColor systemGreenColor]; import.font=[NSFont systemFontOfSize:10]; import.target=self; import.action=@selector(cloudProviderImportLink:); [import applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:import];
+    ColorHoverButton *logout=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(480,36,96,32)]; logout.title=@"退出登录"; logout.hoverColor=[NSColor systemOrangeColor]; logout.font=[NSFont systemFontOfSize:10]; logout.target=self; logout.action=@selector(cloudLogout:); [logout applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:logout];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(584,36,92,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeCloudDocsList:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.cloudDocsWindow center];
   }
   [self.cloudProviderTable reloadData];
   [self bringAuxiliaryWindowToFront:self.cloudDocsWindow];
+}
+
+- (void)cloudLogout:(id)sender {
+  WKWebsiteDataStore *store=[WKWebsiteDataStore defaultDataStore];
+  NSSet *types=[WKWebsiteDataStore allWebsiteDataTypes];
+  [store fetchDataRecordsOfTypes:types completionHandler:^(NSArray<WKWebsiteDataRecord *> *records){
+    NSMutableArray *targets=[NSMutableArray array];
+    NSArray *hosts=@[@"qq.com",@"feishu.cn",@"larksuite.com",@"yuque.com",@"notion.so",@"notion.site",@"google.com",@"kdocs.cn",@"wps.cn",@"dingtalk.com"];
+    for(WKWebsiteDataRecord *r in records){
+      NSString *n=r.displayName.lowercaseString ?: @"";
+      for(NSString *h in hosts)if([n containsString:h]){[targets addObject:r];break;}
+    }
+    if(!targets.count){dispatch_async(dispatch_get_main_queue(),^{[self showToast:@"没有找到云文档登录态"];});return;}
+    [store removeDataOfTypes:types forDataRecords:targets completionHandler:^{
+      dispatch_async(dispatch_get_main_queue(),^{
+        [self showToast:@"已退出云文档登录"];
+        [self.cloudLoginWebView reload];
+        self.cloudLoginFiles=@[]; [self.cloudLoginFileTable reloadData];
+      });
+    }];
+  }];
 }
 
 - (void)closeCloudDocsList:(id)sender { [self.cloudDocsWindow orderOut:nil]; }
@@ -24751,6 +24829,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     sv.documentView=self.cloudLoginFileTable; [cv addSubview:sv];
     ColorHoverButton *refresh=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(20,16,110,28)]; refresh.title=@"刷新列表"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(scanCloudLoginPage:); [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
     ColorHoverButton *import=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(140,16,140,28)]; import.title=@"导入当前正文"; import.hoverColor=[NSColor systemGreenColor]; import.font=[NSFont systemFontOfSize:10]; import.target=self; import.action=@selector(importCloudCurrentPage:); [import applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:import];
+    ColorHoverButton *logout=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(420,16,100,28)]; logout.title=@"退出登录"; logout.hoverColor=[NSColor systemOrangeColor]; logout.font=[NSFont systemFontOfSize:10]; logout.target=self; logout.action=@selector(cloudLogout:); [logout applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:logout];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(868,16,92,28)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeCloudLogin:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.cloudLoginWindow center];
   }
@@ -24893,24 +24972,36 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.aiFileResultPath]];
 }
 
+- (void)aiFileAPICall:(NSString *)prompt model:(NSString *)model url:(NSString *)url key:(NSString *)key completion:(void (^)(NSString *answer, NSString *error))completion {
+  NSDictionary *body=@{@"model":model ?: @"qwen2.5:3b",@"messages":@[@{@"role":@"user",@"content":prompt ?: @""}],@"temperature":@0.3,@"max_tokens":@1800};
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+  req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  if(key.length)[req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+  req.HTTPBody=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL]; req.timeoutInterval=240;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    NSString *answer=nil;
+    if([o isKindOfClass:[NSDictionary class]]){id c=o[@"choices"];if([c isKindOfClass:[NSArray class]]&&[c count]){id m=c[0][@"message"];if([m isKindOfClass:[NSDictionary class]])answer=m[@"content"];}}
+    dispatch_async(dispatch_get_main_queue(),^{ completion(answer,err.localizedDescription); });
+  }] resume];
+}
+
+- (void)aiFileSaveReport:(NSString *)answer files:(NSArray *)files {
+  NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
+  NSString *name=[NSString stringWithFormat:@"AI文件分析-%@.md",[df stringFromDate:[NSDate date]]];
+  NSString *desktop=[NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"];
+  NSString *configured=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerAIFileOutputDirectory"] ?: @"";
+  NSString *dir=(configured.length && [[NSFileManager defaultManager] fileExistsAtPath:configured])?configured:([[NSFileManager defaultManager] fileExistsAtPath:desktop]?desktop:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AI文件"]);
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *path=[dir stringByAppendingPathComponent:name];
+  NSString *md=[NSString stringWithFormat:@"# AI 文件分析\n\n生成时间：%@\n\n## 文件列表\n\n%@\n\n## AI 分析\n\n%@\n",[NSDate date],files.count?[NSString stringWithFormat:@"- %@",[files componentsJoinedByString:@"\n- "]]:@"- 无",answer ?: @""];
+  [md writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  self.aiFileResultPath=path; self.aiFileOutput.string=md; self.aiFileStatus.stringValue=[NSString stringWithFormat:@"已生成：%@",path];
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+}
+
 - (void)aiFileAnalyze:(id)sender {
-  if(!self.aiFiles.count){self.aiFileStatus.stringValue=@"请先导入文件";return;}
-  NSMutableString *content=[NSMutableString string];
-  NSMutableArray *okFiles=[NSMutableArray array];
-  for(NSString *path in self.aiFiles){
-    NSString *text=[self aiFileExtractText:path];
-    if(!text.length)continue;
-    [okFiles addObject:path.lastPathComponent];
-    [content appendFormat:@"\n\n===== 文件：%@ =====\n%@",path.lastPathComponent,[text substringToIndex:MIN(text.length,(NSUInteger)12000)]];
-    if(content.length>50000)break;
-  }
-  for(NSDictionary *c in self.aiCloudDocs){
-    NSString *text=c[@"content"] ?: @""; if(!text.length)continue;
-    [okFiles addObject:c[@"title"] ?: @"云文档"];
-    [content appendFormat:@"\n\n===== 云文档：%@（%@） =====\n%@",c[@"title"] ?: @"",c[@"provider"] ?: @"",[text substringToIndex:MIN(text.length,(NSUInteger)12000)]];
-    if(content.length>50000)break;
-  }
-  if(!content.length){self.aiFileStatus.stringValue=@"没有可提取的文本内容";return;}
+  if(!self.aiFiles.count && !self.aiCloudDocs.count){self.aiFileStatus.stringValue=@"请先导入文件或云文档";return;}
   NSString *url=@"", *key=@"", *model=self.aiFileModelField.stringValue ?: @"";
   NSInteger chosenIdx=[self.aiFileServicePopup.selectedItem.representedObject integerValue];
   NSDictionary *chosen=(chosenIdx>=0 && chosenIdx<(NSInteger)self.aiEntries.count)?self.aiEntries[chosenIdx]:nil;
@@ -24922,32 +25013,47 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     key=chosen[@"api"] ?: @"";
     if(!model.length)model=chosen[@"model"] ?: @"qwen2.5:3b";
   } else {url=@"http://127.0.0.1:11434/v1/chat/completions"; if(!model.length)model=@"qwen2.5:3b";}
-  if(!url.length){self.aiFileStatus.stringValue=@"请选择可用的 AI 服务或填写 API 地址";return;}
-  NSString *prompt=[NSString stringWithFormat:@"%@\n\n请输出完整的 Markdown 报告，包含：\n1. 文件概览\n2. 每个文件的核心内容\n3. 关键数据与结论\n4. 风险与待办\n5. 建议\n不要编造文件中不存在的信息。\n\n文件内容：%@",self.aiFilePromptField.stringValue,content];
-  NSDictionary *body=@{@"model":model,@"messages":@[@{@"role":@"user",@"content":prompt}],@"temperature":@0.3,@"max_tokens":@1500};
-  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
-  req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"]; if(key.length)[req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"]; req.HTTPBody=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL]; req.timeoutInterval=180;
-  self.aiFileStatus.stringValue=@"AI 分析中…"; self.aiFileOutput.string=@"正在分析，请稍候…";
+  if(!url.length){self.aiFileStatus.stringValue=@"请选择可用的 AI 服务";return;}
+  NSMutableArray *docs=[NSMutableArray array];
+  for(NSString *path in self.aiFiles){NSString *t=[self aiFileExtractText:path];if(t.length)[docs addObject:@{@"source":path.lastPathComponent,@"text":t}];}
+  for(NSDictionary *c in self.aiCloudDocs){NSString *t=c[@"content"] ?: @"";if(t.length)[docs addObject:@{@"source":c[@"title"] ?: @"云文档",@"text":t}];}
+  if(!docs.count){self.aiFileStatus.stringValue=@"没有可提取的文本内容";return;}
+  NSMutableArray *files=[NSMutableArray array]; for(NSDictionary *d in docs)[files addObject:d[@"source"]];
+  NSInteger total=0; for(NSDictionary *d in docs)total+=[d[@"text"] length];
+  self.aiFileOutput.string=@"正在分析，请稍候…";
   __weak typeof(self) weakSelf=self;
-  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
-    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
-    NSString *answer=nil;
-    if([o isKindOfClass:[NSDictionary class]]){id c=o[@"choices"];if([c isKindOfClass:[NSArray class]]&&[c count]){id m=c[0][@"message"];if([m isKindOfClass:[NSDictionary class]])answer=m[@"content"];}}
-    dispatch_async(dispatch_get_main_queue(),^{
-      if(!answer.length){weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"分析失败：%@",err.localizedDescription ?: @"无返回内容"];weakSelf.aiFileOutput.string=weakSelf.aiFileStatus.stringValue;return;}
-      NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
-      NSString *name=[NSString stringWithFormat:@"AI文件分析-%@.md",[df stringFromDate:[NSDate date]]];
-      NSString *desktop=[NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"];
-      NSString *configured=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerAIFileOutputDirectory"] ?: @"";
-      NSString *dir=(configured.length && [[NSFileManager defaultManager] fileExistsAtPath:configured])?configured:([[NSFileManager defaultManager] fileExistsAtPath:desktop]?desktop:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/AI文件"]);
-      [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
-      NSString *path=[dir stringByAppendingPathComponent:name];
-      NSString *md=[NSString stringWithFormat:@"# AI 文件分析\n\n生成时间：%@\n\n## 文件列表\n\n%@\n\n## AI 分析\n\n%@\n",[NSDate date],[[okFiles componentsJoinedByString:@"、"] length]?[NSString stringWithFormat:@"- %@",[okFiles componentsJoinedByString:@"\n- "]]:@"- 无",answer];
-      [md writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-      weakSelf.aiFileResultPath=path; weakSelf.aiFileOutput.string=md; weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"已生成：%@",path];
-      [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
-    });
-  }] resume];
+  if(total<=30000){
+    NSMutableString *content=[NSMutableString string];
+    for(NSDictionary *d in docs)[content appendFormat:@"\n\n===== 来源：%@ =====\n%@",d[@"source"],d[@"text"]];
+    NSString *prompt=[NSString stringWithFormat:@"%@\n\n请输出 Markdown 报告，引用内容时标注 [来源: 文件名]。包含：文件概览、核心内容、关键数据、风险与待办、建议。不要编造。\n\n%@",self.aiFilePromptField.stringValue,content];
+    self.aiFileStatus.stringValue=@"AI 分析中…";
+    [self aiFileAPICall:prompt model:model url:url key:key completion:^(NSString *answer,NSString *err){ if(!answer.length){weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"分析失败：%@",err ?: @"无返回"];return;} [weakSelf aiFileSaveReport:answer files:files]; }];
+    return;
+  }
+  NSMutableArray *chunks=[NSMutableArray array];
+  for(NSDictionary *d in docs){
+    NSString *t=d[@"text"]; NSInteger part=0;
+    for(NSInteger i=0;i<(NSInteger)t.length && chunks.count<24;i+=8000){part++;NSString *sub=[t substringWithRange:NSMakeRange(i,MIN((NSUInteger)8000,t.length-i))];[chunks addObject:@{@"source":d[@"source"],@"part":@(part),@"text":sub}];}
+  }
+  __block NSInteger ci=0; NSMutableArray *summaries=[NSMutableArray array];
+  __block void (^next)(void); next=^{
+    if(ci>=(NSInteger)chunks.count){
+      NSMutableString *joined=[NSMutableString string];
+      for(NSString *x in summaries)[joined appendFormat:@"\n\n%@",x];
+      NSString *prompt=[NSString stringWithFormat:@"%@\n\n以下是长文档的分段摘要，请综合成完整 Markdown 报告，保留关键数据和条款，引用时标注来源和片段。\n\n%@",weakSelf.aiFilePromptField.stringValue,joined];
+      weakSelf.aiFileStatus.stringValue=@"正在生成最终报告…";
+      [weakSelf aiFileAPICall:prompt model:model url:url key:key completion:^(NSString *answer,NSString *err){ if(!answer.length){weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"分析失败：%@",err ?: @"无返回"];return;} [weakSelf aiFileSaveReport:answer files:files]; }];
+      return;
+    }
+    NSDictionary *c=chunks[ci];
+    weakSelf.aiFileStatus.stringValue=[NSString stringWithFormat:@"分段分析 %ld/%ld…",(long)(ci+1),(long)chunks.count];
+    NSString *p=[NSString stringWithFormat:@"请总结下面这段文档，保留关键数据、条款、结论和风险，并保留来源标记。\n来源：%@ 第%@段\n\n%@",c[@"source"],c[@"part"],c[@"text"]];
+    [weakSelf aiFileAPICall:p model:model url:url key:key completion:^(NSString *answer,NSString *err){
+      if(answer.length)[summaries addObject:[NSString stringWithFormat:@"[来源：%@ 第%@段]\n%@",c[@"source"],c[@"part"],answer]];
+      ci++; next();
+    }];
+  };
+  next();
 }
 
 - (void)openAIVideoPanel:(id)sender {
