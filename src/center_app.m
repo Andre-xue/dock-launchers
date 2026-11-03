@@ -7745,28 +7745,64 @@ static BOOL ValidGroupName(NSString *raw) {
   return a;
 }
 
+- (NSString *)videoMarketCachePath {
+  NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return [dir stringByAppendingPathComponent:@"video_market_latest.json"];
+}
+
+- (NSArray *)videoMarketCachedLatest {
+  NSData *d=[NSData dataWithContentsOfFile:[self videoMarketCachePath]];
+  id o=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+  return [o isKindOfClass:[NSArray class]]?o:@[];
+}
+
+- (void)saveVideoMarketLatest:(NSArray *)latest {
+  NSData *d=[NSJSONSerialization dataWithJSONObject:latest options:0 error:NULL];
+  [d writeToFile:[self videoMarketCachePath] atomically:YES];
+}
+
 - (void)videoModelMarketRefreshLatest:(id)sender {
-  self.videoModelMarketStatus.stringValue=@"正在从 Hugging Face 获取最新视频模型…";
+  NSArray *cached=[self videoMarketCachedLatest];
+  NSMutableArray *immediate=[[self videoBackendCatalog] mutableCopy];
+  NSSet *baseRepos=[NSSet setWithArray:[immediate valueForKey:@"repo"]];
+  for(NSDictionary *m in cached) if(m[@"repo"] && ![baseRepos containsObject:m[@"repo"]])[immediate addObject:m];
+  self.videoModelMarketModels=immediate;
+  [self videoModelMarketFilterChanged:nil];
+  self.videoModelMarketStatus.stringValue=[NSString stringWithFormat:@"已显示 %ld 个（含缓存），正在后台检查更新…",(long)immediate.count];
   __weak typeof(self) weakSelf=self;
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-    NSMutableArray *models=[[weakSelf videoBackendCatalog] mutableCopy];
-    NSMutableSet *known=[NSMutableSet set];
-    for(NSDictionary *m in models) if(m[@"repo"])[known addObject:m[@"repo"]];
+    NSURLSessionConfiguration *cfg=[NSURLSessionConfiguration ephemeralSessionConfiguration];
+    cfg.timeoutIntervalForRequest=6; cfg.timeoutIntervalForResource=8;
+    NSURLSession *session=[NSURLSession sessionWithConfiguration:cfg];
+    dispatch_group_t group=dispatch_group_create();
+    NSMutableArray *fresh=[NSMutableArray array];
     for(NSString *tag in @[@"text-to-video",@"image-to-video"]){
-      NSString *url=[NSString stringWithFormat:@"https://huggingface.co/api/models?search=%@&sort=lastModified&direction=-1&limit=12",tag];
-      NSData *d=[NSData dataWithContentsOfURL:[NSURL URLWithString:url]];
-      id arr=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
-      if(![arr isKindOfClass:[NSArray class]])continue;
-      for(NSDictionary *x in arr){
-        NSString *rid=x[@"id"]; if(!rid.length||[known containsObject:rid])continue;
-        [known addObject:rid];
-        [models addObject:@{@"name":rid,@"repo":rid,@"file":@"",@"category":@"最新",@"size":@"未知",@"desc":[NSString stringWithFormat:@"Hugging Face 最新视频模型（%@，实验）",tag],@"recommended":@NO,@"format":@"Hugging Face 模型",@"platform":@"需确认，可能不兼容 ComfyUI"}];
-      }
+      NSString *url=[NSString stringWithFormat:@"https://huggingface.co/api/models?search=%@&sort=lastModified&direction=-1&limit=6",tag];
+      dispatch_group_enter(group);
+      [[session dataTaskWithURL:[NSURL URLWithString:url] completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
+        id arr=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+        if([arr isKindOfClass:[NSArray class]]){
+          @synchronized(fresh){
+            for(NSDictionary *x in arr){
+              NSString *rid=x[@"id"]; if(!rid.length)continue;
+              [fresh addObject:@{@"name":rid,@"repo":rid,@"file":@"",@"category":@"最新",@"size":@"未知",@"desc":[NSString stringWithFormat:@"Hugging Face 最新视频模型（%@，实验）",tag],@"recommended":@NO,@"format":@"Hugging Face 模型",@"platform":@"需确认，可能不兼容 ComfyUI"}];
+            }
+          }
+        }
+        dispatch_group_leave(group);
+      }] resume];
     }
+    dispatch_group_wait(group,dispatch_time(DISPATCH_TIME_NOW,(int64_t)(10*NSEC_PER_SEC)));
     dispatch_async(dispatch_get_main_queue(),^{
-      weakSelf.videoModelMarketModels=models;
+      NSMutableArray *all=[[weakSelf videoBackendCatalog] mutableCopy];
+      NSMutableSet *known=[NSMutableSet set];
+      for(NSDictionary *m in all) if(m[@"repo"])[known addObject:m[@"repo"]];
+      for(NSDictionary *m in fresh) if(m[@"repo"] && ![known containsObject:m[@"repo"]]){[known addObject:m[@"repo"]];[all addObject:m];}
+      if(fresh.count)[weakSelf saveVideoMarketLatest:fresh];
+      weakSelf.videoModelMarketModels=all;
       [weakSelf videoModelMarketFilterChanged:nil];
-      weakSelf.videoModelMarketStatus.stringValue=[NSString stringWithFormat:@"已同步 %ld 个视频模型（含 Hugging Face 最新）",(long)models.count];
+      weakSelf.videoModelMarketStatus.stringValue=fresh.count?[NSString stringWithFormat:@"已更新：%ld 个视频模型",(long)all.count]:@"网络暂不可用，已使用内置/缓存列表";
     });
   });
 }
@@ -7833,7 +7869,12 @@ static BOOL ValidGroupName(NSString *raw) {
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(656,34,100,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeVideoModelMarket:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.videoModelMarketWindow center];
   }
-  if(!self.videoModelMarketModels)self.videoModelMarketModels=[self videoBackendCatalog];
+  if(!self.videoModelMarketModels){
+    NSMutableArray *base=[[self videoBackendCatalog] mutableCopy];
+    NSSet *known=[NSSet setWithArray:[base valueForKey:@"repo"]];
+    for(NSDictionary *m in [self videoMarketCachedLatest]) if(m[@"repo"] && ![known containsObject:m[@"repo"]])[base addObject:m];
+    self.videoModelMarketModels=base;
+  }
   [self videoModelMarketFilterChanged:nil];
   [self bringAuxiliaryWindowToFront:self.videoModelMarketWindow];
 }
