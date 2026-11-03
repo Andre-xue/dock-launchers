@@ -23039,6 +23039,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     saveDir.title=@"保存位置…"; saveDir.hoverColor=[NSColor systemTealColor]; saveDir.target=self; saveDir.action=@selector(chooseAIGeneratedDirectory:);
     saveDir.toolTip=@"修改 AI 图片/视频/语音保存目录";
     [saveDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:saveDir];
+    ColorHoverButton *upscale = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(496,20,110,28)];
+    upscale.title=@"高清放大…"; upscale.hoverColor=[NSColor systemIndigoColor]; upscale.target=self; upscale.action=@selector(upscaleImageFile:);
+    upscale.toolTip=@"本地高质量放大图片，不调用 AI";
+    [upscale applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:upscale];
     self.aiImageStatus = [self label:@"输入提示词后点击生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.aiImageStatus.frame=NSMakeRect(244,266,390,18); [cv addSubview:self.aiImageStatus];
     self.aiImagePreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,60,610,190)];
@@ -23176,6 +23180,51 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[NSUserDefaults standardUserDefaults] setObject:p.URL.path forKey:@"centerAITTSDirectory"];
   [[NSUserDefaults standardUserDefaults] synchronize];
   [self showToast:[NSString stringWithFormat:@"AI 语音保存到：%@", p.URL.path]];
+}
+
+- (void)upscaleImageFile:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=NO;
+  p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"];
+  if ([p runModal] != NSModalResponseOK) return;
+  NSAlert *alert = [[NSAlert alloc] init];
+  alert.messageText = @"选择放大倍数";
+  alert.informativeText = @"本地 Lanczos 高质量放大，不调用 AI，适合截图和素材。";
+  [alert addButtonWithTitle:@"2 倍"];
+  [alert addButtonWithTitle:@"4 倍"];
+  [alert addButtonWithTitle:@"取消"];
+  NSModalResponse resp = [alert runModal];
+  if (resp != NSAlertFirstButtonReturn && resp != NSAlertSecondButtonReturn) return;
+  CGFloat scale = resp == NSAlertFirstButtonReturn ? 2.0 : 4.0;
+  NSImage *src = [[NSImage alloc] initWithContentsOfFile:p.URL.path];
+  if (!src) { [self showToast:@"图片读取失败"]; return; }
+  NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithData:[NSData dataWithContentsOfFile:p.URL.path]];
+  if (!rep) { [self showToast:@"图片格式不支持"]; return; }
+  CIImage *ci = [[CIImage alloc] initWithBitmapImageRep:rep];
+  if (!ci) { [self showToast:@"图片解析失败"]; return; }
+  CGFloat w = ci.extent.size.width * scale, h = ci.extent.size.height * scale;
+  if (w * h > 120000000) { [self showToast:@"放大后尺寸过大"]; return; }
+  CIFilter *filter = [CIFilter filterWithName:@"CILanczosScaleTransform"];
+  [filter setValue:ci forKey:kCIInputImageKey];
+  [filter setValue:@(scale) forKey:kCIInputScaleKey];
+  [filter setValue:@1.0 forKey:kCIInputAspectRatioKey];
+  CIImage *out = filter.outputImage;
+  CIContext *ctx = [CIContext contextWithOptions:nil];
+  CGImageRef cg = [ctx createCGImage:out fromRect:out.extent];
+  if (!cg) { [self showToast:@"放大失败"]; return; }
+  NSBitmapImageRep *outRep = [[NSBitmapImageRep alloc] initWithCGImage:cg];
+  CGImageRelease(cg);
+  NSData *png = [outRep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+  NSDateFormatter *df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyyMMdd-HHmmss";
+  NSString *outPath=[[self aiGeneratedDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"AI放大-%@.png",[df stringFromDate:[NSDate date]]]];
+  if ([png writeToFile:outPath atomically:YES]) {
+    self.aiImageResultPath = outPath;
+    self.aiImageStatus.stringValue = [NSString stringWithFormat:@"已放大 %ldx：%@", (long)scale, outPath.lastPathComponent];
+    if (self.aiImagePreview) { self.aiImagePreview.image = [[NSImage alloc] initWithContentsOfFile:outPath]; }
+    [self showToast:@"高清放大完成"];
+  } else {
+    [self showToast:@"保存放大图片失败"];
+  }
 }
 
 - (void)chooseAIGeneratedDirectory:(id)sender {
