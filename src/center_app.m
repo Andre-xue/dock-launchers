@@ -1600,6 +1600,11 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSSwitch *localOllamaSwitch, *localComfySwitch, *localWhisperSwitch;
 @property (strong) NSTextField *localOllamaStatus, *localComfyStatus, *localWhisperStatus;
 @property (strong) NSTask *localComfyTask, *localOllamaTask;
+@property (strong) NSWindow *localModelWindow;
+@property (strong) NSTableView *localModelTable;
+@property (strong) NSArray *localModelItems;
+@property NSInteger localModelService;
+@property (strong) NSTextField *localModelStatus, *localModelAddField;
 @property (strong) NSTimer *localAITimer;
 @property (strong) NSWindow *aiVisionWindow, *aiEditWindow;
 @property (strong) NSPopUpButton *aiVisionServicePopup, *aiEditServicePopup, *aiEditSizePopup;
@@ -7099,6 +7104,146 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showToast:@"已恢复 AI 数据历史版本，恢复前状态已自动保存"];
 }
 
+- (NSString *)runLocalTool:(NSString *)tool args:(NSArray *)args {
+  NSTask *t=[[NSTask alloc] init]; t.launchPath=tool; t.arguments=args;
+  NSPipe *pipe=[NSPipe pipe]; t.standardOutput=pipe; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+  @try{[t launch];}@catch(NSException *e){return @"";}
+  NSData *d=[pipe.fileHandleForReading readDataToEndOfFile]; [t waitUntilExit];
+  return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
+}
+
+- (void)manageOllamaModels:(id)sender { [self openLocalModelManager:0]; }
+- (void)manageComfyModels:(id)sender { [self openLocalModelManager:1]; }
+- (void)manageWhisperModels:(id)sender { [self openLocalModelManager:2]; }
+
+- (void)openLocalModelManager:(NSInteger)service {
+  self.localModelService=service;
+  if(!self.localModelWindow){
+    self.localModelWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.localModelWindow.releasedWhenClosed=NO;
+    NSView *cv=self.localModelWindow.contentView;
+    NSTextField *t=[self label:@"模型管理" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,456,400,24); [cv addSubview:t];
+    NSTextField *h=[self label:@"更换、添加、删除模型；当前模型会用于 AI 功能" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,434,520,18); [cv addSubview:h];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,100,572,320)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.localModelTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"lm"]; col.title=@"模型"; col.width=550; [self.localModelTable addTableColumn:col];
+    self.localModelTable.rowHeight=28; self.localModelTable.dataSource=self; self.localModelTable.delegate=self;
+    sv.documentView=self.localModelTable; [cv addSubview:sv];
+    self.localModelAddField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,64,280,26)]; self.localModelAddField.placeholderString=@"输入模型名，例如 qwen2.5:3b"; [cv addSubview:self.localModelAddField];
+    self.localModelStatus=[self label:@"选择模型后操作" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.localModelStatus.frame=NSMakeRect(24,38,360,18); [cv addSubview:self.localModelStatus];
+    NSArray *titles=@[@"添加",@"删除",@"设为当前",@"设置…",@"关闭"];
+    NSArray *sels=@[@"localModelAdd:",@"localModelDelete:",@"localModelSetCurrent:",@"localModelSettings:",@"closeLocalModelManager:"];
+    // 右侧按钮由布局函数设置
+    for(NSInteger i=0;i<5;i++){ColorHoverButton *b=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(0,0,0,0)]; b.title=titles[i]; b.tag=i; b.font=[NSFont systemFontOfSize:10]; b.target=self; b.action=NSSelectorFromString(sels[i]); [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:b]; [b setHidden:YES];}
+    [self.localModelWindow center];
+  }
+  self.localModelWindow.title=service==0?@"Ollama 模型管理":(service==1?@"ComfyUI 模型管理":@"Whisper 模型管理");
+  NSView *cv=self.localModelWindow.contentView;
+  for(NSView *v in cv.subviews) if([v isKindOfClass:[ColorHoverButton class]] && ((ColorHoverButton *)v).tag<=4){v.hidden=NO;}
+  // 重新排布底部按钮
+  CGFloat x=312;
+  for(NSView *v in cv.subviews) if([v isKindOfClass:[ColorHoverButton class]] && ((ColorHoverButton *)v).tag<=4){CGFloat w=((ColorHoverButton *)v).tag==3?70:62; v.frame=NSMakeRect(x,64,w,28); x+=w+6;}
+  self.localModelAddField.hidden=service!=0;
+  [self localModelReload:nil];
+  [self forceWindowToFront:self.localModelWindow];
+}
+
+- (void)closeLocalModelManager:(id)sender { [self.localModelWindow orderOut:nil]; }
+
+- (NSString *)localModelDir {
+  if(self.localModelService==1){
+    NSString *base=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerComfyUIPath"] ?: [NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI"];
+    return [base stringByAppendingPathComponent:@"models/checkpoints"];
+  }
+  return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/Models"];
+}
+
+- (void)localModelReload:(id)sender {
+  if(self.localModelService==0){
+    self.localModelStatus.stringValue=@"正在读取 Ollama 模型…";
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+      NSString *out=[self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"list"]];
+      NSMutableArray *models=[NSMutableArray array];
+      for(NSString *line in [out componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
+        NSString *t=[line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if(!t.length||[t hasPrefix:@"NAME "])continue;
+        NSString *name=[t componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet].firstObject;
+        if(name.length)[models addObject:name];
+      }
+      dispatch_async(dispatch_get_main_queue(),^{ self.localModelItems=models; [self.localModelTable reloadData]; self.localModelStatus.stringValue=[NSString stringWithFormat:@"%ld 个 Ollama 模型",(long)models.count]; });
+    });
+    return;
+  }
+  NSFileManager *fm=[NSFileManager defaultManager]; NSString *dir=[self localModelDir];
+  NSArray *files=[fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+  NSMutableArray *out=[NSMutableArray array];
+  for(NSString *f in files){NSString *e=f.pathExtension.lowercaseString;if(self.localModelService==1){if([e isEqualToString:@"safetensors"]||[e isEqualToString:@"ckpt"])[out addObject:f];}else if([e isEqualToString:@"bin"])[out addObject:f];}
+  [out sortUsingSelector:@selector(localizedCompare:)];
+  self.localModelItems=out; [self.localModelTable reloadData];
+  self.localModelStatus.stringValue=[NSString stringWithFormat:@"%@：%ld 个模型",dir.lastPathComponent,(long)out.count];
+}
+
+- (void)localModelAdd:(id)sender {
+  if(self.localModelService==0){
+    NSString *name=[self.localModelAddField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    if(!name.length){self.localModelStatus.stringValue=@"请输入模型名";return;}
+    self.localModelStatus.stringValue=[NSString stringWithFormat:@"正在拉取 %@…",name];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+      [self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"pull",name]];
+      dispatch_async(dispatch_get_main_queue(),^{self.localModelAddField.stringValue=@"";[self localModelReload:nil];});
+    }); return;
+  }
+  NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=YES; p.canChooseDirectories=NO; p.allowsMultipleSelection=YES;
+  if(self.localModelService==1)p.allowedFileTypes=@[@"safetensors",@"ckpt"]; else p.allowedFileTypes=@[@"bin"];
+  if([p runModal]!=NSModalResponseOK)return;
+  NSString *dir=[self localModelDir]; [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  for(NSURL *u in p.URLs){NSString *dst=[dir stringByAppendingPathComponent:u.lastPathComponent];[[NSFileManager defaultManager] removeItemAtPath:dst error:NULL];[[NSFileManager defaultManager] copyItemAtPath:u.path toPath:dst error:NULL];}
+  [self localModelReload:nil];
+}
+
+- (void)localModelDelete:(id)sender {
+  NSInteger row=self.localModelTable.selectedRow;
+  if(row<0||row>=(NSInteger)self.localModelItems.count){self.localModelStatus.stringValue=@"请先选择模型";return;}
+  NSString *m=self.localModelItems[row];
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=[NSString stringWithFormat:@"删除模型 %@？",m]; [a addButtonWithTitle:@"删除"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  if(self.localModelService==0){[self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"rm",m]];}
+  else {NSString *path=[[self localModelDir] stringByAppendingPathComponent:m];[[NSFileManager defaultManager] trashItemAtURL:[NSURL fileURLWithPath:path] resultingItemURL:NULL error:NULL];}
+  [self localModelReload:nil];
+}
+
+- (void)localModelSetCurrent:(id)sender {
+  NSInteger row=self.localModelTable.selectedRow;
+  if(row<0||row>=(NSInteger)self.localModelItems.count){self.localModelStatus.stringValue=@"请先选择模型";return;}
+  NSString *m=self.localModelItems[row];
+  if(self.localModelService==2){[[NSUserDefaults standardUserDefaults] setObject:[[self localModelDir] stringByAppendingPathComponent:m] forKey:@"centerWhisperModel"];[[NSUserDefaults standardUserDefaults] synchronize];self.localModelStatus.stringValue=[NSString stringWithFormat:@"Whisper 当前模型：%@",m];return;}
+  NSString *targetName=self.localModelService==0?@"Ollama 本地":@"ComfyUI 本地";
+  for(NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++){
+    NSDictionary *e=self.aiEntries[i]; if(![e[@"name"] isEqualToString:targetName])continue;
+    NSMutableDictionary *md=[e mutableCopy]; md[@"model"]=m; if(self.localModelService==1)md[@"imageModel"]=m; self.aiEntries[i]=md;
+    [self saveAIEntries]; self.localModelStatus.stringValue=[NSString stringWithFormat:@"当前模型：%@",m]; return;
+  }
+  self.localModelStatus.stringValue=@"没有找到对应 AI 服务条目";
+}
+
+- (void)localModelSettings:(id)sender {
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"本地服务设置";
+  NSTextField *f=[[NSTextField alloc] initWithFrame:NSMakeRect(0,0,340,24)]; a.accessoryView=f;
+  if(self.localModelService==0){a.informativeText=@"Ollama API 地址"; f.stringValue=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerOllamaBase"] ?: @"http://127.0.0.1:11434/v1";}
+  else if(self.localModelService==1){a.informativeText=@"ComfyUI 目录路径"; f.stringValue=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerComfyUIPath"] ?: [NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI"];}
+  else {a.informativeText=@"whisper-cli 可执行文件路径"; f.stringValue=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerWhisperExe"] ?: @"/opt/homebrew/bin/whisper-cli";}
+  [a addButtonWithTitle:@"保存"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+  if(self.localModelService==0){
+    [ud setObject:f.stringValue forKey:@"centerOllamaBase"]; [ud synchronize];
+    for(NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++){NSDictionary *e=self.aiEntries[i];if([e[@"name"] isEqualToString:@"Ollama 本地"]){NSMutableDictionary *m=[e mutableCopy];m[@"apiBase"]=f.stringValue;self.aiEntries[i]=m;[self saveAIEntries];break;}}
+    self.localModelStatus.stringValue=@"已保存 Ollama 地址";
+  }
+  else if(self.localModelService==1){[ud setObject:f.stringValue forKey:@"centerComfyUIPath"];[ud synchronize];[self localModelReload:nil];}
+  else {[ud setObject:f.stringValue forKey:@"centerWhisperExe"];[ud synchronize];self.localModelStatus.stringValue=@"已保存 Whisper 路径";}
+}
+
 - (void)openLocalAIServices:(id)sender {
   if (!self.localAIWindow) {
     self.localAIWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,520) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
@@ -7121,6 +7266,11 @@ static BOOL ValidGroupName(NSString *raw) {
       else if(i==1){sw.action=@selector(localAIToggleComfy:);self.localComfyStatus=st;self.localComfySwitch=sw;}
       else {sw.action=@selector(localAIToggleWhisper:);self.localWhisperStatus=st;self.localWhisperSwitch=sw;}
       [card addSubview:sw];
+      ColorHoverButton *manage=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(382,48,94,26)];
+      manage.title=@"管理…"; manage.hoverColor=[NSColor systemPurpleColor]; manage.font=[NSFont systemFontOfSize:10];
+      manage.target=self;
+      manage.action=i==0?@selector(manageOllamaModels:):(i==1?@selector(manageComfyModels:):@selector(manageWhisperModels:));
+      [manage applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [card addSubview:manage];
     }
     ColorHoverButton *refresh=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,40,100,32)];
     refresh.title=@"刷新状态"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(refreshLocalAIServices:);
@@ -7222,7 +7372,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)localAIToggleComfy:(NSSwitch *)sender {
   if(sender.state==NSControlStateValueOn){
-    NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI"];
+    NSString *dir=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerComfyUIPath"] ?: [NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI"];
     NSString *py=[dir stringByAppendingPathComponent:@"venv/bin/python"];
     NSString *main=[dir stringByAppendingPathComponent:@"main.py"];
     if(![[NSFileManager defaultManager] isExecutableFileAtPath:py] || ![[NSFileManager defaultManager] fileExistsAtPath:main]){ self.localComfyStatus.stringValue=@"未找到 ~/ComfyUI"; sender.state=NSControlStateValueOff; return; }
@@ -10298,6 +10448,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.automationTable) return self.automationRules.count;
+  if (tableView == self.localModelTable) return self.localModelItems.count;
   if (tableView == self.radialItemsTable) return self.radialItemsCurrentItems.count;
   if (tableView == self.videoEditorTable) return self.videoEditorPaths.count;
   if (tableView == self.convertTable) return self.convertPaths.count;
@@ -10392,6 +10543,13 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,30)];
     NSTextField *l=[self label:self.videoEditorPaths[row].lastPathComponent size:11 bold:NO color:nil];
     l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,5,col.width-8,20); [v addSubview:l];
+    return v;
+  }
+  if (tableView == self.localModelTable) {
+    if (row < 0 || row >= (NSInteger)self.localModelItems.count) return nil;
+    NSView *v=[[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,28)];
+    NSTextField *l=[self label:self.localModelItems[row] size:11 bold:NO color:nil];
+    l.lineBreakMode=NSLineBreakByTruncatingMiddle; l.frame=NSMakeRect(4,4,col.width-8,20); [v addSubview:l];
     return v;
   }
   if (tableView == self.radialItemsTable) {
