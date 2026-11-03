@@ -1662,7 +1662,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextView *aiTTSText;
 @property (copy) NSString *aiTTSResultPath, *aiTTSTargetVideoPath, *aiTTSVideoResultPath;
 @property (strong) NSButton *aiTTSKeepOriginalCheck;
-@property (strong) NSPopUpButton *speechEnginePopup, *speechServicePopup;
+@property (strong) NSPopUpButton *speechEnginePopup, *speechServicePopup, *speechLanguagePopup;
 @property (strong) NSTextField *speechModelField;
 @property (strong) NSButton *speechServerCheck;
 @property (strong) NSTextView *voiceTextOutput, *meetingTranscript, *meetingSummary;
@@ -8185,23 +8185,35 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)aiExportData:(id)sender {
+  NSAlert *ask=[[NSAlert alloc] init]; ask.messageText=@"导出 AI 数据"; ask.informativeText=@"是否包含 API Key？包含后文件可被直接读取，请只在可信位置保存。";
+  [ask addButtonWithTitle:@"不包含 Key"]; [ask addButtonWithTitle:@"包含 Key"]; [ask addButtonWithTitle:@"取消"];
+  NSModalResponse choice=[ask runModal];
+  if (choice==NSAlertThirdButtonReturn) return;
+  BOOL includeKeys = choice==NSAlertSecondButtonReturn;
+  if (includeKeys && ![self requestAdminAuthentication]) return;
   NSSavePanel *sp = [NSSavePanel savePanel];
-  sp.nameFieldStringValue = @"ai-services.json";
+  sp.nameFieldStringValue = includeKeys ? @"ai-services-with-keys.json" : @"ai-services.json";
   sp.allowedFileTypes = @[@"json", @"csv"];
   if ([sp runModal] != NSModalResponseOK) return;
   NSString *path = sp.URL.path;
+  NSMutableArray *exportEntries=[NSMutableArray array];
+  for (NSDictionary *e in self.aiEntries) {
+    NSMutableDictionary *m=[e mutableCopy];
+    if (!includeKeys) [m removeObjectForKey:@"api"];
+    [exportEntries addObject:m];
+  }
   if ([path.pathExtension.lowercaseString isEqualToString:@"csv"]) {
     NSMutableString *csv = [NSMutableString stringWithString:@"名称,余量,链接地址(API),API Key,备注\n"];
-    for (NSDictionary *e in self.aiEntries) {
-      [csv appendFormat:@"%@,%@,%@,%@,%@\n", [self csvEscaped:e[@"name"]], [self csvEscaped:e[@"quota"]],
-       [self csvEscaped:e[@"endpoint"]], [self csvEscaped:e[@"api"]], [self csvEscaped:e[@"note"]]];
+    for (NSDictionary *e in exportEntries) {
+      [csv appendFormat:@"%@,%@,%@,%@,%@\n", [self csvEscaped:e[@"name"]], [self csvEscaped:e[@"quota"]], [self csvEscaped:e[@"endpoint"]], [self csvEscaped:e[@"api"]], [self csvEscaped:e[@"note"]]];
     }
     [csv writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
   } else {
-    NSData *d = [NSJSONSerialization dataWithJSONObject:self.aiEntries options:NSJSONWritingPrettyPrinted error:NULL];
+    NSData *d = [NSJSONSerialization dataWithJSONObject:exportEntries options:NSJSONWritingPrettyPrinted error:NULL];
     [d writeToFile:path atomically:YES];
   }
-  [self showToast:@"已导出 AI 数据"];
+  [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions:@(0600)} ofItemAtPath:path error:NULL];
+  [self showToast:includeKeys?@"已导出 AI 数据（含 Key）":@"已导出 AI 数据（不含 Key）"];
 }
 
 - (NSArray<NSString *> *)parseCSVLine:(NSString *)line {
@@ -8261,11 +8273,16 @@ static BOOL ValidGroupName(NSString *raw) {
       NSDictionary *d = item;
       NSString *name = d[@"name"] ?: d[@"名称"];
       if (!name.length) continue;
-      [incoming addObject:@{@"name": name,
+      NSMutableDictionary *item=[@{@"name": name,
                             @"quota": d[@"quota"] ?: d[@"余量"] ?: @"",
                             @"endpoint": d[@"endpoint"] ?: d[@"链接地址(API)"] ?: d[@"链接地址"] ?: @"",
                             @"api": d[@"api"] ?: d[@"API Key"] ?: d[@"apikey"] ?: @"",
-                            @"note": d[@"note"] ?: d[@"备注"] ?: @""}];
+                            @"note": d[@"note"] ?: d[@"备注"] ?: @""} mutableCopy];
+      if ([d[@"kid"] isKindOfClass:[NSString class]]) item[@"kid"]=d[@"kid"];
+      if ([d[@"modelCategory"] isKindOfClass:[NSString class]]) item[@"modelCategory"]=d[@"modelCategory"];
+      if ([d[@"apiBase"] isKindOfClass:[NSString class]]) item[@"apiBase"]=d[@"apiBase"];
+      if ([d[@"model"] isKindOfClass:[NSString class]]) item[@"model"]=d[@"model"];
+      [incoming addObject:item];
     }
   } else {
     NSArray *lines = [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
@@ -8289,11 +8306,28 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger added = 0, updated = 0;
   for (NSDictionary *e in incoming) {
     NSInteger idx = NSNotFound;
-    for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
-      if ([self.aiEntries[i][@"name"] ?: @"" isEqualToString:e[@"name"]]) { idx = i; break; }
+    NSString *incomingKid = e[@"kid"];
+    if (incomingKid.length) {
+      for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
+        if ([self.aiEntries[i][@"kid"] isEqualToString:incomingKid]) { idx = i; break; }
+      }
+    }
+    if (idx == NSNotFound) {
+      for (NSInteger i = 0; i < (NSInteger)self.aiEntries.count; i++) {
+        if ([self.aiEntries[i][@"name"] ?: @"" isEqualToString:e[@"name"]]) { idx = i; break; }
+      }
     }
     if (idx == NSNotFound) { [self.aiEntries addObject:e]; added++; }
-    else { self.aiEntries[idx] = e; updated++; }
+    else {
+      NSMutableDictionary *merged=[self.aiEntries[idx] mutableCopy];
+      for (NSString *k in e) {
+        id v=e[k];
+        if ([v isKindOfClass:[NSString class]] && ![v length]) continue;
+        merged[k]=v;
+      }
+      if (![e[@"api"] length]) merged[@"api"]=self.aiEntries[idx][@"api"] ?: @"";
+      self.aiEntries[idx] = merged; updated++;
+    }
   }
   [self saveAIEntries];
   self.aiPage = 0;
@@ -22598,7 +22632,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiVideoModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(190,520,230,28)];
     self.aiVideoModelField.placeholderString=@"视频模型";
     self.aiVideoModelField.font=[NSFont systemFontOfSize:11];
-    self.aiVideoModelField.editable=NO;
+    self.aiVideoModelField.editable=YES;
     self.aiVideoModelField.toolTip=@"从下拉列表选择可用视频模型";
     [cv addSubview:self.aiVideoModelField];
     self.aiVideoDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(426,520,84,28) pullsDown:NO];
@@ -22617,7 +22651,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [gen applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gen];
     self.aiVideoURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,486,610,28)];
     self.aiVideoURLField.placeholderString=@"视频生成/任务 API 地址";
-    self.aiVideoURLField.editable=NO; self.aiVideoURLField.selectable=YES;
+    self.aiVideoURLField.editable=YES; self.aiVideoURLField.selectable=YES;
     self.aiVideoURLField.toolTip=@"根据所选 AI 服务自动填写；不会跟随手动输入改变";
     [cv addSubview:self.aiVideoURLField];
     NSScrollView *inScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,300,610,170)];
@@ -23491,7 +23525,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [cv addSubview:self.aiEditSizePopup];
     self.aiEditURLField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,546,592,28)];
     self.aiEditURLField.placeholderString=@"图片编辑 API 地址";
-    self.aiEditURLField.editable=NO; self.aiEditURLField.selectable=YES;
+    self.aiEditURLField.editable=YES; self.aiEditURLField.selectable=YES;
     self.aiEditURLField.toolTip=@"根据所选 AI 服务自动填写";
     [cv addSubview:self.aiEditURLField];
     ColorHoverButton *pick=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,504,120,30)];
@@ -23879,7 +23913,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiImageModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(190,520,230,28)];
     self.aiImageModelField.placeholderString=@"图片模型";
     self.aiImageModelField.font=[NSFont systemFontOfSize:11];
-    self.aiImageModelField.editable=NO;
+    self.aiImageModelField.editable=YES;
     self.aiImageModelField.toolTip=@"从下拉列表选择可用图片模型";
     [cv addSubview:self.aiImageModelField];
     self.aiImageSizePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(426,520,84,28) pullsDown:NO];
@@ -23898,7 +23932,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [gen applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:gen];
     self.aiImageURLField = [[NSTextField alloc] initWithFrame:NSMakeRect(24,486,610,28)];
     self.aiImageURLField.placeholderString=@"图片生成 API 地址";
-    self.aiImageURLField.editable=NO; self.aiImageURLField.selectable=YES;
+    self.aiImageURLField.editable=YES; self.aiImageURLField.selectable=YES;
     self.aiImageURLField.toolTip=@"根据所选 AI 服务自动填写";
     [cv addSubview:self.aiImageURLField];
     NSScrollView *inScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,300,610,170)];
@@ -24905,7 +24939,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"%@\"\r\n\r\n%@\r\n", boundary, name, value] dataUsingEncoding:NSUTF8StringEncoding]];
     };
     field(@"model", model ?: @"whisper-1");
-    field(@"language", @"zh");
+    NSString *lang=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerSTTLanguage"] ?: @"auto";
+    if (![lang isEqualToString:@"auto"]) field(@"language", lang);
     field(@"response_format", @"json");
     [body appendData:[[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
     [body appendData:fileData];
@@ -25042,10 +25077,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     t.frame = NSMakeRect(24, 286, 300, 24); [cv addSubview:t];
     NSTextField *h = [self label:@"本机使用 Apple Speech；第三方使用 OpenAI 兼容 /audio/transcriptions 接口" size:10 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame = NSMakeRect(24, 264, 450, 18); [cv addSubview:h];
-    self.speechEnginePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(150, 218, 320, 28) pullsDown:NO];
+    self.speechEnginePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(150, 218, 220, 28) pullsDown:NO];
     [self.speechEnginePopup addItemsWithTitles:@[@"本机 Apple Speech（离线）", @"第三方 Whisper / 兼容 API", @"本地 Whisper"]];
     self.speechEnginePopup.target = self; self.speechEnginePopup.action = @selector(speechSettingChanged:);
     [cv addSubview:self.speechEnginePopup];
+    self.speechLanguagePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(378,218,92,28) pullsDown:NO];
+    [self.speechLanguagePopup addItemsWithTitles:@[@"语言:自动",@"语言:中文",@"语言:英文",@"语言:日文"]];
+    self.speechLanguagePopup.toolTip=@"第三方转写的语言提示";
+    [cv addSubview:self.speechLanguagePopup];
     NSTextField *el = [self label:@"转写引擎" size:11 bold:NO color:[NSColor secondaryLabelColor]];
     el.frame = NSMakeRect(24, 224, 110, 18); [cv addSubview:el];
     self.speechServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(150, 176, 320, 28) pullsDown:NO];
@@ -25094,6 +25133,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (engine < 0 || engine > 2) engine = 0;
   [self.speechEnginePopup selectItemAtIndex:engine];
   self.speechModelField.stringValue = [self sttModelName];
+  NSString *lang=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerSTTLanguage"] ?: @"auto";
+  NSArray *langVals=@[@"auto",@"zh",@"en",@"ja"];
+  [self.speechLanguagePopup selectItemAtIndex:MAX(0,[langVals indexOfObject:lang])];
   NSInteger sel = [self sttSelectedServiceIndex];
   NSArray *svc = [self sttServices];
   if (sel >= 0 && sel < (NSInteger)svc.count) {
@@ -25124,6 +25166,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger engine = self.speechEnginePopup.indexOfSelectedItem;
   self.speechServicePopup.enabled = engine == 1;
   self.speechModelField.enabled = engine == 1;
+  self.speechLanguagePopup.enabled = engine == 1;
   self.speechServerCheck.enabled = engine == 0;
 }
 
@@ -25132,6 +25175,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [ud setInteger:self.speechEnginePopup.indexOfSelectedItem forKey:@"centerSTTEngine"];
   if (self.speechServicePopup.selectedItem.representedObject) [ud setInteger:[self.speechServicePopup.selectedItem.representedObject integerValue] forKey:@"centerSTTServiceIndex"];
   [ud setObject:(self.speechModelField.stringValue.length ? self.speechModelField.stringValue : @"whisper-1") forKey:@"centerSTTModel"];
+  NSArray *langVals=@[@"auto",@"zh",@"en",@"ja"];
+  [ud setObject:langVals[MAX(0,MIN(3,self.speechLanguagePopup.indexOfSelectedItem))] forKey:@"centerSTTLanguage"];
   [ud setBool:(self.speechServerCheck.state == NSControlStateValueOn) forKey:@"centerSTTAllowServer"];
   [ud synchronize];
   [self.speechSettingsWindow orderOut:nil];
