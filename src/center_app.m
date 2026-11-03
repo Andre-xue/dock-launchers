@@ -1421,7 +1421,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiImageURLField, *aiImageStatus, *aiVideoURLField, *aiVideoStatus;
 @property (strong) NSImageView *aiImagePreview, *aiVideoPreview;
 @property (copy) NSString *aiImageResultPath, *aiVideoResultPath, *aiVideoTaskID, *aiVideoPollURL, *aiVideoFirstFramePath;
-@property (strong) NSWindow *aiImageBatchWindow, *aiGalleryWindow;
+@property (strong) NSWindow *aiImageBatchWindow, *aiGalleryWindow, *aiVideoBatchWindow;
+@property (strong) NSTextView *aiVideoBatchTextView;
+@property (strong) NSMutableArray<NSString *> *aiVideoBatchQueue;
+@property BOOL aiVideoBatchRunning;
 @property (strong) NSTextView *aiImageBatchTextView;
 @property (strong) NSMutableArray<NSString *> *aiImageBatchQueue;
 @property BOOL aiImageBatchRunning;
@@ -21704,6 +21707,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     videoDir.title=@"保存位置…"; videoDir.hoverColor=[NSColor systemTealColor]; videoDir.target=self; videoDir.action=@selector(chooseAIVideoDirectory:);
     videoDir.toolTip=@"单独设置 AI 视频保存目录";
     [videoDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:videoDir];
+    ColorHoverButton *batch = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(494,20,110,28)];
+    batch.title=@"批量生成…"; batch.hoverColor=[NSColor systemPurpleColor]; batch.target=self; batch.action=@selector(showAIVideoBatch:);
+    [batch applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:batch];
     self.aiVideoStatus = [self label:@"输入提示词后点击生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.aiVideoStatus.frame=NSMakeRect(360,266,274,18); [cv addSubview:self.aiVideoStatus];
     self.aiVideoPreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,60,610,190)];
@@ -21715,6 +21721,69 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self reloadAIVideoServices];
   [NSApp activateIgnoringOtherApps:YES];
   [self.aiVideoWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)showAIVideoBatch:(id)sender {
+  if (!self.aiVideoBatchWindow) {
+    self.aiVideoBatchWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,560,420) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiVideoBatchWindow.title = @"AI 视频批量生成";
+    self.aiVideoBatchWindow.releasedWhenClosed = NO;
+    NSView *cv = self.aiVideoBatchWindow.contentView;
+    NSTextField *t = [self label:@"视频批量生成" size:18 bold:YES color:nil];
+    t.frame=NSMakeRect(24,376,300,24); [cv addSubview:t];
+    NSTextField *h = [self label:@"每行一个提示词；使用当前服务/模型/首帧依次排队生成" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    h.frame=NSMakeRect(24,354,510,18); [cv addSubview:h];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,90,512,250)];
+    sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.aiVideoBatchTextView = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+    self.aiVideoBatchTextView.font=[NSFont systemFontOfSize:12];
+    self.aiVideoBatchTextView.string=@"一只猫在草地上奔跑\n雨夜赛博朋克城市街道\n海边日落延时摄影";
+    sv.documentView=self.aiVideoBatchTextView; [cv addSubview:sv];
+    ColorHoverButton *start = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,48,120,32)];
+    start.title=@"开始批量"; start.hoverColor=[NSColor systemGreenColor]; start.target=self; start.action=@selector(startAIVideoBatch:);
+    [start applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:start];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(436,48,100,32)];
+    close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeAIVideoBatch:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.aiVideoBatchWindow center];
+  }
+  [self forceWindowToFront:self.aiVideoBatchWindow];
+}
+
+- (void)closeAIVideoBatch:(id)sender { [self.aiVideoBatchWindow orderOut:nil]; }
+
+- (void)startAIVideoBatch:(id)sender {
+  NSMutableArray *lines = [NSMutableArray array];
+  for (NSString *line in [self.aiVideoBatchTextView.string componentsSeparatedByString:@"\n"]) {
+    NSString *v = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (v.length) [lines addObject:v];
+  }
+  if (!lines.count) { [self showToast:@"请每行输入一个提示词"]; return; }
+  if (self.aiVideoBusy) { [self showToast:@"当前正在生成，请稍后"]; return; }
+  self.aiVideoBatchQueue = lines;
+  self.aiVideoBatchRunning = YES;
+  [self.aiVideoBatchWindow orderOut:nil];
+  [self runNextAIVideoBatch];
+}
+
+- (void)runNextAIVideoBatch {
+  if (!self.aiVideoBatchRunning) return;
+  if (self.aiVideoBusy) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.5*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [self runNextAIVideoBatch]; });
+    return;
+  }
+  if (!self.aiVideoBatchQueue.count) {
+    self.aiVideoBatchRunning = NO;
+    self.aiVideoStatus.stringValue = @"视频批量生成完成";
+    [self showToast:@"视频批量生成完成"];
+    return;
+  }
+  NSString *prompt = self.aiVideoBatchQueue.firstObject;
+  [self.aiVideoBatchQueue removeObjectAtIndex:0];
+  self.aiVideoPrompt.string = prompt;
+  self.aiVideoStatus.stringValue = [NSString stringWithFormat:@"批量生成：%@", prompt];
+  [self generateAIVideo:nil];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.8*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [self runNextAIVideoBatch]; });
 }
 
 - (void)pickAIVideoFirstFrame:(id)sender {
@@ -22098,6 +22167,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.aiVideoTaskID = nil;
   self.aiVideoPollURL = nil;
   self.aiVideoFirstFramePath = nil;
+  self.aiVideoBatchRunning = NO;
+  [self.aiVideoBatchQueue removeAllObjects];
   self.aiVideoStatus.stringValue = @"已清空";
 }
 - (void)clearAIEditPanel:(id)sender {
