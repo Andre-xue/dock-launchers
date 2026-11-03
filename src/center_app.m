@@ -1553,6 +1553,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSMutableDictionary *captureHistoryTags;
 @property (strong) NSTextField *captureStatusLabel, *captureImagePathField, *captureVideoPathField;
 @property (strong) NSTask *captureTask;
+@property (strong) NSTask *compressCurrentTask;
+@property BOOL compressCancelled;
 @property (strong) NSPopUpButton *captureDelayPopup, *captureDurationPopup, *captureScenePopup, *captureQualityPopup, *capturePiPPopup, *captureRecordCountdownPopup, *captureMicGainPopup, *capturePresetPopup, *captureDisplayPopup;
 @property (strong) id clickGlobalMonitor, clickLocalMonitor;
 @property (strong) NSMutableArray *clickRingWindows;
@@ -20182,7 +20184,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.compressSpinner.displayedWhenStopped = NO;
     [cv addSubview:self.compressSpinner];
     self.compressStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    self.compressStatus.frame = NSMakeRect(50, 30, 540, 18); [cv addSubview:self.compressStatus];
+    self.compressStatus.frame = NSMakeRect(50, 30, 450, 18); [cv addSubview:self.compressStatus];
+    ColorHoverButton *cancelCompress = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(508,26,88,26)];
+    cancelCompress.title=@"取消"; cancelCompress.hoverColor=[NSColor systemRedColor];
+    cancelCompress.target=self; cancelCompress.action=@selector(cancelCompressTask:);
+    [cancelCompress applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancelCompress];
     self.compressPaths = [NSMutableArray array];
     [self.compressWindow center];
   }
@@ -20240,8 +20246,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)runCompressTask:(NSString *)launch args:(NSArray<NSString *> *)args currentDir:(NSString *)dir completion:(void (^)(BOOL, NSString *))completion {
+  self.compressCancelled = NO;
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSTask *t = [[NSTask alloc] init];
+    self.compressCurrentTask = t;
     t.launchPath = launch;
     t.arguments = args;
     if (dir) t.currentDirectoryURL = [NSURL fileURLWithPath:dir];
@@ -20255,8 +20263,20 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSData *ed = [err.fileHandleForReading readDataToEndOfFile];
     [t waitUntilExit];
     NSString *msg = [[NSString alloc] initWithData:ed encoding:NSUTF8StringEncoding] ?: @"";
-    dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(t.terminationStatus == 0, msg); });
+    dispatch_async(dispatch_get_main_queue(), ^{
+      self.compressCurrentTask = nil;
+      if (self.compressCancelled) { self.compressCancelled = NO; self.compressStatus.stringValue = @"已取消"; [self.compressSpinner stopAnimation:nil]; return; }
+      if (completion) completion(t.terminationStatus == 0, msg);
+    });
   });
+}
+
+- (void)cancelCompressTask:(id)sender {
+  self.compressCancelled = YES;
+  NSTask *t = self.compressCurrentTask;
+  if (t && t.isRunning) [t terminate];
+  [self.compressSpinner stopAnimation:nil];
+  self.compressStatus.stringValue = @"正在取消…";
 }
 
 - (void)compressZip:(id)sender {
