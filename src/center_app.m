@@ -22920,6 +22920,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *clearEdit=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(240,24,110,30)];
     clearEdit.title=@"清空全部"; clearEdit.hoverColor=[NSColor systemRedColor]; clearEdit.target=self; clearEdit.action=@selector(clearAIEditPanel:);
     [clearEdit applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:clearEdit];
+    ColorHoverButton *editDir=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(358,24,120,30)];
+    editDir.title=@"保存位置…"; editDir.hoverColor=[NSColor systemPurpleColor]; editDir.target=self; editDir.action=@selector(chooseAIEditDirectory:);
+    editDir.toolTip=@"设置 AI 图片编辑默认保存目录";
+    [editDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:editDir];
     [self.aiEditWindow center];
   }
   [self reloadAIEditServices];
@@ -23038,7 +23042,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       }
       NSBitmapImageRep *orp=[[NSBitmapImageRep alloc] initWithData:[output TIFFRepresentation]]; NSData *png=[orp representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
       NSDateFormatter *df=[[NSDateFormatter alloc] init];df.dateFormat=@"yyyyMMdd-HHmmss";
-      NSString *path=[[weakSelf aiGeneratedDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"AI局部重绘-%@.png",[df stringFromDate:[NSDate date]]]];
+      NSString *path=[[weakSelf aiEditOutputDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"AI局部重绘-%@.png",[df stringFromDate:[NSDate date]]]];
       [png writeToFile:path atomically:YES];
       dispatch_async(dispatch_get_main_queue(),^{
         weakSelf.aiEditResultPath=path; if(weakSelf.aiEditResultPreview)weakSelf.aiEditResultPreview.image=output;
@@ -23105,7 +23109,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     }
     void (^finish)(NSData*)=^(NSData *data){
       if(!data.length){dispatch_async(dispatch_get_main_queue(),^{weakSelf.aiEditBusy=NO;weakSelf.aiEditStatus.stringValue=@"图片下载失败";});return;}
-      NSString *dir=[self aiGeneratedDirectory];
+      NSString *dir=[self aiEditOutputDirectory];
       [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
       NSDateFormatter *df=[[NSDateFormatter alloc] init];df.dateFormat=@"yyyyMMdd-HHmmss";
       NSString *path=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"AI编辑-%@.png",[df stringFromDate:[NSDate date]]]];
@@ -23424,6 +23428,24 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *dir = [custom stringByExpandingTildeInPath];
   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
   return dir;
+}
+
+- (NSString *)aiEditOutputDirectory {
+  NSString *custom = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerAIEditDirectory"];
+  if (!custom.length) return [self aiGeneratedDirectory];
+  NSString *dir = [custom stringByExpandingTildeInPath];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return dir;
+}
+
+- (void)chooseAIEditDirectory:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.canChooseFiles = NO; p.canChooseDirectories = YES; p.canCreateDirectories = YES; p.allowsMultipleSelection = NO;
+  p.prompt = @"选择 AI 图片编辑保存目录";
+  if ([p runModal] != NSModalResponseOK) return;
+  [[NSUserDefaults standardUserDefaults] setObject:p.URL.path forKey:@"centerAIEditDirectory"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self showToast:[NSString stringWithFormat:@"图片编辑保存到：%@", p.URL.path]];
 }
 
 - (void)chooseAIVideoDirectory:(id)sender {
