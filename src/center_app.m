@@ -1421,7 +1421,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiImageURLField, *aiImageStatus, *aiVideoURLField, *aiVideoStatus;
 @property (strong) NSImageView *aiImagePreview, *aiVideoPreview;
 @property (copy) NSString *aiImageResultPath, *aiVideoResultPath, *aiVideoTaskID, *aiVideoPollURL, *aiVideoFirstFramePath;
-@property (strong) NSWindow *aiImageBatchWindow, *aiGalleryWindow, *aiVideoBatchWindow;
+@property (strong) NSWindow *aiImageBatchWindow, *aiGalleryWindow, *aiVideoBatchWindow, *aiVideoHistoryWindow;
+@property (strong) NSTableView *aiVideoHistoryTable;
+@property (strong) NSArray *aiVideoHistoryItems;
 @property (strong) NSTextView *aiVideoBatchTextView;
 @property (strong) NSMutableArray<NSString *> *aiVideoBatchQueue;
 @property BOOL aiVideoBatchRunning;
@@ -9836,6 +9838,7 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
   if (tableView == self.automationTable) return self.automationRules.count;
+  if (tableView == self.aiVideoHistoryTable) return self.aiVideoHistoryItems.count;
   if (tableView == self.shelfTable) return self.shelfVisiblePaths.count;
   if (tableView == self.dupTable) return self.dupItems.count;
   if (tableView == self.captureHistoryTable) return self.captureHistoryItems.count;
@@ -9912,6 +9915,16 @@ static BOOL ValidGroupName(NSString *raw) {
       l.lineBreakMode = NSLineBreakByTruncatingMiddle;
       l.frame = NSMakeRect(4, 10, col.width - 8, 18); [v addSubview:l];
     }
+    return v;
+  }
+  if (tableView == self.aiVideoHistoryTable) {
+    if (row < 0 || row >= (NSInteger)self.aiVideoHistoryItems.count) return nil;
+    NSDictionary *it = self.aiVideoHistoryItems[row];
+    NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0,0,col.width,32)];
+    NSTextField *l = [self label:it[@"name"] ?: @"" size:10.5 bold:NO color:nil];
+    l.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    l.toolTip = it[@"path"];
+    l.frame = NSMakeRect(4,7,col.width-8,18); [v addSubview:l];
     return v;
   }
   if (tableView == self.shelfTable) {
@@ -21658,6 +21671,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     t.frame=NSMakeRect(24,578,300,28); [cv addSubview:t];
     NSTextField *h = [self label:@"异步任务：提交后自动轮询，完成后可预览/保存" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame=NSMakeRect(24,556,560,18); [cv addSubview:h];
+    ColorHoverButton *historyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(358,578,112,28)];
+    historyBtn.title=@"视频历史…"; historyBtn.hoverColor=[NSColor systemOrangeColor]; historyBtn.target=self; historyBtn.action=@selector(showAIVideoHistory:);
+    [historyBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:historyBtn];
     self.aiVideoServicePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,520,160,28) pullsDown:NO];
     self.aiVideoServicePopup.target=self; self.aiVideoServicePopup.action=@selector(aiVideoServiceChanged:);
     [cv addSubview:self.aiVideoServicePopup];
@@ -21726,6 +21742,77 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self reloadAIVideoServices];
   [NSApp activateIgnoringOtherApps:YES];
   [self.aiVideoWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)showAIVideoHistory:(id)sender {
+  if (!self.aiVideoHistoryWindow) {
+    self.aiVideoHistoryWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiVideoHistoryWindow.title = @"AI 视频历史";
+    self.aiVideoHistoryWindow.releasedWhenClosed = NO;
+    NSView *cv = self.aiVideoHistoryWindow.contentView;
+    NSTextField *t = [self label:@"AI 视频历史" size:18 bold:YES color:nil];
+    t.frame = NSMakeRect(24,456,300,24); [cv addSubview:t];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(20,70,600,370)];
+    sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    self.aiVideoHistoryTable = [[NSTableView alloc] initWithFrame:sv.contentView.bounds];
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"vfile"];
+    col.title = @"视频文件"; col.width = 580;
+    [self.aiVideoHistoryTable addTableColumn:col];
+    self.aiVideoHistoryTable.rowHeight = 32;
+    self.aiVideoHistoryTable.dataSource = self; self.aiVideoHistoryTable.delegate = self;
+    self.aiVideoHistoryTable.target = self; self.aiVideoHistoryTable.doubleAction = @selector(openAIVideoHistoryRow:);
+    sv.documentView = self.aiVideoHistoryTable; [cv addSubview:sv];
+    ColorHoverButton *open = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(20,24,100,30)];
+    open.title=@"打开"; open.hoverColor=[NSColor systemGreenColor]; open.target=self; open.action=@selector(openAIVideoHistoryRow:);
+    [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
+    ColorHoverButton *reveal = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(128,24,120,30)];
+    reveal.title=@"在 Finder 显示"; reveal.hoverColor=[NSColor systemTealColor]; reveal.target=self; reveal.action=@selector(revealAIVideoHistoryRow:);
+    [reveal applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:reveal];
+    ColorHoverButton *refresh = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(256,24,90,30)];
+    refresh.title=@"刷新"; refresh.hoverColor=[NSColor systemBlueColor]; refresh.target=self; refresh.action=@selector(refreshAIVideoHistory:);
+    [refresh applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:refresh];
+    ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(524,24,96,30)];
+    close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeAIVideoHistory:);
+    [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self.aiVideoHistoryWindow center];
+  }
+  [self refreshAIVideoHistory:nil];
+  [self forceWindowToFront:self.aiVideoHistoryWindow];
+}
+
+- (void)closeAIVideoHistory:(id)sender { [self.aiVideoHistoryWindow orderOut:nil]; }
+
+- (void)refreshAIVideoHistory:(id)sender {
+  NSMutableArray *items = [NSMutableArray array];
+  NSMutableSet *seen = [NSMutableSet set];
+  for (NSString *dir in @[[self aiVideoOutputDirectory], [self aiGeneratedDirectory]]) {
+    NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+    for (NSString *f in files) {
+      if (![@[@"mp4",@"mov",@"m4v"] containsObject:f.pathExtension.lowercaseString]) continue;
+      NSString *p = [dir stringByAppendingPathComponent:f];
+      if ([seen containsObject:p]) continue;
+      [seen addObject:p];
+      NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:p error:NULL] ?: @{};
+      [items addObject:@{@"path": p, @"name": f, @"date": attr[NSFileModificationDate] ?: [NSDate date]}];
+    }
+  }
+  [items sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b){ return [b[@"date"] compare:a[@"date"]]; }];
+  self.aiVideoHistoryItems = items;
+  [self.aiVideoHistoryTable reloadData];
+}
+
+- (void)openAIVideoHistoryRow:(id)sender {
+  NSInteger row = self.aiVideoHistoryTable.selectedRow;
+  if (row < 0) row = self.aiVideoHistoryTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.aiVideoHistoryItems.count) return;
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.aiVideoHistoryItems[row][@"path"]]];
+}
+
+- (void)revealAIVideoHistoryRow:(id)sender {
+  NSInteger row = self.aiVideoHistoryTable.selectedRow;
+  if (row < 0) row = self.aiVideoHistoryTable.clickedRow;
+  if (row < 0 || row >= (NSInteger)self.aiVideoHistoryItems.count) return;
+  [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.aiVideoHistoryItems[row][@"path"]]]];
 }
 
 - (void)showAIVideoBatch:(id)sender {
