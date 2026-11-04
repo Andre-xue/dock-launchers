@@ -10529,6 +10529,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)comboBoxSelectionDidChange:(NSNotification *)note {
+  if(note.object == self.translationModelField){ [self saveTranslationModelSelection]; return; }
   if (note.object != self.dialogAIName) return;
   NSComboBox *cb = note.object;
   NSInteger idx = cb.indexOfSelectedItem;
@@ -19942,11 +19943,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }] resume];
 }
 
+- (NSString *)translationModelDefaultsKeyForEntry:(NSDictionary *)e {
+  NSString *name=e[@"name"] ?: e[@"apiBase"] ?: @"default";
+  return [@"centerTranslationModel:" stringByAppendingString:name];
+}
+
+- (void)saveTranslationModelSelection {
+  NSDictionary *e=self.translationProviderPopup.selectedItem.representedObject;
+  NSString *model=[self.translationModelField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+  if(!e || !model.length)return;
+  [[NSUserDefaults standardUserDefaults] setObject:model forKey:[self translationModelDefaultsKeyForEntry:e]];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (void)translationModelChanged:(id)sender { [self saveTranslationModelSelection]; }
+
 - (void)translationProviderChanged:(id)sender {
   NSDictionary *e = self.translationProviderPopup.selectedItem.representedObject;
   if (!e) return;
   NSDictionary *cfg = [self translationAPIConfigForEntry:e];
-  self.translationModelField.stringValue = cfg[@"model"] ?: @"";
+  NSString *savedModel = [[NSUserDefaults standardUserDefaults] stringForKey:[self translationModelDefaultsKeyForEntry:e]];
+  self.translationModelField.stringValue = savedModel.length ? savedModel : (cfg[@"model"] ?: @"");
   if (!cfg) self.translationStatus.stringValue = @"该服务暂无可用 API 地址，可在备注中写「API 地址：https://…」";
   else {
     self.translationStatus.stringValue = @"";
@@ -21455,6 +21472,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.translationModelField.placeholderString = @"模型";
     self.translationModelField.editable = NO; self.translationModelField.completes = NO;
     self.translationModelField.font = [NSFont systemFontOfSize:10];
+    self.translationModelField.delegate = self;
+    self.translationModelField.target = self; self.translationModelField.action = @selector(translationModelChanged:);
     [cv addSubview:self.translationModelField];
     ColorHoverButton *fetchModels = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(558, 458, 64, 28)];
     fetchModels.title = @"获取模型"; fetchModels.hoverColor = [NSColor systemBlueColor];
@@ -22894,6 +22913,53 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [web loadHTMLString:html baseURL:nil];
 }
 
+- (NSString *)docxXMLParagraphsForText:(NSString *)text bold:(BOOL)bold {
+  NSMutableString *out=[NSMutableString string];
+  NSString *esc=[self htmlEscape:text ?: @""];
+  for(NSString *line in [esc componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
+    if(line.length){
+      [out appendFormat:@"<w:p><w:r>%@<w:t xml:space=\"preserve\">%@</w:t></w:r></w:p>",bold?@"<w:rPr><w:b/></w:rPr>":@"",line];
+    } else [out appendString:@"<w:p/>"];
+  }
+  return out;
+}
+
+- (BOOL)writeBilingualDOCX:(NSString *)source translated:(NSString *)translated toPath:(NSString *)out name:(NSString *)name {
+  NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dl-docx-%lld",(long long)[[NSDate date] timeIntervalSince1970]]];
+  NSFileManager *fm=[NSFileManager defaultManager];
+  [fm removeItemAtPath:tmp error:NULL];
+  [fm createDirectoryAtPath:[tmp stringByAppendingPathComponent:@"_rels"] withIntermediateDirectories:YES attributes:nil error:NULL];
+  [fm createDirectoryAtPath:[tmp stringByAppendingPathComponent:@"word/_rels"] withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *contentTypes=@"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>";
+  NSString *rels=@"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>";
+  NSString *docRels=@"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"></Relationships>";
+  NSString *preamble=@"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>";
+  NSMutableString *xml=[NSMutableString stringWithFormat:@"%@<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val=\"32\"/></w:rPr><w:t xml:space=\"preserve\">双语对照：%@</w:t></w:r></w:p>",preamble,[self htmlEscape:name]];
+  [xml appendString:@"<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"4500\"/><w:gridCol w:w=\"4500\"/></w:tblGrid>"];
+  [xml appendString:@"<w:tr><w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"pct\"/></w:tcPr>"];
+  [xml appendString:[self docxXMLParagraphsForText:@"原文" bold:YES]];
+  [xml appendString:@"</w:tc><w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"pct\"/></w:tcPr>"];
+  [xml appendString:[self docxXMLParagraphsForText:@"译文" bold:YES]];
+  [xml appendString:@"</w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"pct\"/></w:tcPr>"];
+  [xml appendString:[self docxXMLParagraphsForText:source bold:NO]];
+  [xml appendString:@"</w:tc><w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"pct\"/></w:tcPr>"];
+  [xml appendString:[self docxXMLParagraphsForText:translated bold:NO]];
+  [xml appendString:@"</w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\"/></w:sectPr></w:body></w:document>"];
+  NSDictionary *files=@{@"[Content_Types].xml":contentTypes,@"_rels/.rels":rels,@"word/_rels/document.xml.rels":docRels,@"word/document.xml":xml};
+  for(NSString *rel in files){
+    NSString *path=[tmp stringByAppendingPathComponent:rel];
+    [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:NULL];
+    [files[rel] writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  }
+  [[NSFileManager defaultManager] removeItemAtPath:out error:NULL];
+  NSTask *zip=[[NSTask alloc] init]; zip.launchPath=@"/usr/bin/zip"; zip.currentDirectoryURL=[NSURL fileURLWithPath:tmp];
+  zip.arguments=@[@"-r",@"-X",out,@"[Content_Types].xml",@"_rels",@"word"];
+  zip.standardOutput=[NSFileHandle fileHandleWithNullDevice]; zip.standardError=[NSFileHandle fileHandleWithNullDevice];
+  @try{[zip launch];[zip waitUntilExit];}@catch(NSException *e){}
+  [fm removeItemAtPath:tmp error:NULL];
+  return [[NSFileManager defaultManager] fileExistsAtPath:out] && [[[NSFileManager defaultManager] attributesOfItemAtPath:out error:NULL][NSFileSize] unsignedLongLongValue]>500;
+}
+
 - (void)exportBilingualTranslation {
   NSString *source=self.translationImportedText.length ? self.translationImportedText : self.translationSourceView.string;
   NSString *translated=self.translationResultView.string;
@@ -22919,13 +22985,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSString *txt=[NSString stringWithFormat:@"双语对照：%@\n\n原文\t译文\n%@\t%@\n",name,[source stringByReplacingOccurrencesOfString:@"\n" withString:@" "],[translated stringByReplacingOccurrencesOfString:@"\n" withString:@" "]];
     ok=[txt writeToFile:out atomically:YES encoding:NSUTF8StringEncoding error:&err];
   } else if([ext isEqualToString:@"docx"]){
-    NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-bilingual.html"];
-    [html writeToFile:tmp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/textutil"; t.arguments=@[@"-convert",@"docx",@"-output",out,tmp];
-    t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
-    @try{[t launch];[t waitUntilExit];}@catch(NSException *e){}
-    ok=[[NSFileManager defaultManager] fileExistsAtPath:out] && [[[NSFileManager defaultManager] attributesOfItemAtPath:out error:NULL][NSFileSize] unsignedLongLongValue]>100;
-    [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+    ok=[self writeBilingualDOCX:source translated:translated toPath:out name:name];
   } else {
     [self exportPDFHTML:html toPath:out];
     return;
