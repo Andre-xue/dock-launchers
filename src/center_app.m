@@ -19884,9 +19884,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (NSTextView *)translationTextViewAtFrame:(NSRect)frame {
-  NSScrollView *sv = [[NSScrollView alloc] initWithFrame:frame];
+  DLDropScrollView *sv = [[DLDropScrollView alloc] initWithFrame:frame];
   sv.hasVerticalScroller = YES;
   sv.borderType = NSBezelBorder;
+  sv.allowedExtensions = [NSSet setWithArray:@[@"txt",@"md",@"markdown",@"pdf",@"doc",@"docx",@"rtf",@"odt",@"png",@"jpg",@"jpeg",@"tiff",@"heic",@"webp"]];
+  __weak typeof(self) weakSelf=self;
+  sv.onPaths = ^(NSArray<NSString *> *paths){
+    NSMutableArray *urls=[NSMutableArray array];
+    for(NSString *path in paths)[urls addObject:[NSURL fileURLWithPath:path]];
+    [weakSelf translationFilesDropped:urls];
+  };
   NSTextView *tv = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
   tv.font = [NSFont systemFontOfSize:12];
   tv.richText = NO;
