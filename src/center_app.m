@@ -1711,6 +1711,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSArray *videoModelMarketModels;
 @property (strong) NSArray *videoModelMarketFiltered;
 @property (strong) NSString *videoGenPromptID;
+@property (strong) NSString *videoGenLastCheckpoint;
 @property NSTimeInterval videoGenStart;
 @property BOOL videoGenAutoStartedComfy;
 @property BOOL videoGenCancelled;
@@ -8291,7 +8292,9 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)videoGenCheckpointChanged:(id)sender {
-  NSString *n=(self.videoGenCheckpointPopup.titleOfSelectedItem ?: @"").lowercaseString;
+  NSString *raw=self.videoGenCheckpointPopup.titleOfSelectedItem ?: @"";
+  self.videoGenLastCheckpoint=raw;
+  NSString *n=raw.lowercaseString;
   NSString *neg;
   if([n containsString:@"anything"]||[n containsString:@"anime"]||[n containsString:@"counterfeit"]||[n containsString:@"meina"]){
     neg=@"blurry, low quality, distorted, watermark, bad hands, extra fingers, missing fingers, fused fingers, ugly, deformed, photo, realistic, photorealistic, 3d, cgi, live action, worst quality, jpeg artifacts, noise, bad anatomy, bad proportions, extra limbs, fused limbs, missing limbs, poorly drawn face, poorly drawn paws, text, logo, cropped, flicker, ghosting, inconsistent motion";
@@ -8313,6 +8316,8 @@ static BOOL ValidGroupName(NSString *raw) {
   NSArray *mms=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:mmDir error:NULL] ?: @[];
   [self.videoGenMotionPopup removeAllItems];
   for(NSString *f in mms) if([@[@"ckpt",@"safetensors"] containsObject:f.pathExtension.lowercaseString]) [self.videoGenMotionPopup addItemWithTitle:f];
+  NSString *selected=self.videoGenCheckpointPopup.titleOfSelectedItem ?: @"";
+  if(selected.length && ![selected isEqualToString:self.videoGenLastCheckpoint ?: @""])[self videoGenCheckpointChanged:nil];
   if(!ckpts.count) self.videoGenStatus.stringValue=@"未找到底模";
   else if(ckpts.count==1) self.videoGenStatus.stringValue=@"只有基础底模；可到「视频模型市场」下载写实/动漫底模";
   else if(!mms.count) self.videoGenStatus.stringValue=@"未找到 AnimateDiff 运动模块";
