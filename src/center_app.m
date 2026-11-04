@@ -21762,7 +21762,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       NSDictionary *it=items[i]; NSString *action=it[@"action"] ?: @"";
       if(!action.length)continue;
       NSInteger aid=5000+page*100+i;
-      [out addObject:@{@"id":@(aid),@"cat":@(page),@"title":it[@"title"] ?: @"",@"desc":[NSString stringWithFormat:@"菜单栏 · %@",module],@"radialAction":action}];
+      [out addObject:@{@"id":@(aid),@"cat":@(page),@"title":it[@"title"] ?: @"",@"desc":[NSString stringWithFormat:@"菜单栏 · 第 %ld 页",(long)(page+1)],@"radialAction":action}];
     }
   }
   return out;
@@ -21977,7 +21977,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if(!self.allShortcutDefs.count) self.allShortcutDefs = [self allGlobalActionDefs];
   [self.allShortcutCategoryPopup removeAllItems];
   if(self.radialPages.count){
-    for(NSInteger p=0;p<(NSInteger)self.radialPages.count;p++)[self.allShortcutCategoryPopup addItemWithTitle:[NSString stringWithFormat:@"%ld. %@",(long)(p+1),[self radialModuleTitleForPage:p]]];
+    for(NSInteger p=0;p<(NSInteger)self.radialPages.count;p++)[self.allShortcutCategoryPopup addItemWithTitle:[NSString stringWithFormat:@"第 %ld 页",(long)(p+1)]];
   } else {
     [self.allShortcutCategoryPopup addItemsWithTitles:@[@"截图 / 录制", @"文件与工具", @"启动与搜索", @"系统与分组", @"AI / 新功能"]];
   }
