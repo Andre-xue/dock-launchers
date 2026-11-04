@@ -8422,6 +8422,7 @@ static BOOL ValidGroupName(NSString *raw) {
       [NSThread sleepForTimeInterval:0.5];
     }
     if(!ready){dispatch_async(dispatch_get_main_queue(),^{weakSelf.videoGenStatus.stringValue=@"Ollama 未就绪，无法翻译";});return;}
+    dispatch_async(dispatch_get_main_queue(),^{ weakSelf.localOllamaRunning=YES; });
     NSString *en=[weakSelf translateVideoPromptWithOllama:text];
     dispatch_async(dispatch_get_main_queue(),^{
       if(en.length){weakSelf.videoGenPromptField.stringValue=en;weakSelf.videoGenStatus.stringValue=@"已翻译成英文，请检查后生成";}
