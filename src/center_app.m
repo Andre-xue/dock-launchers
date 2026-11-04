@@ -3449,6 +3449,7 @@ static void HideDockHoverTip(void) {
   [self loadAppShortcuts];
   [self buildWindow];
   [self buildPopover];
+  [self installAllGlobalHotkeys];
   [self applyThemeFromDefaults];
   [self startGroupBadgeTimer];
   [self installShelfServiceWorkflowIfNeeded];
@@ -21808,6 +21809,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.shortcutSettingsWindow orderFrontRegardless];
 }
 
+- (NSArray<NSDictionary *> *)radialShortcutDefs {
+  if(!self.radialPages.count)return @[];
+  NSMutableArray *out=[NSMutableArray array];
+  for(NSInteger page=0;page<(NSInteger)self.radialPages.count;page++){
+    NSString *module=[self radialModuleTitleForPage:page];
+    NSArray *items=self.radialPages[page];
+    for(NSInteger i=0;i<(NSInteger)items.count;i++){
+      NSDictionary *it=items[i]; NSString *action=it[@"action"] ?: @"";
+      if(!action.length)continue;
+      NSInteger aid=5000+page*100+i;
+      [out addObject:@{@"id":@(aid),@"cat":@(page),@"title":it[@"title"] ?: @"",@"desc":[NSString stringWithFormat:@"菜单栏 · %@",module],@"radialAction":action}];
+    }
+  }
+  return out;
+}
+
 - (NSArray<NSDictionary *> *)allGlobalActionDefs {
   return @[
     @{@"id":@3000,@"cat":@0,@"title":@"打开截图 / 录屏面板",@"desc":@"截图与录屏设置",@"sel":@"showCaptureTool:"},
@@ -21890,12 +21907,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (NSDictionary *)allGlobalActionForID:(NSInteger)aid {
-  for (NSDictionary *d in self.allShortcutDefs ?: [self allGlobalActionDefs]) if ([d[@"id"] integerValue] == aid) return d;
+  for (NSDictionary *d in self.allShortcutDefs ?: @[]) if ([d[@"id"] integerValue] == aid) return d;
+  for (NSDictionary *d in [self allGlobalActionDefs]) if ([d[@"id"] integerValue] == aid) return d;
+  for (NSDictionary *d in [self radialShortcutDefs]) if ([d[@"id"] integerValue] == aid) return d;
   return nil;
 }
 
 - (void)performAllGlobalActionID:(NSInteger)aid {
   NSDictionary *d = [self allGlobalActionForID:aid];
+  NSString *radial = d[@"radialAction"] ?: @"";
+  if (radial.length) { [self performRadialAction:radial]; return; }
   NSString *sel = d[@"sel"] ?: @"";
   if (!sel.length) return;
   SEL s = NSSelectorFromString(sel);
@@ -21921,7 +21942,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)installAllGlobalHotkeys {
-  self.allShortcutDefs = [self allGlobalActionDefs];
+  NSMutableArray *defs=[[self allGlobalActionDefs] mutableCopy];
+  [defs addObjectsFromArray:[self radialShortcutDefs]];
+  self.allShortcutDefs = defs;
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
   for (NSDictionary *d in self.allShortcutDefs) {
     NSInteger aid = [d[@"id"] integerValue];
@@ -21985,8 +22008,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *t = [self label:@"全部功能快捷键" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,594,300,24); [cv addSubview:t];
     NSTextField *h = [self label:@"按功能分类；点击快捷键后录制新的组合键，Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame=NSMakeRect(24,570,560,18); [cv addSubview:h];
-    self.allShortcutCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,530,180,28) pullsDown:NO];
-    [self.allShortcutCategoryPopup addItemsWithTitles:@[@"截图 / 录制", @"文件与工具", @"启动与搜索", @"系统与分组", @"AI / 新功能"]];
+    self.allShortcutCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,530,220,28) pullsDown:NO];
     self.allShortcutCategoryPopup.target=self; self.allShortcutCategoryPopup.action=@selector(allShortcutCategoryChanged:);
     [cv addSubview:self.allShortcutCategoryPopup];
     self.allShortcutContainer = [[NSView alloc] initWithFrame:NSMakeRect(0,70,620,450)];
@@ -22001,7 +22023,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.allShortcutPageLabel.alignment=NSTextAlignmentCenter; self.allShortcutPageLabel.frame=NSMakeRect(260,24,100,18); [cv addSubview:self.allShortcutPageLabel];
     [self.allShortcutWindow center];
   }
-  self.allShortcutDefs = [self allGlobalActionDefs];
+  self.allShortcutDefs = [self radialShortcutDefs];
+  if(!self.allShortcutDefs.count) self.allShortcutDefs = [self allGlobalActionDefs];
+  [self.allShortcutCategoryPopup removeAllItems];
+  if(self.radialPages.count){
+    for(NSInteger p=0;p<(NSInteger)self.radialPages.count;p++)[self.allShortcutCategoryPopup addItemWithTitle:[NSString stringWithFormat:@"%ld. %@",(long)(p+1),[self radialModuleTitleForPage:p]]];
+  } else {
+    [self.allShortcutCategoryPopup addItemsWithTitles:@[@"截图 / 录制", @"文件与工具", @"启动与搜索", @"系统与分组", @"AI / 新功能"]];
+  }
   self.allShortcutCategory = 0; self.allShortcutPage = 0;
   [self.allShortcutCategoryPopup selectItemAtIndex:0];
   [self rebuildAllShortcutPage];
