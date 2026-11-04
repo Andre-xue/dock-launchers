@@ -25833,12 +25833,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   double dot=0;for(NSNumber *k in a)dot+=[a[k] doubleValue]*[b[k] doubleValue];return dot;
 }
 
+- (void)aiFileChatAddFiles:(id)sender { [self aiFileAddFiles:nil]; self.aiFileChatStatus.stringValue=[NSString stringWithFormat:@"已导入 %ld 个文件，可以提问",(long)self.aiFiles.count]; }
+- (void)aiFileChatAddFolder:(id)sender { [self aiFileAddFolder:nil]; self.aiFileChatStatus.stringValue=[NSString stringWithFormat:@"文件夹已加入，共 %ld 个文件",(long)self.aiFiles.count]; }
+
 - (void)openAIFileChat:(id)sender {
   if(!self.aiFileChatWindow){
     self.aiFileChatWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,800,620) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
     self.aiFileChatWindow.title=@"AI 文件问答"; self.aiFileChatWindow.releasedWhenClosed=NO;
     NSView *cv=self.aiFileChatWindow.contentView;
-    NSTextField *t=[self label:@"AI 文件问答" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,576,300,28); [cv addSubview:t];
+    NSTextField *t=[self label:@"AI 文件问答" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,576,220,28); [cv addSubview:t];
+    ColorHoverButton *chatImport=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(500,576,110,28)]; chatImport.title=@"导入文件…"; chatImport.hoverColor=[NSColor systemBlueColor]; chatImport.font=[NSFont systemFontOfSize:10]; chatImport.target=self; chatImport.action=@selector(aiFileChatAddFiles:); [chatImport applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:chatImport];
+    ColorHoverButton *chatFolder=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(616,576,110,28)]; chatFolder.title=@"导入文件夹…"; chatFolder.hoverColor=[NSColor systemPurpleColor]; chatFolder.font=[NSFont systemFontOfSize:10]; chatFolder.target=self; chatFolder.action=@selector(aiFileChatAddFolder:); [chatFolder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:chatFolder];
     NSTextField *h=[self label:@"基于已导入的文件回答，回答中会标注来源；资料不足时会说明" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,554,720,18); [cv addSubview:h];
     self.aiFileChatStatus=[self label:@"导入文件后提问" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.aiFileChatStatus.frame=NSMakeRect(24,530,720,18); [cv addSubview:self.aiFileChatStatus];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,120,752,398)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
