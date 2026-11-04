@@ -17462,6 +17462,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   if (!action.length) return;
   if ([action isEqualToString:@"translate"]) [self showTranslationWindow:nil];
+  else if ([action isEqualToString:@"screenshottranslate"]) [self beginScreenshotTranslation];
   else if ([action isEqualToString:@"compress"]) [self showCompressWindow:nil];
   else if ([action isEqualToString:@"pdf"]) [self showPDFTools:nil];
   else if ([action isEqualToString:@"image"]) [self showImageTools:nil];
@@ -19141,6 +19142,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         @{@"title": @"PDF", @"symbol": @"doc.richtext", @"action": @"pdf"},
         @{@"title": @"压缩", @"symbol": @"archivebox.fill", @"action": @"compress"},
         @{@"title": @"翻译", @"symbol": @"character.bubble.fill", @"action": @"translate"},
+        @{@"title": @"截图翻译", @"symbol": @"text.viewfinder", @"action": @"screenshottranslate"},
         @{@"title": @"屏幕取色器", @"symbol": @"eyedropper", @"action": @"colorsampler"}
       ],
       @[
