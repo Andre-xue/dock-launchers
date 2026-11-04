@@ -2240,11 +2240,10 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (BOOL)windowShouldClose:(NSWindow *)sender {
-  return !self.pinned;
+  return YES;
 }
 
 - (void)windowDidMiniaturize:(NSNotification *)notification {
-  if (self.pinned) [self.window deminiaturize:nil];
 }
 
 - (void)windowWillClose:(NSNotification *)notification {
@@ -2267,7 +2266,6 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)closeCancel:(id)sender {
-  if (self.pinned) { NSBeep(); return; }
   fflush(stdout);
   [NSApp terminate:nil];
   exit(1);
@@ -2475,7 +2473,7 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)redLightTapped:(id)sender { [NSApp terminate:nil]; }
-- (void)yellowLightTapped:(id)sender { if (self.pinned) { NSBeep(); return; } [self.window miniaturize:nil]; }
+- (void)yellowLightTapped:(id)sender { [self.window miniaturize:nil]; }
 
 - (void)greenLightTapped:(id)sender {
   BOOL alt = (([NSEvent modifierFlags] & NSEventModifierFlagOption) != 0);
@@ -3686,7 +3684,7 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)layoutFour:(id)sender { [self applyLayoutColumns:4]; }
 
 - (void)cLightRedTapped:(id)sender { [NSApp terminate:nil]; }
-- (void)cLightYellowTapped:(id)sender { if (self.pinned) { NSBeep(); return; } [self.window miniaturize:nil]; }
+- (void)cLightYellowTapped:(id)sender { [self.window miniaturize:nil]; }
 - (void)cLightGreenTapped:(id)sender {
   NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
   NSRect vf = screen.visibleFrame;
@@ -4755,10 +4753,10 @@ static NSString *ResolveAppPath(NSString *target) {
     self.pinBtn.font = [NSFont systemFontOfSize:18];
     self.pinBtn.alphaValue = self.pinned ? 1.0 : 0.45;
   }
-  self.pinBtn.toolTip = self.pinned ? @"已钉住：窗口置顶，最小化/关闭已禁用" : @"钉住：置顶并禁用最小化/关闭（再点取消）";
+  self.pinBtn.toolTip = self.pinned ? @"已钉在桌面（不置顶），可正常关闭" : @"钉在桌面（不置顶，可关闭）";
   if (self.window) {
     if (self.pinned) {
-      self.window.level = NSFloatingWindowLevel;
+      self.window.level = NSNormalWindowLevel - 1;
       self.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
       self.window.hidesOnDeactivate = NO;
     } else {
@@ -4766,9 +4764,9 @@ static NSString *ResolveAppPath(NSString *target) {
       self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenNone;
     }
     NSButton *mini = [self.window standardWindowButton:NSWindowMiniaturizeButton];
-    if (mini) mini.enabled = !self.pinned;
+    if (mini) { mini.hidden = NO; mini.enabled = YES; }
     NSButton *cl = [self.window standardWindowButton:NSWindowCloseButton];
-    if (cl) cl.enabled = !self.pinned;
+    if (cl) { cl.hidden = NO; cl.enabled = YES; }
   }
 }
 
@@ -4780,7 +4778,6 @@ static NSString *ResolveAppPath(NSString *target) {
   [self updatePinAppearance];
   if (self.pinned) { [self.idleExitTimer invalidate]; self.idleExitTimer = nil; [self hideCountdown]; }
   else [self resetIdleTimer];
-  if (self.pinned) NSBeep();
 }
 
 #pragma mark - 内存/缓存

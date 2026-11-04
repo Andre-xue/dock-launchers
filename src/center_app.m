@@ -3912,14 +3912,15 @@ static void HideDockHoverTip(void) {
   BOOL nowPinned = !pinned;
   if (nowPinned) {
     [self.pinnedWindows addObject:key];
-    NSInteger base = [objc_getAssociatedObject(w, "DLCenterBaseLevel") integerValue];
-    w.level = MAX(base, NSFloatingWindowLevel);
+    w.level = NSNormalWindowLevel - 1;
+    NSButton *cl0 = [w standardWindowButton:NSWindowCloseButton];
+    if (cl0) { cl0.hidden = NO; cl0.enabled = YES; }
     sender.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"已钉住"];
     sender.contentTintColor = [NSColor whiteColor];
     sender.layer.backgroundColor = [NSColor systemOrangeColor].CGColor;
     sender.layer.borderColor = [NSColor systemOrangeColor].CGColor;
     sender.layer.shadowOpacity = 0.5;
-    sender.toolTip = @"已钉住，点击取消钉住";
+    sender.toolTip = @"已钉在桌面（不置顶），点击取消";
   } else {
     [self.pinnedWindows removeObject:key];
     NSInteger base = [objc_getAssociatedObject(w, "DLCenterBaseLevel") integerValue];
@@ -3932,8 +3933,8 @@ static void HideDockHoverTip(void) {
     sender.toolTip = @"钉住窗口";
   }
   NSButton *close = [w standardWindowButton:NSWindowCloseButton];
-  if (close) close.enabled = !nowPinned;
-  [self showToast:(nowPinned ? @"窗口已钉住，关闭按钮暂不可用" : @"窗口已取消钉住，可以关闭")];
+  if (close) { close.hidden = NO; close.enabled = YES; }
+  [self showToast:(nowPinned ? @"窗口已钉在桌面，不置顶，可正常关闭" : @"窗口已取消钉住")];
 }
 
 - (BOOL)windowShouldClose:(NSWindow *)sender {
@@ -3943,11 +3944,6 @@ static void HideDockHoverTip(void) {
   }
   if (sender == self.window) {
     [sender orderOut:nil];
-    return NO;
-  }
-  if (!self.pinnedWindows) return YES;
-  if ([self.pinnedWindows containsObject:[NSValue valueWithNonretainedObject:sender]]) {
-    [self showToast:@"窗口已钉住，先取消钉住才能关闭"];
     return NO;
   }
   return YES;
@@ -17569,9 +17565,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)toggleDetachedPin:(ColorHoverButton *)sender {
   NSWindow *w = sender.window;
   if (!w) return;
-  BOOL pinned = (w.level != NSFloatingWindowLevel);
-  w.level = pinned ? NSFloatingWindowLevel : NSNormalWindowLevel;
-  sender.title = pinned ? @"钉住" : @"浮动";
+  BOOL pinned = (w.level != NSNormalWindowLevel - 1);
+  w.level = pinned ? NSNormalWindowLevel - 1 : NSNormalWindowLevel;
+  sender.title = pinned ? @"浮动" : @"钉住";
   sender.hoverColor = pinned ? [NSColor systemOrangeColor] : [NSColor systemGrayColor];
 }
 
@@ -19909,14 +19905,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   b.state = pinned ? NSControlStateValueOn : NSControlStateValueOff;
   b.image = [NSImage imageWithSystemSymbolName:(pinned ? @"pin.fill" : @"pin") accessibilityDescription:@"钉住"];
   b.contentTintColor = pinned ? [NSColor systemOrangeColor] : [NSColor secondaryLabelColor];
-  b.toolTip = pinned ? @"取消钉住（不再置顶）" : @"钉住窗口（始终置顶）";
+  b.toolTip = pinned ? @"取消钉住（恢复普通窗口）" : @"钉住窗口（置于桌面，不置顶）";
 }
 
 - (void)toggleToolPin:(NSButton *)b {
   NSWindow *w = b.tag == 0 ? self.compressWindow : self.translationWindow;
   if (!w) return;
-  BOOL pinned = (w.level != NSFloatingWindowLevel);
-  w.level = pinned ? NSFloatingWindowLevel : NSNormalWindowLevel;
+  BOOL pinned = (w.level != NSNormalWindowLevel - 1);
+  w.level = pinned ? NSNormalWindowLevel - 1 : NSNormalWindowLevel;
   [[NSUserDefaults standardUserDefaults] setBool:pinned forKey:(b.tag == 0 ? @"centerCompressPinned" : @"centerTranslatePinned")];
   [self applyPinLook:b pinned:pinned];
 }
@@ -24374,7 +24370,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,size.width,size.height) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
   w.opaque = YES;
   w.backgroundColor = [NSColor blackColor];
-  w.level = NSFloatingWindowLevel;
+  w.level = NSNormalWindowLevel - 1;
   w.hasShadow = YES;
   w.releasedWhenClosed = NO;
   w.movableByWindowBackground = YES;
@@ -29358,7 +29354,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     clearVoice.title = @"清空全部"; clearVoice.hoverColor = [NSColor systemRedColor];
     clearVoice.target = self; clearVoice.action = @selector(clearVoiceTextPanel:);
     [clearVoice applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearVoice];
-    self.voiceTextWindow.level = NSFloatingWindowLevel;
+    self.voiceTextWindow.level = NSNormalWindowLevel;
     [self addLocalAIServiceAccessoryToWindow:self.voiceTextWindow];
     [self.voiceTextWindow center];
   }
@@ -29469,7 +29465,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *close = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(760, 14, 116, 32)];
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor]; close.target = self; close.action = @selector(closeMeetingAssistant:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
-    self.meetingWindow.level = NSFloatingWindowLevel;
+    self.meetingWindow.level = NSNormalWindowLevel;
     [self addLocalAIServiceAccessoryToWindow:self.meetingWindow];
     [self.meetingWindow center];
   }
