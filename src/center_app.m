@@ -22937,8 +22937,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (NSString *)bilingualHTMLForName:(NSString *)name source:(NSString *)source translated:(NSString *)translated {
-  NSString *css = @"<style>@page{size:A4;margin:18mm}body{font-family:-apple-system,'PingFang SC','Helvetica Neue',sans-serif;font-size:11pt;color:#111}h1{font-size:16pt;text-align:center;margin:0 0 14px}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #aaa;padding:8px;vertical-align:top;white-space:pre-wrap;word-wrap:break-word;line-height:1.45}th{background:#f2f2f2;text-align:left}</style>";
-  return [NSString stringWithFormat:@"<html><head><meta charset=\"utf-8\">%@</head><body><h1>双语对照：%@</h1><table><tr><th style=\"width:50%%\">原文</th><th style=\"width:50%%\">译文</th></tr><tr><td>%@</td><td>%@</td></tr></table></body></html>",css,[self htmlEscape:name],[self htmlEscape:source],[self htmlEscape:translated]];
+  NSString *css = @"<style>@page{size:A4;margin:18mm}body{font-family:-apple-system,'PingFang SC','Helvetica Neue',sans-serif;font-size:11pt;color:#111;line-height:1.55}h1{font-size:16pt;text-align:center;margin:0 0 16px}h2{font-size:12pt;margin:14px 0 8px}.text{white-space:pre-wrap;word-wrap:break-word}.sep{border:none;border-top:1px solid #999;margin:20px 0}</style>";
+  return [NSString stringWithFormat:@"<html><head><meta charset=\"utf-8\">%@</head><body><h1>双语对照：%@</h1><h2>原文</h2><div class=\"text\">%@</div><p style=\"text-align:center\">────────────────────────────────</p><h2>译文</h2><div class=\"text\">%@</div></body></html>",css,[self htmlEscape:name],[self htmlEscape:source],[self htmlEscape:translated]];
 }
 
 - (void)exportPDFHTML:(NSString *)html toPath:(NSString *)out {
@@ -23033,17 +23033,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *html=[self bilingualHTMLForName:name source:source translated:translated];
   NSError *err=nil; BOOL ok=NO;
   if([ext isEqualToString:@"md"]){
-    NSString *escSrc=[source stringByReplacingOccurrencesOfString:@"|" withString:@"\\|"];
-    escSrc=[escSrc stringByReplacingOccurrencesOfString:@"\n" withString:@"<br>"];
-    NSString *escTrans=[translated stringByReplacingOccurrencesOfString:@"|" withString:@"\\|"];
-    escTrans=[escTrans stringByReplacingOccurrencesOfString:@"\n" withString:@"<br>"];
-    NSString *md=[NSString stringWithFormat:@"# 双语对照：%@\n\n| 原文 | 译文 |\n|---|---|\n| %@ | %@ |\n",name,escSrc,escTrans];
+    NSString *md=[NSString stringWithFormat:@"# 双语对照：%@\n\n## 原文\n\n%@\n\n---\n\n## 译文\n\n%@\n",name,source,translated];
     ok=[md writeToFile:out atomically:YES encoding:NSUTF8StringEncoding error:&err];
   } else if([ext isEqualToString:@"txt"]){
-    NSString *txt=[NSString stringWithFormat:@"双语对照：%@\n\n原文\t译文\n%@\t%@\n",name,[source stringByReplacingOccurrencesOfString:@"\n" withString:@" "],[translated stringByReplacingOccurrencesOfString:@"\n" withString:@" "]];
+    NSString *txt=[NSString stringWithFormat:@"双语对照：%@\n\n原文\n====\n\n%@\n\n--------------------------------\n\n译文\n====\n\n%@\n",name,source,translated];
     ok=[txt writeToFile:out atomically:YES encoding:NSUTF8StringEncoding error:&err];
   } else if([ext isEqualToString:@"docx"]){
-    ok=[self writeBilingualDOCX:source translated:translated toPath:out name:name];
+    NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-bilingual.html"];
+    [html writeToFile:tmp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/textutil"; t.arguments=@[@"-convert",@"docx",@"-output",out,tmp];
+    t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+    @try{[t launch];[t waitUntilExit];}@catch(NSException *e){}
+    ok=[[NSFileManager defaultManager] fileExistsAtPath:out] && [[[NSFileManager defaultManager] attributesOfItemAtPath:out error:NULL][NSFileSize] unsignedLongLongValue]>100;
+    [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
   } else {
     [self exportPDFHTML:html toPath:out];
     return;
