@@ -728,6 +728,15 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 }
 @end
 
+@interface DLPdfNavigationDelegate : NSObject <WKNavigationDelegate>
+@property (copy) void (^onFinish)(WKWebView *webView);
+@end
+@implementation DLPdfNavigationDelegate
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
+  if (self.onFinish) self.onFinish(webView);
+}
+@end
+
 @interface DLRegionSelectView : NSView
 @property NSPoint startPoint;
 @property NSRect selection;
@@ -1430,6 +1439,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextView *translationSourceView, *translationResultView;
 @property (strong) NSString *translationImportedFileURL, *translationImportedText;
 @property (strong) NSPopUpButton *translationExportTypePopup;
+@property (strong) id translationPDFDelegate;
+@property (strong) WKWebView *translationPDFWebView;
 @property (strong) NSTextField *translationExportFolderField;
 @property (strong) NSWindow *shotTranslateWindow;
 @property (strong) NSTextView *shotTranslateSourceView, *shotTranslateResultView;
@@ -22848,6 +22859,42 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return m;
 }
 
+- (NSString *)bilingualHTMLForName:(NSString *)name source:(NSString *)source translated:(NSString *)translated {
+  NSString *css = @"<style>@page{size:A4;margin:18mm}body{font-family:-apple-system,'PingFang SC','Helvetica Neue',sans-serif;font-size:11pt;color:#111}h1{font-size:16pt;text-align:center;margin:0 0 14px}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #aaa;padding:8px;vertical-align:top;white-space:pre-wrap;word-wrap:break-word;line-height:1.45}th{background:#f2f2f2;text-align:left}</style>";
+  return [NSString stringWithFormat:@"<html><head><meta charset=\"utf-8\">%@</head><body><h1>双语对照：%@</h1><table><tr><th style=\"width:50%%\">原文</th><th style=\"width:50%%\">译文</th></tr><tr><td>%@</td><td>%@</td></tr></table></body></html>",css,[self htmlEscape:name],[self htmlEscape:source],[self htmlEscape:translated]];
+}
+
+- (void)exportPDFHTML:(NSString *)html toPath:(NSString *)out {
+  self.translationStatus.stringValue = @"正在生成双语 PDF…";
+  WKWebViewConfiguration *cfg = [[WKWebViewConfiguration alloc] init];
+  WKWebView *web = [[WKWebView alloc] initWithFrame:NSMakeRect(0,0,900,1200) configuration:cfg];
+  web.hidden = YES;
+  [self.translationWindow.contentView addSubview:web];
+  DLPdfNavigationDelegate *delegate = [[DLPdfNavigationDelegate alloc] init];
+  __weak typeof(self) weakSelf = self;
+  delegate.onFinish = ^(WKWebView *wv){
+    WKPDFConfiguration *pdfCfg = [[WKPDFConfiguration alloc] init];
+    [wv createPDFWithConfiguration:pdfCfg completionHandler:^(NSData *pdfData, NSError *error){
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [wv removeFromSuperview];
+        if(weakSelf.translationPDFWebView==wv)weakSelf.translationPDFWebView=nil;
+        if(weakSelf.translationPDFDelegate==delegate)weakSelf.translationPDFDelegate=nil;
+        BOOL ok = pdfData.length>100 && [pdfData writeToFile:out atomically:YES];
+        if(ok){
+          weakSelf.translationStatus.stringValue=[NSString stringWithFormat:@"双语文件已保存：%@",out];
+          [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:out]];
+        } else {
+          weakSelf.translationStatus.stringValue=[NSString stringWithFormat:@"PDF 导出失败%@",error?[NSString stringWithFormat:@"：%@",error.localizedDescription]:@""];
+        }
+      });
+    }];
+  };
+  self.translationPDFWebView = web;
+  self.translationPDFDelegate = delegate;
+  web.navigationDelegate = delegate;
+  [web loadHTMLString:html baseURL:nil];
+}
+
 - (void)exportBilingualTranslation {
   NSString *source=self.translationImportedText.length ? self.translationImportedText : self.translationSourceView.string;
   NSString *translated=self.translationResultView.string;
@@ -22860,13 +22907,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if([[NSFileManager defaultManager] fileExistsAtPath:out]){
     out=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-双语-%ld.%@",name,(long)[[NSDate date] timeIntervalSince1970],ext]];
   }
-  NSString *md=[NSString stringWithFormat:@"# 双语对照：%@\n\n## 原文\n\n%@\n\n## 译文\n\n%@\n",name,source,translated];
-  NSError *err=nil;
-  BOOL ok=NO;
-  if([ext isEqualToString:@"md"]||[ext isEqualToString:@"txt"]){
+  NSString *html=[self bilingualHTMLForName:name source:source translated:translated];
+  NSError *err=nil; BOOL ok=NO;
+  if([ext isEqualToString:@"md"]){
+    NSString *escSrc=[source stringByReplacingOccurrencesOfString:@"|" withString:@"\\|"];
+    escSrc=[escSrc stringByReplacingOccurrencesOfString:@"\n" withString:@"<br>"];
+    NSString *escTrans=[translated stringByReplacingOccurrencesOfString:@"|" withString:@"\\|"];
+    escTrans=[escTrans stringByReplacingOccurrencesOfString:@"\n" withString:@"<br>"];
+    NSString *md=[NSString stringWithFormat:@"# 双语对照：%@\n\n| 原文 | 译文 |\n|---|---|\n| %@ | %@ |\n",name,escSrc,escTrans];
     ok=[md writeToFile:out atomically:YES encoding:NSUTF8StringEncoding error:&err];
+  } else if([ext isEqualToString:@"txt"]){
+    NSString *txt=[NSString stringWithFormat:@"双语对照：%@\n\n原文\t译文\n%@\t%@\n",name,[source stringByReplacingOccurrencesOfString:@"\n" withString:@" "],[translated stringByReplacingOccurrencesOfString:@"\n" withString:@" "]];
+    ok=[txt writeToFile:out atomically:YES encoding:NSUTF8StringEncoding error:&err];
   } else if([ext isEqualToString:@"docx"]){
-    NSString *html=[NSString stringWithFormat:@"<html><head><meta charset=\"utf-8\"></head><body><h1>双语对照：%@</h1><h2>原文</h2><div style=\"white-space:pre-wrap\">%@</div><h2>译文</h2><div style=\"white-space:pre-wrap\">%@</div></body></html>",[self htmlEscape:name],[self htmlEscape:source],[self htmlEscape:translated]];
     NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-bilingual.html"];
     [html writeToFile:tmp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
     NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/textutil"; t.arguments=@[@"-convert",@"docx",@"-output",out,tmp];
@@ -22875,18 +22928,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ok=[[NSFileManager defaultManager] fileExistsAtPath:out] && [[[NSFileManager defaultManager] attributesOfItemAtPath:out error:NULL][NSFileSize] unsignedLongLongValue]>100;
     [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
   } else {
-    NSString *txt=[NSString stringWithFormat:@"双语对照：%@\n\n原文\n====\n\n%@\n\n译文\n====\n\n%@\n",name,source,translated];
-    NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-bilingual.txt"];
-    [txt writeToFile:tmp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-    [[NSFileManager defaultManager] removeItemAtPath:out error:NULL];
-    [[NSFileManager defaultManager] createFileAtPath:out contents:nil attributes:nil];
-    NSFileHandle *fh=[NSFileHandle fileHandleForWritingAtPath:out];
-    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/sbin/cupsfilter"; t.arguments=@[tmp];
-    t.standardOutput=fh; t.standardError=[NSFileHandle fileHandleWithNullDevice];
-    @try{[t launch];[t waitUntilExit];}@catch(NSException *e){}
-    [fh closeFile];
-    ok=[[NSFileManager defaultManager] fileExistsAtPath:out] && [[[NSFileManager defaultManager] attributesOfItemAtPath:out error:NULL][NSFileSize] unsignedLongLongValue]>100;
-    [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+    [self exportPDFHTML:html toPath:out];
+    return;
   }
   if(ok){
     self.translationStatus.stringValue=[NSString stringWithFormat:@"双语文件已保存：%@",out];
