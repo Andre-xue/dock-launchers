@@ -5097,7 +5097,8 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
     @[@"打开文件夹", @"在 Finder 中打开分组 App 所在的文件夹", @(240), @(110), [NSColor systemYellowColor], @"openGroupsFolder:"],
     @[@"一键备份", @"备份所有已安装分组的数据和图标", @(360), @(100), [NSColor systemPurpleColor], @"backupGroupsClicked:"],
     @[@"一键删除", @"删除勾选的分组；会先要求备份并二次确认", @(468), @(100), [NSColor systemRedColor], @"deleteGroupsClicked:"],
-    @[@"一键恢复", @"从最近一次删除备份恢复分组", @(576), @(100), [NSColor systemOrangeColor], @"restoreGroupsClicked:"]];
+    @[@"一键恢复", @"从最近一次删除备份恢复分组", @(576), @(100), [NSColor systemOrangeColor], @"restoreGroupsClicked:"],
+    @[@"修复 Dock", @"重新写入所有分组 Dock 图标并重启 Dock", @(684), @(66), [NSColor systemTealColor], @"repairDockEntriesClicked:"]];
   for (NSArray *d in toolDefs) {
     ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([d[2] doubleValue], 540, [d[3] doubleValue], 32)];
     b.title = d[0]; b.toolTip = d[1]; b.hoverColor = d[4];
@@ -5919,6 +5920,7 @@ static BOOL ValidGroupName(NSString *raw) {
   reg.arguments = @[@"-f", dst];
   @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
   [self addDockEntry:dst label:name];
+  [self ensureGroupDockEntries];
   [self killDock];
   [self refreshGroups];
   if (self.popover.isShown) [self rebuildQuickGroups];
@@ -6026,6 +6028,7 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   [self removeDockEntry:targetApp];
   [self addDockEntry:targetApp label:display];
+  [self ensureGroupDockEntries];
   [self killDock];
   [self refreshGroups];
   if (self.popover.isShown) [self rebuildQuickGroups];
@@ -6098,8 +6101,16 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 // ---------------- Dock 条目 ----------------
+- (void)repairDockEntriesClicked:(id)sender {
+  [self ensureGroupDockEntries];
+  self.dockPersistentDirty=YES;
+  [self killDock];
+  [self refreshGroups];
+  [self showToast:@"已重新写入分组 Dock 图标"];
+}
+
 - (void)ensureGroupDockEntries {
-  NSString *dir = [GroupDir() stringByAppendingPathComponent:@"DockLaunchers"];
+  NSString *dir = GroupDir();
   NSFileManager *fm = [NSFileManager defaultManager];
   NSArray *files = [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
   for (NSString *f in files) {
@@ -6160,6 +6171,17 @@ static BOOL ValidGroupName(NSString *raw) {
   if (changed) [self hardRestartDock];
 }
 
+- (void)logDockState:(NSString *)tag path:(NSString *)path {
+  CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+  NSArray *apps = raw ? CFBridgingRelease(raw) : @[];
+  BOOL found = NO;
+  for (id item in apps) { NSString *u = nil; @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {} if (u && [DockEntryPath(u) isEqualToString:[path stringByStandardizingPath]]) { found = YES; break; } }
+  NSString *line = [NSString stringWithFormat:@"%@ %@ count=%ld found=%d %@\n", [NSDate date], tag, (long)apps.count, found, path ?: @""];
+  NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:@"/tmp/docklaunchers_dock_debug.log"];
+  if (!fh) { [[NSFileManager defaultManager] createFileAtPath:@"/tmp/docklaunchers_dock_debug.log" contents:nil attributes:nil]; fh = [NSFileHandle fileHandleForWritingAtPath:@"/tmp/docklaunchers_dock_debug.log"]; }
+  [fh seekToEndOfFile]; [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]]; [fh closeFile];
+}
+
 - (void)addDockEntry:(NSString *)path label:(NSString *)label {
   @try {
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Info.plist"]];
@@ -6179,6 +6201,7 @@ static BOOL ValidGroupName(NSString *raw) {
     CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)apps, CFSTR("com.apple.dock"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
     self.dockPersistentDirty=YES;
+    [self logDockState:@"add" path:path];
   } @catch (NSException *e) {}
 }
 
@@ -6197,6 +6220,7 @@ static BOOL ValidGroupName(NSString *raw) {
     CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)keep, CFSTR("com.apple.dock"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
     self.dockPersistentDirty=YES;
+    [self logDockState:@"remove" path:path];
   } @catch (NSException *e) {}
 }
 
@@ -6207,7 +6231,11 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)hardRestartDock {
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    NSTask *ic = [[NSTask alloc] init];
+    ic.launchPath = @"/usr/bin/killall";
+    ic.arguments = @[@"iconservicesagent"];
+    @try { [ic launch]; } @catch (NSException *e) {}
     NSTask *t = [[NSTask alloc] init];
     t.launchPath = @"/usr/bin/killall";
     t.arguments = @[@"-KILL", @"Dock"];
