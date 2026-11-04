@@ -22516,10 +22516,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
     if (![[NSFileManager defaultManager] fileExistsAtPath:tmp]) return;
     NSTimeInterval shotDone = [[NSDate date] timeIntervalSince1970];
-    dispatch_async(dispatch_get_main_queue(), ^{
-      [self showTranslationWindow:nil];
-      self.translationStatus.stringValue = @"截图完成，正在识别文字…";
-    });
     [self translationOCRImage:tmp completion:^(NSString *text) {
       NSTimeInterval ocrDone = [[NSDate date] timeIntervalSince1970];
       NSString *log = [NSString stringWithFormat:@"capture=%.3fs ocr=%.3fs total=%.3fs chars=%ld\n", shotDone-shotStart, ocrDone-shotDone, ocrDone-shotStart, (long)text.length];
