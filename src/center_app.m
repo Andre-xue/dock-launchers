@@ -25424,7 +25424,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *cloud=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(254,596,120,30)]; cloud.title=@"添加云文档…"; cloud.hoverColor=[NSColor systemBlueColor]; cloud.font=[NSFont systemFontOfSize:10]; cloud.target=self; cloud.action=@selector(openCloudDocsList:); cloud.toolTip=@"云文档列表：官方扫码登录、导出或导入链接"; [cloud applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cloud];
     self.aiFileTemplateCategoryPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(386,596,132,30) pullsDown:NO]; self.aiFileTemplateCategoryPopup.font=[NSFont systemFontOfSize:10]; self.aiFileTemplateCategoryPopup.target=self; self.aiFileTemplateCategoryPopup.action=@selector(aiFileTemplateCategoryChanged:); [cv addSubview:self.aiFileTemplateCategoryPopup];
     self.aiFileTemplatePopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(524,596,372,30) pullsDown:NO]; self.aiFileTemplatePopup.font=[NSFont systemFontOfSize:10]; self.aiFileTemplatePopup.target=self; self.aiFileTemplatePopup.action=@selector(aiFileTemplateChanged:); [cv addSubview:self.aiFileTemplatePopup];
-    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,420,872,166)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    DLDropScrollView *sv=[[DLDropScrollView alloc] initWithFrame:NSMakeRect(24,420,872,166)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    sv.allowedExtensions=[NSSet setWithArray:@[@"txt",@"md",@"markdown",@"csv",@"json",@"xml",@"yaml",@"yml",@"log",@"pdf",@"doc",@"docx",@"rtf",@"odt",@"xlsx",@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"webp",@"wav",@"mp3",@"m4a",@"flac",@"mp4",@"mov"]];
+    __weak typeof(self) weakAIFile=self;
+    sv.onPaths=^(NSArray<NSString *> *paths){ [weakAIFile aiFileAddPaths:paths]; };
     self.aiFileTable=[[NSTableView alloc] initWithFrame:sv.contentView.bounds];
     NSTableColumn *col=[[NSTableColumn alloc] initWithIdentifier:@"aifile"]; col.title=@"已导入文件"; col.width=850; [self.aiFileTable addTableColumn:col];
     self.aiFileTable.rowHeight=34; self.aiFileTable.dataSource=self; self.aiFileTable.delegate=self;
@@ -25436,7 +25439,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *analyze=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,336,160,34)]; analyze.title=@"分析并生成 MD"; analyze.hoverColor=[NSColor systemPinkColor]; analyze.target=self; analyze.action=@selector(aiFileAnalyze:); [analyze applyColor:[NSColor systemPinkColor] textColor:[NSColor whiteColor]]; [cv addSubview:analyze];
     ColorHoverButton *open=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(194,336,120,34)]; open.title=@"打开 MD"; open.hoverColor=[NSColor systemGreenColor]; open.target=self; open.action=@selector(aiFileOpenResult:); [open applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:open];
     ColorHoverButton *cancel=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(320,336,72,34)]; cancel.title=@"取消"; cancel.hoverColor=[NSColor systemRedColor]; cancel.font=[NSFont systemFontOfSize:10]; cancel.target=self; cancel.action=@selector(aiFileCancelAnalysis:); [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel]; self.aiFileCancelButton=cancel;
-    self.aiFileStatus=[self label:@"导入 txt / md / pdf / docx / csv / json 等文件" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.aiFileStatus.frame=NSMakeRect(400,344,496,18); [cv addSubview:self.aiFileStatus];
+    self.aiFileStatus=[self label:@"拖入文件，或点击导入；支持 txt / pdf / docx / xlsx / 图片 / 音视频" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.aiFileStatus.frame=NSMakeRect(400,344,496,18); [cv addSubview:self.aiFileStatus];
     NSScrollView *outScroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,64,872,260)]; outScroll.hasVerticalScroller=YES; outScroll.borderType=NSBezelBorder;
     self.aiFileOutput=[[NSTextView alloc] initWithFrame:outScroll.contentView.bounds]; self.aiFileOutput.editable=NO; self.aiFileOutput.selectable=YES; self.aiFileOutput.font=[NSFont systemFontOfSize:11];
     outScroll.documentView=self.aiFileOutput; [cv addSubview:outScroll];
@@ -26030,6 +26033,30 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [md writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
   self.aiFileResultPath=path; self.aiFileOutput.string=md; self.aiFileStatus.stringValue=[NSString stringWithFormat:@"已生成：%@",path];
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+}
+
+- (void)aiFileAddPaths:(NSArray<NSString *> *)paths {
+  if(!paths.count)return;
+  NSSet *allowed=[NSSet setWithArray:@[@"txt",@"md",@"markdown",@"csv",@"json",@"xml",@"yaml",@"yml",@"log",@"pdf",@"doc",@"docx",@"rtf",@"odt",@"xlsx",@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"webp",@"wav",@"mp3",@"m4a",@"flac",@"mp4",@"mov"]];
+  NSMutableArray *files=[NSMutableArray array];
+  for(NSString *path in paths){
+    BOOL isDir=NO;
+    if(![[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir])continue;
+    if(isDir){
+      NSDirectoryEnumerator *en=[[NSFileManager defaultManager] enumeratorAtPath:path];
+      for(NSString *rel in en){
+        if(files.count>=500)break;
+        NSString *full=[path stringByAppendingPathComponent:rel];
+        BOOL d=NO;[[NSFileManager defaultManager] fileExistsAtPath:full isDirectory:&d];
+        if(!d && [allowed containsObject:full.pathExtension.lowercaseString])[files addObject:full];
+      }
+    } else if([allowed containsObject:path.pathExtension.lowercaseString]) [files addObject:path];
+  }
+  if(!self.aiFiles)self.aiFiles=[NSMutableArray array];
+  NSInteger added=0;
+  for(NSString *path in files)if(![self.aiFiles containsObject:path]){[self.aiFiles addObject:path];added++;}
+  [self.aiFileTable reloadData];
+  self.aiFileStatus.stringValue=added?[NSString stringWithFormat:@"已拖入 %ld 个文件，可开始分析",(long)added]:@"没有可导入的新文件";
 }
 
 - (void)aiFileAddFolder:(id)sender {
