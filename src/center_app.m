@@ -1368,7 +1368,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextView *translationSourceView, *translationResultView;
 @property (strong) NSWindow *shotTranslateWindow;
 @property (strong) NSTextView *shotTranslateSourceView, *shotTranslateResultView;
-@property (strong) NSPopUpButton *shotTranslateServicePopup, *shotTranslateTargetPopup;
+@property (strong) NSPopUpButton *shotTranslateServicePopup, *shotTranslateTargetPopup, *shotTranslateModelPopup;
+@property NSInteger shotTranslateModelRequest;
 @property (strong) NSView *shotTranslateServiceList;
 @property (strong) NSArray *shotTranslateServiceItems;
 @property NSInteger shotTranslateSelectedService;
@@ -22535,6 +22536,41 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return i>=0&&i<(NSInteger)codes.count?codes[i]:@"中文（简体）";
 }
 
+- (void)reloadShotTranslateModels {
+  [self.shotTranslateModelPopup removeAllItems];
+  NSDictionary *item=nil;
+  if(self.shotTranslateSelectedService>=0 && self.shotTranslateSelectedService<(NSInteger)self.shotTranslateServiceItems.count)item=self.shotTranslateServiceItems[self.shotTranslateSelectedService];
+  NSInteger provider=item?[item[@"provider"] integerValue]:-1;
+  NSString *fallback=item[@"model"] ?: @"";
+  if(!fallback.length) fallback=(provider<0?@"qwen2.5:3b":@"gpt-4o-mini");
+  [self.shotTranslateModelPopup addItemWithTitle:fallback];
+  self.shotTranslateModelPopup.stringValue=fallback;
+  if(provider<0)return;
+  NSInteger request=++self.shotTranslateModelRequest;
+  NSDictionary *e=(provider<(NSInteger)self.aiEntries.count)?self.aiEntries[provider]:nil;
+  NSString *base=e[@"apiBase"] ?: @"", *key=e[@"api"] ?: @"";
+  if([base hasSuffix:@"/chat/completions"])base=[base substringToIndex:base.length-17];
+  while([base hasSuffix:@"/"])base=[base substringToIndex:base.length-1];
+  if(!base.length||!key.length)return;
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[base stringByAppendingString:@"/models"]]];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"]; req.timeoutInterval=15;
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil; NSArray *list=[o isKindOfClass:[NSDictionary class]]?o[@"data"]:nil;
+    NSMutableArray *models=[NSMutableArray array];
+    for(NSDictionary *x in list){NSString *mid=x[@"id"];if(mid.length)[models addObject:mid];}
+    if(!models.count)return;
+    dispatch_async(dispatch_get_main_queue(),^{
+      if(request!=weakSelf.shotTranslateModelRequest)return;
+      NSString *cur=weakSelf.shotTranslateModelPopup.titleOfSelectedItem;
+      [weakSelf.shotTranslateModelPopup removeAllItems];
+      [weakSelf.shotTranslateModelPopup addItemsWithTitles:models];
+      if(cur.length&&[models containsObject:cur])weakSelf.shotTranslateModelPopup.stringValue=cur;
+      else weakSelf.shotTranslateModelPopup.stringValue=models.firstObject;
+    });
+  }] resume];
+}
+
 - (void)shotTranslateNow:(id)sender {
   NSString *text=[self.shotTranslateSourceView.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
   if(!text.length){self.shotTranslateStatus.stringValue=@"没有可翻译的文字";return;}
@@ -22544,7 +22580,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSInteger provider=-1;
   if(self.shotTranslateSelectedService>=0 && self.shotTranslateSelectedService<(NSInteger)self.shotTranslateServiceItems.count)
     provider=[self.shotTranslateServiceItems[self.shotTranslateSelectedService][@"provider"] integerValue];
-  NSString *url=@"",*key=@"",*model=@"";
+  NSString *url=@"",*key=@"",*model=self.shotTranslateModelPopup.titleOfSelectedItem ?: @"";
   if(provider<0){
     url=@"http://127.0.0.1:11434/v1/chat/completions"; model=@"qwen2.5:3b";
   } else if(provider<(NSInteger)self.aiEntries.count){
@@ -22597,6 +22633,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [b applyColor:(sel?[NSColor controlAccentColor]:DLButtonBackground()) textColor:(sel?[NSColor whiteColor]:[NSColor labelColor])];
     [self.shotTranslateServiceList addSubview:b];
   }
+  [self reloadShotTranslateModels];
 }
 
 - (void)shotTranslateServiceSelected:(ColorHoverButton *)sender {
@@ -22618,6 +22655,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *swap=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(164,434,34,26)]; swap.title=@"⇄"; swap.hoverColor=[NSColor systemTealColor]; [swap applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:swap];
     self.shotTranslateTargetPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(208,434,160,26)];
     [self.shotTranslateTargetPopup addItemsWithTitles:@[@"中文（简体）",@"English",@"日本語",@"한국어",@"Français",@"Deutsch",@"Español",@"Русский"]]; [cv addSubview:self.shotTranslateTargetPopup];
+    NSTextField *ml=[self label:@"模型" size:10 bold:NO color:[NSColor secondaryLabelColor]]; ml.frame=NSMakeRect(376,440,36,16); [cv addSubview:ml];
+    self.shotTranslateModelPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(416,434,280,26)]; self.shotTranslateModelPopup.font=[NSFont systemFontOfSize:10]; self.shotTranslateModelPopup.target=self; self.shotTranslateModelPopup.action=@selector(shotTranslateNow:); [cv addSubview:self.shotTranslateModelPopup];
     NSTextField *svl=[self label:@"翻译服务" size:10 bold:NO color:[NSColor secondaryLabelColor]]; svl.frame=NSMakeRect(24,408,100,16); [cv addSubview:svl];
     NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,252,672,148)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
     self.shotTranslateServiceList=[[NSView alloc] initWithFrame:NSMakeRect(0,0,640,34)]; sv.documentView=self.shotTranslateServiceList; [cv addSubview:sv];
