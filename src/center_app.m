@@ -1713,6 +1713,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSString *videoGenPromptID;
 @property NSTimeInterval videoGenStart;
 @property BOOL videoGenAutoStartedComfy;
+@property BOOL videoGenCancelled;
 @property double videoGenTargetSeconds;
 @property double videoGenBaseSeconds;
 @property (strong) NSTimer *videoGenComfyPollTimer;
@@ -8267,6 +8268,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [cv addSubview:self.videoGenSavePathField];
     ColorHoverButton *pick=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(628,276,136,30)]; pick.title=@"选择目录…"; pick.hoverColor=[NSColor systemBlueColor]; pick.font=[NSFont systemFontOfSize:10]; pick.target=self; pick.action=@selector(chooseVideoGenSavePath:); [pick applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:pick];
     ColorHoverButton *gen=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,40,130,34)]; gen.title=@"生成视频"; gen.hoverColor=[NSColor systemPinkColor]; gen.target=self; gen.action=@selector(generateVideo:); [gen applyColor:[NSColor systemPinkColor] textColor:[NSColor whiteColor]]; [cv addSubview:gen];
+    ColorHoverButton *cancelGen=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(434,40,110,34)]; cancelGen.title=@"取消生成"; cancelGen.hoverColor=[NSColor systemRedColor]; cancelGen.font=[NSFont systemFontOfSize:10]; cancelGen.target=self; cancelGen.action=@selector(cancelVideoGeneration:); [cancelGen applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancelGen];
     ColorHoverButton *vm=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(304,40,120,34)]; vm.title=@"视频模型市场…"; vm.hoverColor=[NSColor systemPurpleColor]; vm.font=[NSFont systemFontOfSize:10]; vm.target=self; vm.action=@selector(showVideoModelMarket:); [vm applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:vm];
     ColorHoverButton *folder=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(164,40,130,34)]; folder.title=@"打开输出目录"; folder.hoverColor=[NSColor systemBlueColor]; folder.target=self; folder.action=@selector(openVideoGenOutput:); [folder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:folder];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(654,40,100,34)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeVideoGeneration:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
@@ -8427,6 +8429,30 @@ static BOOL ValidGroupName(NSString *raw) {
   });
 }
 
+- (void)cancelVideoGeneration:(id)sender {
+  if(!self.videoGenPromptID.length && !self.videoGenPollTimer){
+    self.videoGenStatus.stringValue=@"当前没有正在生成的视频";
+    return;
+  }
+  self.videoGenCancelled=YES;
+  NSString *pid=self.videoGenPromptID ?: @"";
+  self.videoGenPromptID=nil;
+  [self.videoGenPollTimer invalidate]; self.videoGenPollTimer=nil;
+  [self.videoGenElapsedTimer invalidate]; self.videoGenElapsedTimer=nil;
+  [self.videoGenComfyPollTimer invalidate]; self.videoGenComfyPollTimer=nil;
+  NSMutableURLRequest *ir=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:8188/interrupt"]];
+  ir.HTTPMethod=@"POST"; ir.HTTPBody=[@"{}" dataUsingEncoding:NSUTF8StringEncoding];
+  [[[NSURLSession sharedSession] dataTaskWithRequest:ir] resume];
+  if(pid.length){
+    NSMutableURLRequest *qr=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:8188/queue"]];
+    qr.HTTPMethod=@"POST"; [qr setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    qr.HTTPBody=[NSJSONSerialization dataWithJSONObject:@{@"delete":@[pid]} options:0 error:NULL];
+    [[[NSURLSession sharedSession] dataTaskWithRequest:qr] resume];
+  }
+  if(self.videoGenAutoStartedComfy){[self stopComfyAfterVideoAuto];self.videoGenAutoStartedComfy=NO;}
+  self.videoGenStatus.stringValue=@"已取消生成";
+}
+
 - (void)generateVideo:(id)sender {
   if(self.videoGenSavePathField.stringValue.length)[self videoGenSavePathChanged:nil];
   if(self.videoGenPromptID.length){self.videoGenStatus.stringValue=@"已有生成任务在进行";return;}
@@ -8439,6 +8465,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)submitVideoGeneration:(id)sender {
+  self.videoGenCancelled=NO;
   if(self.videoGenSavePathField.stringValue.length)[self videoGenSavePathChanged:nil];
   if(self.videoGenPromptID.length){self.videoGenStatus.stringValue=@"已有生成任务在进行";return;}
   if(self.videoGenBackendPopup.indexOfSelectedItem != 0){
@@ -8496,6 +8523,7 @@ static BOOL ValidGroupName(NSString *raw) {
   __weak typeof(self) weakSelf=self;
   [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
     dispatch_async(dispatch_get_main_queue(),^{
+      if(weakSelf.videoGenCancelled)return;
       id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
       NSString *pid=[o isKindOfClass:[NSDictionary class]]?o[@"prompt_id"]:nil;
       if(!pid.length){weakSelf.videoGenStatus.stringValue=[NSString stringWithFormat:@"提交失败：%@",e.localizedDescription ?: @"请确认 ComfyUI 已启动"]; if(weakSelf.videoGenAutoStartedComfy){[weakSelf stopComfyAfterVideoAuto];weakSelf.videoGenAutoStartedComfy=NO;} return;}
@@ -8547,7 +8575,9 @@ static BOOL ValidGroupName(NSString *raw) {
         }
       }
     }
+    if(!weakSelf.videoGenPromptID.length)return;
     dispatch_async(dispatch_get_main_queue(),^{
+      if(!weakSelf.videoGenPromptID.length)return;
       [weakSelf.videoGenPollTimer invalidate]; weakSelf.videoGenPollTimer=nil;
       [weakSelf.videoGenElapsedTimer invalidate]; weakSelf.videoGenElapsedTimer=nil;
       weakSelf.videoGenPromptID=nil;
