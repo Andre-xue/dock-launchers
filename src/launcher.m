@@ -4753,10 +4753,10 @@ static NSString *ResolveAppPath(NSString *target) {
     self.pinBtn.font = [NSFont systemFontOfSize:18];
     self.pinBtn.alphaValue = self.pinned ? 1.0 : 0.45;
   }
-  self.pinBtn.toolTip = self.pinned ? @"已钉在桌面（不置顶），可正常关闭" : @"钉在桌面（不置顶，可关闭）";
+  self.pinBtn.toolTip = self.pinned ? @"已钉住（保留窗口，不置顶），可正常关闭" : @"钉住窗口（保留窗口，不置顶）";
   if (self.window) {
     if (self.pinned) {
-      self.window.level = NSNormalWindowLevel - 1;
+      self.window.level = NSNormalWindowLevel;
       self.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
       self.window.hidesOnDeactivate = NO;
     } else {

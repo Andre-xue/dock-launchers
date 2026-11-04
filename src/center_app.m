@@ -3912,7 +3912,7 @@ static void HideDockHoverTip(void) {
   BOOL nowPinned = !pinned;
   if (nowPinned) {
     [self.pinnedWindows addObject:key];
-    w.level = NSNormalWindowLevel - 1;
+    w.level = NSNormalWindowLevel;
     NSButton *cl0 = [w standardWindowButton:NSWindowCloseButton];
     if (cl0) { cl0.hidden = NO; cl0.enabled = YES; }
     sender.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"已钉住"];
@@ -17565,10 +17565,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)toggleDetachedPin:(ColorHoverButton *)sender {
   NSWindow *w = sender.window;
   if (!w) return;
-  BOOL pinned = (w.level != NSNormalWindowLevel - 1);
-  w.level = pinned ? NSNormalWindowLevel - 1 : NSNormalWindowLevel;
-  sender.title = pinned ? @"浮动" : @"钉住";
-  sender.hoverColor = pinned ? [NSColor systemOrangeColor] : [NSColor systemGrayColor];
+  BOOL pinned = [objc_getAssociatedObject(w, "DLDetachedPinned") boolValue];
+  BOOL nowPinned = !pinned;
+  objc_setAssociatedObject(w, "DLDetachedPinned", @(nowPinned), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  w.level = NSNormalWindowLevel;
+  sender.title = nowPinned ? @"浮动" : @"钉住";
+  sender.hoverColor = nowPinned ? [NSColor systemOrangeColor] : [NSColor systemGrayColor];
 }
 
 - (void)zoomDetachedOut:(id)sender {
@@ -19905,14 +19907,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   b.state = pinned ? NSControlStateValueOn : NSControlStateValueOff;
   b.image = [NSImage imageWithSystemSymbolName:(pinned ? @"pin.fill" : @"pin") accessibilityDescription:@"钉住"];
   b.contentTintColor = pinned ? [NSColor systemOrangeColor] : [NSColor secondaryLabelColor];
-  b.toolTip = pinned ? @"取消钉住（恢复普通窗口）" : @"钉住窗口（置于桌面，不置顶）";
+  b.toolTip = pinned ? @"取消钉住" : @"钉住窗口（保留窗口，不置顶）";
 }
 
 - (void)toggleToolPin:(NSButton *)b {
   NSWindow *w = b.tag == 0 ? self.compressWindow : self.translationWindow;
   if (!w) return;
-  BOOL pinned = (w.level != NSNormalWindowLevel - 1);
-  w.level = pinned ? NSNormalWindowLevel - 1 : NSNormalWindowLevel;
+  BOOL pinned = (b.state != NSControlStateValueOn);
+  w.level = NSNormalWindowLevel;
   [[NSUserDefaults standardUserDefaults] setBool:pinned forKey:(b.tag == 0 ? @"centerCompressPinned" : @"centerTranslatePinned")];
   [self applyPinLook:b pinned:pinned];
 }
@@ -24370,7 +24372,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,size.width,size.height) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
   w.opaque = YES;
   w.backgroundColor = [NSColor blackColor];
-  w.level = NSNormalWindowLevel - 1;
+  w.level = NSNormalWindowLevel;
   w.hasShadow = YES;
   w.releasedWhenClosed = NO;
   w.movableByWindowBackground = YES;
