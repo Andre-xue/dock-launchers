@@ -694,6 +694,40 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 }
 @end
 
+@interface DLFileTextView : NSTextView
+@property (copy) void (^onPaths)(NSArray<NSString *> *paths);
+@end
+@implementation DLFileTextView
+- (instancetype)initWithFrame:(NSRect)frame {
+  self=[super initWithFrame:frame];
+  if(self)[self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType]];
+  return self;
+}
+- (NSArray<NSString *> *)filePaths:(id<NSDraggingInfo>)info {
+  NSMutableArray *out=[NSMutableArray array];
+  NSArray *urls=[[info draggingPasteboard] readObjectsForClasses:@[[NSURL class]] options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}];
+  for(NSURL *u in urls)if(u.path.length)[out addObject:u.path];
+  if(!out.count){
+    NSArray *names=[[info draggingPasteboard] propertyListForType:NSFilenamesPboardType];
+    if([names isKindOfClass:[NSArray class]])for(id n in names)if([n isKindOfClass:[NSString class]])[out addObject:n];
+  }
+  return out;
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)info {
+  if([self filePaths:info].count)return NSDragOperationCopy;
+  return [super draggingEntered:info];
+}
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)info {
+  if([self filePaths:info].count)return NSDragOperationCopy;
+  return [super draggingUpdated:info];
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)info {
+  NSArray *paths=[self filePaths:info];
+  if(paths.count){if(self.onPaths)self.onPaths(paths);return YES;}
+  return [super performDragOperation:info];
+}
+@end
+
 @interface DLRegionSelectView : NSView
 @property NSPoint startPoint;
 @property NSRect selection;
@@ -19922,7 +19956,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     for(NSString *path in paths)[urls addObject:[NSURL fileURLWithPath:path]];
     [weakSelf translationFilesDropped:urls];
   };
-  NSTextView *tv = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+  DLFileTextView *tv = [[DLFileTextView alloc] initWithFrame:sv.contentView.bounds];
+  tv.onPaths = ^(NSArray<NSString *> *paths){
+    NSMutableArray *urls=[NSMutableArray array];
+    for(NSString *path in paths)[urls addObject:[NSURL fileURLWithPath:path]];
+    [weakSelf translationFilesDropped:urls];
+  };
   tv.font = [NSFont systemFontOfSize:12];
   tv.richText = NO;
   tv.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -29495,7 +29534,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       weakTTS.aiTTSTargetVideoPath=p;
       weakTTS.aiTTSStatus.stringValue=[NSString stringWithFormat:@"已选择视频：%@，生成配音后会合成",p.lastPathComponent];
     };
-    self.aiTTSText = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+    DLFileTextView *ttsTV = [[DLFileTextView alloc] initWithFrame:sv.contentView.bounds];
+    ttsTV.onPaths = ^(NSArray<NSString *> *paths){
+      NSString *p=paths.firstObject; if(!p.length)return;
+      weakTTS.aiTTSTargetVideoPath=p;
+      weakTTS.aiTTSStatus.stringValue=[NSString stringWithFormat:@"已选择视频：%@，生成配音后会合成",p.lastPathComponent];
+    };
+    self.aiTTSText = ttsTV;
     self.aiTTSText.font=[NSFont systemFontOfSize:12];
     self.aiTTSText.string=@"请输入要朗读的文本。";
     sv.documentView=self.aiTTSText; [cv addSubview:sv];
@@ -29804,7 +29849,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       weakVoice.voiceTextOutput.string=@"";
       weakVoice.voiceTextStatus.stringValue=[NSString stringWithFormat:@"已拖入：%@，点开始转写",p.lastPathComponent];
     };
-    self.voiceTextOutput = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
+    DLFileTextView *voiceTV = [[DLFileTextView alloc] initWithFrame:sv.contentView.bounds];
+    voiceTV.onPaths = ^(NSArray<NSString *> *paths){
+      NSString *p=paths.firstObject; if(!p.length)return;
+      weakVoice.voiceTextPath=p; weakVoice.voiceTextOutput.string=@"";
+      weakVoice.voiceTextStatus.stringValue=[NSString stringWithFormat:@"已拖入：%@，点开始转写",p.lastPathComponent];
+    };
+    self.voiceTextOutput = voiceTV;
     self.voiceTextOutput.font = [NSFont systemFontOfSize:12];
     self.voiceTextOutput.editable = NO;
     sv.documentView = self.voiceTextOutput; [cv addSubview:sv];
@@ -29907,7 +29958,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       weakMeeting.meetingPathLabel.stringValue=p.lastPathComponent;
       weakMeeting.meetingStatus.stringValue=[NSString stringWithFormat:@"已拖入：%@，点开始转写",p.lastPathComponent];
     };
-    self.meetingTranscript = [[NSTextView alloc] initWithFrame:tv.contentView.bounds];
+    DLFileTextView *meetingTV = [[DLFileTextView alloc] initWithFrame:tv.contentView.bounds];
+    meetingTV.onPaths = ^(NSArray<NSString *> *paths){
+      NSString *p=paths.firstObject; if(!p.length)return;
+      weakMeeting.meetingPath=p; weakMeeting.meetingPathLabel.stringValue=p.lastPathComponent;
+      weakMeeting.meetingStatus.stringValue=[NSString stringWithFormat:@"已拖入：%@，点开始转写",p.lastPathComponent];
+    };
+    self.meetingTranscript = meetingTV;
     self.meetingTranscript.font = [NSFont systemFontOfSize:12]; self.meetingTranscript.editable = NO;
     tv.documentView = self.meetingTranscript; [cv addSubview:tv];
     NSScrollView *sv2 = [[NSScrollView alloc] initWithFrame:NSMakeRect(464, 96, 412, 420)];
