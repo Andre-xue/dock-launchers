@@ -5646,7 +5646,8 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 
 - (void)dialogIconClicked:(NSButton *)b {
   self.dialogIconsMissing = NO;
-  if (b.tag == 99) { self.dialogSelectedBuiltin = -1; self.dialogCustomIcon = nil; }
+  if (b.tag == 98) { self.dialogSelectedBuiltin = -2; self.dialogCustomIcon = nil; }
+  else if (b.tag == 99) { self.dialogSelectedBuiltin = -1; self.dialogCustomIcon = nil; }
   else { self.dialogSelectedBuiltin = b.tag; self.dialogCustomIcon = nil; }
   if (self.dialogIconButtons.count && self.dialogFirstIconImage && b.tag != 98) {
     ((NSButton *)self.dialogIconButtons.firstObject).image = self.dialogFirstIconImage;
@@ -5675,6 +5676,15 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   } else {
     if ([panel runModal] == NSModalResponseOK) apply(panel.URL);
   }
+}
+
+- (void)applySafeFileIconForApp:(NSString *)app {
+  NSString *iconPath=[app stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"];
+  NSImage *img=[[NSImage alloc] initWithContentsOfFile:iconPath]; if(!img)return;
+  NSImage *small=[[NSImage alloc] initWithSize:NSMakeSize(128,128)];
+  [small lockFocus]; [img drawInRect:NSMakeRect(0,0,128,128) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0]; [small unlockFocus];
+  [[NSWorkspace sharedWorkspace] setIcon:small forFile:app options:0];
+  NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/touch"; t.arguments=@[app]; @try{[t launch];[t waitUntilExit];}@catch(NSException *e){}
 }
 
 - (NSString *)createICNSFromImagePath:(NSString *)path {
@@ -5717,13 +5727,17 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
       src = [self createICNSFromImagePath:self.dialogCustomIcon];
     }
   }
-  if (!src) return YES;
+  if (!src) return NO;
   [[NSFileManager defaultManager] removeItemAtPath:dst error:NULL];
   if (![[NSFileManager defaultManager] copyItemAtPath:src toPath:dst error:NULL]) return NO;
   NSString *plist = [app stringByAppendingPathComponent:@"Contents/Info.plist"];
   NSMutableDictionary *info = [[NSDictionary dictionaryWithContentsOfFile:plist] mutableCopy] ?: [NSMutableDictionary dictionary];
   info[@"CFBundleIconFile"] = @"AppIcon";
   [info writeToFile:plist atomically:YES];
+  NSNumber *sz=[[[NSFileManager defaultManager] attributesOfItemAtPath:dst error:NULL] objectForKey:NSFileSize];
+  NSFileHandle *fh=[NSFileHandle fileHandleForWritingAtPath:@"/tmp/docklaunchers_dock_debug.log"];
+  if(!fh){[[NSFileManager defaultManager] createFileAtPath:@"/tmp/docklaunchers_dock_debug.log" contents:nil attributes:nil];fh=[NSFileHandle fileHandleForWritingAtPath:@"/tmp/docklaunchers_dock_debug.log"];}
+  [fh seekToEndOfFile];[fh writeData:[[NSString stringWithFormat:@"%@ icon %@ bytes=%@ custom=%@\n",[NSDate date],[app lastPathComponent],sz ?: @0,self.dialogCustomIcon ?: @"builtin"] dataUsingEncoding:NSUTF8StringEncoding]];[fh closeFile];
   return YES;
 }
 
@@ -5914,7 +5928,8 @@ static BOOL ValidGroupName(NSString *raw) {
   NSTask *sign = [[NSTask alloc] init];
   sign.launchPath = @"/usr/bin/codesign";
   sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", dst];
-  @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
+  @try { [sign launch]; [sign waitUntilExit]; } @catch(NSException *e) {}
+  [self applySafeFileIconForApp:dst];
   NSTask *reg = [[NSTask alloc] init];
   reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
   reg.arguments = @[@"-f", dst];
@@ -6020,7 +6035,8 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTask *sign = [[NSTask alloc] init];
     sign.launchPath = @"/usr/bin/codesign";
     sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", targetApp];
-    @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
+    @try { [sign launch]; [sign waitUntilExit]; } @catch(NSException *e) {}
+    [self applySafeFileIconForApp:targetApp];
     NSTask *reg = [[NSTask alloc] init];
     reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
     reg.arguments = @[@"-f", targetApp];
