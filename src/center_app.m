@@ -24902,11 +24902,29 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return [out stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 
+- (NSString *)aiFileOCRPDF:(NSString *)path {
+  PDFDocument *doc=[[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]]; if(!doc)return @"";
+  NSMutableString *out=[NSMutableString string];
+  NSInteger pages=MIN((NSInteger)doc.pageCount,12);
+  for(NSInteger i=0;i<pages;i++){
+    PDFPage *page=[doc pageAtIndex:i]; if(!page)continue;
+    NSImage *img=[page thumbnailOfSize:NSMakeSize(1600,2200) forBox:kPDFDisplayBoxMediaBox]; if(!img)continue;
+    NSData *tiff=[img TIFFRepresentation]; NSBitmapImageRep *rep=[NSBitmapImageRep imageRepWithData:tiff]; NSData *png=[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dl-pdf-ocr-%ld.png",(long)i]];
+    [png writeToFile:tmp atomically:YES];
+    NSString *t=[self aiFileOCRImage:tmp]; [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+    if(t.length)[out appendFormat:@"\n=== 第 %ld 页 ===\n%@",(long)(i+1),t];
+  }
+  return out;
+}
+
 - (NSString *)aiFileExtractText:(NSString *)path {
   NSString *ext=path.pathExtension.lowercaseString;
   if([ext isEqualToString:@"pdf"]){
     PDFDocument *doc=[[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
-    return doc.string ?: @"";
+    NSString *t=doc.string ?: @"";
+    if(t.length>40)return t;
+    return [self aiFileOCRPDF:path];
   }
   if([@[@"doc",@"docx",@"rtf",@"rtfd",@"html",@"htm",@"odt"] containsObject:ext]) return DLTextutilToText(path) ?: @"";
   if([@[@"txt",@"md",@"markdown",@"csv",@"tsv",@"json",@"xml",@"yaml",@"yml",@"log",@"swift",@"m",@"h",@"py",@"js",@"ts",@"css"] containsObject:ext]){
@@ -25685,7 +25703,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSMutableArray *chunks=[NSMutableArray array];
     for(NSString *path in self.aiFiles){NSString *t=[self aiFileExtractText:path];if(t.length){NSInteger n=0;for(NSInteger i=0;i<(NSInteger)t.length;i+=6000){n++;[chunks addObject:@{@"src":path.lastPathComponent,@"text":[t substringWithRange:NSMakeRange(i,MIN((NSUInteger)6000,t.length-i))]}];}}}
     for(NSDictionary *c in self.aiCloudDocs){NSString *t=c[@"content"] ?: @"";if(t.length){NSInteger n=0;for(NSInteger i=0;i<(NSInteger)t.length;i+=6000){n++;[chunks addObject:@{@"src":c[@"title"] ?: @"云文档",@"text":[t substringWithRange:NSMakeRange(i,MIN((NSUInteger)6000,t.length-i))]}];}}}
-    NSArray *terms=[[q lowercaseString] componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSMutableArray *terms=[NSMutableArray array];
+    NSString *lq=[q lowercaseString];
+    for(NSString *w in [lq componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]])if(w.length)[terms addObject:w];
+    NSArray *chars=@[@"的",@"了",@"是",@"在",@"和",@"有",@"这",@"那",@"我",@"你",@"他",@"它",@"吗",@"呢",@"把",@"被",@"中",@"上",@"下",@"个",@"请",@"帮",@"找",@"有",@"哪些",@"什么"];
+    NSMutableOrderedSet *grams=[NSMutableOrderedSet orderedSet];
+    for(NSUInteger i=0;i+2<=lq.length;i++){NSString *g=[lq substringWithRange:NSMakeRange(i,2)];if(![chars containsObject:g])[grams addObject:g];}
+    [terms addObjectsFromArray:grams.array];
     NSMutableArray *scored=[NSMutableArray array];
     for(NSDictionary *c in chunks){NSString *t=[c[@"text"] lowercaseString];NSInteger score=0;for(NSString *term in terms)if(term.length&&[t containsString:term])score++;[scored addObject:@{@"src":c[@"src"],@"text":c[@"text"],@"score":@(score)}];}
     [scored sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"score"] compare:a[@"score"]];}];
