@@ -1672,6 +1672,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSString *aiFileResultPath;
 @property NSInteger aiFileAnalysisToken;
 @property (strong) NSButton *aiFileCancelButton;
+@property (strong) NSWindow *aiFileChatWindow;
+@property (strong) NSTextView *aiFileChatOutput;
+@property (strong) NSTextField *aiFileChatInput, *aiFileChatStatus;
+@property (strong) NSMutableString *aiFileChatTranscript;
 @property (strong) NSWindow *videoGenWindow;
 @property (strong) NSPopUpButton *videoGenCheckpointPopup, *videoGenMotionPopup, *videoGenBackendPopup;
 @property (strong) NSTextField *videoGenPromptField, *videoGenNegativeField, *videoGenStatus, *videoGenWidthField, *videoGenHeightField, *videoGenFramesField, *videoGenStepsField, *videoGenSeedField, *videoGenFpsField;
@@ -24914,6 +24918,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSScrollView *outScroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,64,872,260)]; outScroll.hasVerticalScroller=YES; outScroll.borderType=NSBezelBorder;
     self.aiFileOutput=[[NSTextView alloc] initWithFrame:outScroll.contentView.bounds]; self.aiFileOutput.editable=NO; self.aiFileOutput.selectable=YES; self.aiFileOutput.font=[NSFont systemFontOfSize:11];
     outScroll.documentView=self.aiFileOutput; [cv addSubview:outScroll];
+    ColorHoverButton *chat=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(456,20,100,32)]; chat.title=@"文件问答…"; chat.hoverColor=[NSColor systemBlueColor]; chat.font=[NSFont systemFontOfSize:10]; chat.target=self; chat.action=@selector(openAIFileChat:); [chat applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:chat];
     ColorHoverButton *copyMD=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(568,20,100,32)]; copyMD.title=@"复制 MD"; copyMD.hoverColor=[NSColor systemPurpleColor]; copyMD.font=[NSFont systemFontOfSize:10]; copyMD.target=self; copyMD.action=@selector(aiFileCopyMarkdown:); [copyMD applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copyMD];
     ColorHoverButton *saveDir=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(680,20,100,32)]; saveDir.title=@"保存位置…"; saveDir.hoverColor=[NSColor systemTealColor]; saveDir.font=[NSFont systemFontOfSize:10]; saveDir.target=self; saveDir.action=@selector(aiFileChooseOutputDirectory:); saveDir.toolTip=@"自定义 Markdown 报告保存目录"; [saveDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:saveDir];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(800,20,96,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(aiFileClose:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
@@ -25494,6 +25499,68 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [md writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
   self.aiFileResultPath=path; self.aiFileOutput.string=md; self.aiFileStatus.stringValue=[NSString stringWithFormat:@"已生成：%@",path];
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+}
+
+- (void)openAIFileChat:(id)sender {
+  if(!self.aiFileChatWindow){
+    self.aiFileChatWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,800,620) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.aiFileChatWindow.title=@"AI 文件问答"; self.aiFileChatWindow.releasedWhenClosed=NO;
+    NSView *cv=self.aiFileChatWindow.contentView;
+    NSTextField *t=[self label:@"AI 文件问答" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,576,300,28); [cv addSubview:t];
+    NSTextField *h=[self label:@"基于已导入的文件回答，回答中会标注来源；资料不足时会说明" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,554,720,18); [cv addSubview:h];
+    self.aiFileChatStatus=[self label:@"导入文件后提问" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.aiFileChatStatus.frame=NSMakeRect(24,530,720,18); [cv addSubview:self.aiFileChatStatus];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,120,752,398)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.aiFileChatOutput=[[NSTextView alloc] initWithFrame:sv.contentView.bounds]; self.aiFileChatOutput.editable=NO; self.aiFileChatOutput.selectable=YES; self.aiFileChatOutput.font=[NSFont systemFontOfSize:11.5];
+    sv.documentView=self.aiFileChatOutput; [cv addSubview:sv];
+    self.aiFileChatInput=[[NSTextField alloc] initWithFrame:NSMakeRect(24,76,600,30)]; self.aiFileChatInput.placeholderString=@"针对这些文件提问，例如：合同里有哪些付款条款？"; self.aiFileChatInput.target=self; self.aiFileChatInput.action=@selector(aiFileAskQuestion:); [cv addSubview:self.aiFileChatInput];
+    ColorHoverButton *ask=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(634,76,90,30)]; ask.title=@"提问"; ask.hoverColor=[NSColor systemPinkColor]; ask.target=self; ask.action=@selector(aiFileAskQuestion:); [ask applyColor:[NSColor systemPinkColor] textColor:[NSColor whiteColor]]; [cv addSubview:ask];
+    ColorHoverButton *clear=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(634,38,90,30)]; clear.title=@"清空对话"; clear.hoverColor=[NSColor systemGrayColor]; clear.font=[NSFont systemFontOfSize:10]; clear.target=self; clear.action=@selector(aiFileClearChat:); [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(734,38,42,30)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.font=[NSFont systemFontOfSize:9]; close.target=self; close.action=@selector(closeAIFileChat:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    self.aiFileChatTranscript=[NSMutableString string];
+    [self.aiFileChatWindow center];
+  }
+  [self bringAuxiliaryWindowToFront:self.aiFileChatWindow];
+}
+
+- (void)closeAIFileChat:(id)sender { [self.aiFileChatWindow orderOut:nil]; }
+- (void)aiFileClearChat:(id)sender { [self.aiFileChatTranscript setString:@""]; self.aiFileChatOutput.string=@""; self.aiFileChatStatus.stringValue=@"对话已清空"; }
+
+- (void)aiFileAskQuestion:(id)sender {
+  NSString *q=[self.aiFileChatInput.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  if(!q.length)return;
+  if(!self.aiFiles.count && !self.aiCloudDocs.count){self.aiFileChatStatus.stringValue=@"请先在 AI 文件窗口导入文件或云文档";return;}
+  NSString *url=@"", *key=@"", *model=self.aiFileModelField.stringValue ?: @"";
+  NSInteger chosenIdx=[self.aiFileServicePopup.selectedItem.representedObject integerValue];
+  NSDictionary *chosen=(chosenIdx>=0 && chosenIdx<(NSInteger)self.aiEntries.count)?self.aiEntries[chosenIdx]:nil;
+  if(chosen){NSString *base=chosen[@"apiBase"] ?: @"";if([base hasSuffix:@"/chat/completions"])base=[base substringToIndex:base.length-17];while([base hasSuffix:@"/"])base=[base substringToIndex:base.length-1];url=base.length?[base stringByAppendingString:@"/chat/completions"]:@"";key=chosen[@"api"] ?: @"";if(!model.length)model=chosen[@"model"] ?: @"qwen2.5:3b";}
+  else {url=@"http://127.0.0.1:11434/v1/chat/completions";if(!model.length)model=@"qwen2.5:3b";}
+  if(!url.length){self.aiFileChatStatus.stringValue=@"请先选择可用的 AI 服务";return;}
+  self.aiFileChatInput.stringValue=@""; self.aiFileChatStatus.stringValue=@"正在检索文件并回答…";
+  [self.aiFileChatTranscript appendFormat:@"\n\n**你：** %@\n\n",q];
+  self.aiFileChatOutput.string=self.aiFileChatTranscript;
+  __weak typeof(self) weakSelf=self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSMutableArray *chunks=[NSMutableArray array];
+    for(NSString *path in self.aiFiles){NSString *t=[self aiFileExtractText:path];if(t.length){NSInteger n=0;for(NSInteger i=0;i<(NSInteger)t.length;i+=6000){n++;[chunks addObject:@{@"src":path.lastPathComponent,@"text":[t substringWithRange:NSMakeRange(i,MIN((NSUInteger)6000,t.length-i))]}];}}}
+    for(NSDictionary *c in self.aiCloudDocs){NSString *t=c[@"content"] ?: @"";if(t.length){NSInteger n=0;for(NSInteger i=0;i<(NSInteger)t.length;i+=6000){n++;[chunks addObject:@{@"src":c[@"title"] ?: @"云文档",@"text":[t substringWithRange:NSMakeRange(i,MIN((NSUInteger)6000,t.length-i))]}];}}}
+    NSArray *terms=[[q lowercaseString] componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSMutableArray *scored=[NSMutableArray array];
+    for(NSDictionary *c in chunks){NSString *t=[c[@"text"] lowercaseString];NSInteger score=0;for(NSString *term in terms)if(term.length&&[t containsString:term])score++;[scored addObject:@{@"src":c[@"src"],@"text":c[@"text"],@"score":@(score)}];}
+    [scored sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"score"] compare:a[@"score"]];}];
+    NSMutableString *context=[NSMutableString string];NSInteger used=0;
+    for(NSDictionary *c in scored){if(used>30000)break;if([c[@"score"] integerValue]==0 && used>0)continue;[context appendFormat:@"\n[来源：%@]\n%@",c[@"src"],c[@"text"]];used+=[c[@"text"] length];if(used>30000)break;}
+    if(!context.length){for(NSDictionary *c in scored){[context appendFormat:@"\n[来源：%@]\n%@",c[@"src"],c[@"text"]];if(context.length>20000)break;}}
+    NSString *prompt=[NSString stringWithFormat:@"你是文件问答助手。只能根据下面资料回答；资料不足就明确说资料中没有。引用时标注 [来源：文件名]。\n\n资料：%@\n\n问题：%@",context,q];
+    dispatch_async(dispatch_get_main_queue(),^{
+      [weakSelf aiFileAPICall:prompt model:model url:url key:key completion:^(NSString *answer,NSString *err){
+        NSString *text=answer.length?answer:[NSString stringWithFormat:@"回答失败：%@",err ?: @"无返回"];
+        [weakSelf.aiFileChatTranscript appendFormat:@"**AI：** %@\n\n",text];
+        weakSelf.aiFileChatOutput.string=weakSelf.aiFileChatTranscript;
+        [weakSelf.aiFileChatOutput scrollToEndOfDocument:nil];
+        weakSelf.aiFileChatStatus.stringValue=answer.length?@"回答完成":@"回答失败";
+      }];
+    });
+  });
 }
 
 - (void)aiFileAnalyze:(id)sender {
