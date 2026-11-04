@@ -1683,6 +1683,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *aiFileChartWindow;
 @property (strong) NSImageView *aiFileChartImageView;
 @property (strong) NSArray *aiFileChartValues;
+@property (strong) NSArray *aiFileChartColumns;
+@property (strong) NSPopUpButton *aiFileChartColumnPopup;
 @property BOOL aiFileChartLine;
 @property (strong) NSWindow *videoGenWindow;
 @property (strong) NSPopUpButton *videoGenCheckpointPopup, *videoGenMotionPopup, *videoGenBackendPopup;
@@ -24902,11 +24904,29 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return [out stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 
+- (void)aiFilePDFRangeSettings:(id)sender {
+  NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+  NSInteger start=[ud integerForKey:@"centerAIFilePDFStart"]; if(start<1)start=1;
+  NSInteger end=[ud integerForKey:@"centerAIFilePDFEnd"]; if(end<1)end=12;
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"扫描 PDF OCR 页码范围";
+  NSTextField *sf=[[NSTextField alloc] initWithFrame:NSMakeRect(0,0,80,24)]; sf.integerValue=start;
+  NSTextField *ef=[[NSTextField alloc] initWithFrame:NSMakeRect(100,0,80,24)]; ef.integerValue=end;
+  NSView *av=[[NSView alloc] initWithFrame:NSMakeRect(0,0,200,24)]; [av addSubview:sf]; [av addSubview:ef]; a.accessoryView=av;
+  a.informativeText=@"起始页 / 结束页；仅对没有文本层的扫描 PDF 生效";
+  [a addButtonWithTitle:@"保存"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  [ud setInteger:MAX(1,sf.integerValue) forKey:@"centerAIFilePDFStart"];
+  [ud setInteger:MAX(1,ef.integerValue) forKey:@"centerAIFilePDFEnd"];
+  self.aiFileStatus.stringValue=[NSString stringWithFormat:@"PDF OCR 范围：%ld–%ld 页",(long)sf.integerValue,(long)ef.integerValue];
+}
+
 - (NSString *)aiFileOCRPDF:(NSString *)path {
   PDFDocument *doc=[[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]]; if(!doc)return @"";
   NSMutableString *out=[NSMutableString string];
-  NSInteger pages=MIN((NSInteger)doc.pageCount,12);
-  for(NSInteger i=0;i<pages;i++){
+  NSInteger start=[[NSUserDefaults standardUserDefaults] integerForKey:@"centerAIFilePDFStart"]; if(start<1)start=1;
+  NSInteger end=[[NSUserDefaults standardUserDefaults] integerForKey:@"centerAIFilePDFEnd"]; if(end<1)end=12;
+  start=MAX(1,MIN(start,(NSInteger)doc.pageCount)); end=MAX(start,MIN(end,(NSInteger)doc.pageCount));
+  for(NSInteger i=start-1;i<end;i++){
     PDFPage *page=[doc pageAtIndex:i]; if(!page)continue;
     NSImage *img=[page thumbnailOfSize:NSMakeSize(1600,2200) forBox:kPDFDisplayBoxMediaBox]; if(!img)continue;
     NSData *tiff=[img TIFFRepresentation]; NSBitmapImageRep *rep=[NSBitmapImageRep imageRepWithData:tiff]; NSData *png=[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
@@ -24974,6 +24994,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *folder=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,20,120,32)]; folder.title=@"导入文件夹…"; folder.hoverColor=[NSColor systemPurpleColor]; folder.font=[NSFont systemFontOfSize:10]; folder.target=self; folder.action=@selector(aiFileAddFolder:); [folder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:folder];
     ColorHoverButton *chart=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(264,20,110,32)]; chart.title=@"Excel 图表…"; chart.hoverColor=[NSColor systemTealColor]; chart.font=[NSFont systemFontOfSize:10]; chart.target=self; chart.action=@selector(openAIFileChart:); [chart applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:chart];
     ColorHoverButton *compare=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(152,20,100,32)]; compare.title=@"文档对比…"; compare.hoverColor=[NSColor systemOrangeColor]; compare.font=[NSFont systemFontOfSize:10]; compare.target=self; compare.action=@selector(openAIFileCompare:); [compare applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:compare];
+    ColorHoverButton *pdfRange=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(376,20,72,32)]; pdfRange.title=@"PDF页…"; pdfRange.hoverColor=[NSColor systemOrangeColor]; pdfRange.font=[NSFont systemFontOfSize:9.5]; pdfRange.target=self; pdfRange.action=@selector(aiFilePDFRangeSettings:); [pdfRange applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:pdfRange];
     ColorHoverButton *chat=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(456,20,100,32)]; chat.title=@"文件问答…"; chat.hoverColor=[NSColor systemBlueColor]; chat.font=[NSFont systemFontOfSize:10]; chat.target=self; chat.action=@selector(openAIFileChat:); [chat applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:chat];
     ColorHoverButton *copyMD=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(568,20,100,32)]; copyMD.title=@"复制 MD"; copyMD.hoverColor=[NSColor systemPurpleColor]; copyMD.font=[NSFont systemFontOfSize:10]; copyMD.target=self; copyMD.action=@selector(aiFileCopyMarkdown:); [copyMD applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copyMD];
     ColorHoverButton *saveDir=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(680,20,100,32)]; saveDir.title=@"保存位置…"; saveDir.hoverColor=[NSColor systemTealColor]; saveDir.font=[NSFont systemFontOfSize:10]; saveDir.target=self; saveDir.action=@selector(aiFileChooseOutputDirectory:); saveDir.toolTip=@"自定义 Markdown 报告保存目录"; [saveDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:saveDir];
@@ -25595,23 +25616,40 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *target=nil;
   for(NSString *p in self.aiFiles)if([p.pathExtension.lowercaseString isEqualToString:@"xlsx"]){target=p;break;}
   if(!target){NSOpenPanel *op=[NSOpenPanel openPanel];op.canChooseFiles=YES;op.allowedFileTypes=@[@"xlsx"];if([op runModal]!=NSModalResponseOK)return;target=op.URL.path;}
-  NSString *text=[self aiFileExtractXLSX:target]; NSMutableArray *vals=[NSMutableArray array];
-  for(NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){if(vals.count>=30)break;NSArray *cols=[line componentsSeparatedByString:@"\t"];for(NSString *c in cols){NSString *t=[c stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];NSScanner *sc=[NSScanner scannerWithString:t];double v=0;if([sc scanDouble:&v]&&sc.isAtEnd){[vals addObject:@(v)];break;}}}
-  if(!vals.count){[self showToast:@"没有找到可绘图的数值列"];return;}
-  self.aiFileChartValues=vals; self.aiFileChartLine=NO;
+  NSString *text=[self aiFileExtractXLSX:target]; NSMutableArray *cols=[NSMutableArray array];
+  for(NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
+    NSArray *cells=[line componentsSeparatedByString:@"\t"];
+    for(NSInteger i=0;i<(NSInteger)cells.count;i++){
+      NSString *t=[cells[i] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]; NSScanner *sc=[NSScanner scannerWithString:t]; double v=0;
+      if([sc scanDouble:&v]&&sc.isAtEnd){while((NSInteger)cols.count<=i)[cols addObject:[NSMutableArray array]];[cols[i] addObject:@(v)];}
+    }
+  }
+  NSMutableArray *columns=[NSMutableArray array];
+  for(NSMutableArray *c in cols)if(c.count>=2)[columns addObject:[c copy]];
+  if(!columns.count){[self showToast:@"没有找到可绘图的数值列"];return;}
+  self.aiFileChartColumns=columns; self.aiFileChartValues=columns.firstObject; self.aiFileChartLine=NO;
   if(!self.aiFileChartWindow){
     self.aiFileChartWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,700,500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
     self.aiFileChartWindow.title=@"Excel 图表"; self.aiFileChartWindow.releasedWhenClosed=NO;
     NSView *cv=self.aiFileChartWindow.contentView;
-    self.aiFileChartImageView=[[NSImageView alloc] initWithFrame:NSMakeRect(20,80,660,400)]; self.aiFileChartImageView.imageScaling=NSImageScaleProportionallyUpOrDown; [cv addSubview:self.aiFileChartImageView];
+    self.aiFileChartColumnPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(20,76,260,26) pullsDown:NO]; self.aiFileChartColumnPopup.target=self; self.aiFileChartColumnPopup.action=@selector(aiFileChartColumnChanged:); [cv addSubview:self.aiFileChartColumnPopup];
+    self.aiFileChartImageView=[[NSImageView alloc] initWithFrame:NSMakeRect(20,112,660,368)]; self.aiFileChartImageView.imageScaling=NSImageScaleProportionallyUpOrDown; [cv addSubview:self.aiFileChartImageView];
     NSArray *titles=@[@"柱状图",@"折线图",@"保存 PNG"]; NSArray *sels=@[@"aiFileChartBar:",@"aiFileChartLineMode:",@"aiFileChartSave:"];
     for(NSInteger i=0;i<3;i++){ColorHoverButton *b=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(20+i*120,30,110,30)];b.title=titles[i];b.hoverColor=[NSColor systemTealColor];b.font=[NSFont systemFontOfSize:10];b.target=self;b.action=NSSelectorFromString(sels[i]);[b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:b];}
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(600,30,80,30)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeAIFileChart:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.aiFileChartWindow center];
   }
+  [self.aiFileChartColumnPopup removeAllItems];
+  for(NSInteger i=0;i<(NSInteger)self.aiFileChartColumns.count;i++)[self.aiFileChartColumnPopup addItemWithTitle:[NSString stringWithFormat:@"第 %ld 列（%ld 个数值）",(long)(i+1),(long)[self.aiFileChartColumns[i] count]]];
+  [self.aiFileChartColumnPopup selectItemAtIndex:0];
   self.aiFileChartLine=NO; self.aiFileChartImageView.image=[self aiFileChartImage];
   [self bringAuxiliaryWindowToFront:self.aiFileChartWindow];
 }
+- (void)aiFileChartColumnChanged:(id)sender {
+  NSInteger i=self.aiFileChartColumnPopup.indexOfSelectedItem;
+  if(i>=0&&i<(NSInteger)self.aiFileChartColumns.count){self.aiFileChartValues=self.aiFileChartColumns[i];self.aiFileChartImageView.image=[self aiFileChartImage];}
+}
+
 - (void)aiFileChartBar:(id)sender { self.aiFileChartLine=NO; self.aiFileChartImageView.image=[self aiFileChartImage]; }
 - (void)aiFileChartLineMode:(id)sender { self.aiFileChartLine=YES; self.aiFileChartImageView.image=[self aiFileChartImage]; }
 - (void)aiFileChartSave:(id)sender { NSSavePanel *p=[NSSavePanel savePanel]; p.nameFieldStringValue=@"Excel图表.png"; if([p runModal]!=NSModalResponseOK)return; NSData *d=[[self aiFileChartImage] TIFFRepresentation]; NSBitmapImageRep *rep=[NSBitmapImageRep imageRepWithData:d]; NSData *png=[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}]; [png writeToFile:p.URL.path atomically:YES]; [self showToast:@"图表已保存"]; }
@@ -25661,6 +25699,35 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self aiFileAPICall:prompt model:model url:url key:key completion:^(NSString *answer,NSString *err){ if(answer.length){weakSelf.aiFileCompareOutput.string=answer;weakSelf.aiFileCompareStatus.stringValue=@"对比完成";}else{weakSelf.aiFileCompareOutput.string=[NSString stringWithFormat:@"对比失败：%@",err ?: @"无返回"];weakSelf.aiFileCompareStatus.stringValue=@"对比失败";} }];
 }
 
+- (NSDictionary *)aiFileVectorForText:(NSString *)text {
+  const NSInteger dim=384; NSMutableDictionary *v=[NSMutableDictionary dictionary];
+  NSString *l=text.lowercaseString;
+  NSMutableArray *tokens=[NSMutableArray array];
+  NSMutableString *latin=[NSMutableString string];
+  for(NSUInteger i=0;i<l.length;i++){
+    unichar c=[l characterAtIndex:i];
+    if((c>='a'&&c<='z')||(c>='0'&&c<='9'))[latin appendFormat:@"%C",c];
+    else {if(latin.length>1)[tokens addObject:[latin copy]];[latin setString:@""];}
+  }
+  if(latin.length>1)[tokens addObject:[latin copy]];
+  NSMutableString *han=[NSMutableString string];
+  for(NSUInteger i=0;i<l.length;i++){
+    unichar c=[l characterAtIndex:i];
+    if(c>=0x4E00&&c<=0x9FFF)[han appendFormat:@"%C",c];
+    else {for(NSUInteger j=0;j+2<=han.length;j++)[tokens addObject:[han substringWithRange:NSMakeRange(j,2)]];[han setString:@""];}
+  }
+  for(NSUInteger j=0;j+2<=han.length;j++)[tokens addObject:[han substringWithRange:NSMakeRange(j,2)]];
+  for(NSString *t in tokens){NSUInteger h=[t hash]%dim;NSNumber *n=v[@(h)] ?: @0;v[@(h)]=@(n.doubleValue+1);}
+  double norm=0;for(NSNumber *n in v.allValues)norm+=n.doubleValue*n.doubleValue;norm=sqrt(norm);
+  if(norm<=0)return @{};
+  NSMutableDictionary *out=[NSMutableDictionary dictionary];for(NSNumber *k in v)out[k]=@([v[k] doubleValue]/norm);
+  return out;
+}
+
+- (double)aiFileCosine:(NSDictionary *)a with:(NSDictionary *)b {
+  double dot=0;for(NSNumber *k in a)dot+=[a[k] doubleValue]*[b[k] doubleValue];return dot;
+}
+
 - (void)openAIFileChat:(id)sender {
   if(!self.aiFileChatWindow){
     self.aiFileChatWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,800,620) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
@@ -25703,18 +25770,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSMutableArray *chunks=[NSMutableArray array];
     for(NSString *path in self.aiFiles){NSString *t=[self aiFileExtractText:path];if(t.length){NSInteger n=0;for(NSInteger i=0;i<(NSInteger)t.length;i+=6000){n++;[chunks addObject:@{@"src":path.lastPathComponent,@"text":[t substringWithRange:NSMakeRange(i,MIN((NSUInteger)6000,t.length-i))]}];}}}
     for(NSDictionary *c in self.aiCloudDocs){NSString *t=c[@"content"] ?: @"";if(t.length){NSInteger n=0;for(NSInteger i=0;i<(NSInteger)t.length;i+=6000){n++;[chunks addObject:@{@"src":c[@"title"] ?: @"云文档",@"text":[t substringWithRange:NSMakeRange(i,MIN((NSUInteger)6000,t.length-i))]}];}}}
-    NSMutableArray *terms=[NSMutableArray array];
-    NSString *lq=[q lowercaseString];
-    for(NSString *w in [lq componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]])if(w.length)[terms addObject:w];
-    NSArray *chars=@[@"的",@"了",@"是",@"在",@"和",@"有",@"这",@"那",@"我",@"你",@"他",@"它",@"吗",@"呢",@"把",@"被",@"中",@"上",@"下",@"个",@"请",@"帮",@"找",@"有",@"哪些",@"什么"];
-    NSMutableOrderedSet *grams=[NSMutableOrderedSet orderedSet];
-    for(NSUInteger i=0;i+2<=lq.length;i++){NSString *g=[lq substringWithRange:NSMakeRange(i,2)];if(![chars containsObject:g])[grams addObject:g];}
-    [terms addObjectsFromArray:grams.array];
+    NSDictionary *qv=[self aiFileVectorForText:q];
     NSMutableArray *scored=[NSMutableArray array];
-    for(NSDictionary *c in chunks){NSString *t=[c[@"text"] lowercaseString];NSInteger score=0;for(NSString *term in terms)if(term.length&&[t containsString:term])score++;[scored addObject:@{@"src":c[@"src"],@"text":c[@"text"],@"score":@(score)}];}
+    for(NSDictionary *c in chunks){NSDictionary *cv=[self aiFileVectorForText:c[@"text"]];double score=[self aiFileCosine:qv with:cv];[scored addObject:@{@"src":c[@"src"],@"text":c[@"text"],@"score":@(score)}];}
     [scored sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"score"] compare:a[@"score"]];}];
     NSMutableString *context=[NSMutableString string];NSInteger used=0;
-    for(NSDictionary *c in scored){if(used>30000)break;if([c[@"score"] integerValue]==0 && used>0)continue;[context appendFormat:@"\n[来源：%@]\n%@",c[@"src"],c[@"text"]];used+=[c[@"text"] length];if(used>30000)break;}
+    for(NSDictionary *c in scored){if(used>30000)break;if([c[@"score"] doubleValue]<=0.001 && used>0)continue;[context appendFormat:@"\n[来源：%@]\n%@",c[@"src"],c[@"text"]];used+=[c[@"text"] length];if(used>30000)break;}
     if(!context.length){for(NSDictionary *c in scored){[context appendFormat:@"\n[来源：%@]\n%@",c[@"src"],c[@"text"]];if(context.length>20000)break;}}
     NSString *prompt=[NSString stringWithFormat:@"你是文件问答助手。只能根据下面资料回答；资料不足就明确说资料中没有。引用时标注 [来源：文件名]。\n\n资料：%@\n\n问题：%@",context,q];
     dispatch_async(dispatch_get_main_queue(),^{
