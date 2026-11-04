@@ -21455,6 +21455,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     tl.frame = NSMakeRect(626, 464, 60, 18); [cv addSubview:tl];
     self.translationTargetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(688, 458, 118, 28) pullsDown:NO];
     [self.translationTargetPopup addItemsWithTitles:@[@"中文（简体）", @"English", @"日本語", @"한국어", @"Français", @"Deutsch", @"Español", @"Русский"]];
+    self.translationTargetPopup.target=self; self.translationTargetPopup.action=@selector(translationTargetChanged:);
     [cv addSubview:self.translationTargetPopup];
 
     NSTextField *sl = [self label:@"原文" size:11 bold:YES color:nil];
@@ -21496,7 +21497,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     dh.alignment = NSTextAlignmentCenter;
     dh.frame = NSMakeRect(24, 49, 772, 18); [cv addSubview:dh];
     self.translationStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    self.translationStatus.frame = NSMakeRect(24, 10, 772, 18); [cv addSubview:self.translationStatus];
+    self.translationStatus.frame = NSMakeRect(24, 10, 650, 18); [cv addSubview:self.translationStatus];
+    ColorHoverButton *translateNow=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(690,4,106,28)];
+    translateNow.title=@"翻译"; translateNow.hoverColor=[NSColor systemTealColor];
+    translateNow.target=self; translateNow.action=@selector(translationTranslate:);
+    [translateNow applyColor:[NSColor controlAccentColor] textColor:[NSColor whiteColor]];
+    [cv addSubview:translateNow];
     NSString *st=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerTranslationExportType"] ?: @"DOCX";
     [self.translationExportTypePopup selectItemWithTitle:st];
     self.translationExportFolderField.stringValue=[self translationExportFolder];
@@ -22983,6 +22989,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       }
     });
   }] resume];
+}
+
+- (void)translationTargetChanged:(id)sender {
+  [[NSUserDefaults standardUserDefaults] setInteger:self.translationTargetPopup.indexOfSelectedItem forKey:@"centerTranslationTarget"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  if(self.translationBusy)return;
+  NSString *text=self.translationImportedText.length?self.translationImportedText:self.translationSourceView.string;
+  if(text.length)[self translationTranslate:nil];
 }
 
 - (void)translationTranslate:(id)sender {
