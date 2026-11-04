@@ -18723,17 +18723,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)closeRadialPageCustomization:(id)sender { [self.radialCustomWindow orderOut:nil]; }
 
 - (NSString *)radialModuleTitleForPage:(NSInteger)page {
-  if(page<0||page>=(NSInteger)self.radialPages.count)return @"模块";
-  NSArray *items=self.radialPages[page];
-  NSMutableSet *actions=[NSMutableSet set];
-  for(NSDictionary *it in items) if(it[@"action"])[actions addObject:it[@"action"]];
-  if([actions containsObject:@"image"]||[actions containsObject:@"aiedit"]||[actions containsObject:@"aivision"])return @"图片 / 文档";
-  if([actions containsObject:@"capture"]||[actions containsObject:@"fullshot"]||[actions containsObject:@"scrollshot"])return @"截图工具";
-  if([actions containsObject:@"recordtoggle"]||[actions containsObject:@"recordpause"]||[actions containsObject:@"videopost"])return @"录屏工具";
-  if([actions containsObject:@"rename"]||[actions containsObject:@"compress"]||[actions containsObject:@"pdf"]||[actions containsObject:@"filesearch"])return @"文件工具";
-  if([actions containsObject:@"groups"]||[actions containsObject:@"scene"]||[actions containsObject:@"layouts"])return @"分组 / 场景";
-  if([actions containsObject:@"usage"]||[actions containsObject:@"process"]||[actions containsObject:@"startup"]||[actions containsObject:@"automation"])return @"系统工具";
-  return @"AI 工具";
+  NSArray *names=@[@"AI 工具",@"图片 / 文档",@"截图工具",@"录屏工具",@"文件工具",@"分组 / 场景",@"系统工具"];
+  if(page>=0 && page<(NSInteger)names.count && page<(NSInteger)self.radialPages.count)return names[page];
+  if(page>=0 && page<(NSInteger)names.count)return names[page];
+  return @"模块";
 }
 
 - (void)showRadialSearch:(id)sender {
@@ -21762,7 +21755,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       NSDictionary *it=items[i]; NSString *action=it[@"action"] ?: @"";
       if(!action.length)continue;
       NSInteger aid=5000+page*100+i;
-      [out addObject:@{@"id":@(aid),@"cat":@(page),@"title":it[@"title"] ?: @"",@"desc":[NSString stringWithFormat:@"菜单栏 · 第 %ld 页",(long)(page+1)],@"radialAction":action}];
+      [out addObject:@{@"id":@(aid),@"cat":@(page),@"title":it[@"title"] ?: @"",@"desc":[NSString stringWithFormat:@"菜单栏 · 第 %ld 页：%@",(long)(page+1),module],@"radialAction":action}];
     }
   }
   return out;
@@ -21977,7 +21970,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if(!self.allShortcutDefs.count) self.allShortcutDefs = [self allGlobalActionDefs];
   [self.allShortcutCategoryPopup removeAllItems];
   if(self.radialPages.count){
-    for(NSInteger p=0;p<(NSInteger)self.radialPages.count;p++)[self.allShortcutCategoryPopup addItemWithTitle:[NSString stringWithFormat:@"第 %ld 页",(long)(p+1)]];
+    for(NSInteger p=0;p<(NSInteger)self.radialPages.count;p++)[self.allShortcutCategoryPopup addItemWithTitle:[NSString stringWithFormat:@"第 %ld 页：%@",(long)(p+1),[self radialModuleTitleForPage:p]]];
   } else {
     [self.allShortcutCategoryPopup addItemsWithTitles:@[@"截图 / 录制", @"文件与工具", @"启动与搜索", @"系统与分组", @"AI / 新功能"]];
   }
