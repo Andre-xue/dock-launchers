@@ -4017,16 +4017,14 @@ static void HideDockHoverTip(void) {
   NSWindow *w = [NSApp keyWindow];
   if (!w) return;
   if ([self isWindowPinned:w]) { NSBeep(); return; }
-  [w performClose:nil];
-  if (w.isVisible) [w orderOut:nil];
+  [w orderOut:nil];
 }
 
 - (void)forceCloseWindowFromChrome:(NSButton *)sender {
   NSWindow *w = sender.window;
   if (!w) return;
   if ([self isWindowPinned:w]) { NSBeep(); return; }
-  [w performClose:nil];
-  if (w.isVisible) [w orderOut:nil];
+  [w orderOut:nil];
 }
 
 - (void)toggleWindowPin:(NSButton *)sender {
