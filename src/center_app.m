@@ -8722,6 +8722,12 @@ static BOOL ValidGroupName(NSString *raw) {
   keyFileBtn.toolTip = @"选择 AI 服务，验证应用密码后定位本地密钥文件";
   [keyFileBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:keyFileBtn];
+  ColorHoverButton *aiFileBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(324,598,124,28)];
+  aiFileBtn.title=@"AI 文件…"; aiFileBtn.hoverColor=[NSColor systemPinkColor];
+  aiFileBtn.target=self; aiFileBtn.action=@selector(openAIFileAnalyzer:);
+  aiFileBtn.toolTip=@"导入文件、云文档并用 AI 分析";
+  [aiFileBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:aiFileBtn];
   ColorHoverButton *localAIBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(456,598,132,28)];
   localAIBtn.title=@"本地服务…"; localAIBtn.hoverColor=[NSColor systemPurpleColor];
   localAIBtn.target=self; localAIBtn.action=@selector(openLocalAIServices:);
