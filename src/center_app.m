@@ -22650,7 +22650,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSPopUpButton *sl=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,434,130,26)]; [sl addItemWithTitle:@"自动检测"]; [cv addSubview:sl];
     ColorHoverButton *swap=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(164,434,34,26)]; swap.title=@"⇄"; swap.hoverColor=[NSColor systemTealColor]; [swap applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:swap];
     self.shotTranslateTargetPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(208,434,160,26)];
-    [self.shotTranslateTargetPopup addItemsWithTitles:@[@"中文（简体）",@"English",@"日本語",@"한국어",@"Français",@"Deutsch",@"Español",@"Русский"]]; [cv addSubview:self.shotTranslateTargetPopup];
+    [self.shotTranslateTargetPopup addItemsWithTitles:@[@"中文（简体）",@"English",@"日本語",@"한국어",@"Français",@"Deutsch",@"Español",@"Русский"]];
+    self.shotTranslateTargetPopup.target=self; self.shotTranslateTargetPopup.action=@selector(shotTranslateNow:);
+    [cv addSubview:self.shotTranslateTargetPopup];
     NSTextField *ml=[self label:@"模型" size:10 bold:NO color:[NSColor secondaryLabelColor]]; ml.frame=NSMakeRect(376,440,36,16); [cv addSubview:ml];
     self.shotTranslateModelPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(416,434,280,26)]; self.shotTranslateModelPopup.font=[NSFont systemFontOfSize:10]; self.shotTranslateModelPopup.target=self; self.shotTranslateModelPopup.action=@selector(shotTranslateNow:); [cv addSubview:self.shotTranslateModelPopup];
     NSTextField *svl=[self label:@"翻译服务" size:10 bold:NO color:[NSColor secondaryLabelColor]]; svl.frame=NSMakeRect(24,408,100,16); [cv addSubview:svl];
