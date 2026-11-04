@@ -24812,6 +24812,58 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return result ?: @"";
 }
 
+- (NSData *)aiFileUnzipEntry:(NSString *)path entry:(NSString *)entry {
+  NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/unzip"; t.arguments=@[@"-p",path,entry];
+  NSPipe *pipe=[NSPipe pipe]; t.standardOutput=pipe; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+  @try{[t launch];}@catch(NSException *e){return nil;}
+  NSData *d=[pipe.fileHandleForReading readDataToEndOfFile]; [t waitUntilExit];
+  return d;
+}
+
+- (NSString *)aiFileExtractXLSX:(NSString *)path {
+  NSData *ssData=[self aiFileUnzipEntry:path entry:@"xl/sharedStrings.xml"];
+  NSMutableArray *shared=[NSMutableArray array];
+  if(ssData.length){
+    NSXMLDocument *doc=[[NSXMLDocument alloc] initWithData:ssData options:0 error:NULL];
+    NSArray *nodes=[doc nodesForXPath:@"//*[local-name()='si']" error:NULL] ?: @[];
+    for(NSXMLElement *si in nodes){
+      NSMutableString *v=[NSMutableString string];
+      for(NSXMLElement *t in [si nodesForXPath:@".//*[local-name()='t']" error:NULL] ?: @[]) if(t.stringValue)[v appendString:t.stringValue];
+      [shared addObject:v];
+    }
+  }
+  NSData *listData=[self aiFileUnzipEntry:path entry:@"xl/worksheets"];
+  NSMutableArray *sheetNames=[NSMutableArray array];
+  NSString *list=[[NSString alloc] initWithData:listData encoding:NSUTF8StringEncoding];
+  if(!list.length){
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/unzip"; t.arguments=@[@"-Z1",path];
+    NSPipe *pipe=[NSPipe pipe]; t.standardOutput=pipe; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+    @try{[t launch];}@catch(NSException *e){}
+    NSData *d=[pipe.fileHandleForReading readDataToEndOfFile]; [t waitUntilExit];
+    NSString *all=[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
+    for(NSString *line in [all componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) if([line hasPrefix:@"xl/worksheets/sheet"]&&[line hasSuffix:@".xml"])[sheetNames addObject:line];
+  }
+  NSMutableString *out=[NSMutableString string];
+  for(NSString *entry in sheetNames){
+    NSData *d=[self aiFileUnzipEntry:path entry:entry]; if(!d.length)continue;
+    NSXMLDocument *doc=[[NSXMLDocument alloc] initWithData:d options:0 error:NULL];
+    [out appendFormat:@"\n===== 工作表：%@ =====\n",entry.lastPathComponent.stringByDeletingPathExtension];
+    NSArray *rows=[doc nodesForXPath:@"//*[local-name()='row']" error:NULL] ?: @[];
+    for(NSXMLElement *row in rows){
+      NSMutableArray *vals=[NSMutableArray array];
+      for(NSXMLElement *c in [row nodesForXPath:@"./*[local-name()='c']" error:NULL] ?: @[]){
+        NSString *type=[[c attributeForName:@"t"] stringValue] ?: @"";
+        NSString *v=[[c nodesForXPath:@"./*[local-name()='v']" error:NULL].firstObject stringValue] ?: @"";
+        if([type isEqualToString:@"s"]){NSInteger idx=v.integerValue;if(idx>=0&&idx<(NSInteger)shared.count)v=shared[idx];}
+        else if([type isEqualToString:@"inlineStr"]){NSXMLElement *is=[c nodesForXPath:@"./*[local-name()='is']" error:NULL].firstObject;v=is.stringValue ?: @"";}
+        [vals addObject:v.length?v:@""];
+      }
+      if(vals.count)[out appendString:[vals componentsJoinedByString:@"\t"]]; [out appendString:@"\n"];
+    }
+  }
+  return out;
+}
+
 - (NSString *)aiFileExtractText:(NSString *)path {
   NSString *ext=path.pathExtension.lowercaseString;
   if([ext isEqualToString:@"pdf"]){
@@ -24824,6 +24876,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     if(!t.length)t=[NSString stringWithContentsOfFile:path encoding:NSISOLatin1StringEncoding error:NULL];
     return t ?: @"";
   }
+  if([ext isEqualToString:@"xlsx"]) return [self aiFileExtractXLSX:path] ?: @"";
+  if([ext isEqualToString:@"xls"]) return @"旧版 Excel .xls 暂不支持，请另存为 .xlsx 后导入";
   if([@[@"png",@"jpg",@"jpeg",@"heic",@"heif",@"tiff",@"tif",@"bmp",@"webp"] containsObject:ext]) return [self aiFileOCRImage:path];
   return @"";
 }
