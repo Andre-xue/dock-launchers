@@ -21749,64 +21749,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)openShortcutSettings:(id)sender {
-  if (!self.shortcutSettingsWindow) {
-    self.shortcutSettingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,626) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
-    self.shortcutSettingsWindow.title = @"快捷键设置";
-    self.shortcutSettingsWindow.releasedWhenClosed = NO;
-    self.shortcutSettingsWindow.level = NSNormalWindowLevel;
-    NSView *cv = self.shortcutSettingsWindow.contentView;
-    NSTextField *t = [self label:@"快捷键设置" size:18 bold:YES color:nil];
-    t.frame = NSMakeRect(24, 580, 300, 24); [cv addSubview:t];
-    NSTextField *h = [self label:@"点击右侧快捷键，然后按下新的组合键；Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    h.frame = NSMakeRect(24, 558, 430, 18); [cv addSubview:h];
-    NSArray *names = @[@"截图翻译", @"划词翻译", @"翻译当前文本", @"应用搜索", @"打开快速面板", @"打开剪贴板", @"打开控制台", @"区域截图", @"录屏 30 秒"];
-    self.shortcutButtons = [NSMutableArray array];
-    for (NSInteger i = 0; i < 9; i++) {
-      NSTextField *l = [self label:names[i] size:13 bold:YES color:nil];
-      l.frame = NSMakeRect(28, 501 - i * 52, 160, 22); [cv addSubview:l];
-      ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(190, 496 - i * 52, 240, 32)];
-      b.tag = i;
-      b.title = [self shortcutDisplayForAction:i];
-      b.hoverColor = [NSColor systemTealColor];
-      b.target = self; b.action = @selector(recordShortcutForAction:);
-      [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-      [cv addSubview:b];
-      [self.shortcutButtons addObject:b];
-      ColorHoverButton *clr = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(438, 496 - i * 52, 34, 32)];
-      clr.title = @"清除"; clr.tag = i; clr.font = [NSFont systemFontOfSize:9];
-      clr.hoverColor = [NSColor systemRedColor];
-      clr.target = self; clr.action = @selector(clearShortcutForAction:);
-      [clr applyColor:DLButtonBackground() textColor:[NSColor secondaryLabelColor]];
-      [cv addSubview:clr];
-    }
-    self.shortcutStatusLabel = [self label:@"点击右侧快捷键开始录制；Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
-    self.shortcutStatusLabel.frame = NSMakeRect(24, 50, 430, 18); [cv addSubview:self.shortcutStatusLabel];
-    ColorHoverButton *clearAllBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 16, 108, 32)];
-    clearAllBtn.title = @"清除全部"; clearAllBtn.hoverColor = [NSColor systemRedColor];
-    clearAllBtn.target = self; clearAllBtn.action = @selector(clearAllShortcuts:);
-    [clearAllBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-    [cv addSubview:clearAllBtn];
-    ColorHoverButton *allShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(140, 16, 150, 32)];
-    allShortcutBtn.title = @"全部功能快捷键…";
-    allShortcutBtn.hoverColor = [NSColor systemTealColor];
-    allShortcutBtn.target = self;
-    allShortcutBtn.action = @selector(openAllShortcutSettings:);
-    [allShortcutBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-    [cv addSubview:allShortcutBtn];
-    ColorHoverButton *groupShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(300, 16, 150, 32)];
-    groupShortcutBtn.title = @"分组快捷键…";
-    groupShortcutBtn.hoverColor = [NSColor systemPurpleColor];
-    groupShortcutBtn.target = self;
-    groupShortcutBtn.action = @selector(openGroupShortcutSettings:);
-    [groupShortcutBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
-    [cv addSubview:groupShortcutBtn];
-    [self.shortcutSettingsWindow center];
-  }
-  [self stopShortcutRecording];
-  [self refreshShortcutButtons];
-  [NSApp activateIgnoringOtherApps:YES];
-  [self.shortcutSettingsWindow makeKeyAndOrderFront:nil];
-  [self.shortcutSettingsWindow orderFrontRegardless];
+  [self openAllShortcutSettings:sender];
 }
 
 - (NSArray<NSDictionary *> *)radialShortcutDefs {
@@ -22001,12 +21944,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)openAllShortcutSettings:(id)sender {
   if (!self.allShortcutWindow) {
     self.allShortcutWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,640) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
-    self.allShortcutWindow.title = @"全部功能快捷键";
+    self.allShortcutWindow.title = @"快捷键设置";
     self.allShortcutWindow.releasedWhenClosed = NO;
     NSView *cv = self.allShortcutWindow.contentView;
-    [self label:@"全部功能快捷键" size:18 bold:YES color:nil].frame = NSMakeRect(24,594,300,24);
-    NSTextField *t = [self label:@"全部功能快捷键" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,594,300,24); [cv addSubview:t];
-    NSTextField *h = [self label:@"按功能分类；点击快捷键后录制新的组合键，Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *t = [self label:@"快捷键设置" size:18 bold:YES color:nil]; t.frame=NSMakeRect(24,594,300,24); [cv addSubview:t];
+    NSTextField *h = [self label:@"按菜单栏功能分类；点击快捷键录制组合键，Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame=NSMakeRect(24,570,560,18); [cv addSubview:h];
     self.allShortcutCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,530,220,28) pullsDown:NO];
     self.allShortcutCategoryPopup.target=self; self.allShortcutCategoryPopup.action=@selector(allShortcutCategoryChanged:);
@@ -22021,6 +21963,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.allShortcutNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.allShortcutNextButton];
     self.allShortcutPageLabel = [self label:@"1 / 1" size:10 bold:YES color:[NSColor secondaryLabelColor]];
     self.allShortcutPageLabel.alignment=NSTextAlignmentCenter; self.allShortcutPageLabel.frame=NSMakeRect(260,24,100,18); [cv addSubview:self.allShortcutPageLabel];
+    ColorHoverButton *groupBtn=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,20,140,28)];
+    groupBtn.title=@"分组快捷键…"; groupBtn.hoverColor=[NSColor systemPurpleColor]; groupBtn.font=[NSFont systemFontOfSize:10];
+    groupBtn.target=self; groupBtn.action=@selector(openGroupShortcutSettings:);
+    [groupBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:groupBtn];
+    ColorHoverButton *clearBtn=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(450,20,140,28)];
+    clearBtn.title=@"清除全部"; clearBtn.hoverColor=[NSColor systemRedColor]; clearBtn.font=[NSFont systemFontOfSize:10];
+    clearBtn.target=self; clearBtn.action=@selector(clearAllRadialShortcuts:);
+    [clearBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearBtn];
     [self.allShortcutWindow center];
   }
   self.allShortcutDefs = [self radialShortcutDefs];
@@ -22036,6 +21986,26 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self rebuildAllShortcutPage];
   [NSApp activateIgnoringOtherApps:YES];
   [self.allShortcutWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)clearAllRadialShortcuts:(id)sender {
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"清除全部快捷键？";
+  a.informativeText=@"会清除当前快捷键设置里所有已录制的组合键，可重新设置。";
+  [a addButtonWithTitle:@"清除"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  [self stopAllShortcutRecording];
+  NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+  for(NSDictionary *d in self.allShortcutDefs ?: [self radialShortcutDefs]){
+    NSInteger aid=[d[@"id"] integerValue];
+    NSValue *v=self.allHotKeyRefs[@(aid)];
+    if(v){EventHotKeyRef ref=(EventHotKeyRef)v.pointerValue; if(ref)UnregisterEventHotKey(ref); [self.allHotKeyRefs removeObjectForKey:@(aid)];}
+    [ud removeObjectForKey:[NSString stringWithFormat:@"centerGA%ldCode",(long)aid]];
+    [ud removeObjectForKey:[NSString stringWithFormat:@"centerGA%ldMods",(long)aid]];
+    [ud removeObjectForKey:[NSString stringWithFormat:@"centerGA%ldDisplay",(long)aid]];
+  }
+  [ud synchronize];
+  [self rebuildAllShortcutPage];
+  [self showToast:@"已清除全部快捷键"];
 }
 
 - (void)allShortcutCategoryChanged:(id)sender {
