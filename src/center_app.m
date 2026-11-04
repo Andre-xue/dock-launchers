@@ -1691,7 +1691,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiFileChartTitleField;
 @property (strong) NSWindow *videoGenWindow;
 @property (strong) NSPopUpButton *videoGenCheckpointPopup, *videoGenMotionPopup, *videoGenBackendPopup;
-@property (strong) NSTextField *videoGenPromptField, *videoGenNegativeField, *videoGenStatus, *videoGenWidthField, *videoGenHeightField, *videoGenFramesField, *videoGenStepsField, *videoGenSeedField, *videoGenFpsField;
+@property (strong) NSTextField *videoGenPromptField, *videoGenNegativeField, *videoGenStatus, *videoGenWidthField, *videoGenHeightField, *videoGenFramesField, *videoGenStepsField, *videoGenSeedField, *videoGenFpsField, *videoGenSavePathField;
 @property (strong) NSTimer *videoGenPollTimer, *videoGenElapsedTimer;
 @property (strong) NSWindow *videoModelMarketWindow;
 @property (strong) NSTask *marketDownloadTask;
@@ -8241,6 +8241,12 @@ static BOOL ValidGroupName(NSString *raw) {
       NSTextField *f=[[NSTextField alloc] initWithFrame:NSMakeRect(xs[i],326,100,26)]; f.stringValue=vals[i]; [cv addSubview:f]; [fields addObject:f];
     }
     self.videoGenWidthField=fields[0]; self.videoGenHeightField=fields[1]; self.videoGenFramesField=fields[2]; self.videoGenStepsField=fields[3]; self.videoGenSeedField=fields[4]; self.videoGenFpsField=fields[5];
+    NSTextField *ls=[self label:@"保存到" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; ls.frame=NSMakeRect(24,286,60,16); [cv addSubview:ls];
+    self.videoGenSavePathField=[[NSTextField alloc] initWithFrame:NSMakeRect(90,278,530,26)];
+    self.videoGenSavePathField.placeholderString=@"视频保存目录，默认 ComfyUI/output";
+    self.videoGenSavePathField.target=self; self.videoGenSavePathField.action=@selector(videoGenSavePathChanged:);
+    [cv addSubview:self.videoGenSavePathField];
+    ColorHoverButton *pick=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(628,276,136,30)]; pick.title=@"选择目录…"; pick.hoverColor=[NSColor systemBlueColor]; pick.font=[NSFont systemFontOfSize:10]; pick.target=self; pick.action=@selector(chooseVideoGenSavePath:); [pick applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:pick];
     ColorHoverButton *gen=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,40,130,34)]; gen.title=@"生成视频"; gen.hoverColor=[NSColor systemPinkColor]; gen.target=self; gen.action=@selector(generateVideo:); [gen applyColor:[NSColor systemPinkColor] textColor:[NSColor whiteColor]]; [cv addSubview:gen];
     ColorHoverButton *vm=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(304,40,120,34)]; vm.title=@"视频模型市场…"; vm.hoverColor=[NSColor systemPurpleColor]; vm.font=[NSFont systemFontOfSize:10]; vm.target=self; vm.action=@selector(showVideoModelMarket:); [vm applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:vm];
     ColorHoverButton *folder=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(164,40,130,34)]; folder.title=@"打开输出目录"; folder.hoverColor=[NSColor systemBlueColor]; folder.target=self; folder.action=@selector(openVideoGenOutput:); [folder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:folder];
@@ -8248,6 +8254,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [self.videoGenWindow center];
   }
   [self refreshVideoGenModels];
+  self.videoGenSavePathField.stringValue=[self videoGenSaveDirectory];
   [self bringAuxiliaryWindowToFront:self.videoGenWindow];
 }
 
@@ -8272,8 +8279,36 @@ static BOOL ValidGroupName(NSString *raw) {
   else if(!mms.count) self.videoGenStatus.stringValue=@"未找到 AnimateDiff 运动模块";
 }
 
+- (NSString *)videoGenSaveDirectory {
+  NSString *p=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerVideoOutputPath"] ?: @"";
+  if(!p.length)p=[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/output"];
+  p=[p stringByExpandingTildeInPath];
+  [[NSFileManager defaultManager] createDirectoryAtPath:p withIntermediateDirectories:YES attributes:nil error:NULL];
+  return p;
+}
+
+- (void)videoGenSavePathChanged:(id)sender {
+  NSString *p=[self.videoGenSavePathField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if(!p.length)p=[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/output"];
+  p=[p stringByExpandingTildeInPath];
+  [[NSUserDefaults standardUserDefaults] setObject:p forKey:@"centerVideoOutputPath"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [[NSFileManager defaultManager] createDirectoryAtPath:p withIntermediateDirectories:YES attributes:nil error:NULL];
+  self.videoGenSavePathField.stringValue=p;
+  self.videoGenStatus.stringValue=[NSString stringWithFormat:@"视频将保存到：%@",p];
+}
+
+- (void)chooseVideoGenSavePath:(id)sender {
+  NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=NO; p.canChooseDirectories=YES; p.allowsMultipleSelection=NO; p.prompt=@"选择保存目录"; p.directoryURL=[NSURL fileURLWithPath:[self videoGenSaveDirectory]];
+  [p beginSheetModalForWindow:self.videoGenWindow completionHandler:^(NSModalResponse r){
+    if(r!=NSModalResponseOK)return;
+    self.videoGenSavePathField.stringValue=p.URL.path;
+    [self videoGenSavePathChanged:nil];
+  }];
+}
+
 - (void)openVideoGenOutput:(id)sender {
-  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/output"]]];
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self videoGenSaveDirectory]]];
 }
 
 - (void)checkComfyVideoReady:(void (^)(BOOL ready))completion {
@@ -8326,6 +8361,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)generateVideo:(id)sender {
+  if(self.videoGenSavePathField.stringValue.length)[self videoGenSavePathChanged:nil];
   if(self.videoGenPromptID.length){self.videoGenStatus.stringValue=@"已有生成任务在进行";return;}
   if(self.videoGenBackendPopup.indexOfSelectedItem != 0){
     NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"该视频后端尚未安装";
@@ -8336,6 +8372,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)submitVideoGeneration:(id)sender {
+  if(self.videoGenSavePathField.stringValue.length)[self videoGenSavePathChanged:nil];
   if(self.videoGenPromptID.length){self.videoGenStatus.stringValue=@"已有生成任务在进行";return;}
   if(self.videoGenBackendPopup.indexOfSelectedItem != 0){
     NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"该视频后端尚未安装";
@@ -8405,11 +8442,25 @@ static BOOL ValidGroupName(NSString *raw) {
     NSDictionary *hist=o[weakSelf.videoGenPromptID]; NSDictionary *outputs=hist[@"outputs"];
     NSString *found=nil;
     for(NSDictionary *node in outputs.allValues){ if(![node isKindOfClass:[NSDictionary class]])continue; for(NSString *key in @[@"gifs",@"images",@"videos"]){ NSArray *arr=node[key]; if(![arr isKindOfClass:[NSArray class]]||!arr.count)continue; NSDictionary *f=arr.firstObject; if(![f isKindOfClass:[NSDictionary class]])continue; NSString *fn=f[@"filename"]; if(fn.length){NSString *sub=f[@"subfolder"] ?: @""; found=[[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/output"] stringByAppendingPathComponent:[sub stringByAppendingPathComponent:fn]];break;} } if(found)break; }
+    NSString *saved=found;
+    if(found.length){
+      NSString *dir=[weakSelf videoGenSaveDirectory];
+      NSString *srcDir=[found stringByDeletingLastPathComponent];
+      if(![srcDir isEqualToString:dir]){
+        NSString *dest=[dir stringByAppendingPathComponent:found.lastPathComponent];
+        if([[NSFileManager defaultManager] fileExistsAtPath:dest]){
+          NSString *base=found.lastPathComponent.stringByDeletingPathExtension;
+          NSString *ext=found.pathExtension;
+          dest=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%ld.%@",base,(long)[[NSDate date] timeIntervalSince1970],ext]];
+        }
+        if([[NSFileManager defaultManager] copyItemAtPath:found toPath:dest error:NULL])saved=dest;
+      }
+    }
     dispatch_async(dispatch_get_main_queue(),^{
       [weakSelf.videoGenPollTimer invalidate]; weakSelf.videoGenPollTimer=nil;
       [weakSelf.videoGenElapsedTimer invalidate]; weakSelf.videoGenElapsedTimer=nil;
       weakSelf.videoGenPromptID=nil;
-      if(found.length){weakSelf.videoGenStatus.stringValue=[NSString stringWithFormat:@"生成完成：%@",found.lastPathComponent]; [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:found]];}
+      if(saved.length){weakSelf.videoGenStatus.stringValue=[NSString stringWithFormat:@"已保存：%@",saved]; [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:saved]];}
       else weakSelf.videoGenStatus.stringValue=@"生成完成，但未找到输出文件";
       if(weakSelf.videoGenAutoStartedComfy){[weakSelf stopComfyAfterVideoAuto];weakSelf.videoGenAutoStartedComfy=NO;weakSelf.videoGenStatus.stringValue=[weakSelf.videoGenStatus.stringValue stringByAppendingString:@" · 已释放 ComfyUI 内存"];}
     });
