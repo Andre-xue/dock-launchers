@@ -8297,6 +8297,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.videoGenMotionPopup removeAllItems];
   for(NSString *f in mms) if([@[@"ckpt",@"safetensors"] containsObject:f.pathExtension.lowercaseString]) [self.videoGenMotionPopup addItemWithTitle:f];
   if(!ckpts.count) self.videoGenStatus.stringValue=@"未找到底模";
+  else if(ckpts.count==1) self.videoGenStatus.stringValue=@"只有基础底模；可到「视频模型市场」下载写实/动漫底模";
   else if(!mms.count) self.videoGenStatus.stringValue=@"未找到 AnimateDiff 运动模块";
 }
 
