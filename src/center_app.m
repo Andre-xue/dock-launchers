@@ -23094,7 +23094,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.translationResultView.string = output;
     self.translationStatus.stringValue = @"翻译完成";
     self.translationBusy = NO;
-    if (self.translationImportedFileURL.length) [self exportBilingualTranslation];
     return;
   }
   self.translationStatus.stringValue = [NSString stringWithFormat:@"正在翻译 %ld/%ld…", (long)(idx+1), (long)chunks.count];
