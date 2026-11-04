@@ -21425,14 +21425,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     CGImageRef img = NULL;
     if (src) {
       NSDictionary *thumbOpts = @{(__bridge id)kCGImageSourceCreateThumbnailFromImageAlways:@YES,
-                                  (__bridge id)kCGImageSourceThumbnailMaxPixelSize:@2600,
+                                  (__bridge id)kCGImageSourceThumbnailMaxPixelSize:@1200,
                                   (__bridge id)kCGImageSourceCreateThumbnailWithTransform:@YES};
       img = CGImageSourceCreateThumbnailAtIndex(src, 0, (__bridge CFDictionaryRef)thumbOpts);
       if (!img) img = CGImageSourceCreateImageAtIndex(src, 0, NULL);
     }
     if (!img) { if (src) CFRelease(src); dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(@""); }); return; }
     VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
-    req.recognitionLevel = VNRequestTextRecognitionLevelFast;
+    req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
     req.usesLanguageCorrection = NO;
     req.recognitionLanguages = @[@"en-US", @"zh-Hans", @"ja-JP", @"ko-KR"];
     VNImageRequestHandler *h = [[VNImageRequestHandler alloc] initWithCGImage:img options:@{}];
