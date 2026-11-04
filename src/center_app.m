@@ -5676,6 +5676,31 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   }
 }
 
+- (NSString *)createICNSFromImagePath:(NSString *)path {
+  NSImage *img=[[NSImage alloc] initWithContentsOfFile:path]; if(!img)return nil;
+  NSString *base=[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dl-icon-%@",[[NSUUID UUID] UUIDString]]];
+  NSString *iconset=[base stringByAppendingPathExtension:@"iconset"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:iconset withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSArray *sizes=@[@16,@32,@128,@256,@512];
+  for(NSNumber *n in sizes){
+    NSInteger sz=n.integerValue;
+    for(NSInteger scale=1;scale<=2;scale++){
+      NSInteger px=sz*scale; NSString *name=[NSString stringWithFormat:@"icon_%ldx%ld%s.png",(long)sz,(long)sz,scale==2?"@2x":""];
+      NSImage *out=[[NSImage alloc] initWithSize:NSMakeSize(px,px)];
+      [out lockFocus]; [img drawInRect:NSMakeRect(0,0,px,px) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0]; [out unlockFocus];
+      NSBitmapImageRep *rep=[NSBitmapImageRep imageRepWithData:[out TIFFRepresentation]];
+      NSData *png=[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+      [png writeToFile:[iconset stringByAppendingPathComponent:name] atomically:YES];
+    }
+  }
+  NSString *out=[base stringByAppendingPathExtension:@"icns"];
+  NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/iconutil"; t.arguments=@[@"-c",@"icns",iconset,@"-o",out];
+  t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+  @try{[t launch];[t waitUntilExit];}@catch(NSException *e){return nil;}
+  [[NSFileManager defaultManager] removeItemAtPath:iconset error:NULL];
+  return [[NSFileManager defaultManager] fileExistsAtPath:out]?out:nil;
+}
+
 - (BOOL)applyIconToApp:(NSString *)app {
   NSString *resDir = [app stringByAppendingPathComponent:@"Contents/Resources"];
   [[NSFileManager defaultManager] createDirectoryAtPath:resDir withIntermediateDirectories:YES attributes:nil error:NULL];
@@ -5688,12 +5713,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
     if ([[self.dialogCustomIcon pathExtension].lowercaseString isEqualToString:@"icns"]) {
       src = self.dialogCustomIcon;
     } else {
-      NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-custom-icon.icns"];
-      NSTask *t = [[NSTask alloc] init];
-      t.launchPath = @"/usr/bin/sips";
-      t.arguments = @[@"-s", @"format", @"icns", @"--resampleHeightWidth", @"1024", @"1024", self.dialogCustomIcon, @"--out", tmp];
-      @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
-      if (t.terminationStatus == 0) src = tmp;
+      src = [self createICNSFromImagePath:self.dialogCustomIcon];
     }
   }
   if (!src) return YES;
@@ -5881,7 +5901,11 @@ static BOOL ValidGroupName(NSString *raw) {
   info[@"CFBundleDisplayName"] = name;
   info[@"CFBundleIdentifier"] = [NSString stringWithFormat:@"com.docklaunchers.g%lu", (unsigned long)([[NSDate date] timeIntervalSince1970]*1000)];
   [info writeToFile:plist atomically:YES];
-  [self applyIconToApp:dst];
+  if (![self applyIconToApp:dst]) {
+    [fm removeItemAtPath:dst error:NULL];
+    [self showSheetMessage:@"图标应用失败" info:@"无法把自定义图片转换为 icns，请换一张图片或使用内置图标。" parent:[NSApp modalWindow]];
+    return;
+  }
   NSString *lists = [GroupDir() stringByAppendingPathComponent:@"lists"];
   [fm createDirectoryAtPath:lists withIntermediateDirectories:YES attributes:nil error:NULL];
   NSString *listFile = [lists stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
@@ -5987,11 +6011,18 @@ static BOOL ValidGroupName(NSString *raw) {
     display = newName;
   }
   if (iconChanged) {
-    [self applyIconToApp:targetApp];
+    if (![self applyIconToApp:targetApp]) {
+      [self showSheetMessage:@"图标应用失败" info:@"无法生成 icns，请换一张图片。" parent:[NSApp modalWindow]];
+      return;
+    }
     NSTask *sign = [[NSTask alloc] init];
     sign.launchPath = @"/usr/bin/codesign";
     sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", targetApp];
     @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
+    NSTask *reg = [[NSTask alloc] init];
+    reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+    reg.arguments = @[@"-f", targetApp];
+    @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
   }
   [self removeDockEntry:targetApp];
   [self addDockEntry:targetApp label:display];
