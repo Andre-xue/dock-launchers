@@ -24804,12 +24804,53 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self aiFileServiceChanged:nil];
 }
 
+- (void)fetchAIFileModelsForEntry:(NSDictionary *)e defaultModel:(NSString *)model fallback:(NSString *)fallback {
+  NSString *base=e[@"apiBase"] ?: @""; NSString *key=e[@"api"] ?: @"";
+  if([base hasSuffix:@"/chat/completions"])base=[base substringToIndex:base.length-17];
+  while([base hasSuffix:@"/"])base=[base substringToIndex:base.length-1];
+  if(!base.length||!key.length){[self.aiFileModelField addItemWithObjectValue:model];self.aiFileModelField.stringValue=model;return;}
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[base stringByAppendingString:@"/models"]]];
+  [req setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"]; req.timeoutInterval=15;
+  __weak typeof(self) weakSelf=self;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil; NSArray *list=[o isKindOfClass:[NSDictionary class]]?o[@"data"]:nil;
+    NSMutableArray *models=[NSMutableArray array];
+    for(NSDictionary *x in list)if(x[@"id"])[models addObject:x[@"id"]];
+    dispatch_async(dispatch_get_main_queue(),^{
+      if(models.count){
+        [weakSelf.aiFileModelField removeAllItems];
+        for(NSString *m in models)[weakSelf.aiFileModelField addItemWithObjectValue:m];
+        weakSelf.aiFileModelField.stringValue=[models containsObject:model]?model:models.firstObject;
+      } else {[weakSelf.aiFileModelField addItemWithObjectValue:model];weakSelf.aiFileModelField.stringValue=model;}
+      (void)fallback;
+    });
+  }] resume];
+}
+
 - (void)aiFileServiceChanged:(id)sender {
   NSInteger idx=[self.aiFileServicePopup.selectedItem.representedObject integerValue];
   [self.aiFileModelField removeAllItems];
   NSString *model=@"qwen2.5:3b";
-  if(idx>=0 && idx<(NSInteger)self.aiEntries.count){NSDictionary *e=self.aiEntries[idx];model=e[@"model"] ?: @"qwen2.5:3b";}
-  [self.aiFileModelField addItemWithObjectValue:model]; self.aiFileModelField.stringValue=model;
+  if(idx<0){
+    NSString *out=[self runLocalTool:@"/opt/homebrew/bin/ollama" args:@[@"list"]];
+    NSMutableArray *names=[NSMutableArray array];
+    for(NSString *line in [out componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
+      NSString *t=[line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+      if(!t.length||[t hasPrefix:@"NAME "])continue;
+      NSString *n=[t componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet].firstObject;
+      if(n.length && ![n containsString:@"nomic-embed"])[names addObject:n];
+    }
+    if(!names.count)[names addObject:model];
+    for(NSString *n in names)[self.aiFileModelField addItemWithObjectValue:n];
+    self.aiFileModelField.stringValue=[names containsObject:model]?model:names.firstObject;
+    return;
+  }
+  if(idx>=0 && idx<(NSInteger)self.aiEntries.count){
+    NSDictionary *e=self.aiEntries[idx];model=e[@"model"] ?: @"qwen2.5:3b";
+    [self.aiFileModelField addItemWithObjectValue:model]; self.aiFileModelField.stringValue=model;
+    [self fetchAIFileModelsForEntry:e defaultModel:model fallback:model];
+    return;
+  }
 }
 
 - (NSString *)aiFileOCRImage:(NSString *)path {
