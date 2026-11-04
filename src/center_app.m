@@ -1336,6 +1336,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSImage *statusBaseImage;
 @property (strong) NSDictionary<NSString *, NSDictionary *> *groupBadgeCounts;
 @property (copy) NSString *lastGroupDockBadgeSignature;
+@property BOOL dockPersistentDirty;
 @property (strong) NSTimer *groupBadgeTimer;
 @property (strong) NSTimer *shelfInboxTimer;
 @property (strong) ColorHoverButton *groupBadgeToggleButton;
@@ -5061,6 +5062,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
     [restored addObject:n];
   }
   if (restored.count) [self saveLastDeleteBatch:@[]];
+  [self ensureGroupDockEntries];
   [self killDock];
   [self refreshGroups];
   if (self.popover.isShown) [self rebuildQuickGroups];
@@ -6145,6 +6147,7 @@ static BOOL ValidGroupName(NSString *raw) {
                       @"tile-type": @"file-tile"}];
     CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)apps, CFSTR("com.apple.dock"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+    self.dockPersistentDirty=YES;
   } @catch (NSException *e) {}
 }
 
@@ -6162,6 +6165,7 @@ static BOOL ValidGroupName(NSString *raw) {
     }
     CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)keep, CFSTR("com.apple.dock"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+    self.dockPersistentDirty=YES;
   } @catch (NSException *e) {}
 }
 
@@ -6180,8 +6184,15 @@ static BOOL ValidGroupName(NSString *raw) {
   });
 }
 
-// 默认软刷新：只通知 Dock 重读偏好，不重启 Dock，不闪屏
-- (void)killDock { [self reloadDockPreferences]; }
+// 默认软刷新；持久化 Dock 条目变更后必须硬重启 Dock 才能可靠生效
+- (void)killDock {
+  if (self.dockPersistentDirty) {
+    self.dockPersistentDirty = NO;
+    [self hardRestartDock];
+    return;
+  }
+  [self reloadDockPreferences];
+}
 
 // ---------------- 应用卸载 ----------------
 - (NSArray<NSDictionary *> *)diskMountList {
