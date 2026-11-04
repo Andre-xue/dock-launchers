@@ -8241,14 +8241,17 @@ static BOOL ValidGroupName(NSString *raw) {
     self.videoGenBackendPopup.target=self; self.videoGenBackendPopup.action=@selector(videoGenBackendChanged:);
     [cv addSubview:self.videoGenBackendPopup];
     NSTextField *lc=[self label:@"底模" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lc.frame=NSMakeRect(240,532,80,16); [cv addSubview:lc];
-    self.videoGenCheckpointPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(240,504,300,26) pullsDown:NO]; [cv addSubview:self.videoGenCheckpointPopup];
+    self.videoGenCheckpointPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(240,504,300,26) pullsDown:NO]; self.videoGenCheckpointPopup.target=self; self.videoGenCheckpointPopup.action=@selector(videoGenCheckpointChanged:); [cv addSubview:self.videoGenCheckpointPopup];
     NSTextField *lm=[self label:@"运动模块" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lm.frame=NSMakeRect(556,532,100,16); [cv addSubview:lm];
     self.videoGenMotionPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(556,504,200,26) pullsDown:NO]; [cv addSubview:self.videoGenMotionPopup];
     NSTextField *lp=[self label:@"提示词" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lp.frame=NSMakeRect(24,478,60,16); [cv addSubview:lp];
     self.videoGenPromptField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,448,628,26)]; self.videoGenPromptField.placeholderString=@"英文提示词，例如：a cute cat licking its fur, close-up, soft light"; [cv addSubview:self.videoGenPromptField];
     ColorHoverButton *tr=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(660,444,96,30)]; tr.title=@"译成英文"; tr.hoverColor=[NSColor systemTealColor]; tr.font=[NSFont systemFontOfSize:10]; tr.target=self; tr.action=@selector(translateVideoPromptClicked:); [tr applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:tr];
     NSTextField *ln=[self label:@"负面提示词" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; ln.frame=NSMakeRect(24,424,100,16); [cv addSubview:ln];
-    self.videoGenNegativeField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,394,732,26)]; self.videoGenNegativeField.stringValue=@"blurry, low quality, distorted, watermark"; [cv addSubview:self.videoGenNegativeField];
+    self.videoGenNegativeField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,394,732,26)];
+    self.videoGenNegativeField.stringValue=@"worst quality, low quality, blurry, out of focus, jpeg artifacts, noise, grainy, oversaturated, distorted, deformed, bad anatomy, bad proportions, extra limbs, fused limbs, missing limbs, extra ears, extra eyes, poorly drawn face, poorly drawn paws, watermark, text, logo, cropped, flicker, ghosting, inconsistent motion";
+    self.videoGenNegativeField.toolTip=@"负面提示词；切换底模会自动套用写实/动漫预设，也可手动修改";
+    [cv addSubview:self.videoGenNegativeField];
     NSArray *names=@[@"宽",@"高",@"帧数",@"步数",@"种子",@"FPS"];
     CGFloat xs[6]={24,140,256,372,488,604};
     double mem2=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
@@ -8285,6 +8288,20 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.videoGenPollTimer invalidate]; self.videoGenPollTimer=nil;
   [self.videoGenElapsedTimer invalidate]; self.videoGenElapsedTimer=nil;
   [self.videoGenWindow orderOut:nil];
+}
+
+- (void)videoGenCheckpointChanged:(id)sender {
+  NSString *n=(self.videoGenCheckpointPopup.titleOfSelectedItem ?: @"").lowercaseString;
+  NSString *neg;
+  if([n containsString:@"anything"]||[n containsString:@"anime"]||[n containsString:@"counterfeit"]||[n containsString:@"meina"]){
+    neg=@"photo, realistic, photorealistic, 3d, cgi, live action, worst quality, low quality, blurry, jpeg artifacts, noise, distorted, deformed, bad anatomy, bad proportions, extra limbs, fused limbs, missing limbs, poorly drawn face, poorly drawn paws, watermark, text, logo, cropped, flicker, ghosting, inconsistent motion";
+  } else if([n containsString:@"realistic"]||[n containsString:@"epicrealism"]||[n containsString:@"majicmix"]){
+    neg=@"anime, cartoon, illustration, 3d render, cgi, painting, worst quality, low quality, blurry, out of focus, jpeg artifacts, noise, oversaturated, distorted, deformed, bad anatomy, bad proportions, extra limbs, fused limbs, missing limbs, poorly drawn face, poorly drawn paws, watermark, text, logo, cropped, flicker, ghosting, inconsistent motion";
+  } else {
+    neg=@"worst quality, low quality, blurry, out of focus, jpeg artifacts, noise, grainy, oversaturated, distorted, deformed, bad anatomy, bad proportions, extra limbs, fused limbs, missing limbs, extra ears, extra eyes, poorly drawn face, poorly drawn paws, watermark, text, logo, cropped, flicker, ghosting, inconsistent motion";
+  }
+  self.videoGenNegativeField.stringValue=neg;
+  self.videoGenStatus.stringValue=[NSString stringWithFormat:@"已套用%@负面提示词",([n containsString:@"anything"]||[n containsString:@"anime"])?@"动漫":([n containsString:@"realistic"]?@"写实":@"通用")];
 }
 
 - (void)refreshVideoGenModels {
