@@ -21362,10 +21362,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *pl = [self label:@"AI 服务" size:11 bold:NO color:[NSColor secondaryLabelColor]];
     pl.frame = NSMakeRect(24, 464, 70, 18); [cv addSubview:pl];
     NSTextField *ml = [self label:@"模型" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-    ml.frame = NSMakeRect(330, 464, 40, 18); [cv addSubview:ml];
-    self.translationModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(374, 458, 140, 28)];
+    ml.frame = NSMakeRect(288, 464, 40, 18); [cv addSubview:ml];
+    self.translationModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(332, 458, 220, 28)];
     self.translationModelField.placeholderString = @"模型";
     self.translationModelField.editable = NO; self.translationModelField.completes = NO;
+    self.translationModelField.font = [NSFont systemFontOfSize:10];
     [cv addSubview:self.translationModelField];
     ColorHoverButton *fetchModels = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(558, 458, 64, 28)];
     fetchModels.title = @"获取模型"; fetchModels.hoverColor = [NSColor systemBlueColor];
@@ -21374,7 +21375,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [fetchModels applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [cv addSubview:fetchModels];
     NSTextField *tl = [self label:@"目标语言" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-    tl.frame = NSMakeRect(594, 464, 60, 18); [cv addSubview:tl];
+    tl.frame = NSMakeRect(628, 464, 60, 18); [cv addSubview:tl];
     self.translationTargetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(660, 458, 146, 28) pullsDown:NO];
     [self.translationTargetPopup addItemsWithTitles:@[@"中文（简体）", @"English", @"日本語", @"한국어", @"Français", @"Deutsch", @"Español", @"Русский"]];
     [cv addSubview:self.translationTargetPopup];
