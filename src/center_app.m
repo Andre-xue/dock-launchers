@@ -19978,7 +19978,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       if ([list isKindOfClass:[NSArray class]]) {
         for (id m in list) {
           NSString *mid = [m isKindOfClass:[NSDictionary class]] ? m[@"id"] : nil;
-          if (mid.length) [models addObject:mid];
+          if (!mid.length) continue;
+          NSString *low = mid.lowercaseString;
+          if ([low containsString:@"embed"] || [low containsString:@"nomic"] || [low containsString:@"bge"] || [low containsString:@"mxbai"]) continue;
+          [models addObject:mid];
         }
       }
     }
@@ -20015,7 +20018,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (!e) return;
   NSDictionary *cfg = [self translationAPIConfigForEntry:e];
   NSString *savedModel = [[NSUserDefaults standardUserDefaults] stringForKey:[self translationModelDefaultsKeyForEntry:e]];
-  self.translationModelField.stringValue = savedModel.length ? savedModel : (cfg[@"model"] ?: @"");
+  NSString *candidate = savedModel.length ? savedModel : (cfg[@"model"] ?: @"");
+  NSString *clow = candidate.lowercaseString;
+  if ([clow containsString:@"embed"] || [clow containsString:@"nomic"] || [clow containsString:@"bge"] || [clow containsString:@"mxbai"]) candidate = @"qwen2.5:3b";
+  self.translationModelField.stringValue = candidate.length ? candidate : @"qwen2.5:3b";
   if (!cfg) self.translationStatus.stringValue = @"该服务暂无可用 API 地址，可在备注中写「API 地址：https://…」";
   else {
     self.translationStatus.stringValue = @"";
