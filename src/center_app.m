@@ -21356,7 +21356,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *sub = [self label:@"选择 AI 服务；支持截图 OCR、拖入英文文档翻译" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     sub.frame = NSMakeRect(24, 494, 500, 18); [cv addSubview:sub];
 
-    self.translationProviderPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(96, 458, 220, 28) pullsDown:NO];
+    self.translationProviderPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(96, 458, 180, 28) pullsDown:NO];
     self.translationProviderPopup.target = self; self.translationProviderPopup.action = @selector(translationProviderChanged:);
     [cv addSubview:self.translationProviderPopup];
     NSTextField *pl = [self label:@"AI 服务" size:11 bold:NO color:[NSColor secondaryLabelColor]];
@@ -21375,8 +21375,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [fetchModels applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [cv addSubview:fetchModels];
     NSTextField *tl = [self label:@"目标语言" size:11 bold:NO color:[NSColor secondaryLabelColor]];
-    tl.frame = NSMakeRect(628, 464, 60, 18); [cv addSubview:tl];
-    self.translationTargetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(660, 458, 146, 28) pullsDown:NO];
+    tl.frame = NSMakeRect(626, 464, 60, 18); [cv addSubview:tl];
+    self.translationTargetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(688, 458, 118, 28) pullsDown:NO];
     [self.translationTargetPopup addItemsWithTitles:@[@"中文（简体）", @"English", @"日本語", @"한국어", @"Français", @"Deutsch", @"Español", @"Русский"]];
     [cv addSubview:self.translationTargetPopup];
 
