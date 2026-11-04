@@ -10106,7 +10106,10 @@ static BOOL ValidGroupName(NSString *raw) {
       id list = [obj isKindOfClass:[NSDictionary class]] ? obj[@"data"] : nil;
       if ([list isKindOfClass:[NSArray class]]) for (id m in list) {
         NSString *mid = [m isKindOfClass:[NSDictionary class]] ? m[@"id"] : nil;
-        if (mid.length) [models addObject:mid];
+        if (!mid.length) continue;
+        NSString *low=[mid lowercaseString];
+        if([low containsString:@"embed"]||[low containsString:@"nomic"]||[low containsString:@"bge"]||[low containsString:@"mxbai"])continue;
+        [models addObject:mid];
       }
     }
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -24821,7 +24824,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
     id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil; NSArray *list=[o isKindOfClass:[NSDictionary class]]?o[@"data"]:nil;
     NSMutableArray *models=[NSMutableArray array];
-    for(NSDictionary *x in list)if(x[@"id"])[models addObject:x[@"id"]];
+    for(NSDictionary *x in list){NSString *mid=x[@"id"];if(!mid.length)continue;NSString *low=mid.lowercaseString;if([low containsString:@"embed"]||[low containsString:@"nomic"]||[low containsString:@"bge"]||[low containsString:@"mxbai"])continue;[models addObject:mid];}
     dispatch_async(dispatch_get_main_queue(),^{
       if(models.count){
         [weakSelf.aiFileModelField removeAllItems];
@@ -27174,7 +27177,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   for (id m in ids) {
     if (![m isKindOfClass:[NSString class]]) continue;
     NSString *low = [m lowercaseString];
-    if ([low containsString:@"edit"]) continue;
+    if ([low containsString:@"edit"] || [low containsString:@"embed"] || [low containsString:@"nomic"] || [low containsString:@"bge"] || [low containsString:@"mxbai"]) continue;
     for (NSString *k in keywords) if ([low containsString:k]) { [out addObject:m]; break; }
   }
   return out;
