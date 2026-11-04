@@ -21367,7 +21367,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.translationModelField.placeholderString = @"模型";
     self.translationModelField.editable = NO; self.translationModelField.completes = NO;
     [cv addSubview:self.translationModelField];
-    ColorHoverButton *fetchModels = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(520, 458, 64, 28)];
+    ColorHoverButton *fetchModels = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(558, 458, 64, 28)];
     fetchModels.title = @"获取模型"; fetchModels.hoverColor = [NSColor systemBlueColor];
     fetchModels.target = self; fetchModels.action = @selector(fetchTranslationModels:);
     fetchModels.toolTip = @"从服务商 /models 接口获取最新模型";
