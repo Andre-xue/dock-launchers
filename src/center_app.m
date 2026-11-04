@@ -25015,76 +25015,40 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)feishuFetchFiles {
-  self.cloudApiStatus.stringValue=@"正在获取飞书云文档…";
-  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://open.feishu.cn/open-apis/drive/v1/files?page_size=50"]];
-  [req setValue:[@"Bearer " stringByAppendingString:self.feishuUserToken ?: @""] forHTTPHeaderField:@"Authorization"];
+  self.cloudApiStatus.stringValue=@"正在获取飞书根目录…";
+  NSMutableURLRequest *rootReq=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://open.feishu.cn/open-apis/drive/explorer/v2/root_folder/meta"]];
+  [rootReq setValue:[@"Bearer " stringByAppendingString:self.feishuUserToken ?: @""] forHTTPHeaderField:@"Authorization"];
   __weak typeof(self) weakSelf=self;
-  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
+  [[[NSURLSession sharedSession] dataTaskWithRequest:rootReq completionHandler:^(NSData *d,NSURLResponse *r,NSError *err){
     id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
-    NSArray *files=[o isKindOfClass:[NSDictionary class]]?o[@"data"][@"files"]:nil;
-    NSMutableArray *items=[NSMutableArray array];
-    for(NSDictionary *f in files){
-      NSString *name=f[@"name"] ?: @"飞书文档"; NSString *token=f[@"token"] ?: @""; NSString *type=f[@"type"] ?: @"";
-      [items addObject:@{@"title":name,@"subtitle":[NSString stringWithFormat:@"飞书 · %@",type],@"id":token,@"ftype":type,@"kind":@"feishu"}];
-    }
+    NSString *rootToken=nil;
+    if([o isKindOfClass:[NSDictionary class]]){id data=o[@"data"];if([data isKindOfClass:[NSDictionary class]])rootToken=data[@"token"] ?: data[@"id"];}
     dispatch_async(dispatch_get_main_queue(),^{
-      weakSelf.cloudApiItems=items; [weakSelf.cloudApiTable reloadData];
-      weakSelf.cloudApiStatus.stringValue=files.count?[NSString stringWithFormat:@"飞书已登录，获取到 %ld 个文件/文档",(long)items.count]:@"飞书登录成功，但没有找到文件";
+      NSString *url=rootToken.length?[NSString stringWithFormat:@"https://open.feishu.cn/open-apis/drive/v1/files?folder_token=%@&page_size=50",rootToken]:@"https://open.feishu.cn/open-apis/drive/v1/files?page_size=50";
+      NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+      [req setValue:[@"Bearer " stringByAppendingString:weakSelf.feishuUserToken ?: @""] forHTTPHeaderField:@"Authorization"];
+      weakSelf.cloudApiStatus.stringValue=@"正在获取飞书文件列表…";
+      [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d2,NSURLResponse *r2,NSError *e2){
+        id o2=d2.length?[NSJSONSerialization JSONObjectWithData:d2 options:0 error:NULL]:nil;
+        NSArray *files=[o2 isKindOfClass:[NSDictionary class]]?o2[@"data"][@"files"]:nil;
+        NSString *msg=[o2 isKindOfClass:[NSDictionary class]]?o2[@"msg"]:nil;
+        NSMutableArray *items=[NSMutableArray array];
+        for(NSDictionary *f in files){
+          NSString *name=f[@"name"] ?: @"飞书文档"; NSString *token=f[@"token"] ?: @""; NSString *type=f[@"type"] ?: @"";
+          [items addObject:@{@"title":name,@"subtitle":[NSString stringWithFormat:@"飞书 · %@",type],@"id":token,@"ftype":type,@"kind":@"feishu"}];
+        }
+        dispatch_async(dispatch_get_main_queue(),^{
+          weakSelf.cloudApiItems=items; [weakSelf.cloudApiTable reloadData];
+          if(items.count)weakSelf.cloudApiStatus.stringValue=[NSString stringWithFormat:@"飞书已登录，获取到 %ld 个文件/文档",(long)items.count];
+          else weakSelf.cloudApiStatus.stringValue=[NSString stringWithFormat:@"飞书登录成功，但文件列表为空（%@）",msg.length?msg:@"请检查云文档权限和根目录"];
+        });
+      }] resume];
     });
   }] resume];
 }
 
-- (void)cloudAPISaveAndList:(id)sender {
-  NSString *p=self.cloudApiProviderPopup.titleOfSelectedItem ?: @"Notion";
-  if([p isEqualToString:@"飞书"]){
-    NSString *aid=self.cloudApiAppIDField.stringValue, *sec=self.cloudApiAppSecretField.stringValue;
-    if(!aid.length||!sec.length){self.cloudApiStatus.stringValue=@"请填写飞书 AppID 和 AppSecret";return;}
-    [[NSUserDefaults standardUserDefaults] setObject:aid forKey:@"cloudFeishuAppID"];
-    AIKeychainSet(@"cloud.feishu.secret", sec);
-    [self feishuStartOAuthWithAppID:aid secret:sec];
-    return;
-  }
-  NSString *token=self.cloudApiTokenField.stringValue;
-  if(!token.length){self.cloudApiStatus.stringValue=@"请填写 Token";return;}
-  AIKeychainSet([p isEqualToString:@"Notion"]?@"cloud.notion.token":@"cloud.yuque.token", token);
-  self.cloudApiStatus.stringValue=@"正在获取…";
-  if([p isEqualToString:@"Notion"]){
-    NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://api.notion.com/v1/search"]];
-    req.HTTPMethod=@"POST"; [req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
-    [req setValue:@"2022-06-28" forHTTPHeaderField:@"Notion-Version"]; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    req.HTTPBody=[NSJSONSerialization dataWithJSONObject:@{@"page_size":@100} options:0 error:NULL];
-    [self cloudAPIRequest:req completion:^(id o,NSError *err){
-      NSArray *results=[o isKindOfClass:[NSDictionary class]]?o[@"results"]:nil;
-      NSMutableArray *items=[NSMutableArray array];
-      for(NSDictionary *r in results){
-        NSString *title=@"未命名"; NSDictionary *props=r[@"properties"];
-        for(NSDictionary *v in props.allValues){id t=v[@"title"];if([t isKindOfClass:[NSArray class]]&&[t count]){NSDictionary *x=t[0];NSString *s=x[@"plain_text"];if(s.length){title=s;break;}}}
-        if(![title isEqualToString:@"未命名"]||r[@"id"]) [items addObject:@{@"title":title,@"subtitle":[NSString stringWithFormat:@"Notion · %@",r[@"object"] ?: @"page"],@"id":r[@"id"] ?: @"",@"kind":@"notion"}];
-      }
-      self.cloudApiItems=items; [self.cloudApiTable reloadData];
-      self.cloudApiStatus.stringValue=[NSString stringWithFormat:@"获取到 %ld 个页面/数据库",(long)items.count];
-    }];
-  } else {
-    NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://www.yuque.com/api/v2/user"]];
-    [req setValue:token forHTTPHeaderField:@"X-Auth-Token"];
-    [self cloudAPIRequest:req completion:^(id o,NSError *err){
-      NSString *login=[o isKindOfClass:[NSDictionary class]]?o[@"data"][@"login"]:nil;
-      if(!login.length){self.cloudApiStatus.stringValue=@"语雀 Token 无效或网络失败";return;}
-      NSMutableURLRequest *r2=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://www.yuque.com/api/v2/users/%@/repos",login]]];
-      [r2 setValue:token forHTTPHeaderField:@"X-Auth-Token"];
-      [self cloudAPIRequest:r2 completion:^(id o2,NSError *e2){
-        NSArray *repos=[o2 isKindOfClass:[NSDictionary class]]?o2[@"data"]:nil;
-        NSMutableArray *items=[NSMutableArray array];
-        for(NSDictionary *r in repos) if(r[@"namespace"]&&r[@"name"]) [items addObject:@{@"title":r[@"name"],@"subtitle":[NSString stringWithFormat:@"语雀知识库 · %@",r[@"namespace"]],@"namespace":r[@"namespace"],@"kind":@"yuque_repo"}];
-        self.cloudApiItems=items; [self.cloudApiTable reloadData];
-        self.cloudApiStatus.stringValue=[NSString stringWithFormat:@"获取到 %ld 个知识库，双击进入",(long)items.count];
-      }];
-    }];
-  }
-}
-
 - (void)cloudNotionAppendBlocks:(NSString *)blockID token:(NSString *)token depth:(NSInteger)depth text:(NSMutableString *)text completion:(void (^)(void))completion {
-  if(depth>4){ if(completion)completion(); return; }
+  if(depth>4){if(completion)completion();return;}
   NSString *url=[NSString stringWithFormat:@"https://api.notion.com/v1/blocks/%@/children?page_size=100",blockID];
   NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
   [req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
@@ -25093,19 +25057,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
     NSArray *results=[o isKindOfClass:[NSDictionary class]]?o[@"results"]:@[];
     dispatch_async(dispatch_get_main_queue(),^{
-      __block NSInteger idx=0;
-      __block void (^next)(void); next=^{
+      __block NSInteger idx=0; __block void (^next)(void);
+      next=^{
         if(idx>=(NSInteger)results.count){if(completion)completion();return;}
-        NSDictionary *b=results[idx++];
-        NSString *type=b[@"type"] ?: @"";
+        NSDictionary *b=results[idx++]; NSString *type=b[@"type"] ?: @"";
         NSDictionary *payload=[b[type] isKindOfClass:[NSDictionary class]]?b[type]:nil;
         id rich=payload[@"rich_text"];
-        if([rich isKindOfClass:[NSArray class]]){
-          for(NSDictionary *rt in rich) if([rt[@"plain_text"] isKindOfClass:[NSString class]])[text appendString:rt[@"plain_text"]];
-          [text appendString:@"\n"];
-        }
-        BOOL hasChild=[b[@"has_children"] boolValue];
-        if(hasChild && depth<4){[self cloudNotionAppendBlocks:b[@"id"] token:token depth:depth+1 text:text completion:next];}
+        if([rich isKindOfClass:[NSArray class]]){for(NSDictionary *rt in rich)if([rt[@"plain_text"] isKindOfClass:[NSString class]])[text appendString:rt[@"plain_text"]];[text appendString:@"\\n"];}
+        if([b[@"has_children"] boolValue] && depth<4)[self cloudNotionAppendBlocks:b[@"id"] token:token depth:depth+1 text:text completion:next];
         else next();
       };
       next();
