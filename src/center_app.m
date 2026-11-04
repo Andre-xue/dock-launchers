@@ -21402,6 +21402,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     dh.frame = NSMakeRect(24, 49, 772, 18); [cv addSubview:dh];
     self.translationStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.translationStatus.frame = NSMakeRect(24, 10, 772, 18); [cv addSubview:self.translationStatus];
+    [self addLocalAIServiceAccessoryToWindow:self.translationWindow];
     [self.translationWindow center];
   }
   [self reloadTranslationProviders];
