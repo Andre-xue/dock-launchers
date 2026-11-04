@@ -21986,12 +21986,24 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)clearAllRadialShortcuts:(id)sender {
   NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"清除全部快捷键？";
-  a.informativeText=@"会清除当前快捷键设置里所有已录制的组合键，可重新设置。";
+  a.informativeText=@"会清除七个菜单页、旧版基础快捷键和遗留的全部功能快捷键；分组快捷键不受影响。可随时重新设置。";
   [a addButtonWithTitle:@"清除"]; [a addButtonWithTitle:@"取消"];
   if([a runModal]!=NSAlertFirstButtonReturn)return;
   [self stopAllShortcutRecording];
   NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+  // 清除旧版 9 个基础快捷键，避免界面上看不到但仍生效
+  for(NSInteger i=0;i<9;i++)[self clearShortcutForAction:i];
+  // 清除七个菜单页已录制的快捷键
   for(NSDictionary *d in self.allShortcutDefs ?: [self radialShortcutDefs]){
+    NSInteger aid=[d[@"id"] integerValue];
+    NSValue *v=self.allHotKeyRefs[@(aid)];
+    if(v){EventHotKeyRef ref=(EventHotKeyRef)v.pointerValue; if(ref)UnregisterEventHotKey(ref); [self.allHotKeyRefs removeObjectForKey:@(aid)];}
+    [ud removeObjectForKey:[NSString stringWithFormat:@"centerGA%ldCode",(long)aid]];
+    [ud removeObjectForKey:[NSString stringWithFormat:@"centerGA%ldMods",(long)aid]];
+    [ud removeObjectForKey:[NSString stringWithFormat:@"centerGA%ldDisplay",(long)aid]];
+  }
+  // 清除旧版“全部功能快捷键”遗留的通用动作快捷键
+  for(NSDictionary *d in [self allGlobalActionDefs]){
     NSInteger aid=[d[@"id"] integerValue];
     NSValue *v=self.allHotKeyRefs[@(aid)];
     if(v){EventHotKeyRef ref=(EventHotKeyRef)v.pointerValue; if(ref)UnregisterEventHotKey(ref); [self.allHotKeyRefs removeObjectForKey:@(aid)];}
