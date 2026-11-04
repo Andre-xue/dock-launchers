@@ -7993,6 +7993,8 @@ static BOOL ValidGroupName(NSString *raw) {
   for(NSDictionary *x in @[
     @{@"name":@"AnimateDiff + SD1.5",@"file":@"mm_sd_v15_v2.ckpt",@"category":@"AnimateDiff",@"size":@"3.8 GB",@"desc":@"文生视频/图生视频，8GB 唯一稳定方案",@"recommended":@YES,@"installed":@YES},
     @{@"name":@"mm_sd_v15_v2.ckpt",@"file":@"mm_sd_v15_v2.ckpt",@"category":@"AnimateDiff",@"size":@"1.7 GB",@"desc":@"已安装的运动模块",@"recommended":@YES,@"installed":@YES},
+    @{@"name":@"Realistic Vision V6.0（写实）",@"file":@"realisticVisionV60B1_v51VAE.safetensors",@"repo":@"SG161222/Realistic_Vision_V6.0_B1_noVAE",@"category":@"SD1.5 写实",@"size":@"约 2.0 GB",@"desc":@"写实猫/人像，SD1.5 + AnimateDiff 可用",@"recommended":@YES,@"target":@"checkpoints",@"format":@"SD1.5 写实底模",@"platform":@"ComfyUI / A1111 / Forge"},
+    @{@"name":@"Anything V5（动漫）",@"file":@"anything-v5-PrtRE.safetensors",@"repo":@"stablediffusionapi/anything-v5",@"category":@"SD1.5 动漫",@"size":@"约 2.0 GB",@"desc":@"动漫赛璐璐风格，SD1.5 + AnimateDiff 可用",@"recommended":@YES,@"target":@"checkpoints",@"format":@"SD1.5 动漫底模",@"platform":@"ComfyUI / A1111 / Forge"},
     @{@"name":@"Stable Video Diffusion",@"file":@"svd.safetensors",@"repo":@"stabilityai/stable-video-diffusion-img2vid",@"category":@"Stable Video Diffusion",@"size":@"9.5 GB",@"desc":@"图片转视频，建议 16GB 以上",@"recommended":@(svd)},
     @{@"name":@"SVD-XT",@"file":@"svd_xt.safetensors",@"repo":@"stabilityai/stable-video-diffusion-img2vid-xt",@"category":@"Stable Video Diffusion",@"size":@"9.5 GB",@"desc":@"更长帧数图生视频",@"recommended":@(svd)},
     @{@"name":@"HunyuanVideo BF16",@"file":@"hunyuan_video_t2v_720p_bf16.safetensors",@"repo":@"tencent/HunyuanVideo",@"category":@"HunyuanVideo",@"size":@"约 25 GB",@"desc":@"高质量文生视频，建议 24GB 以上",@"recommended":@(hunyuan)},
@@ -8003,7 +8005,9 @@ static BOOL ValidGroupName(NSString *raw) {
   for(NSMutableDictionary *m in a){
     if([m[@"installed"] boolValue])continue;
     NSString *catDir=m[@"category"] ?: @"其他"; NSString *fname=m[@"file"] ?: @"";
-    NSString *p=[dir stringByAppendingPathComponent:[catDir stringByAppendingPathComponent:fname]];
+    NSString *p;
+    if([m[@"target"] isEqualToString:@"checkpoints"])p=[[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/models/checkpoints"] stringByAppendingPathComponent:fname];
+    else p=[dir stringByAppendingPathComponent:[catDir stringByAppendingPathComponent:fname]];
     if([[NSFileManager defaultManager] fileExistsAtPath:p])m[@"installed"]=@YES;
     if(m[@"repo"] && !m[@"url"])m[@"url"]=[NSString stringWithFormat:@"https://hf-mirror.com/%@/resolve/main/%@",m[@"repo"],m[@"file"]];
     NSString *cat=m[@"category"] ?: @"";
@@ -8097,7 +8101,9 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   if(!url.length){self.videoModelMarketStatus.stringValue=@"未找到可下载的 safetensors 文件";return;}
   NSString *name=m[@"file"]; if(!name.length)name=url.lastPathComponent;
-  NSString *dir=[[self videoMarketDirectory] stringByAppendingPathComponent:m[@"category"] ?: @"其他"];
+  NSString *dir;
+  if([m[@"target"] isEqualToString:@"checkpoints"])dir=[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/models/checkpoints"];
+  else dir=[[self videoMarketDirectory] stringByAppendingPathComponent:m[@"category"] ?: @"其他"];
   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
   NSString *dst=[dir stringByAppendingPathComponent:name];
   NSDictionary *fs=[[NSFileManager defaultManager] attributesOfFileSystemForPath:dir error:NULL];
@@ -8140,7 +8146,7 @@ static BOOL ValidGroupName(NSString *raw) {
   NSError *mv=nil; BOOL ok=[[NSFileManager defaultManager] moveItemAtURL:location toURL:[NSURL fileURLWithPath:dst] error:&mv];
   self.videoDownloadTask=nil; [self.videoDownloadSession finishTasksAndInvalidate]; self.videoDownloadSession=nil;
   self.videoModelMarketStatus.stringValue=ok?[NSString stringWithFormat:@"%@ 下载完成",self.videoDownloadName]:[NSString stringWithFormat:@"保存失败：%@",mv.localizedDescription ?: @""];
-  if(ok)[self videoModelMarketReload];
+  if(ok){[self videoModelMarketReload];[self refreshVideoGenModels];}
 }
 
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
@@ -8158,7 +8164,7 @@ static BOOL ValidGroupName(NSString *raw) {
     double gb=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
     NSTextField *h=[self label:[NSString stringWithFormat:@"当前内存约 %.0f GB；这里只展示兼容性和性能建议，不会自动下载模型",gb] size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,466,720,18); [cv addSubview:h];
     self.videoModelMarketCategory=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,430,210,28) pullsDown:NO];
-    for(NSString *c in @[@"全部",@"推荐",@"AnimateDiff",@"Stable Video Diffusion",@"HunyuanVideo",@"LTX-Video",@"最新"])[self.videoModelMarketCategory addItemWithTitle:c];
+    for(NSString *c in @[@"全部",@"推荐",@"AnimateDiff",@"SD1.5 写实",@"SD1.5 动漫",@"Stable Video Diffusion",@"HunyuanVideo",@"LTX-Video",@"最新"])[self.videoModelMarketCategory addItemWithTitle:c];
     self.videoModelMarketCategory.target=self; self.videoModelMarketCategory.action=@selector(videoModelMarketFilterChanged:); [cv addSubview:self.videoModelMarketCategory];
     self.videoModelMarketPlatformPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(246,430,220,28) pullsDown:NO];
     for(NSString *p in @[@"全部平台",@"通用",@"ComfyUI",@"A1111 / Forge",@"仅专用工作流",@"需确认"])[self.videoModelMarketPlatformPopup addItemWithTitle:p];
@@ -8168,7 +8174,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTableColumn *videoCol=[[NSTableColumn alloc] initWithIdentifier:@"vmname"]; videoCol.title=@"模型"; videoCol.width=790; [self.videoModelMarketTable addTableColumn:videoCol];
     self.videoModelMarketTable.rowHeight=44; self.videoModelMarketTable.dataSource=self; self.videoModelMarketTable.delegate=self;
     sv.documentView=self.videoModelMarketTable; [cv addSubview:sv];
-    self.videoModelMarketStatus=[self label:@"只展示，不下载到本地；AnimateDiff 已安装可执行" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.videoModelMarketStatus.frame=NSMakeRect(24,44,390,18); [cv addSubview:self.videoModelMarketStatus];
+    self.videoModelMarketStatus=[self label:@"写实/动漫底模会下载到 ComfyUI/models/checkpoints" size:10 bold:NO color:[NSColor secondaryLabelColor]]; self.videoModelMarketStatus.frame=NSMakeRect(24,44,390,18); [cv addSubview:self.videoModelMarketStatus];
     ColorHoverButton *dl=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(420,34,120,32)]; dl.title=@"下载到本地"; dl.hoverColor=[NSColor systemGreenColor]; dl.target=self; dl.action=@selector(videoModelMarketDownload:); [dl applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:dl];
     ColorHoverButton *cancel=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(670,34,64,32)]; cancel.title=@"取消"; cancel.hoverColor=[NSColor systemRedColor]; cancel.font=[NSFont systemFontOfSize:10]; cancel.target=self; cancel.action=@selector(cancelVideoModelDownload:); [cancel applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cancel];
     ColorHoverButton *latest=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(548,34,100,32)]; latest.title=@"获取最新"; latest.hoverColor=[NSColor systemBlueColor]; latest.target=self; latest.action=@selector(videoModelMarketRefreshLatest:); [latest applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:latest];
