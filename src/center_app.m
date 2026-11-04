@@ -4023,6 +4023,10 @@ static void HideDockHoverTip(void) {
   [self showToast:(nowPinned ? @"窗口已钉在桌面，不置顶，可正常关闭" : @"窗口已取消钉住")];
 }
 
+- (void)windowWillClose:(NSNotification *)note {
+  if(note.object==self.translationWindow)[self saveTranslationModelSelection];
+}
+
 - (BOOL)windowShouldClose:(NSWindow *)sender {
   if (sender == self.shelfWindow) {
     [self.shelfPruneTimer invalidate]; self.shelfPruneTimer = nil;
@@ -10526,6 +10530,10 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   if (note.object != self.dialogAIName) return;
   [self applyAIPresetAutofill];
+}
+
+- (void)comboBoxSelectionIsChanging:(NSNotification *)note {
+  if(note.object==self.translationModelField)[self saveTranslationModelSelection];
 }
 
 - (void)comboBoxSelectionDidChange:(NSNotification *)note {
@@ -22935,14 +22943,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *docRels=@"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"></Relationships>";
   NSString *preamble=@"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>";
   NSMutableString *xml=[NSMutableString stringWithFormat:@"%@<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val=\"32\"/></w:rPr><w:t xml:space=\"preserve\">双语对照：%@</w:t></w:r></w:p>",preamble,[self htmlEscape:name]];
-  [xml appendString:@"<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"4500\"/><w:gridCol w:w=\"4500\"/></w:tblGrid>"];
-  [xml appendString:@"<w:tr><w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"pct\"/></w:tcPr>"];
+  [xml appendString:@"<w:tbl><w:tblPr><w:tblW w:w=\"9638\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"4819\"/><w:gridCol w:w=\"4819\"/></w:tblGrid>"];
+  [xml appendString:@"<w:tr><w:tc><w:tcPr><w:tcW w:w=\"4819\" w:type=\"dxa\"/></w:tcPr>"];
   [xml appendString:[self docxXMLParagraphsForText:@"原文" bold:YES]];
-  [xml appendString:@"</w:tc><w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"pct\"/></w:tcPr>"];
+  [xml appendString:@"</w:tc><w:tc><w:tcPr><w:tcW w:w=\"4819\" w:type=\"dxa\"/></w:tcPr>"];
   [xml appendString:[self docxXMLParagraphsForText:@"译文" bold:YES]];
-  [xml appendString:@"</w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"pct\"/></w:tcPr>"];
+  [xml appendString:@"</w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"4819\" w:type=\"dxa\"/></w:tcPr>"];
   [xml appendString:[self docxXMLParagraphsForText:source bold:NO]];
-  [xml appendString:@"</w:tc><w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"pct\"/></w:tcPr>"];
+  [xml appendString:@"</w:tc><w:tc><w:tcPr><w:tcW w:w=\"4819\" w:type=\"dxa\"/></w:tcPr>"];
   [xml appendString:[self docxXMLParagraphsForText:translated bold:NO]];
   [xml appendString:@"</w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\"/></w:sectPr></w:body></w:document>"];
   NSDictionary *files=@{@"[Content_Types].xml":contentTypes,@"_rels/.rels":rels,@"word/_rels/document.xml.rels":docRels,@"word/document.xml":xml};
@@ -23093,6 +23101,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)translationTargetChanged:(id)sender {
+  [self saveTranslationModelSelection];
   [[NSUserDefaults standardUserDefaults] setInteger:self.translationTargetPopup.indexOfSelectedItem forKey:@"centerTranslationTarget"];
   [[NSUserDefaults standardUserDefaults] synchronize];
   if(self.translationBusy)return;
@@ -23102,6 +23111,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)translationTranslate:(id)sender {
   if (self.translationBusy) return;
+  [self saveTranslationModelSelection];
   NSString *text = self.translationImportedText.length ? self.translationImportedText : self.translationSourceView.string;
   if (!text.length) { self.translationStatus.stringValue = @"请先输入、截图或拖入要翻译的内容"; return; }
   NSDictionary *e = self.translationProviderPopup.selectedItem.representedObject;
