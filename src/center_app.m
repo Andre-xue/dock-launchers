@@ -1691,7 +1691,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiFileChartTitleField;
 @property (strong) NSWindow *videoGenWindow;
 @property (strong) NSPopUpButton *videoGenCheckpointPopup, *videoGenMotionPopup, *videoGenBackendPopup;
-@property (strong) NSTextField *videoGenPromptField, *videoGenNegativeField, *videoGenStatus, *videoGenWidthField, *videoGenHeightField, *videoGenFramesField, *videoGenStepsField, *videoGenSeedField, *videoGenFpsField, *videoGenSavePathField;
+@property (strong) NSTextField *videoGenPromptField, *videoGenNegativeField, *videoGenStatus, *videoGenWidthField, *videoGenHeightField, *videoGenFramesField, *videoGenStepsField, *videoGenSeedField, *videoGenFpsField, *videoGenSavePathField, *videoGenDurationField;
 @property (strong) NSTimer *videoGenPollTimer, *videoGenElapsedTimer;
 @property (strong) NSWindow *videoModelMarketWindow;
 @property (strong) NSTask *marketDownloadTask;
@@ -1713,6 +1713,8 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSString *videoGenPromptID;
 @property NSTimeInterval videoGenStart;
 @property BOOL videoGenAutoStartedComfy;
+@property double videoGenTargetSeconds;
+@property double videoGenBaseSeconds;
 @property (strong) NSTimer *videoGenComfyPollTimer;
 @property NSInteger videoGenComfyPollAttempts;
 @property BOOL localOllamaAutoStarting, localComfyAutoStarting;
@@ -8221,7 +8223,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *cv=self.videoGenWindow.contentView;
     NSTextField *t=[self label:@"本地视频生成" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,606,300,28); [cv addSubview:t];
     double mem=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
-    NSString *hint=mem<12?@"AnimateDiff + SD1.5；8GB 建议 256×256、8 帧、8 步；提示词请用英文" : @"AnimateDiff + SD1.5；建议 512×512、16 帧、20 步；提示词用英文";
+    NSString *hint=mem<12?@"AnimateDiff + SD1.5；8GB 建议 256×256、8 帧、8 步；提示词用英文；时长>1 秒会循环补足" : @"AnimateDiff + SD1.5；建议 512×512、16 帧、20 步；提示词用英文；时长>1 秒会循环补足";
     NSTextField *h=[self label:hint size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,582,700,18); [cv addSubview:h];
     self.videoGenStatus=[self label:@"就绪" size:10.5 bold:YES color:[NSColor systemGreenColor]]; self.videoGenStatus.frame=NSMakeRect(24,558,720,18); [cv addSubview:self.videoGenStatus];
     NSTextField *lb=[self label:@"后端" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lb.frame=NSMakeRect(24,532,60,16); [cv addSubview:lb];
@@ -8236,7 +8238,8 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTextField *lm=[self label:@"运动模块" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lm.frame=NSMakeRect(556,532,100,16); [cv addSubview:lm];
     self.videoGenMotionPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(556,504,200,26) pullsDown:NO]; [cv addSubview:self.videoGenMotionPopup];
     NSTextField *lp=[self label:@"提示词" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lp.frame=NSMakeRect(24,478,60,16); [cv addSubview:lp];
-    self.videoGenPromptField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,448,732,26)]; self.videoGenPromptField.placeholderString=@"英文提示词，例如：a cute cat licking its fur, close-up, soft light"; [cv addSubview:self.videoGenPromptField];
+    self.videoGenPromptField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,448,628,26)]; self.videoGenPromptField.placeholderString=@"英文提示词，例如：a cute cat licking its fur, close-up, soft light"; [cv addSubview:self.videoGenPromptField];
+    ColorHoverButton *tr=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(660,444,96,30)]; tr.title=@"译成英文"; tr.hoverColor=[NSColor systemTealColor]; tr.font=[NSFont systemFontOfSize:10]; tr.target=self; tr.action=@selector(translateVideoPromptClicked:); [tr applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:tr];
     NSTextField *ln=[self label:@"负面提示词" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; ln.frame=NSMakeRect(24,424,100,16); [cv addSubview:ln];
     self.videoGenNegativeField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,394,732,26)]; self.videoGenNegativeField.stringValue=@"blurry, low quality, distorted, watermark"; [cv addSubview:self.videoGenNegativeField];
     NSArray *names=@[@"宽",@"高",@"帧数",@"步数",@"种子",@"FPS"];
@@ -8249,6 +8252,8 @@ static BOOL ValidGroupName(NSString *raw) {
       NSTextField *f=[[NSTextField alloc] initWithFrame:NSMakeRect(xs[i],326,100,26)]; f.stringValue=vals[i]; [cv addSubview:f]; [fields addObject:f];
     }
     self.videoGenWidthField=fields[0]; self.videoGenHeightField=fields[1]; self.videoGenFramesField=fields[2]; self.videoGenStepsField=fields[3]; self.videoGenSeedField=fields[4]; self.videoGenFpsField=fields[5];
+    NSTextField *ld=[self label:@"时长(秒)" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; ld.frame=NSMakeRect(716,356,60,16); [cv addSubview:ld];
+    self.videoGenDurationField=[[NSTextField alloc] initWithFrame:NSMakeRect(716,326,56,26)]; self.videoGenDurationField.stringValue=@"1"; self.videoGenDurationField.toolTip=@"超过实际片长时用循环补足，不会产生新的动作"; [cv addSubview:self.videoGenDurationField];
     NSTextField *ls=[self label:@"保存到" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; ls.frame=NSMakeRect(24,286,60,16); [cv addSubview:ls];
     self.videoGenSavePathField=[[NSTextField alloc] initWithFrame:NSMakeRect(90,278,530,26)];
     self.videoGenSavePathField.placeholderString=@"视频保存目录，默认 ComfyUI/output";
@@ -8368,6 +8373,54 @@ static BOOL ValidGroupName(NSString *raw) {
   self.localAISwitchUpdating=YES; self.localComfySwitch.state=NSControlStateValueOff; self.localAISwitchUpdating=NO;
 }
 
+- (NSString *)translateVideoPromptWithOllama:(NSString *)text {
+  NSString *prompt=[NSString stringWithFormat:@"Translate this Chinese video prompt into concise English. Output only the English prompt, no quotes, no explanation, keep visual details:\n%@",text];
+  NSDictionary *body=@{@"model":@"qwen2.5:3b",@"prompt":prompt,@"stream":@NO,@"options":@{@"temperature":@0.1}};
+  NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:11434/api/generate"]];
+  req.HTTPMethod=@"POST"; [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"]; req.HTTPBody=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL]; req.timeoutInterval=90;
+  __block NSString *out=nil; dispatch_semaphore_t sem=dispatch_semaphore_create(0);
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
+    id o=d.length?[NSJSONSerialization JSONObjectWithData:d options:0 error:NULL]:nil;
+    if([o isKindOfClass:[NSDictionary class]])out=o[@"response"];
+    dispatch_semaphore_signal(sem);
+  }] resume];
+  dispatch_semaphore_wait(sem,dispatch_time(DISPATCH_TIME_NOW,(int64_t)(95*NSEC_PER_SEC)));
+  if(!out.length)return nil;
+  out=[out stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  out=[out stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\"“”'"]];
+  return out.length?out:nil;
+}
+
+- (void)translateVideoPromptClicked:(id)sender {
+  NSString *text=[self.videoGenPromptField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  if(!text.length){self.videoGenStatus.stringValue=@"请先填写提示词";return;}
+  if(!ContainsChineseText(text)){self.videoGenStatus.stringValue=@"提示词已经是英文";return;}
+  self.videoGenStatus.stringValue=@"正在启动 Ollama 翻译…";
+  self.localOllamaWanted=YES; self.localOllamaStartAt=[[NSDate date] timeIntervalSince1970];
+  [self startLocalOllamaAuto];
+  __weak typeof(self) weakSelf=self;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+    __block BOOL ready=NO;
+    for(NSInteger i=0;i<45;i++){
+      dispatch_semaphore_t s=dispatch_semaphore_create(0);
+      __block BOOL ok=NO;
+      [[[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:@"http://127.0.0.1:11434/api/version"] completionHandler:^(NSData *d,NSURLResponse *r,NSError *e){
+        ok = (!e && [r isKindOfClass:[NSHTTPURLResponse class]] && [(NSHTTPURLResponse *)r statusCode]==200);
+        dispatch_semaphore_signal(s);
+      }] resume];
+      dispatch_semaphore_wait(s,dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2*NSEC_PER_SEC)));
+      if(ok){ready=YES;break;}
+      [NSThread sleepForTimeInterval:0.5];
+    }
+    if(!ready){dispatch_async(dispatch_get_main_queue(),^{weakSelf.videoGenStatus.stringValue=@"Ollama 未就绪，无法翻译";});return;}
+    NSString *en=[weakSelf translateVideoPromptWithOllama:text];
+    dispatch_async(dispatch_get_main_queue(),^{
+      if(en.length){weakSelf.videoGenPromptField.stringValue=en;weakSelf.videoGenStatus.stringValue=@"已翻译成英文，请检查后生成";}
+      else weakSelf.videoGenStatus.stringValue=@"翻译失败，请手动输入英文";
+    });
+  });
+}
+
 - (void)generateVideo:(id)sender {
   if(self.videoGenSavePathField.stringValue.length)[self videoGenSavePathChanged:nil];
   if(self.videoGenPromptID.length){self.videoGenStatus.stringValue=@"已有生成任务在进行";return;}
@@ -8407,6 +8460,8 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger steps=MAX(2,MIN(30,self.videoGenStepsField.integerValue));
   NSInteger fps=MAX(1,MIN(30,self.videoGenFpsField.integerValue));
   NSInteger seed=self.videoGenSeedField.integerValue;
+  self.videoGenTargetSeconds=MAX(1.0,MIN(30.0,self.videoGenDurationField.doubleValue));
+  self.videoGenBaseSeconds=(fps>0)?((double)frames/(double)fps):1.0;
   NSString *pos=[(self.videoGenPromptField.stringValue ?: @"") stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
   NSString *neg=self.videoGenNegativeField.stringValue ?: @"";
   if(!pos.length){self.videoGenStatus.stringValue=@"请先填写英文提示词";return;}
@@ -8471,6 +8526,19 @@ static BOOL ValidGroupName(NSString *raw) {
           dest=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%ld.%@",base,(long)[[NSDate date] timeIntervalSince1970],ext]];
         }
         if([[NSFileManager defaultManager] copyItemAtPath:found toPath:dest error:NULL])saved=dest;
+      }
+      double target=weakSelf.videoGenTargetSeconds, base=weakSelf.videoGenBaseSeconds;
+      if(target>base+0.25 && saved.length){
+        NSString *ff=[[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/venv/lib/python3.11/site-packages/imageio_ffmpeg/binaries"] stringByAppendingPathComponent:@"ffmpeg-macos-aarch64-v9.0"];
+        if([[NSFileManager defaultManager] isExecutableFileAtPath:ff]){
+          NSString *out=[[saved stringByDeletingPathExtension] stringByAppendingFormat:@"-%lds.mp4",(long)target];
+          NSInteger loops=(NSInteger)ceil(target/base);
+          NSTask *t=[[NSTask alloc] init]; t.launchPath=ff;
+          t.arguments=@[@"-y",@"-stream_loop",[@(loops) stringValue],@"-i",saved,@"-t",[@(target) stringValue],@"-c",@"copy",out];
+          t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+          @try{[t launch];[t waitUntilExit];}@catch(NSException *e){}
+          if([[NSFileManager defaultManager] fileExistsAtPath:out])saved=out;
+        }
       }
     }
     dispatch_async(dispatch_get_main_queue(),^{
