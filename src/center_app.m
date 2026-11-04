@@ -1366,6 +1366,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *translationGlossaryWindow;
 @property (strong) NSTextView *translationGlossaryTextView;
 @property (strong) NSTextView *translationSourceView, *translationResultView;
+@property (strong) NSString *translationImportedFileURL, *translationImportedText;
+@property (strong) NSPopUpButton *translationExportTypePopup;
+@property (strong) NSTextField *translationExportFolderField;
 @property (strong) NSWindow *shotTranslateWindow;
 @property (strong) NSTextView *shotTranslateSourceView, *shotTranslateResultView;
 @property (strong) NSPopUpButton *shotTranslateServicePopup, *shotTranslateTargetPopup, *shotTranslateModelPopup;
@@ -21404,6 +21407,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
     }
+    NSTextField *el=[self label:@"导出" size:10 bold:NO color:[NSColor secondaryLabelColor]]; el.frame=NSMakeRect(24,106,36,18); [cv addSubview:el];
+    self.translationExportTypePopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(62,100,92,26)];
+    [self.translationExportTypePopup addItemsWithTitles:@[@"DOCX",@"PDF",@"Markdown",@"TXT"]];
+    self.translationExportTypePopup.target=self; self.translationExportTypePopup.action=@selector(translationExportTypeChanged:);
+    [cv addSubview:self.translationExportTypePopup];
+    self.translationExportFolderField=[[NSTextField alloc] initWithFrame:NSMakeRect(162,100,430,26)]; self.translationExportFolderField.editable=NO; self.translationExportFolderField.selectable=YES; [cv addSubview:self.translationExportFolderField];
+    ColorHoverButton *chooseDir=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(598,100,96,26)]; chooseDir.title=@"保存位置…"; chooseDir.hoverColor=[NSColor systemTealColor]; chooseDir.font=[NSFont systemFontOfSize:9.5]; chooseDir.target=self; chooseDir.action=@selector(chooseTranslationExportFolder:); [chooseDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:chooseDir];
+    ColorHoverButton *exportNow=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(700,100,96,26)]; exportNow.title=@"立即导出"; exportNow.hoverColor=[NSColor systemGreenColor]; exportNow.font=[NSFont systemFontOfSize:9.5]; exportNow.target=self; exportNow.action=@selector(exportBilingualTranslation); [exportNow applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:exportNow];
     CompressDropView *drop = [[CompressDropView alloc] initWithFrame:NSMakeRect(24, 34, 772, 50)];
     drop.dropTarget = self; drop.dropAction = @selector(translationFilesDropped:);
     [cv addSubview:drop];
@@ -21412,6 +21423,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     dh.frame = NSMakeRect(24, 49, 772, 18); [cv addSubview:dh];
     self.translationStatus = [self label:@"" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.translationStatus.frame = NSMakeRect(24, 10, 772, 18); [cv addSubview:self.translationStatus];
+    NSString *st=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerTranslationExportType"] ?: @"DOCX";
+    [self.translationExportTypePopup selectItemWithTitle:st];
+    self.translationExportFolderField.stringValue=[self translationExportFolder];
     [self addLocalAIServiceAccessoryToWindow:self.translationWindow];
     [self.translationWindow center];
   }
@@ -21480,8 +21494,20 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)translationSetSource:(NSString *)text status:(NSString *)status {
+  self.translationImportedFileURL = nil;
+  self.translationImportedText = nil;
+  self.translationSourceView.editable = YES;
   if (text.length) self.translationSourceView.string = text;
   self.translationStatus.stringValue = status ?: @"";
+  [self scheduleAutoTranslate];
+}
+
+- (void)translationSetFileSource:(NSURL *)url text:(NSString *)text {
+  self.translationImportedFileURL = url.path;
+  self.translationImportedText = text ?: @"";
+  self.translationSourceView.editable = NO;
+  self.translationSourceView.string = [NSString stringWithFormat:@"📄 %@\n\n文件已导入，原文内容已隐藏。\n点击「翻译」后将生成双语对照文件。", url.lastPathComponent ?: @"文件"];
+  self.translationStatus.stringValue = [NSString stringWithFormat:@"已读取 %@，正在准备翻译…", url.lastPathComponent ?: @"文件"];
   [self scheduleAutoTranslate];
 }
 
@@ -21496,7 +21522,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)scheduleAutoTranslate {
   [self.translationAutoTimer invalidate];
   self.translationAutoTimer = nil;
-  NSString *text = self.translationSourceView.string;
+  NSString *text = self.translationImportedText.length ? self.translationImportedText : self.translationSourceView.string;
   if (!text.length || self.translationBusy || !self.translationWindow.isVisible) return;
   NSString *detected = [self translationDetectedLanguage:text];
   self.translationStatus.stringValue = [NSString stringWithFormat:@"检测到 %@，准备自动翻译…", detected];
@@ -22700,10 +22726,94 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)closeShotTranslate:(id)sender { [self.shotTranslateWindow orderOut:nil]; }
 
 - (void)clearTranslationInput:(id)sender {
+  self.translationImportedFileURL = nil;
+  self.translationImportedText = nil;
+  self.translationSourceView.editable = YES;
   self.translationSourceView.string = @"";
   self.translationResultView.string = @"";
   [self.translationSourceView.window makeFirstResponder:self.translationSourceView];
   [self showToast:@"已清空原文和译文"];
+}
+
+- (NSString *)translationExportFolder {
+  NSString *dir=[[NSUserDefaults standardUserDefaults] stringForKey:@"centerTranslationExportFolder"] ?: @"";
+  if(!dir.length)dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"];
+  dir=[dir stringByExpandingTildeInPath];
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+  return dir;
+}
+
+- (void)chooseTranslationExportFolder:(id)sender {
+  NSOpenPanel *p=[NSOpenPanel openPanel]; p.canChooseFiles=NO; p.canChooseDirectories=YES; p.allowsMultipleSelection=NO; p.prompt=@"选择导出文件夹";
+  p.directoryURL=[NSURL fileURLWithPath:[self translationExportFolder]];
+  [p beginSheetModalForWindow:self.translationWindow completionHandler:^(NSModalResponse r){
+    if(r!=NSModalResponseOK)return;
+    [[NSUserDefaults standardUserDefaults] setObject:p.URL.path forKey:@"centerTranslationExportFolder"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    self.translationExportFolderField.stringValue=p.URL.path;
+    self.translationStatus.stringValue=[NSString stringWithFormat:@"双语文件将保存到：%@",p.URL.path];
+  }];
+}
+
+- (void)translationExportTypeChanged:(id)sender {
+  [[NSUserDefaults standardUserDefaults] setObject:self.translationExportTypePopup.titleOfSelectedItem ?: @"DOCX" forKey:@"centerTranslationExportType"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (NSString *)htmlEscape:(NSString *)s {
+  NSMutableString *m=[(s ?: @"") mutableCopy];
+  [m replaceOccurrencesOfString:@"&" withString:@"&amp;" options:0 range:NSMakeRange(0,m.length)];
+  [m replaceOccurrencesOfString:@"<" withString:@"&lt;" options:0 range:NSMakeRange(0,m.length)];
+  [m replaceOccurrencesOfString:@">" withString:@"&gt;" options:0 range:NSMakeRange(0,m.length)];
+  return m;
+}
+
+- (void)exportBilingualTranslation {
+  NSString *source=self.translationImportedText.length ? self.translationImportedText : self.translationSourceView.string;
+  NSString *translated=self.translationResultView.string;
+  if(!source.length||!translated.length){self.translationStatus.stringValue=@"没有可导出的双语内容";return;}
+  NSString *name=self.translationImportedFileURL.length ? [self.translationImportedFileURL.lastPathComponent stringByDeletingPathExtension] : @"翻译";
+  NSString *dir=[self translationExportFolder];
+  NSString *type=self.translationExportTypePopup.titleOfSelectedItem ?: @"DOCX";
+  NSString *ext=[type isEqualToString:@"PDF"]?@"pdf":([type isEqualToString:@"Markdown"]?@"md":([type isEqualToString:@"TXT"]?@"txt":@"docx"));
+  NSString *out=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-双语.%@",name,ext]];
+  if([[NSFileManager defaultManager] fileExistsAtPath:out]){
+    out=[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-双语-%ld.%@",name,(long)[[NSDate date] timeIntervalSince1970],ext]];
+  }
+  NSString *md=[NSString stringWithFormat:@"# 双语对照：%@\n\n## 原文\n\n%@\n\n## 译文\n\n%@\n",name,source,translated];
+  NSError *err=nil;
+  BOOL ok=NO;
+  if([ext isEqualToString:@"md"]||[ext isEqualToString:@"txt"]){
+    ok=[md writeToFile:out atomically:YES encoding:NSUTF8StringEncoding error:&err];
+  } else if([ext isEqualToString:@"docx"]){
+    NSString *html=[NSString stringWithFormat:@"<html><head><meta charset=\"utf-8\"></head><body><h1>双语对照：%@</h1><h2>原文</h2><div style=\"white-space:pre-wrap\">%@</div><h2>译文</h2><div style=\"white-space:pre-wrap\">%@</div></body></html>",[self htmlEscape:name],[self htmlEscape:source],[self htmlEscape:translated]];
+    NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-bilingual.html"];
+    [html writeToFile:tmp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/bin/textutil"; t.arguments=@[@"-convert",@"docx",@"-output",out,tmp];
+    t.standardOutput=[NSFileHandle fileHandleWithNullDevice]; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+    @try{[t launch];[t waitUntilExit];}@catch(NSException *e){}
+    ok=[[NSFileManager defaultManager] fileExistsAtPath:out] && [[[NSFileManager defaultManager] attributesOfItemAtPath:out error:NULL][NSFileSize] unsignedLongLongValue]>100;
+    [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+  } else {
+    NSString *txt=[NSString stringWithFormat:@"双语对照：%@\n\n原文\n====\n\n%@\n\n译文\n====\n\n%@\n",name,source,translated];
+    NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:@"dl-bilingual.txt"];
+    [txt writeToFile:tmp atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    [[NSFileManager defaultManager] removeItemAtPath:out error:NULL];
+    [[NSFileManager defaultManager] createFileAtPath:out contents:nil attributes:nil];
+    NSFileHandle *fh=[NSFileHandle fileHandleForWritingAtPath:out];
+    NSTask *t=[[NSTask alloc] init]; t.launchPath=@"/usr/sbin/cupsfilter"; t.arguments=@[tmp];
+    t.standardOutput=fh; t.standardError=[NSFileHandle fileHandleWithNullDevice];
+    @try{[t launch];[t waitUntilExit];}@catch(NSException *e){}
+    [fh closeFile];
+    ok=[[NSFileManager defaultManager] fileExistsAtPath:out] && [[[NSFileManager defaultManager] attributesOfItemAtPath:out error:NULL][NSFileSize] unsignedLongLongValue]>100;
+    [[NSFileManager defaultManager] removeItemAtPath:tmp error:NULL];
+  }
+  if(ok){
+    self.translationStatus.stringValue=[NSString stringWithFormat:@"双语文件已保存：%@",out];
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:out]];
+  } else {
+    self.translationStatus.stringValue=[NSString stringWithFormat:@"双语文件导出失败%@",err?[NSString stringWithFormat:@"：%@",err.localizedDescription]:@""];
+  }
 }
 
 - (void)translationChooseDocument:(id)sender {
@@ -22711,14 +22821,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   p.canChooseFiles = YES; p.canChooseDirectories = NO; p.allowsMultipleSelection = NO;
   if ([p runModal] != NSModalResponseOK) return;
   [self translationExtractTextFromURL:p.URL completion:^(NSString *text) {
-    [self translationSetSource:text status:text.length ? @"文档读取完成，请点击翻译" : @"没有读取到文本"];
+    if(text.length)[self translationSetFileSource:p.URL text:text];
+    else self.translationStatus.stringValue=@"没有读取到文本";
   }];
 }
 
 - (void)translationFilesDropped:(NSArray<NSURL *> *)urls {
   if (!urls.count) return;
   [self translationExtractTextFromURL:urls.firstObject completion:^(NSString *text) {
-    [self translationSetSource:text status:text.length ? [NSString stringWithFormat:@"已读取 %@", urls.firstObject.lastPathComponent] : @"没有读取到文本"];
+    if(text.length)[self translationSetFileSource:urls.firstObject text:text];
+    else self.translationStatus.stringValue=@"没有读取到文本";
   }];
 }
 
@@ -22749,6 +22861,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.translationResultView.string = output;
     self.translationStatus.stringValue = @"翻译完成";
     self.translationBusy = NO;
+    if (self.translationImportedFileURL.length) [self exportBilingualTranslation];
     return;
   }
   self.translationStatus.stringValue = [NSString stringWithFormat:@"正在翻译 %ld/%ld…", (long)(idx+1), (long)chunks.count];
@@ -22800,7 +22913,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)translationTranslate:(id)sender {
   if (self.translationBusy) return;
-  NSString *text = self.translationSourceView.string;
+  NSString *text = self.translationImportedText.length ? self.translationImportedText : self.translationSourceView.string;
   if (!text.length) { self.translationStatus.stringValue = @"请先输入、截图或拖入要翻译的内容"; return; }
   NSDictionary *e = self.translationProviderPopup.selectedItem.representedObject;
   if (!e) { self.translationStatus.stringValue = @"请选择 AI 服务"; return; }
