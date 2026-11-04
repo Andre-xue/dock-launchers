@@ -8449,9 +8449,13 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.videoGenTranslateProviderPopup removeAllItems];
   [self.videoGenTranslateProviderPopup addItemWithTitle:@"本地 Ollama"]; self.videoGenTranslateProviderPopup.lastItem.representedObject=@(-1);
   for(NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++){
-    NSDictionary *e=self.aiEntries[i]; NSString *name=e[@"name"] ?: @"";
+    NSDictionary *e=self.aiEntries[i];
+    if([e[@"localOnly"] boolValue])continue;
+    if(![[self aiModelCategoryKey:e] isEqualToString:@"text"])continue;
+    NSString *name=e[@"name"] ?: @"";
     if(!name.length)continue;
-    [self.videoGenTranslateProviderPopup addItemWithTitle:[NSString stringWithFormat:@"API：%@",name]];
+    NSString *shortName=[name componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].firstObject ?: name;
+    [self.videoGenTranslateProviderPopup addItemWithTitle:[NSString stringWithFormat:@"API：%@",shortName]];
     self.videoGenTranslateProviderPopup.lastItem.representedObject=@(i);
   }
   NSInteger target=0;
