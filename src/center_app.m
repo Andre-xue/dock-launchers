@@ -1691,6 +1691,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *aiFileChartTitleField;
 @property (strong) NSWindow *videoGenWindow;
 @property (strong) NSPopUpButton *videoGenCheckpointPopup, *videoGenMotionPopup, *videoGenBackendPopup;
+@property (strong) NSPopUpButton *videoGenTranslateProviderPopup;
 @property (strong) NSTextField *videoGenPromptField, *videoGenNegativeField, *videoGenStatus, *videoGenWidthField, *videoGenHeightField, *videoGenFramesField, *videoGenStepsField, *videoGenSeedField, *videoGenFpsField, *videoGenSavePathField, *videoGenDurationField;
 @property (strong) NSTimer *videoGenPollTimer, *videoGenElapsedTimer;
 @property (strong) NSWindow *videoModelMarketWindow;
@@ -8247,6 +8248,11 @@ static BOOL ValidGroupName(NSString *raw) {
     self.videoGenMotionPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(556,504,200,26) pullsDown:NO]; [cv addSubview:self.videoGenMotionPopup];
     NSTextField *lp=[self label:@"提示词" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lp.frame=NSMakeRect(24,478,60,16); [cv addSubview:lp];
     self.videoGenPromptField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,448,628,26)]; self.videoGenPromptField.placeholderString=@"英文提示词，例如：a cute cat licking its fur, close-up, soft light"; [cv addSubview:self.videoGenPromptField];
+    NSTextField *ltp=[self label:@"翻译服务" size:9 bold:NO color:[NSColor secondaryLabelColor]]; ltp.frame=NSMakeRect(500,478,56,16); [cv addSubview:ltp];
+    self.videoGenTranslateProviderPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(558,472,198,24) pullsDown:NO];
+    self.videoGenTranslateProviderPopup.font=[NSFont systemFontOfSize:10];
+    self.videoGenTranslateProviderPopup.target=self; self.videoGenTranslateProviderPopup.action=@selector(videoGenTranslateProviderChanged:);
+    [cv addSubview:self.videoGenTranslateProviderPopup];
     ColorHoverButton *tr=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(660,444,96,30)]; tr.title=@"译成英文"; tr.hoverColor=[NSColor systemTealColor]; tr.font=[NSFont systemFontOfSize:10]; tr.target=self; tr.action=@selector(translateVideoPromptClicked:); [tr applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:tr];
     NSTextField *ln=[self label:@"负面提示词" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; ln.frame=NSMakeRect(24,424,100,16); [cv addSubview:ln];
     self.videoGenNegativeField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,394,732,26)];
@@ -8278,6 +8284,7 @@ static BOOL ValidGroupName(NSString *raw) {
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(654,40,100,34)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeVideoGeneration:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self.videoGenWindow center];
   }
+  [self populateVideoTranslateProviders];
   [self refreshVideoGenModels];
   self.videoGenSavePathField.stringValue=[self videoGenSaveDirectory];
   [self bringAuxiliaryWindowToFront:self.videoGenWindow];
@@ -8435,10 +8442,56 @@ static BOOL ValidGroupName(NSString *raw) {
   return out.length?out:nil;
 }
 
+- (void)populateVideoTranslateProviders {
+  if(!self.aiEntries)[self loadAIEntries];
+  if(!self.videoGenTranslateProviderPopup)return;
+  NSInteger saved=[[NSUserDefaults standardUserDefaults] integerForKey:@"centerVideoTranslateProvider"];
+  [self.videoGenTranslateProviderPopup removeAllItems];
+  [self.videoGenTranslateProviderPopup addItemWithTitle:@"本地 Ollama"]; self.videoGenTranslateProviderPopup.lastItem.representedObject=@(-1);
+  for(NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++){
+    NSDictionary *e=self.aiEntries[i]; NSString *name=e[@"name"] ?: @"";
+    if(!name.length)continue;
+    [self.videoGenTranslateProviderPopup addItemWithTitle:[NSString stringWithFormat:@"API：%@",name]];
+    self.videoGenTranslateProviderPopup.lastItem.representedObject=@(i);
+  }
+  NSInteger target=0;
+  for(NSInteger i=0;i<self.videoGenTranslateProviderPopup.numberOfItems;i++){
+    if([[self.videoGenTranslateProviderPopup itemAtIndex:i].representedObject integerValue]==saved){target=i;break;}
+  }
+  [self.videoGenTranslateProviderPopup selectItemAtIndex:target];
+}
+
+- (void)videoGenTranslateProviderChanged:(id)sender {
+  NSInteger idx=[self.videoGenTranslateProviderPopup.selectedItem.representedObject integerValue];
+  [[NSUserDefaults standardUserDefaults] setInteger:idx forKey:@"centerVideoTranslateProvider"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  self.videoGenStatus.stringValue=idx<0?@"翻译服务：本地 Ollama":@"翻译服务：云端 API";
+}
+
+- (void)translateVideoPromptWithAPIEntry:(NSDictionary *)e original:(NSString *)text {
+  NSString *base=e[@"apiBase"] ?: @"", *key=e[@"api"] ?: @"", *model=e[@"model"] ?: @"";
+  if([base hasSuffix:@"/chat/completions"])base=[base substringToIndex:base.length-17];
+  while([base hasSuffix:@"/"])base=[base substringToIndex:base.length-1];
+  if(!base.length||!key.length){self.videoGenStatus.stringValue=@"该 API 服务缺少地址或 Key";return;}
+  if(!model.length)model=@"gpt-4o-mini";
+  NSString *prompt=[NSString stringWithFormat:@"Translate this Chinese video prompt into concise English. Output only the English prompt, no quotes, no explanation, keep visual details:\n%@",text];
+  self.videoGenStatus.stringValue=@"正在调用 API 翻译…";
+  __weak typeof(self) weakSelf=self;
+  [self aiFileAPICall:prompt model:model url:[base stringByAppendingString:@"/chat/completions"] key:key completion:^(NSString *answer,NSString *error){
+    if(answer.length){weakSelf.videoGenPromptField.stringValue=[answer stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];weakSelf.videoGenStatus.stringValue=@"API 翻译完成，请检查后生成";}
+    else weakSelf.videoGenStatus.stringValue=[NSString stringWithFormat:@"API 翻译失败：%@",error ?: @"无返回"];
+  }];
+}
+
 - (void)translateVideoPromptClicked:(id)sender {
   NSString *text=[self.videoGenPromptField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
   if(!text.length){self.videoGenStatus.stringValue=@"请先填写提示词";return;}
   if(!ContainsChineseText(text)){self.videoGenStatus.stringValue=@"提示词已经是英文";return;}
+  NSInteger provider=[self.videoGenTranslateProviderPopup.selectedItem.representedObject integerValue];
+  if(provider>=0 && provider<(NSInteger)self.aiEntries.count){
+    [self translateVideoPromptWithAPIEntry:self.aiEntries[provider] original:text];
+    return;
+  }
   self.videoGenStatus.stringValue=@"正在启动 Ollama 翻译…";
   self.localOllamaWanted=YES; self.localOllamaStartAt=[[NSDate date] timeIntervalSince1970];
   [self startLocalOllamaAuto];
