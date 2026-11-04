@@ -4043,39 +4043,39 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   self.translateModifiers = (UInt32)[ud integerForKey:@"centerTranslateModifiers"];
   self.translateShortcutDisplay = [ud stringForKey:@"centerTranslateKeyDisplay"];
   if (!self.translateShortcutDisplay.length) { self.translateKeyCode = kVK_Return; self.translateModifiers = controlKey | optionKey; self.translateShortcutDisplay = @"⌃⌥↩"; }
-  [self registerHotKeyForAction:0 code:self.shotKeyCode modifiers:self.shotModifiers display:self.shotShortcutDisplay];
-  [self registerHotKeyForAction:1 code:self.selectionKeyCode modifiers:self.selectionModifiers display:self.selectionShortcutDisplay];
-  [self registerHotKeyForAction:2 code:self.translateKeyCode modifiers:self.translateModifiers display:self.translateShortcutDisplay];
+  if(![self.shotShortcutDisplay isEqualToString:@"未设置"]) [self registerHotKeyForAction:0 code:self.shotKeyCode modifiers:self.shotModifiers display:self.shotShortcutDisplay];
+  if(![self.selectionShortcutDisplay isEqualToString:@"未设置"]) [self registerHotKeyForAction:1 code:self.selectionKeyCode modifiers:self.selectionModifiers display:self.selectionShortcutDisplay];
+  if(![self.translateShortcutDisplay isEqualToString:@"未设置"]) [self registerHotKeyForAction:2 code:self.translateKeyCode modifiers:self.translateModifiers display:self.translateShortcutDisplay];
   self.appSearchKeyCode = (UInt32)[ud integerForKey:@"centerAppSearchKeyCode"];
   self.appSearchModifiers = (UInt32)[ud integerForKey:@"centerAppSearchModifiers"];
   self.appSearchShortcutDisplay = [ud stringForKey:@"centerAppSearchKeyDisplay"];
   if (!self.appSearchShortcutDisplay.length) { self.appSearchKeyCode = kVK_Space; self.appSearchModifiers = controlKey | optionKey; self.appSearchShortcutDisplay = @"⌃⌥Space"; }
-  [self registerHotKeyForAction:3 code:self.appSearchKeyCode modifiers:self.appSearchModifiers display:self.appSearchShortcutDisplay];
+  if(![self.appSearchShortcutDisplay isEqualToString:@"未设置"]) [self registerHotKeyForAction:3 code:self.appSearchKeyCode modifiers:self.appSearchModifiers display:self.appSearchShortcutDisplay];
   self.quickPanelKeyCode = (UInt32)[ud integerForKey:@"centerQuickPanelKeyCode"];
   self.quickPanelModifiers = (UInt32)[ud integerForKey:@"centerQuickPanelModifiers"];
   self.quickPanelShortcutDisplay = [ud stringForKey:@"centerQuickPanelKeyDisplay"];
   if (!self.quickPanelShortcutDisplay.length) { self.quickPanelKeyCode = kVK_ANSI_K; self.quickPanelModifiers = cmdKey; self.quickPanelShortcutDisplay = @"⌘K"; }
-  [self registerHotKeyForAction:4 code:self.quickPanelKeyCode modifiers:self.quickPanelModifiers display:self.quickPanelShortcutDisplay];
+  if(![self.quickPanelShortcutDisplay isEqualToString:@"未设置"]) [self registerHotKeyForAction:4 code:self.quickPanelKeyCode modifiers:self.quickPanelModifiers display:self.quickPanelShortcutDisplay];
   self.clipboardKeyCode = (UInt32)[ud integerForKey:@"centerClipboardKeyCode"];
   self.clipboardModifiers = (UInt32)[ud integerForKey:@"centerClipboardModifiers"];
   self.clipboardShortcutDisplay = [ud stringForKey:@"centerClipboardKeyDisplay"];
   if (!self.clipboardShortcutDisplay.length) { self.clipboardKeyCode = kVK_ANSI_V; self.clipboardModifiers = controlKey | optionKey; self.clipboardShortcutDisplay = @"⌃⌥V"; }
-  [self registerHotKeyForAction:5 code:self.clipboardKeyCode modifiers:self.clipboardModifiers display:self.clipboardShortcutDisplay];
+  if(![self.clipboardShortcutDisplay isEqualToString:@"未设置"]) [self registerHotKeyForAction:5 code:self.clipboardKeyCode modifiers:self.clipboardModifiers display:self.clipboardShortcutDisplay];
   self.consoleKeyCode = (UInt32)[ud integerForKey:@"centerConsoleKeyCode"];
   self.consoleModifiers = (UInt32)[ud integerForKey:@"centerConsoleModifiers"];
   self.consoleShortcutDisplay = [ud stringForKey:@"centerConsoleKeyDisplay"];
   if (!self.consoleShortcutDisplay.length) { self.consoleKeyCode = kVK_ANSI_C; self.consoleModifiers = controlKey | optionKey; self.consoleShortcutDisplay = @"⌃⌥C"; }
-  [self registerHotKeyForAction:6 code:self.consoleKeyCode modifiers:self.consoleModifiers display:self.consoleShortcutDisplay];
+  if(![self.consoleShortcutDisplay isEqualToString:@"未设置"]) [self registerHotKeyForAction:6 code:self.consoleKeyCode modifiers:self.consoleModifiers display:self.consoleShortcutDisplay];
   self.screenshotKeyCode = (UInt32)[ud integerForKey:@"centerScreenshotKeyCode"];
   self.screenshotModifiers = (UInt32)[ud integerForKey:@"centerScreenshotModifiers"];
   self.screenshotShortcutDisplay = [ud stringForKey:@"centerScreenshotKeyDisplay"];
   if (!self.screenshotShortcutDisplay.length) { self.screenshotKeyCode = kVK_ANSI_S; self.screenshotModifiers = controlKey | optionKey; self.screenshotShortcutDisplay = @"⌃⌥S"; }
-  [self registerHotKeyForAction:7 code:self.screenshotKeyCode modifiers:self.screenshotModifiers display:self.screenshotShortcutDisplay];
+  if(![self.screenshotShortcutDisplay isEqualToString:@"未设置"]) [self registerHotKeyForAction:7 code:self.screenshotKeyCode modifiers:self.screenshotModifiers display:self.screenshotShortcutDisplay];
   self.recordKeyCode = (UInt32)[ud integerForKey:@"centerRecordKeyCode"];
   self.recordModifiers = (UInt32)[ud integerForKey:@"centerRecordModifiers"];
   self.recordShortcutDisplay = [ud stringForKey:@"centerRecordKeyDisplay"];
   if (!self.recordShortcutDisplay.length) { self.recordKeyCode = kVK_ANSI_R; self.recordModifiers = controlKey | optionKey; self.recordShortcutDisplay = @"⌃⌥R"; }
-  [self registerHotKeyForAction:8 code:self.recordKeyCode modifiers:self.recordModifiers display:self.recordShortcutDisplay];
+  if(![self.recordShortcutDisplay isEqualToString:@"未设置"]) [self registerHotKeyForAction:8 code:self.recordKeyCode modifiers:self.recordModifiers display:self.recordShortcutDisplay];
 }
 
 - (NSString *)shortcutDisplayForAction:(NSInteger)action {
@@ -21771,9 +21771,20 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
       [cv addSubview:b];
       [self.shortcutButtons addObject:b];
+      ColorHoverButton *clr = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(438, 496 - i * 52, 34, 32)];
+      clr.title = @"清除"; clr.tag = i; clr.font = [NSFont systemFontOfSize:9];
+      clr.hoverColor = [NSColor systemRedColor];
+      clr.target = self; clr.action = @selector(clearShortcutForAction:);
+      [clr applyColor:DLButtonBackground() textColor:[NSColor secondaryLabelColor]];
+      [cv addSubview:clr];
     }
     self.shortcutStatusLabel = [self label:@"点击右侧快捷键开始录制；Esc 取消" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     self.shortcutStatusLabel.frame = NSMakeRect(24, 50, 430, 18); [cv addSubview:self.shortcutStatusLabel];
+    ColorHoverButton *clearAllBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 16, 108, 32)];
+    clearAllBtn.title = @"清除全部"; clearAllBtn.hoverColor = [NSColor systemRedColor];
+    clearAllBtn.target = self; clearAllBtn.action = @selector(clearAllShortcuts:);
+    [clearAllBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+    [cv addSubview:clearAllBtn];
     ColorHoverButton *allShortcutBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(140, 16, 150, 32)];
     allShortcutBtn.title = @"全部功能快捷键…";
     allShortcutBtn.hoverColor = [NSColor systemTealColor];
@@ -22363,6 +22374,39 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.shortcutRecordingAction = -1;
   [self refreshShortcutButtons];
   if (self.shortcutStatusLabel) self.shortcutStatusLabel.stringValue = @"点击右侧快捷键开始录制；Esc 取消";
+}
+
+- (void)clearShortcutForAction:(NSInteger)action {
+  if(action < 0 || action > 8) return;
+  EventHotKeyRef old = action == 0 ? self.translationHotKey : (action == 1 ? self.selectionHotKey : (action == 2 ? self.translateHotKey : (action == 3 ? self.appSearchHotKey : (action == 4 ? self.quickPanelHotKey : (action == 5 ? self.clipboardHotKey : (action == 6 ? self.consoleHotKey : (action == 7 ? self.screenshotHotKey : self.recordHotKey)))))));
+  if(old) UnregisterEventHotKey(old);
+  if(action == 0) { self.translationHotKey = NULL; self.shotKeyCode = 0; self.shotModifiers = 0; self.shotShortcutDisplay = @"未设置"; }
+  else if(action == 1) { self.selectionHotKey = NULL; self.selectionKeyCode = 0; self.selectionModifiers = 0; self.selectionShortcutDisplay = @"未设置"; }
+  else if(action == 2) { self.translateHotKey = NULL; self.translateKeyCode = 0; self.translateModifiers = 0; self.translateShortcutDisplay = @"未设置"; }
+  else if(action == 3) { self.appSearchHotKey = NULL; self.appSearchKeyCode = 0; self.appSearchModifiers = 0; self.appSearchShortcutDisplay = @"未设置"; }
+  else if(action == 4) { self.quickPanelHotKey = NULL; self.quickPanelKeyCode = 0; self.quickPanelModifiers = 0; self.quickPanelShortcutDisplay = @"未设置"; }
+  else if(action == 5) { self.clipboardHotKey = NULL; self.clipboardKeyCode = 0; self.clipboardModifiers = 0; self.clipboardShortcutDisplay = @"未设置"; }
+  else if(action == 6) { self.consoleHotKey = NULL; self.consoleKeyCode = 0; self.consoleModifiers = 0; self.consoleShortcutDisplay = @"未设置"; }
+  else if(action == 7) { self.screenshotHotKey = NULL; self.screenshotKeyCode = 0; self.screenshotModifiers = 0; self.screenshotShortcutDisplay = @"未设置"; }
+  else { self.recordHotKey = NULL; self.recordKeyCode = 0; self.recordModifiers = 0; self.recordShortcutDisplay = @"未设置"; }
+  NSArray *kc=@[@"centerShotKeyCode",@"centerSelectKeyCode",@"centerTranslateKeyCode",@"centerAppSearchKeyCode",@"centerQuickPanelKeyCode",@"centerClipboardKeyCode",@"centerConsoleKeyCode",@"centerScreenshotKeyCode",@"centerRecordKeyCode"];
+  NSArray *km=@[@"centerShotModifiers",@"centerSelectModifiers",@"centerTranslateModifiers",@"centerAppSearchModifiers",@"centerQuickPanelModifiers",@"centerClipboardModifiers",@"centerConsoleModifiers",@"centerScreenshotModifiers",@"centerRecordModifiers"];
+  NSArray *kd=@[@"centerShotKeyDisplay",@"centerSelectKeyDisplay",@"centerTranslateKeyDisplay",@"centerAppSearchKeyDisplay",@"centerQuickPanelKeyDisplay",@"centerClipboardKeyDisplay",@"centerConsoleKeyDisplay",@"centerScreenshotKeyDisplay",@"centerRecordKeyDisplay"];
+  NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+  [ud setInteger:0 forKey:kc[action]]; [ud setInteger:0 forKey:km[action]]; [ud setObject:@"未设置" forKey:kd[action]];
+  [ud synchronize];
+  [self refreshShortcutButtons];
+  if(self.shortcutStatusLabel) self.shortcutStatusLabel.stringValue=@"已清除该快捷键";
+}
+
+- (void)clearAllShortcuts:(id)sender {
+  if(self.shortcutRecordingMonitor) [self stopShortcutRecording];
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=@"清除全部全局快捷键？";
+  a.informativeText=@"清除后这些功能不再响应全局快捷键，可随时重新录制。";
+  [a addButtonWithTitle:@"清除"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  for(NSInteger i=0;i<9;i++)[self clearShortcutForAction:i];
+  if(self.shortcutStatusLabel) self.shortcutStatusLabel.stringValue=@"已清除全部快捷键";
 }
 
 - (void)recordShortcutForAction:(ColorHoverButton *)sender {
