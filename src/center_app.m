@@ -666,6 +666,34 @@ static NSFont *DLDisplayFont(CGFloat size, BOOL bold) {
 }
 @end
 
+@interface DLDropImageView : NSImageView
+@property (copy) void (^onPath)(NSString *path);
+@end
+@implementation DLDropImageView
+- (instancetype)initWithFrame:(NSRect)frame {
+  self = [super initWithFrame:frame];
+  if (self) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSFilenamesPboardType]];
+  return self;
+}
+- (NSString *)firstPath:(id<NSDraggingInfo>)info {
+  NSArray *urls=[[info draggingPasteboard] readObjectsForClasses:@[[NSURL class]] options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}];
+  for(NSURL *u in urls) if(u.path.length)return u.path;
+  NSArray *names=[[info draggingPasteboard] propertyListForType:NSFilenamesPboardType];
+  if([names isKindOfClass:[NSArray class]])for(id n in names)if([n isKindOfClass:[NSString class]])return n;
+  return nil;
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)info {
+  self.layer.borderColor=[NSColor controlAccentColor].CGColor;
+  return [self firstPath:info].length?NSDragOperationCopy:NSDragOperationNone;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)info {
+  NSString *path=[self firstPath:info];
+  if(!path.length)return NO;
+  if(self.onPath)self.onPath(path);
+  return YES;
+}
+@end
+
 @interface DLRegionSelectView : NSView
 @property NSPoint startPoint;
 @property NSRect selection;
@@ -27424,7 +27452,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       b.title=titles[i]; b.hoverColor=[NSColor systemTealColor]; b.target=self; b.action=NSSelectorFromString(sels[i]);
       [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:b];
     }
-    self.aiVisionPreview = [[NSImageView alloc] initWithFrame:NSMakeRect(24,300,260,190)];
+    DLDropImageView *vpv = [[DLDropImageView alloc] initWithFrame:NSMakeRect(24,300,260,190)];
+    __weak typeof(self) weakVision=self;
+    vpv.onPath=^(NSString *path){ [weakVision aiVisionLoadImagePath:path]; };
+    self.aiVisionPreview=vpv;
     self.aiVisionPreview.imageScaling=NSImageScaleProportionallyUpOrDown;
     self.aiVisionPreview.wantsLayer=YES; self.aiVisionPreview.layer.borderColor=[NSColor separatorColor].CGColor; self.aiVisionPreview.layer.borderWidth=1;
     [cv addSubview:self.aiVisionPreview];
@@ -27619,13 +27650,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }] resume];
 }
 
+- (void)aiEditLoadImagePath:(NSString *)path {
+  if(!path.length || ![[NSFileManager defaultManager] fileExistsAtPath:path])return;
+  self.aiEditImagePath=path;
+  self.aiEditPreview.image=[[NSImage alloc] initWithContentsOfFile:path];
+  self.aiEditStatus.stringValue=[NSString stringWithFormat:@"已选择：%@",path.lastPathComponent];
+}
+
 - (void)aiEditPickImage:(id)sender {
   NSOpenPanel *p=[NSOpenPanel openPanel];
   p.canChooseFiles=YES;p.canChooseDirectories=NO;p.allowsMultipleSelection=NO;
   p.allowedFileTypes=@[@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"webp"];
   if([p runModal]!=NSModalResponseOK)return;
-  self.aiEditImagePath=p.URL.path;
-  self.aiEditPreview.image=[[NSImage alloc] initWithContentsOfFile:p.URL.path];
+  [self aiEditLoadImagePath:p.URL.path];
   self.aiEditStatus.stringValue=[NSString stringWithFormat:@"已选择：%@",p.URL.lastPathComponent];
 }
 
@@ -27703,7 +27740,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *inpaint=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(152,504,120,30)];
     inpaint.title=@"局部重绘…";inpaint.hoverColor=[NSColor systemPurpleColor];inpaint.target=self;inpaint.action=@selector(openAIInpaintWindow:);
     [inpaint applyColor:DLButtonBackground() textColor:[NSColor labelColor]];[cv addSubview:inpaint];
-    self.aiEditPreview=[[NSImageView alloc] initWithFrame:NSMakeRect(24,280,286,210)];
+    DLDropImageView *epv=[[DLDropImageView alloc] initWithFrame:NSMakeRect(24,280,286,210)];
+    __weak typeof(self) weakEdit=self;
+    epv.onPath=^(NSString *path){ [weakEdit aiEditLoadImagePath:path]; };
+    self.aiEditPreview=epv;
     self.aiEditPreview.imageScaling=NSImageScaleProportionallyUpOrDown;self.aiEditPreview.wantsLayer=YES;
     self.aiEditPreview.layer.borderColor=[NSColor separatorColor].CGColor;self.aiEditPreview.layer.borderWidth=1;
     [cv addSubview:self.aiEditPreview];
@@ -29446,8 +29486,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiTTSURLField.placeholderString=@"/audio/speech 地址";
     self.aiTTSURLField.editable=NO; self.aiTTSURLField.selectable=YES;
     [cv addSubview:self.aiTTSURLField];
-    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24,150,612,300)];
+    DLDropScrollView *sv = [[DLDropScrollView alloc] initWithFrame:NSMakeRect(24,150,612,300)];
     sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    sv.allowedExtensions=[NSSet setWithArray:@[@"mp4",@"mov",@"m4v"]];
+    __weak typeof(self) weakTTS=self;
+    sv.onPaths=^(NSArray<NSString *> *paths){
+      NSString *p=paths.firstObject; if(!p.length)return;
+      weakTTS.aiTTSTargetVideoPath=p;
+      weakTTS.aiTTSStatus.stringValue=[NSString stringWithFormat:@"已选择视频：%@，生成配音后会合成",p.lastPathComponent];
+    };
     self.aiTTSText = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
     self.aiTTSText.font=[NSFont systemFontOfSize:12];
     self.aiTTSText.string=@"请输入要朗读的文本。";
@@ -29746,8 +29793,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *sttSettings = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(476, 430, 140, 32)];
     sttSettings.title = @"转写设置…"; sttSettings.hoverColor = [NSColor systemPurpleColor]; sttSettings.target = self; sttSettings.action = @selector(openSpeechSettings:);
     [sttSettings applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:sttSettings];
-    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, 76, 592, 340)];
+    DLDropScrollView *sv = [[DLDropScrollView alloc] initWithFrame:NSMakeRect(24, 76, 592, 340)];
     sv.hasVerticalScroller = YES; sv.borderType = NSBezelBorder;
+    sv.allowedExtensions = [NSSet setWithArray:@[@"wav",@"mp3",@"m4a",@"aac",@"aiff",@"caf",@"flac",@"mp4",@"mov",@"m4v"]];
+    __weak typeof(self) weakVoice=self;
+    sv.onPaths = ^(NSArray<NSString *> *paths){
+      NSString *p=paths.firstObject;
+      if(!p.length)return;
+      weakVoice.voiceTextPath=p;
+      weakVoice.voiceTextOutput.string=@"";
+      weakVoice.voiceTextStatus.stringValue=[NSString stringWithFormat:@"已拖入：%@，点开始转写",p.lastPathComponent];
+    };
     self.voiceTextOutput = [[NSTextView alloc] initWithFrame:sv.contentView.bounds];
     self.voiceTextOutput.font = [NSFont systemFontOfSize:12];
     self.voiceTextOutput.editable = NO;
@@ -29840,8 +29896,17 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     tl.frame = NSMakeRect(24, 528, 200, 18); [cv addSubview:tl];
     NSTextField *sl = [self label:@"AI 会议纪要" size:12 bold:YES color:nil];
     sl.frame = NSMakeRect(464, 528, 200, 18); [cv addSubview:sl];
-    NSScrollView *tv = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, 96, 420, 420)];
+    DLDropScrollView *tv = [[DLDropScrollView alloc] initWithFrame:NSMakeRect(24, 96, 420, 420)];
     tv.hasVerticalScroller = YES; tv.borderType = NSBezelBorder;
+    tv.allowedExtensions = [NSSet setWithArray:@[@"wav",@"mp3",@"m4a",@"aac",@"aiff",@"caf",@"flac",@"mp4",@"mov",@"m4v"]];
+    __weak typeof(self) weakMeeting=self;
+    tv.onPaths = ^(NSArray<NSString *> *paths){
+      NSString *p=paths.firstObject;
+      if(!p.length)return;
+      weakMeeting.meetingPath=p;
+      weakMeeting.meetingPathLabel.stringValue=p.lastPathComponent;
+      weakMeeting.meetingStatus.stringValue=[NSString stringWithFormat:@"已拖入：%@，点开始转写",p.lastPathComponent];
+    };
     self.meetingTranscript = [[NSTextView alloc] initWithFrame:tv.contentView.bounds];
     self.meetingTranscript.font = [NSFont systemFontOfSize:12]; self.meetingTranscript.editable = NO;
     tv.documentView = self.meetingTranscript; [cv addSubview:tv];
