@@ -22868,7 +22868,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.translationStatus.stringValue = @"正在生成双语 PDF…";
   WKWebViewConfiguration *cfg = [[WKWebViewConfiguration alloc] init];
   WKWebView *web = [[WKWebView alloc] initWithFrame:NSMakeRect(0,0,900,1200) configuration:cfg];
-  web.hidden = YES;
+  web.alphaValue = 0.0;
   [self.translationWindow.contentView addSubview:web];
   DLPdfNavigationDelegate *delegate = [[DLPdfNavigationDelegate alloc] init];
   __weak typeof(self) weakSelf = self;
