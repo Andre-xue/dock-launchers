@@ -3314,17 +3314,24 @@ static void HideDockHoverTip(void) {
 
 - (void)addLocalAIServiceAccessoryToWindow:(NSWindow *)window {
   if(!window)return;
+  if(objc_getAssociatedObject(window, "DLLocalAIButton")) return;
+  NSButton *close=[window standardWindowButton:NSWindowCloseButton];
+  NSView *titlebar=close.superview ?: window.contentView.superview;
+  if(!titlebar) return;
   NSButton *b=[NSButton buttonWithTitle:@"本地 AI 服务" target:self action:@selector(openLocalAIServices:)];
   b.bezelStyle=NSBezelStyleRounded;
-  b.font=[NSFont systemFontOfSize:10.5 weight:NSFontWeightMedium];
+  b.controlSize=NSControlSizeSmall;
+  b.font=[NSFont systemFontOfSize:10 weight:NSFontWeightMedium];
   b.image=[NSImage imageWithSystemSymbolName:@"server.rack" accessibilityDescription:@"本地 AI 服务"];
   b.imagePosition=NSImageLeft;
-  b.frame=NSMakeRect(0,0,136,22);
+  CGFloat w=142, h=24, rightGap=52;
+  CGFloat x=MAX(4,titlebar.bounds.size.width-w-rightGap);
+  CGFloat y=close ? close.frame.origin.y + (close.frame.size.height-h)/2.0 : MAX(2,titlebar.bounds.size.height-h-2);
+  b.frame=NSMakeRect(x,y,w,h);
+  b.autoresizingMask=NSViewMinXMargin|NSViewMinYMargin;
   b.toolTip=@"打开本地 AI 服务：Ollama / ComfyUI / Whisper";
-  NSTitlebarAccessoryViewController *acc=[[NSTitlebarAccessoryViewController alloc] init];
-  acc.view=b;
-  acc.layoutAttribute=NSLayoutAttributeRight;
-  [window addTitlebarAccessoryViewController:acc];
+  [titlebar addSubview:b];
+  objc_setAssociatedObject(window, "DLLocalAIButton", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 - (void)runSelfTest {
