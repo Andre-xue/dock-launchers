@@ -22882,7 +22882,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
         BOOL ok = pdfData.length>100 && [pdfData writeToFile:out atomically:YES];
         if(ok){
           weakSelf.translationStatus.stringValue=[NSString stringWithFormat:@"双语文件已保存：%@",out];
-          [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:out]];
         } else {
           weakSelf.translationStatus.stringValue=[NSString stringWithFormat:@"PDF 导出失败%@",error?[NSString stringWithFormat:@"：%@",error.localizedDescription]:@""];
         }
@@ -22933,7 +22932,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   if(ok){
     self.translationStatus.stringValue=[NSString stringWithFormat:@"双语文件已保存：%@",out];
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:out]];
   } else {
     self.translationStatus.stringValue=[NSString stringWithFormat:@"双语文件导出失败%@",err?[NSString stringWithFormat:@"：%@",err.localizedDescription]:@""];
   }
