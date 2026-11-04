@@ -21365,7 +21365,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ml.frame = NSMakeRect(330, 464, 40, 18); [cv addSubview:ml];
     self.translationModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(374, 458, 140, 28)];
     self.translationModelField.placeholderString = @"模型";
-    self.translationModelField.editable = YES;
+    self.translationModelField.editable = NO; self.translationModelField.completes = NO;
     [cv addSubview:self.translationModelField];
     ColorHoverButton *fetchModels = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(520, 458, 64, 28)];
     fetchModels.title = @"获取模型"; fetchModels.hoverColor = [NSColor systemBlueColor];
@@ -25692,7 +25692,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSTextField *t=[self label:@"AI 文件分析" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,656,300,28); [cv addSubview:t];
     NSTextField *h=[self label:@"导入文件后用 AI 分析，生成 Markdown 报告并保存到桌面" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,634,500,18); [cv addSubview:h];
     self.aiFileServicePopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(530,654,130,26) pullsDown:NO]; self.aiFileServicePopup.target=self; self.aiFileServicePopup.action=@selector(aiFileServiceChanged:); [cv addSubview:self.aiFileServicePopup];
-    self.aiFileModelField=[[NSComboBox alloc] initWithFrame:NSMakeRect(706,654,160,26)]; self.aiFileModelField.placeholderString=@"模型"; self.aiFileModelField.font=[NSFont systemFontOfSize:10]; self.aiFileModelField.editable=YES; [cv addSubview:self.aiFileModelField];
+    self.aiFileModelField=[[NSComboBox alloc] initWithFrame:NSMakeRect(706,654,160,26)]; self.aiFileModelField.placeholderString=@"模型"; self.aiFileModelField.font=[NSFont systemFontOfSize:10]; self.aiFileModelField.editable=NO; self.aiFileModelField.completes=NO; [cv addSubview:self.aiFileModelField];
     ColorHoverButton *add=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,596,120,30)]; add.title=@"导入文件…"; add.hoverColor=[NSColor systemBlueColor]; add.target=self; add.action=@selector(aiFileAddFiles:); [add applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:add];
     ColorHoverButton *clear=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(154,596,90,30)]; clear.title=@"清空"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(aiFileClear:); [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
     ColorHoverButton *cloud=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(254,596,120,30)]; cloud.title=@"添加云文档…"; cloud.hoverColor=[NSColor systemBlueColor]; cloud.font=[NSFont systemFontOfSize:10]; cloud.target=self; cloud.action=@selector(openCloudDocsList:); cloud.toolTip=@"云文档列表：官方扫码登录、导出或导入链接"; [cloud applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:cloud];
@@ -26680,7 +26680,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiVideoModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(190,520,230,28)];
     self.aiVideoModelField.placeholderString=@"视频模型";
     self.aiVideoModelField.font=[NSFont systemFontOfSize:11];
-    self.aiVideoModelField.editable=YES;
+    self.aiVideoModelField.editable=NO; self.aiVideoModelField.completes=NO;
     self.aiVideoModelField.toolTip=@"从下拉列表选择可用视频模型";
     [cv addSubview:self.aiVideoModelField];
     self.aiVideoDurationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(426,520,84,28) pullsDown:NO];
@@ -27915,8 +27915,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   NSString *low = [name lowercaseString];
   BOOL comfy = [low containsString:@"comfy"] || [base containsString:@":8188"];
   if (comfy) {
-    self.aiImageModelField.editable = YES;
-    self.aiImageModelField.stringValue = e[@"imageModel"] ?: @"v1-5-pruned-emaonly.safetensors";
+    self.aiImageModelField.editable=NO; self.aiImageModelField.completes=NO;
+    [self.aiImageModelField removeAllItems];
+    NSString *ckptDir=[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/models/checkpoints"];
+    for(NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:ckptDir error:NULL] ?: @[]) if([@[@"safetensors",@"ckpt"] containsObject:f.pathExtension.lowercaseString])[self.aiImageModelField addItemWithObjectValue:f];
+    if(!self.aiImageModelField.numberOfItems)[self.aiImageModelField addItemWithObjectValue:@"v1-5-pruned-emaonly.safetensors"];
+    NSString *want=e[@"imageModel"] ?: @"v1-5-pruned-emaonly.safetensors";
+    self.aiImageModelField.stringValue=[self.aiImageModelField.objectValues containsObject:want]?want:self.aiImageModelField.objectValues.firstObject;
     self.aiImageURLField.stringValue = base.length ? base : @"http://127.0.0.1:8188";
     self.aiImageStatus.stringValue = @"ComfyUI 本地：模型填 checkpoint 名称，地址填 127.0.0.1:8188；8GB 建议 512x512";
     [self.aiImageSizePopup selectItemWithTitle:@"512x512"];
@@ -27962,7 +27967,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiImageModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(190,520,230,28)];
     self.aiImageModelField.placeholderString=@"图片模型";
     self.aiImageModelField.font=[NSFont systemFontOfSize:11];
-    self.aiImageModelField.editable=YES;
+    self.aiImageModelField.editable=NO; self.aiImageModelField.completes=NO;
     self.aiImageModelField.toolTip=@"从下拉列表选择可用图片模型";
     [cv addSubview:self.aiImageModelField];
     self.aiImageSizePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(426,520,84,28) pullsDown:NO];
@@ -28791,7 +28796,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [cv addSubview:self.aiAssistantReasoningPopup];
     self.aiAssistantModelField = [[NSComboBox alloc] initWithFrame:NSMakeRect(434,478,140,28)];
     self.aiAssistantModelField.placeholderString=@"模型";
-    self.aiAssistantModelField.editable=YES; self.aiAssistantModelField.completes=YES;
+    self.aiAssistantModelField.editable=NO; self.aiAssistantModelField.completes=NO;
     [cv addSubview:self.aiAssistantModelField];
     ColorHoverButton *refreshModels = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(582,478,30,28)];
     refreshModels.title=@"↻"; refreshModels.toolTip=@"刷新模型列表";
