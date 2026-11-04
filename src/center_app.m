@@ -3962,7 +3962,12 @@ static void HideDockHoverTip(void) {
   NSButton *zoom = [w standardWindowButton:NSWindowZoomButton];
   if (mini) mini.hidden = YES;
   if (zoom) zoom.hidden = YES;
-  if (close) close.enabled = YES;
+  if (close) {
+    close.enabled = YES;
+    close.hidden = NO;
+    close.target = self;
+    close.action = @selector(forceCloseWindowFromChrome:);
+  }
   if (!w.delegate) w.delegate = self;
   NSView *titlebar = close.superview ?: w.contentView.superview;
   if (!titlebar) return;
@@ -3987,6 +3992,21 @@ static void HideDockHoverTip(void) {
   pin.frame = NSMakeRect(px, py, pinSize, pinSize);
   pin.autoresizingMask = NSViewMinXMargin | NSViewMinYMargin;
   [titlebar addSubview:pin];
+}
+
+- (void)cancelOperation:(id)sender {
+  NSWindow *w = [NSApp keyWindow];
+  if (!w) return;
+  if (![self.pinnedWindows containsObject:[NSValue valueWithNonretainedObject:w]]) return;
+  [w performClose:nil];
+  if (w.isVisible) [w orderOut:nil];
+}
+
+- (void)forceCloseWindowFromChrome:(NSButton *)sender {
+  NSWindow *w = sender.window;
+  if (!w) return;
+  [w performClose:nil];
+  if (w.isVisible) [w orderOut:nil];
 }
 
 - (void)toggleWindowPin:(NSButton *)sender {
