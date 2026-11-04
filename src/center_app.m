@@ -3312,6 +3312,21 @@ static void HideDockHoverTip(void) {
   return l;
 }
 
+- (void)addLocalAIServiceAccessoryToWindow:(NSWindow *)window {
+  if(!window)return;
+  NSButton *b=[NSButton buttonWithTitle:@"本地 AI 服务" target:self action:@selector(openLocalAIServices:)];
+  b.bezelStyle=NSBezelStyleRounded;
+  b.font=[NSFont systemFontOfSize:10.5 weight:NSFontWeightMedium];
+  b.image=[NSImage imageWithSystemSymbolName:@"server.rack" accessibilityDescription:@"本地 AI 服务"];
+  b.imagePosition=NSImageLeft;
+  b.frame=NSMakeRect(0,0,136,22);
+  b.toolTip=@"打开本地 AI 服务：Ollama / ComfyUI / Whisper";
+  NSTitlebarAccessoryViewController *acc=[[NSTitlebarAccessoryViewController alloc] init];
+  acc.view=b;
+  acc.layoutAttribute=NSLayoutAttributeRight;
+  [window addTitlebarAccessoryViewController:acc];
+}
+
 - (void)runSelfTest {
   __block int failed = 0;
   void (^check)(BOOL, NSString *) = ^(BOOL ok, NSString *name) {
@@ -8282,6 +8297,7 @@ static BOOL ValidGroupName(NSString *raw) {
     ColorHoverButton *vm=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(304,40,120,34)]; vm.title=@"视频模型市场…"; vm.hoverColor=[NSColor systemPurpleColor]; vm.font=[NSFont systemFontOfSize:10]; vm.target=self; vm.action=@selector(showVideoModelMarket:); [vm applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:vm];
     ColorHoverButton *folder=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(164,40,130,34)]; folder.title=@"打开输出目录"; folder.hoverColor=[NSColor systemBlueColor]; folder.target=self; folder.action=@selector(openVideoGenOutput:); [folder applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:folder];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(654,40,100,34)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeVideoGeneration:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self addLocalAIServiceAccessoryToWindow:self.videoGenWindow];
     [self.videoGenWindow center];
   }
   [self populateVideoTranslateProviders];
@@ -25425,6 +25441,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *copyMD=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(568,20,100,32)]; copyMD.title=@"复制 MD"; copyMD.hoverColor=[NSColor systemPurpleColor]; copyMD.font=[NSFont systemFontOfSize:10]; copyMD.target=self; copyMD.action=@selector(aiFileCopyMarkdown:); [copyMD applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copyMD];
     ColorHoverButton *saveDir=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(680,20,100,32)]; saveDir.title=@"保存位置…"; saveDir.hoverColor=[NSColor systemTealColor]; saveDir.font=[NSFont systemFontOfSize:10]; saveDir.target=self; saveDir.action=@selector(aiFileChooseOutputDirectory:); saveDir.toolTip=@"自定义 Markdown 报告保存目录"; [saveDir applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:saveDir];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(800,20,96,32)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(aiFileClose:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    [self addLocalAIServiceAccessoryToWindow:self.aiFileWindow];
     [self.aiFileWindow center];
   }
   [self reloadAIFileServices];
@@ -27693,6 +27710,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.aiImagePreview.imageScaling=NSImageScaleProportionallyUpOrDown;
     self.aiImagePreview.wantsLayer=YES; self.aiImagePreview.layer.borderColor=[NSColor separatorColor].CGColor; self.aiImagePreview.layer.borderWidth=1;
     [cv addSubview:self.aiImagePreview];
+    [self addLocalAIServiceAccessoryToWindow:self.aiImageWindow];
     [self.aiImageWindow center];
   }
   [self reloadAIImageServices];
@@ -28498,6 +28516,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *clear = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250,230,90,28)];
     clear.title=@"清空"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(clearAIAssistant:);
     [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
+    [self addLocalAIServiceAccessoryToWindow:self.aiAssistantWindow];
     [self.aiAssistantWindow center];
   }
   [self reloadAIAssistantServices];
@@ -29033,6 +29052,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     ColorHoverButton *openVideo = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(500,66,120,28)];
     openVideo.title=@"打开配音视频"; openVideo.hoverColor=[NSColor systemIndigoColor]; openVideo.font=[NSFont systemFontOfSize:10]; openVideo.target=self; openVideo.action=@selector(openAITTSVideoResult:);
     [openVideo applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:openVideo];
+    [self addLocalAIServiceAccessoryToWindow:self.aiTTSWindow];
     [self.aiTTSWindow center];
   }
   [self reloadAITTSServices];
@@ -29305,6 +29325,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     clearVoice.target = self; clearVoice.action = @selector(clearVoiceTextPanel:);
     [clearVoice applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearVoice];
     self.voiceTextWindow.level = NSFloatingWindowLevel;
+    [self addLocalAIServiceAccessoryToWindow:self.voiceTextWindow];
     [self.voiceTextWindow center];
   }
   if (!self.voiceTextPath.length) {
@@ -29415,6 +29436,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     close.title = @"关闭"; close.hoverColor = [NSColor systemGrayColor]; close.target = self; close.action = @selector(closeMeetingAssistant:);
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     self.meetingWindow.level = NSFloatingWindowLevel;
+    [self addLocalAIServiceAccessoryToWindow:self.meetingWindow];
     [self.meetingWindow center];
   }
   if (!self.meetingPath.length) {
