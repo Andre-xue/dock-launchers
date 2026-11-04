@@ -1369,6 +1369,9 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSWindow *shotTranslateWindow;
 @property (strong) NSTextView *shotTranslateSourceView, *shotTranslateResultView;
 @property (strong) NSPopUpButton *shotTranslateServicePopup, *shotTranslateTargetPopup;
+@property (strong) NSView *shotTranslateServiceList;
+@property (strong) NSArray *shotTranslateServiceItems;
+@property NSInteger shotTranslateSelectedService;
 @property (strong) NSTextField *shotTranslateStatus;
 @property NSInteger shotTranslateToken;
 @property (strong) NSPopUpButton *translationProviderPopup, *translationTargetPopup;
@@ -22532,31 +22535,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return i>=0&&i<(NSInteger)codes.count?codes[i]:@"中文（简体）";
 }
 
-- (void)reloadShotTranslateServices {
-  if(!self.aiEntries)[self loadAIEntries];
-  [self.shotTranslateServicePopup removeAllItems];
-  for(NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++){
-    NSDictionary *e=self.aiEntries[i];
-    if([e[@"localOnly"] boolValue])continue;
-    if(![[self aiModelCategoryKey:e] isEqualToString:@"text"])continue;
-    if(![e[@"api"] length])continue;
-    NSString *name=e[@"name"] ?: @"";
-    if(!name.length)continue;
-    NSString *shortName=[name componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].firstObject ?: name;
-    [self.shotTranslateServicePopup addItemWithTitle:[NSString stringWithFormat:@"API：%@",shortName]];
-    self.shotTranslateServicePopup.lastItem.representedObject=@(i);
-  }
-  [self.shotTranslateServicePopup addItemWithTitle:@"本地 Ollama"]; self.shotTranslateServicePopup.lastItem.representedObject=@(-1);
-  [self.shotTranslateServicePopup selectItemAtIndex:0];
-}
-
 - (void)shotTranslateNow:(id)sender {
   NSString *text=[self.shotTranslateSourceView.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
   if(!text.length){self.shotTranslateStatus.stringValue=@"没有可翻译的文字";return;}
   NSInteger token=++self.shotTranslateToken;
   NSString *target=[self shotTranslateLanguageCode];
   NSString *prompt=[NSString stringWithFormat:@"Translate the following text into %@. Output only the translation, no explanation, keep formatting.\n\n%@",target,text];
-  NSInteger provider=[self.shotTranslateServicePopup.selectedItem.representedObject integerValue];
+  NSInteger provider=-1;
+  if(self.shotTranslateSelectedService>=0 && self.shotTranslateSelectedService<(NSInteger)self.shotTranslateServiceItems.count)
+    provider=[self.shotTranslateServiceItems[self.shotTranslateSelectedService][@"provider"] integerValue];
   NSString *url=@"",*key=@"",*model=@"";
   if(provider<0){
     url=@"http://127.0.0.1:11434/v1/chat/completions"; model=@"qwen2.5:3b";
@@ -22578,26 +22565,68 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }];
 }
 
+- (void)reloadShotTranslateServices {
+  if(!self.aiEntries)[self loadAIEntries];
+  NSMutableArray *items=[NSMutableArray array];
+  for(NSInteger i=0;i<(NSInteger)self.aiEntries.count;i++){
+    NSDictionary *e=self.aiEntries[i];
+    if([e[@"localOnly"] boolValue])continue;
+    if(![[self aiModelCategoryKey:e] isEqualToString:@"text"])continue;
+    if(![e[@"api"] length])continue;
+    NSString *name=e[@"name"] ?: @""; if(!name.length)continue;
+    NSString *shortName=[name componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].firstObject ?: name;
+    [items addObject:@{@"title":[NSString stringWithFormat:@"API：%@",shortName],@"model":e[@"model"] ?: @"",@"provider":@(i)}];
+  }
+  [items addObject:@{@"title":@"本地 Ollama",@"model":@"qwen2.5:3b",@"provider":@(-1)}];
+  self.shotTranslateServiceItems=items;
+  if(self.shotTranslateSelectedService>=(NSInteger)items.count)self.shotTranslateSelectedService=0;
+  for(NSView *v in self.shotTranslateServiceList.subviews.copy)[v removeFromSuperview];
+  CGFloat rowH=34, h=MAX(rowH*items.count,34);
+  self.shotTranslateServiceList.frame=NSMakeRect(0,0,640,h);
+  for(NSInteger i=0;i<(NSInteger)items.count;i++){
+    NSDictionary *it=items[i];
+    BOOL sel=(i==self.shotTranslateSelectedService);
+    ColorHoverButton *b=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(0,h-(i+1)*rowH+2,640,rowH-4)];
+    NSString *title=it[@"title"] ?: @"";
+    NSString *model=it[@"model"] ?: @"";
+    if(model.length)title=[title stringByAppendingFormat:@"   %@",model];
+    if(sel)title=[@"✓ " stringByAppendingString:title];
+    b.title=title; b.font=[NSFont systemFontOfSize:11]; b.tag=i;
+    b.hoverColor=[NSColor systemTealColor];
+    b.target=self; b.action=@selector(shotTranslateServiceSelected:);
+    [b applyColor:(sel?[NSColor controlAccentColor]:DLButtonBackground()) textColor:(sel?[NSColor whiteColor]:[NSColor labelColor])];
+    [self.shotTranslateServiceList addSubview:b];
+  }
+}
+
+- (void)shotTranslateServiceSelected:(ColorHoverButton *)sender {
+  self.shotTranslateSelectedService=sender.tag;
+  [self reloadShotTranslateServices];
+  [self shotTranslateNow:nil];
+}
+
 - (void)showShotTranslatePanelWithText:(NSString *)text {
   if(!self.shotTranslateWindow){
-    self.shotTranslateWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,630) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
-    self.shotTranslateWindow.title=@"截图翻译";
-    self.shotTranslateWindow.releasedWhenClosed=NO;
+    self.shotTranslateWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,700) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+    self.shotTranslateWindow.title=@"截图翻译"; self.shotTranslateWindow.releasedWhenClosed=NO;
     NSView *cv=self.shotTranslateWindow.contentView;
-    NSTextField *t=[self label:@"截图翻译" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,590,240,26); [cv addSubview:t];
-    NSTextField *h=[self label:@"识别文字后自动翻译；可修改原文后重新翻译" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,570,500,16); [cv addSubview:h];
-    NSScrollView *ss=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,390,672,164)]; ss.hasVerticalScroller=YES; ss.borderType=NSBezelBorder;
+    NSTextField *t=[self label:@"截图翻译" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,660,240,26); [cv addSubview:t];
+    NSTextField *h=[self label:@"识别文字后自动翻译；选择服务或修改原文后重新翻译" size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,640,560,16); [cv addSubview:h];
+    NSScrollView *ss=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,470,672,162)]; ss.hasVerticalScroller=YES; ss.borderType=NSBezelBorder;
     self.shotTranslateSourceView=[[NSTextView alloc] initWithFrame:ss.contentView.bounds]; self.shotTranslateSourceView.font=[NSFont systemFontOfSize:13]; ss.documentView=self.shotTranslateSourceView; [cv addSubview:ss];
-    self.shotTranslateTargetPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,352,150,26)];
+    NSPopUpButton *sl=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(24,434,130,26)]; [sl addItemWithTitle:@"自动检测"]; [cv addSubview:sl];
+    ColorHoverButton *swap=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(164,434,34,26)]; swap.title=@"⇄"; swap.hoverColor=[NSColor systemTealColor]; [swap applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:swap];
+    self.shotTranslateTargetPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(208,434,160,26)];
     [self.shotTranslateTargetPopup addItemsWithTitles:@[@"中文（简体）",@"English",@"日本語",@"한국어",@"Français",@"Deutsch",@"Español",@"Русский"]]; [cv addSubview:self.shotTranslateTargetPopup];
-    self.shotTranslateServicePopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(270,352,250,26)]; self.shotTranslateServicePopup.font=[NSFont systemFontOfSize:10]; [cv addSubview:self.shotTranslateServicePopup];
-    ColorHoverButton *go=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(540,348,76,30)]; go.title=@"翻译"; go.hoverColor=[NSColor systemTealColor]; go.target=self; go.action=@selector(shotTranslateNow:); [go applyColor:[NSColor controlAccentColor] textColor:[NSColor whiteColor]]; [cv addSubview:go];
-    NSTextField *rl=[self label:@"译文" size:10 bold:NO color:[NSColor secondaryLabelColor]]; rl.frame=NSMakeRect(24,328,100,16); [cv addSubview:rl];
-    NSScrollView *rs=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,110,672,210)]; rs.hasVerticalScroller=YES; rs.borderType=NSBezelBorder;
+    NSTextField *svl=[self label:@"翻译服务" size:10 bold:NO color:[NSColor secondaryLabelColor]]; svl.frame=NSMakeRect(24,408,100,16); [cv addSubview:svl];
+    NSScrollView *sv=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,252,672,148)]; sv.hasVerticalScroller=YES; sv.borderType=NSBezelBorder;
+    self.shotTranslateServiceList=[[NSView alloc] initWithFrame:NSMakeRect(0,0,640,34)]; sv.documentView=self.shotTranslateServiceList; [cv addSubview:sv];
+    NSTextField *rl=[self label:@"译文" size:10 bold:NO color:[NSColor secondaryLabelColor]]; rl.frame=NSMakeRect(24,226,100,16); [cv addSubview:rl];
+    NSScrollView *rs=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,76,672,140)]; rs.hasVerticalScroller=YES; rs.borderType=NSBezelBorder;
     self.shotTranslateResultView=[[NSTextView alloc] initWithFrame:rs.contentView.bounds]; self.shotTranslateResultView.font=[NSFont systemFontOfSize:13]; self.shotTranslateResultView.editable=NO; rs.documentView=self.shotTranslateResultView; [cv addSubview:rs];
-    self.shotTranslateStatus=[self label:@"正在识别…" size:10.5 bold:NO color:[NSColor secondaryLabelColor]]; self.shotTranslateStatus.frame=NSMakeRect(24,78,500,18); [cv addSubview:self.shotTranslateStatus];
-    ColorHoverButton *copy=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(540,72,76,28)]; copy.title=@"复制"; copy.hoverColor=[NSColor systemGreenColor]; copy.target=self; copy.action=@selector(copyShotTranslate:); [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
-    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(624,72,72,28)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeShotTranslate:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
+    self.shotTranslateStatus=[self label:@"正在识别…" size:10.5 bold:NO color:[NSColor secondaryLabelColor]]; self.shotTranslateStatus.frame=NSMakeRect(24,44,500,18); [cv addSubview:self.shotTranslateStatus];
+    ColorHoverButton *copy=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(540,40,76,28)]; copy.title=@"复制"; copy.hoverColor=[NSColor systemGreenColor]; copy.target=self; copy.action=@selector(copyShotTranslate:); [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
+    ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(624,40,72,28)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeShotTranslate:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self addLocalAIServiceAccessoryToWindow:self.shotTranslateWindow];
     [self.shotTranslateWindow center];
   }
