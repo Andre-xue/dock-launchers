@@ -3994,10 +3994,29 @@ static void HideDockHoverTip(void) {
   [titlebar addSubview:pin];
 }
 
+- (BOOL)isWindowPinned:(NSWindow *)w {
+  return w && [self.pinnedWindows containsObject:[NSValue valueWithNonretainedObject:w]];
+}
+
+- (void)setCloseButtonsInWindow:(NSWindow *)w enabled:(BOOL)enabled {
+  if(!w)return;
+  NSMutableArray *stack=[NSMutableArray arrayWithObject:w.contentView];
+  while(stack.count){
+    NSView *v=stack.lastObject; [stack removeLastObject];
+    if([v isKindOfClass:[NSButton class]]){
+      NSButton *b=(NSButton *)v;
+      if([b.title containsString:@"关闭"]){
+        b.enabled=enabled;
+      }
+    }
+    [stack addObjectsFromArray:v.subviews];
+  }
+}
+
 - (void)cancelOperation:(id)sender {
   NSWindow *w = [NSApp keyWindow];
   if (!w) return;
-  if (![self.pinnedWindows containsObject:[NSValue valueWithNonretainedObject:w]]) return;
+  if ([self isWindowPinned:w]) { NSBeep(); return; }
   [w performClose:nil];
   if (w.isVisible) [w orderOut:nil];
 }
@@ -4005,6 +4024,7 @@ static void HideDockHoverTip(void) {
 - (void)forceCloseWindowFromChrome:(NSButton *)sender {
   NSWindow *w = sender.window;
   if (!w) return;
+  if ([self isWindowPinned:w]) { NSBeep(); return; }
   [w performClose:nil];
   if (w.isVisible) [w orderOut:nil];
 }
@@ -4020,13 +4040,14 @@ static void HideDockHoverTip(void) {
     [self.pinnedWindows addObject:key];
     w.level = NSNormalWindowLevel;
     NSButton *cl0 = [w standardWindowButton:NSWindowCloseButton];
-    if (cl0) { cl0.hidden = NO; cl0.enabled = YES; }
+    if (cl0) { cl0.hidden = YES; cl0.enabled = NO; }
+    [self setCloseButtonsInWindow:w enabled:NO];
     sender.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:@"已钉住"];
     sender.contentTintColor = [NSColor whiteColor];
     sender.layer.backgroundColor = [NSColor systemOrangeColor].CGColor;
     sender.layer.borderColor = [NSColor systemOrangeColor].CGColor;
     sender.layer.shadowOpacity = 0.5;
-    sender.toolTip = @"已钉在桌面（不置顶），点击取消";
+    sender.toolTip = @"已钉住：关闭 / ESC 已禁用";
   } else {
     [self.pinnedWindows removeObject:key];
     NSInteger base = [objc_getAssociatedObject(w, "DLCenterBaseLevel") integerValue];
@@ -4036,11 +4057,12 @@ static void HideDockHoverTip(void) {
     sender.layer.backgroundColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.16].CGColor;
     sender.layer.borderColor = [[NSColor systemOrangeColor] colorWithAlphaComponent:0.65].CGColor;
     sender.layer.shadowOpacity = 0.28;
-    sender.toolTip = @"钉住窗口";
+    sender.toolTip = @"钉住窗口（禁用关闭）";
   }
   NSButton *close = [w standardWindowButton:NSWindowCloseButton];
-  if (close) { close.hidden = NO; close.enabled = YES; }
-  [self showToast:(nowPinned ? @"窗口已钉在桌面，不置顶，可正常关闭" : @"窗口已取消钉住")];
+  if (close) { close.hidden = nowPinned; close.enabled = !nowPinned; }
+  [self setCloseButtonsInWindow:w enabled:!nowPinned];
+  [self showToast:(nowPinned ? @"窗口已钉住，关闭与 ESC 已禁用" : @"窗口已取消钉住，可以关闭")];
 }
 
 - (void)windowWillClose:(NSNotification *)note {
@@ -4054,6 +4076,10 @@ static void HideDockHoverTip(void) {
   }
   if (sender == self.window) {
     [sender orderOut:nil];
+    return NO;
+  }
+  if ([self isWindowPinned:sender]) {
+    [self showToast:@"窗口已钉住，先取消钉住才能关闭"];
     return NO;
   }
   return YES;

@@ -2240,10 +2240,11 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (BOOL)windowShouldClose:(NSWindow *)sender {
-  return YES;
+  return !self.pinned;
 }
 
 - (void)windowDidMiniaturize:(NSNotification *)notification {
+  if (self.pinned) [self.window deminiaturize:nil];
 }
 
 - (void)windowWillClose:(NSNotification *)notification {
@@ -2266,6 +2267,7 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)closeCancel:(id)sender {
+  if (self.pinned) { NSBeep(); return; }
   fflush(stdout);
   [NSApp terminate:nil];
   exit(1);
@@ -2472,8 +2474,8 @@ static NSString *ResolveAppPath(NSString *target) {
   };
 }
 
-- (void)redLightTapped:(id)sender { [NSApp terminate:nil]; }
-- (void)yellowLightTapped:(id)sender { [self.window miniaturize:nil]; }
+- (void)redLightTapped:(id)sender { if (self.pinned) { NSBeep(); return; } [NSApp terminate:nil]; }
+- (void)yellowLightTapped:(id)sender { if (self.pinned) { NSBeep(); return; } [self.window miniaturize:nil]; }
 
 - (void)greenLightTapped:(id)sender {
   BOOL alt = (([NSEvent modifierFlags] & NSEventModifierFlagOption) != 0);
@@ -3683,8 +3685,8 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)layoutThree:(id)sender { [self applyLayoutColumns:3]; }
 - (void)layoutFour:(id)sender { [self applyLayoutColumns:4]; }
 
-- (void)cLightRedTapped:(id)sender { [NSApp terminate:nil]; }
-- (void)cLightYellowTapped:(id)sender { [self.window miniaturize:nil]; }
+- (void)cLightRedTapped:(id)sender { if (self.pinned) { NSBeep(); return; } [NSApp terminate:nil]; }
+- (void)cLightYellowTapped:(id)sender { if (self.pinned) { NSBeep(); return; } [self.window miniaturize:nil]; }
 - (void)cLightGreenTapped:(id)sender {
   NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
   NSRect vf = screen.visibleFrame;
@@ -4753,7 +4755,7 @@ static NSString *ResolveAppPath(NSString *target) {
     self.pinBtn.font = [NSFont systemFontOfSize:18];
     self.pinBtn.alphaValue = self.pinned ? 1.0 : 0.45;
   }
-  self.pinBtn.toolTip = self.pinned ? @"已钉住（保留窗口，不置顶），可正常关闭" : @"钉住窗口（保留窗口，不置顶）";
+  self.pinBtn.toolTip = self.pinned ? @"已钉住：关闭 / ESC / 最小化已禁用" : @"钉住窗口（钉住后禁用关闭）";
   if (self.window) {
     if (self.pinned) {
       self.window.level = NSNormalWindowLevel;
@@ -4764,9 +4766,11 @@ static NSString *ResolveAppPath(NSString *target) {
       self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenNone;
     }
     NSButton *mini = [self.window standardWindowButton:NSWindowMiniaturizeButton];
-    if (mini) { mini.hidden = NO; mini.enabled = YES; }
+    if (mini) { mini.hidden = self.pinned; mini.enabled = !self.pinned; }
     NSButton *cl = [self.window standardWindowButton:NSWindowCloseButton];
-    if (cl) { cl.hidden = NO; cl.enabled = YES; }
+    if (cl) { cl.hidden = self.pinned; cl.enabled = !self.pinned; }
+    if (self.cLightRed) self.cLightRed.hidden = self.pinned;
+    if (self.cLightYellow) self.cLightYellow.hidden = self.pinned;
   }
 }
 
