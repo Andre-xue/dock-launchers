@@ -21438,7 +21438,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
     req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
     req.usesLanguageCorrection = NO;
-    req.recognitionLanguages = @[@"en-US", @"zh-Hans", @"ja-JP", @"ko-KR"];
+    req.automaticallyDetectsLanguage = YES;
+    req.recognitionLanguages = @[@"en-US",@"zh-Hans",@"zh-Hant",@"ja-JP",@"ko-KR",@"fr-FR",@"de-DE",@"es-ES",@"pt-BR",@"it-IT",@"ru-RU",@"ar-SA"];
     VNImageRequestHandler *h = [[VNImageRequestHandler alloc] initWithCGImage:img options:@{}];
     [h performRequests:@[req] error:NULL];
     NSMutableArray *lines = [NSMutableArray array];
@@ -22520,8 +22521,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       NSTimeInterval ocrDone = [[NSDate date] timeIntervalSince1970];
       NSString *log = [NSString stringWithFormat:@"capture=%.3fs ocr=%.3fs total=%.3fs chars=%ld\n", shotDone-shotStart, ocrDone-shotDone, ocrDone-shotStart, (long)text.length];
       [log writeToFile:@"/tmp/docklaunchers-shot-translate.log" atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-      if (text.length) [self showShotTranslatePanelWithText:text];
-      else [self confirmTranslateText:text origin:@"截图"];
+      [self showShotTranslatePanelWithText:text ?: @""];
     }];
   });
 }
@@ -22666,12 +22666,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [self.shotTranslateWindow center];
   }
   [self reloadShotTranslateServices];
-  self.shotTranslateSourceView.string=text;
+  self.shotTranslateSourceView.string=text ?: @"";
   self.shotTranslateResultView.string=@"";
-  self.shotTranslateStatus.stringValue=@"正在自动翻译…";
+  if((text ?: @"").length){
+    self.shotTranslateStatus.stringValue=@"正在自动翻译…";
+  } else {
+    self.shotTranslateStatus.stringValue=@"没有识别到文字，可手动输入后点击翻译";
+  }
   [self.shotTranslateWindow makeKeyAndOrderFront:nil];
   [self.shotTranslateWindow orderFrontRegardless];
-  dispatch_async(dispatch_get_main_queue(), ^{ [self shotTranslateNow:nil]; });
+  if((text ?: @"").length) dispatch_async(dispatch_get_main_queue(), ^{ [self shotTranslateNow:nil]; });
 }
 
 - (void)copyShotTranslate:(id)sender {
