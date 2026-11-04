@@ -8291,8 +8291,17 @@ static BOOL ValidGroupName(NSString *raw) {
   [self.videoGenWindow orderOut:nil];
 }
 
+- (NSString *)videoCheckpointStyleLabel:(NSString *)file {
+  NSString *n=file.lowercaseString;
+  if([n containsString:@"anything"]||[n containsString:@"anime"]||[n containsString:@"counterfeit"]||[n containsString:@"meina"])return @"动漫";
+  if([n containsString:@"realistic"]||[n containsString:@"epicrealism"]||[n containsString:@"majicmix"])return @"写实";
+  if([n containsString:@"v1-5"]||[n containsString:@"pruned"])return @"通用";
+  return @"底模";
+}
+
 - (void)videoGenCheckpointChanged:(id)sender {
-  NSString *raw=self.videoGenCheckpointPopup.titleOfSelectedItem ?: @"";
+  NSMenuItem *item=self.videoGenCheckpointPopup.selectedItem;
+  NSString *raw=item.representedObject ?: (self.videoGenCheckpointPopup.titleOfSelectedItem ?: @"");
   self.videoGenLastCheckpoint=raw;
   NSString *n=raw.lowercaseString;
   NSString *neg;
@@ -8311,12 +8320,16 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *ckptDir=[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/models/checkpoints"];
   NSArray *ckpts=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:ckptDir error:NULL] ?: @[];
   [self.videoGenCheckpointPopup removeAllItems];
-  for(NSString *f in ckpts) if([f.pathExtension.lowercaseString isEqualToString:@"safetensors"]||[f.pathExtension.lowercaseString isEqualToString:@"ckpt"]) [self.videoGenCheckpointPopup addItemWithTitle:f];
+  for(NSString *f in ckpts) if([f.pathExtension.lowercaseString isEqualToString:@"safetensors"]||[f.pathExtension.lowercaseString isEqualToString:@"ckpt"]){
+    NSString *label=[NSString stringWithFormat:@"%@ · %@",[f stringByDeletingPathExtension],[self videoCheckpointStyleLabel:f]];
+    [self.videoGenCheckpointPopup addItemWithTitle:label];
+    self.videoGenCheckpointPopup.lastItem.representedObject=f;
+  }
   NSString *mmDir=[NSHomeDirectory() stringByAppendingPathComponent:@"ComfyUI/models/animatediff_models"];
   NSArray *mms=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:mmDir error:NULL] ?: @[];
   [self.videoGenMotionPopup removeAllItems];
   for(NSString *f in mms) if([@[@"ckpt",@"safetensors"] containsObject:f.pathExtension.lowercaseString]) [self.videoGenMotionPopup addItemWithTitle:f];
-  NSString *selected=self.videoGenCheckpointPopup.titleOfSelectedItem ?: @"";
+  NSString *selected=self.videoGenCheckpointPopup.selectedItem.representedObject ?: @"";
   if(selected.length && ![selected isEqualToString:self.videoGenLastCheckpoint ?: @""])[self videoGenCheckpointChanged:nil];
   if(!ckpts.count) self.videoGenStatus.stringValue=@"未找到底模";
   else if(ckpts.count==1) self.videoGenStatus.stringValue=@"只有基础底模；可到「视频模型市场」下载写实/动漫底模";
@@ -8497,7 +8510,7 @@ static BOOL ValidGroupName(NSString *raw) {
     a.informativeText=@"Stable Video Diffusion 和 HunyuanVideo 只提供模型市场信息和性能建议，不会自动下载到本机。当前可执行的是 AnimateDiff。";
     [a addButtonWithTitle:@"好"]; [a runModal]; return;
   }
-  NSString *ckpt=self.videoGenCheckpointPopup.titleOfSelectedItem ?: @"";
+  NSString *ckpt=self.videoGenCheckpointPopup.selectedItem.representedObject ?: (self.videoGenCheckpointPopup.titleOfSelectedItem ?: @"");
   NSString *mm=self.videoGenMotionPopup.titleOfSelectedItem ?: @"";
   if(!ckpt.length||!mm.length){self.videoGenStatus.stringValue=@"请先选择底模和运动模块";return;}
   if(self.localOllamaRunning||self.localOllamaSwitch.state==NSControlStateValueOn){
