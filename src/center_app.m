@@ -25288,7 +25288,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
       id list = [obj isKindOfClass:[NSDictionary class]] ? obj[@"data"] : nil;
       if ([list isKindOfClass:[NSArray class]]) for (id m in list) {
         NSString *mid = [m isKindOfClass:[NSDictionary class]] ? m[@"id"] : nil;
-        if (mid.length) [models addObject:mid];
+        if (!mid.length) continue;
+        NSString *low = mid.lowercaseString;
+        if ([low containsString:@"embed"] || [low containsString:@"nomic"] || [low containsString:@"bge"] || [low containsString:@"mxbai"]) continue;
+        [models addObject:mid];
       }
     }
     dispatch_async(dispatch_get_main_queue(), ^{
