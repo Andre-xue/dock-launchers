@@ -21951,18 +21951,22 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [cv addSubview:self.allShortcutCategoryPopup];
     self.allShortcutContainer = [[NSView alloc] initWithFrame:NSMakeRect(0,70,620,450)];
     [cv addSubview:self.allShortcutContainer];
-    self.allShortcutPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(210,20,40,28)];
+    self.allShortcutPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(270,20,40,28)];
     self.allShortcutPrevButton.title=@"‹"; self.allShortcutPrevButton.target=self; self.allShortcutPrevButton.action=@selector(allShortcutPrev:);
     [self.allShortcutPrevButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.allShortcutPrevButton];
-    self.allShortcutNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(370,20,40,28)];
+    self.allShortcutNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(400,20,40,28)];
     self.allShortcutNextButton.title=@"›"; self.allShortcutNextButton.target=self; self.allShortcutNextButton.action=@selector(allShortcutNext:);
     [self.allShortcutNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.allShortcutNextButton];
     self.allShortcutPageLabel = [self label:@"1 / 1" size:10 bold:YES color:[NSColor secondaryLabelColor]];
-    self.allShortcutPageLabel.alignment=NSTextAlignmentCenter; self.allShortcutPageLabel.frame=NSMakeRect(260,24,100,18); [cv addSubview:self.allShortcutPageLabel];
-    ColorHoverButton *groupBtn=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,20,140,28)];
-    groupBtn.title=@"分组快捷键…"; groupBtn.hoverColor=[NSColor systemPurpleColor]; groupBtn.font=[NSFont systemFontOfSize:10];
+    self.allShortcutPageLabel.alignment=NSTextAlignmentCenter; self.allShortcutPageLabel.frame=NSMakeRect(310,24,90,18); [cv addSubview:self.allShortcutPageLabel];
+    ColorHoverButton *groupBtn=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(24,20,130,28)];
+    groupBtn.title=@"分组快捷键…"; groupBtn.hoverColor=[NSColor systemPurpleColor]; groupBtn.font=[NSFont systemFontOfSize:9.5];
     groupBtn.target=self; groupBtn.action=@selector(openGroupShortcutSettings:);
     [groupBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:groupBtn];
+    ColorHoverButton *clearPageBtn=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(160,20,100,28)];
+    clearPageBtn.title=@"清除本页"; clearPageBtn.hoverColor=[NSColor systemOrangeColor]; clearPageBtn.font=[NSFont systemFontOfSize:10];
+    clearPageBtn.target=self; clearPageBtn.action=@selector(clearCurrentPageShortcuts:);
+    [clearPageBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clearPageBtn];
     ColorHoverButton *clearBtn=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(450,20,140,28)];
     clearBtn.title=@"清除全部"; clearBtn.hoverColor=[NSColor systemRedColor]; clearBtn.font=[NSFont systemFontOfSize:10];
     clearBtn.target=self; clearBtn.action=@selector(clearAllRadialShortcuts:);
@@ -21982,6 +21986,29 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self rebuildAllShortcutPage];
   [NSApp activateIgnoringOtherApps:YES];
   [self.allShortcutWindow makeKeyAndOrderFront:nil];
+}
+
+- (void)clearCurrentPageShortcuts:(id)sender {
+  NSArray *defs=[self allShortcutFilteredDefs];
+  if(!defs.count){[self showToast:@"当前页没有可清除的快捷键"];return;}
+  NSString *pageName=self.allShortcutCategoryPopup.titleOfSelectedItem ?: @"当前页";
+  NSAlert *a=[[NSAlert alloc] init]; a.messageText=[NSString stringWithFormat:@"清除%@的快捷键？",pageName];
+  a.informativeText=@"只清除当前页已录制的组合键，其他页不受影响。";
+  [a addButtonWithTitle:@"清除"]; [a addButtonWithTitle:@"取消"];
+  if([a runModal]!=NSAlertFirstButtonReturn)return;
+  [self stopAllShortcutRecording];
+  NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+  for(NSDictionary *d in defs){
+    NSInteger aid=[d[@"id"] integerValue];
+    NSValue *v=self.allHotKeyRefs[@(aid)];
+    if(v){EventHotKeyRef ref=(EventHotKeyRef)v.pointerValue; if(ref)UnregisterEventHotKey(ref); [self.allHotKeyRefs removeObjectForKey:@(aid)];}
+    [ud removeObjectForKey:[NSString stringWithFormat:@"centerGA%ldCode",(long)aid]];
+    [ud removeObjectForKey:[NSString stringWithFormat:@"centerGA%ldMods",(long)aid]];
+    [ud removeObjectForKey:[NSString stringWithFormat:@"centerGA%ldDisplay",(long)aid]];
+  }
+  [ud synchronize];
+  [self rebuildAllShortcutPage];
+  [self showToast:[NSString stringWithFormat:@"已清除%@",pageName]];
 }
 
 - (void)clearAllRadialShortcuts:(id)sender {
