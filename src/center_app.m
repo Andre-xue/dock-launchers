@@ -8723,7 +8723,7 @@ static BOOL ValidGroupName(NSString *raw) {
     policy.toolTip=@"选择只允许单开，或按电脑性能允许双开";
     [policy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:policy];
     NSArray *titles=@[@"Ollama",@"ComfyUI",@"Whisper.cpp"];
-    NSArray *subs=@[@"本地对话模型服务",@"本地 SD1.5 生图服务",@"按需转写，不常驻"];
+    NSArray *subs=@[@"本地对话模型服务",@"本地 SD1.5 生图服务",@"语音转文字 / 会议助手 / AI 文件音视频"];
     for(NSInteger i=0;i<3;i++){
       NSBox *card=[[NSBox alloc] initWithFrame:NSMakeRect(24,330-i*104,572,88)];
       card.boxType=NSBoxCustom; card.cornerRadius=10; card.borderWidth=1; card.borderColor=[NSColor separatorColor]; card.fillColor=DLButtonBackground();
