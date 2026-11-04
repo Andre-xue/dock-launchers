@@ -22662,6 +22662,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSScrollView *rs=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,76,672,140)]; rs.hasVerticalScroller=YES; rs.borderType=NSBezelBorder;
     self.shotTranslateResultView=[[NSTextView alloc] initWithFrame:rs.contentView.bounds]; self.shotTranslateResultView.font=[NSFont systemFontOfSize:13]; self.shotTranslateResultView.editable=NO; rs.documentView=self.shotTranslateResultView; [cv addSubview:rs];
     self.shotTranslateStatus=[self label:@"正在识别…" size:10.5 bold:NO color:[NSColor secondaryLabelColor]]; self.shotTranslateStatus.frame=NSMakeRect(24,44,500,18); [cv addSubview:self.shotTranslateStatus];
+    ColorHoverButton *clear=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(452,40,80,28)]; clear.title=@"清空"; clear.hoverColor=[NSColor systemRedColor]; clear.target=self; clear.action=@selector(clearShotTranslate:); [clear applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:clear];
     ColorHoverButton *copy=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(540,40,76,28)]; copy.title=@"复制"; copy.hoverColor=[NSColor systemGreenColor]; copy.target=self; copy.action=@selector(copyShotTranslate:); [copy applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:copy];
     ColorHoverButton *close=[[ColorHoverButton alloc] initWithFrame:NSMakeRect(624,40,72,28)]; close.title=@"关闭"; close.hoverColor=[NSColor systemGrayColor]; close.target=self; close.action=@selector(closeShotTranslate:); [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     [self addLocalAIServiceAccessoryToWindow:self.shotTranslateWindow];
@@ -22678,6 +22679,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self.shotTranslateWindow makeKeyAndOrderFront:nil];
   [self.shotTranslateWindow orderFrontRegardless];
   if((text ?: @"").length) dispatch_async(dispatch_get_main_queue(), ^{ [self shotTranslateNow:nil]; });
+}
+
+- (void)clearShotTranslate:(id)sender {
+  self.shotTranslateToken++;
+  self.shotTranslateSourceView.string=@"";
+  self.shotTranslateResultView.string=@"";
+  self.shotTranslateStatus.stringValue=@"已清空输入和译文";
+  [self.shotTranslateWindow makeFirstResponder:self.shotTranslateSourceView];
 }
 
 - (void)copyShotTranslate:(id)sender {
