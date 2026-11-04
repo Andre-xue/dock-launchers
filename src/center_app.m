@@ -5780,6 +5780,14 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   return YES;
 }
 
+static BOOL ContainsChineseText(NSString *s) {
+  for (NSUInteger i=0;i<s.length;i++) {
+    unichar c=[s characterAtIndex:i];
+    if (c>=0x4E00 && c<=0x9FFF) return YES;
+  }
+  return NO;
+}
+
 static BOOL ValidGroupName(NSString *raw) {
   if (![raw isKindOfClass:[NSString class]] || raw.length == 0) return NO;
   NSString *trim = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -8213,7 +8221,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSView *cv=self.videoGenWindow.contentView;
     NSTextField *t=[self label:@"本地视频生成" size:20 bold:YES color:nil]; t.frame=NSMakeRect(24,606,300,28); [cv addSubview:t];
     double mem=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
-    NSString *hint=mem<12?@"AnimateDiff + SD1.5；8GB 建议 256×256、8 帧、4 步" : @"AnimateDiff + SD1.5；建议 512×512、16 帧";
+    NSString *hint=mem<12?@"AnimateDiff + SD1.5；8GB 建议 256×256、8 帧、8 步；提示词请用英文" : @"AnimateDiff + SD1.5；建议 512×512、16 帧、20 步；提示词用英文";
     NSTextField *h=[self label:hint size:10 bold:NO color:[NSColor secondaryLabelColor]]; h.frame=NSMakeRect(24,582,700,18); [cv addSubview:h];
     self.videoGenStatus=[self label:@"就绪" size:10.5 bold:YES color:[NSColor systemGreenColor]]; self.videoGenStatus.frame=NSMakeRect(24,558,720,18); [cv addSubview:self.videoGenStatus];
     NSTextField *lb=[self label:@"后端" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lb.frame=NSMakeRect(24,532,60,16); [cv addSubview:lb];
@@ -8228,13 +8236,13 @@ static BOOL ValidGroupName(NSString *raw) {
     NSTextField *lm=[self label:@"运动模块" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lm.frame=NSMakeRect(556,532,100,16); [cv addSubview:lm];
     self.videoGenMotionPopup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(556,504,200,26) pullsDown:NO]; [cv addSubview:self.videoGenMotionPopup];
     NSTextField *lp=[self label:@"提示词" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; lp.frame=NSMakeRect(24,478,60,16); [cv addSubview:lp];
-    self.videoGenPromptField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,448,732,26)]; self.videoGenPromptField.placeholderString=@"例如：a cat walking on grass, cinematic light"; [cv addSubview:self.videoGenPromptField];
+    self.videoGenPromptField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,448,732,26)]; self.videoGenPromptField.placeholderString=@"英文提示词，例如：a cute cat licking its fur, close-up, soft light"; [cv addSubview:self.videoGenPromptField];
     NSTextField *ln=[self label:@"负面提示词" size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; ln.frame=NSMakeRect(24,424,100,16); [cv addSubview:ln];
     self.videoGenNegativeField=[[NSTextField alloc] initWithFrame:NSMakeRect(24,394,732,26)]; self.videoGenNegativeField.stringValue=@"blurry, low quality, distorted, watermark"; [cv addSubview:self.videoGenNegativeField];
     NSArray *names=@[@"宽",@"高",@"帧数",@"步数",@"种子",@"FPS"];
     CGFloat xs[6]={24,140,256,372,488,604};
     double mem2=[NSProcessInfo processInfo].physicalMemory/1073741824.0;
-    NSArray *vals=mem2<12?@[@"256",@"256",@"8",@"4",@"42",@"8"]:@[@"512",@"512",@"16",@"6",@"42",@"8"];
+    NSArray *vals=mem2<12?@[@"256",@"256",@"8",@"8",@"42",@"8"]:@[@"512",@"512",@"16",@"20",@"42",@"8"];
     NSMutableArray *fields=[NSMutableArray array];
     for(NSInteger i=0;i<6;i++){
       NSTextField *l=[self label:names[i] size:9.5 bold:NO color:[NSColor secondaryLabelColor]]; l.frame=NSMakeRect(xs[i],356,80,16); [cv addSubview:l];
@@ -8399,8 +8407,17 @@ static BOOL ValidGroupName(NSString *raw) {
   NSInteger steps=MAX(2,MIN(30,self.videoGenStepsField.integerValue));
   NSInteger fps=MAX(1,MIN(30,self.videoGenFpsField.integerValue));
   NSInteger seed=self.videoGenSeedField.integerValue;
-  NSString *pos=self.videoGenPromptField.stringValue ?: @"";
+  NSString *pos=[(self.videoGenPromptField.stringValue ?: @"") stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
   NSString *neg=self.videoGenNegativeField.stringValue ?: @"";
+  if(!pos.length){self.videoGenStatus.stringValue=@"请先填写英文提示词";return;}
+  if(ContainsChineseText(pos)){
+    NSAlert *a=[[NSAlert alloc] init];
+    a.messageText=@"提示词需要英文";
+    a.informativeText=@"AnimateDiff 使用的 SD1.5 文本编码器不支持中文，中文提示词会生成彩色噪声。\n\n请改成英文，例如：\na cute cat licking its fur, close-up, soft light, detailed fur\n\n步数建议至少 8 步。";
+    [a addButtonWithTitle:@"好"]; [a runModal];
+    self.videoGenStatus.stringValue=@"提示词需要英文，已停止生成";
+    return;
+  }
   NSDictionary *w=@{
     @"1":@{@"class_type":@"CheckpointLoaderSimple",@"inputs":@{@"ckpt_name":ckpt}},
     @"2":@{@"class_type":@"CLIPTextEncode",@"inputs":@{@"text":pos,@"clip":@[@"1",@1]}},
