@@ -16404,10 +16404,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)writeDockValuesAndRestart:(BOOL)restart {
+  NSInteger iconSize=MAX(16,MIN(128,self.dockSizeSlider.integerValue));
+  NSInteger largeSize=MAX(16,MIN(128,self.dockMagnifySlider.integerValue));
   NSArray *pairs = @[
-    @[@"tilesize", @"-int", [NSString stringWithFormat:@"%ld", (long)self.dockSizeSlider.integerValue]],
+    @[@"tilesize", @"-int", [NSString stringWithFormat:@"%ld", (long)iconSize]],
     @[@"magnification", @"-bool", self.dockMagnifyCheck.state == NSControlStateValueOn ? @"true" : @"false"],
-    @[@"largesize", @"-int", [NSString stringWithFormat:@"%ld", (long)self.dockMagnifySlider.integerValue]],
+    @[@"largesize", @"-int", [NSString stringWithFormat:@"%ld", (long)largeSize]],
     @[@"autohide", @"-bool", self.dockAutohideCheck.state == NSControlStateValueOn ? @"true" : @"false"],
     @[@"autohide-delay", @"-float", [NSString stringWithFormat:@"%.2f", [self.dockAutohideDelayPopup.selectedItem.representedObject doubleValue]]]
   ];
@@ -16422,7 +16424,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   t2.launchPath = @"/usr/bin/defaults";
   t2.arguments = @[@"write", @"com.apple.dock", @"orientation", @"-string", pos[MAX(0, MIN(2, self.dockPositionPopup.indexOfSelectedItem))]];
   @try { [t2 launch]; [t2 waitUntilExit]; } @catch (NSException *e) {}
-  if (restart) [self reloadDockPreferences];
+  if (restart) [self hardRestartDock];
   self.dockLastSignature = [self dockValuesSignature];
 }
 
