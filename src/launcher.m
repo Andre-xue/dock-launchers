@@ -562,6 +562,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)layoutThree:(id)sender;
 - (void)layoutFour:(id)sender;
 - (void)applyLayoutColumns:(NSInteger)cols;
+- (void)saveLayoutColumns;
+- (void)restoreSavedWindowLayout;
 - (void)promptIconChange;
 - (void)pickIconImage:(id)sender;
 - (void)resetCustomIcon:(id)sender;
@@ -2130,6 +2132,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.userColumns = wanted;
   if (self.userColumns == 4 && n < 6) self.userColumns = (n >= 4 ? 3 : 1);
   if (self.userColumns == 3 && n < 4) self.userColumns = 1;
+  [self saveLayoutColumns];
   dispatch_async(dispatch_get_main_queue(), ^{ [self reload]; });
   NSScreen *screen = window.screen ?: [NSScreen mainScreen];
   NSRect vf = screen.visibleFrame;
@@ -2144,6 +2147,7 @@ static NSString *ResolveAppPath(NSString *target) {
   // 只在大窗缩回小窗时恢复单列；变形导致的布局变化不重置列数
   if (w < 560 && self.lastContentWidth >= 600 && self.userColumns != 1) {
     self.userColumns = 1;
+    [self saveLayoutColumns];
   }
   self.lastContentWidth = w;
   [self layoutContent];
@@ -2538,11 +2542,11 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 - (void)zoomPanelThree:(id)sender {
   self.forceColumns = 3; [self hideZoomPanel];
-  if (self.window.contentView.bounds.size.width < 600) [self.window zoom:nil]; else { self.userColumns = 3; [self reload]; }
+  if (self.window.contentView.bounds.size.width < 600) [self.window zoom:nil]; else { self.userColumns = 3; [self saveLayoutColumns]; [self reload]; }
 }
 - (void)zoomPanelFour:(id)sender {
   self.forceColumns = 4; [self hideZoomPanel];
-  if (self.window.contentView.bounds.size.width < 600) [self.window zoom:nil]; else { self.userColumns = 4; [self reload]; }
+  if (self.window.contentView.bounds.size.width < 600) [self.window zoom:nil]; else { self.userColumns = 4; [self saveLayoutColumns]; [self reload]; }
 }
 
 #pragma mark - 皮肤
@@ -2558,6 +2562,10 @@ static NSString *ResolveAppPath(NSString *target) {
   gImgPath = [d stringForKey:@"skinImgPath"];
   if ([d objectForKey:@"cornerRatio"]) gCornerRatio = [d doubleForKey:@"cornerRatio"];
   gIconMode = [d boolForKey:@"iconMode"];
+  {
+    NSInteger savedCols = [d integerForKey:@"layoutColumns"];
+    self.userColumns = (savedCols == 3 || savedCols == 4) ? savedCols : 1;
+  }
   gAppIconSettings = [[[d dictionaryForKey:@"appIconSettings"] mutableCopy] mutableCopy] ?: [NSMutableDictionary dictionary];
   gOriginalNames = [[[d dictionaryForKey:@"originalAppNames"] mutableCopy] mutableCopy] ?: [NSMutableDictionary dictionary];
   [self loadCustomShortcuts];
@@ -2579,6 +2587,22 @@ static NSString *ResolveAppPath(NSString *target) {
   [d setObject:gOriginalNames forKey:@"originalAppNames"];
   [d setObject:(gImgPath ?: @"") forKey:@"skinImgPath"];
   [d synchronize];
+}
+
+- (void)saveLayoutColumns {
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  [d setInteger:self.userColumns forKey:@"layoutColumns"];
+  [d synchronize];
+}
+
+- (void)restoreSavedWindowLayout {
+  // 启动时恢复上次的列数；多列走标准缩放，窗口放大，绿灯可再还原
+  if (self.userColumns < 3 || [self effectiveColumns] < 3) return;
+  [self.window center];
+  self.forceColumns = self.userColumns;
+  [self.window zoom:nil];
+  self.forceColumns = 0;
+  self.lastContentWidth = self.window.contentView.bounds.size.width;
 }
 
 - (void)applyTheme {
@@ -3602,6 +3626,7 @@ static NSString *ResolveAppPath(NSString *target) {
   }
   self.forceColumns = 0;
   self.userColumns = 1;
+  [self saveLayoutColumns];
   [self saveTheme];
   [self reload];
   [self layoutContent];
@@ -3624,6 +3649,7 @@ static NSString *ResolveAppPath(NSString *target) {
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   [d removeObjectForKey:@"idleExitEnabled"];
   [d removeObjectForKey:@"skinImgPath"];
+  [d removeObjectForKey:@"layoutColumns"];
   [d synchronize];
   [self.idleExitTimer invalidate];
   self.idleExitTimer = nil;
@@ -3666,11 +3692,13 @@ static NSString *ResolveAppPath(NSString *target) {
     }
     self.userColumns = 1;
     self.forceColumns = 0;
+    [self saveLayoutColumns];
     [self reload];
     [self layoutContent];
     return;
   }
   self.userColumns = cols;
+  [self saveLayoutColumns];
   if (self.window.contentView.bounds.size.width < 560) {
     self.forceColumns = cols;
     [self.window zoom:nil];
@@ -5534,6 +5562,22 @@ int main(int argc, const char *argv[]) {
     delegate.controller = c;
     NSTimeInterval tD = [NSDate timeIntervalSinceReferenceDate];
     [c.window center];
+    [c restoreSavedWindowLayout];
+    if (getenv("DOCKLAUNCHER_TEST_STARTUP_COLS")) {
+      fprintf(stderr, "STARTUP user=%ld eff=%ld w=%.0f h=%.0f\n",
+              (long)c.userColumns, (long)[c effectiveColumns],
+              c.window.frame.size.width, c.window.frame.size.height);
+      exit(0);
+    }
+    if (getenv("DOCKLAUNCHER_TEST_LAYOUT")) {
+      NSInteger k = atoi(getenv("DOCKLAUNCHER_TEST_LAYOUT"));
+      [c applyLayoutColumns:k];
+      NSInteger savedCols = (NSInteger)[[NSUserDefaults standardUserDefaults] integerForKey:@"layoutColumns"];
+      fprintf(stderr, "LAYOUT_SET user=%ld eff=%ld saved=%ld w=%.0f\n",
+              (long)c.userColumns, (long)[c effectiveColumns], (long)savedCols,
+              c.window.frame.size.width);
+      exit(0);
+    }
     NSTimeInterval tE = [NSDate timeIntervalSinceReferenceDate];
     c.window.level = NSFloatingWindowLevel;
     NSTimeInterval tF = [NSDate timeIntervalSinceReferenceDate];
