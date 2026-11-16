@@ -456,6 +456,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 @property NSInteger userColumns;
 @property (copy) NSString *customIconPath;
 @property NSInteger forceColumns;
+@property BOOL zoomLayoutActive;
+@property BOOL expectZoomResize;
 @property CGFloat lastContentWidth;
 @property (strong) LightButton *lightRed;
 @property (strong) LightButton *lightYellow;
@@ -564,6 +566,8 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)applyLayoutColumns:(NSInteger)cols;
 - (void)saveLayoutColumns;
 - (void)restoreSavedWindowLayout;
+- (void)saveWindowFrame;
+- (BOOL)frameVisibleOnAnyScreen:(NSRect)f;
 - (void)promptIconChange;
 - (void)pickIconImage:(id)sender;
 - (void)resetCustomIcon:(id)sender;
@@ -1304,6 +1308,10 @@ static NSString *ResolveAppPath(NSString *target) {
   it = [m addItemWithTitle:@"显示分组窗口" action:@selector(dockOpen:) keyEquivalent:@""];
   it.target = self;
   return m;
+}
+
+- (void)applicationWillTerminate:(NSNotification *)notification {
+  [self.controller saveWindowFrame];
 }
 
 - (void)dockChangeIcon:(id)sender { [self.controller promptIconChange]; }
@@ -2133,6 +2141,10 @@ static NSString *ResolveAppPath(NSString *target) {
   if (self.userColumns == 4 && n < 6) self.userColumns = (n >= 4 ? 3 : 1);
   if (self.userColumns == 3 && n < 4) self.userColumns = 1;
   [self saveLayoutColumns];
+  // 记录“标准缩放态”，但不调用 isZoomed（会重入本方法并改写 userColumns）
+  self.zoomLayoutActive = YES;
+  self.expectZoomResize = YES;
+  dispatch_async(dispatch_get_main_queue(), ^{ self.expectZoomResize = NO; });
   dispatch_async(dispatch_get_main_queue(), ^{ [self reload]; });
   NSScreen *screen = window.screen ?: [NSScreen mainScreen];
   NSRect vf = screen.visibleFrame;
@@ -2143,6 +2155,9 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)windowDidResize:(NSNotification *)notification {
+  BOOL fromZoom = self.expectZoomResize;
+  self.expectZoomResize = NO;
+  if (!fromZoom) self.zoomLayoutActive = NO; // 用户手动改尺寸即视为退出标准缩放态
   CGFloat w = self.window.contentView.bounds.size.width;
   // 只在大窗缩回小窗时恢复单列；变形导致的布局变化不重置列数
   if (w < 560 && self.lastContentWidth >= 600 && self.userColumns != 1) {
@@ -2152,6 +2167,11 @@ static NSString *ResolveAppPath(NSString *target) {
   self.lastContentWidth = w;
   [self layoutContent];
   [self reload];
+  if (self.window.isVisible) [self saveWindowFrame];
+}
+
+- (void)windowDidMove:(NSNotification *)notification {
+  if (self.window.isVisible) [self saveWindowFrame];
 }
 
 - (void)layoutContent {
@@ -2252,6 +2272,7 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)windowWillClose:(NSNotification *)notification {
+  [self saveWindowFrame];
   [NSApp terminate:nil];
 }
 
@@ -2595,14 +2616,53 @@ static NSString *ResolveAppPath(NSString *target) {
   [d synchronize];
 }
 
+- (void)saveWindowFrame {
+  if (!self.window) return;
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  [d setObject:NSStringFromRect(self.window.frame) forKey:@"windowFrame"];
+  [d setBool:self.zoomLayoutActive forKey:@"windowZoomed"];
+  [d synchronize];
+}
+
+- (BOOL)frameVisibleOnAnyScreen:(NSRect)f {
+  for (NSScreen *s in [NSScreen screens]) {
+    NSRect i = NSIntersectionRect(f, s.visibleFrame);
+    if (i.size.width >= 200 && i.size.height >= 200) return YES;
+  }
+  return NO;
+}
+
 - (void)restoreSavedWindowLayout {
-  // 启动时恢复上次的列数；多列走标准缩放，窗口放大，绿灯可再还原
-  if (self.userColumns < 3 || [self effectiveColumns] < 3) return;
-  [self.window center];
-  self.forceColumns = self.userColumns;
-  [self.window zoom:nil];
-  self.forceColumns = 0;
-  self.lastContentWidth = self.window.contentView.bounds.size.width;
+  // 恢复上次的列数 + 窗口位置/大小；多列且上次是标准缩放时继续走缩放，绿灯仍可切回单列
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSString *s = [d stringForKey:@"windowFrame"];
+  BOOL wasZoomed = [d boolForKey:@"windowZoomed"];
+  NSRect saved = NSZeroRect;
+  BOOL hasSaved = NO;
+  if (s.length > 0) {
+    saved = NSRectFromString(s);
+    hasSaved = (saved.size.width >= 420 && saved.size.height >= 480 &&
+                [self frameVisibleOnAnyScreen:saved]);
+  }
+  BOOL multi = (self.userColumns >= 3 && [self effectiveColumns] >= 3);
+  if (multi && (wasZoomed || !hasSaved || saved.size.width < 560)) {
+    [self.window center];
+    self.forceColumns = self.userColumns;
+    [self.window zoom:nil];
+    self.forceColumns = 0;
+    if (hasSaved) [self.window setFrameOrigin:saved.origin];
+    self.lastContentWidth = self.window.contentView.bounds.size.width;
+    [self layoutContent];
+    [self reload];
+    return;
+  }
+  if (hasSaved) {
+    self.forceColumns = 0;
+    [self.window setFrame:saved display:NO];
+    self.lastContentWidth = self.window.contentView.bounds.size.width;
+    [self layoutContent];
+    [self reload];
+  }
 }
 
 - (void)applyTheme {
@@ -3617,7 +3677,7 @@ static NSString *ResolveAppPath(NSString *target) {
   // 一键恢复单列：同时恢复列表模式，确保一定是单列列表
   gIconMode = NO;
   BOOL big = (self.window.contentView.bounds.size.width >= 560);
-  if (big || self.window.isZoomed) {
+  if (big || self.zoomLayoutActive) {
     NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
     NSRect vf = screen.visibleFrame;
     NSRect normal = NSMakeRect(vf.origin.x + (vf.size.width - 480)/2.0,
@@ -3650,6 +3710,8 @@ static NSString *ResolveAppPath(NSString *target) {
   [d removeObjectForKey:@"idleExitEnabled"];
   [d removeObjectForKey:@"skinImgPath"];
   [d removeObjectForKey:@"layoutColumns"];
+  [d removeObjectForKey:@"windowFrame"];
+  [d removeObjectForKey:@"windowZoomed"];
   [d synchronize];
   [self.idleExitTimer invalidate];
   self.idleExitTimer = nil;
@@ -3683,7 +3745,7 @@ static NSString *ResolveAppPath(NSString *target) {
   if (cols <= 1) {
     // 恢复单列：清掉强制列数，窗口若已放大则收回默认尺寸
     BOOL big = (self.window.contentView.bounds.size.width >= 560);
-    if (big || self.window.isZoomed) {
+    if (big || self.zoomLayoutActive) {
       NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
       NSRect vf = screen.visibleFrame;
       NSRect normal = NSMakeRect(vf.origin.x + (vf.size.width - 480)/2.0,
@@ -5564,9 +5626,22 @@ int main(int argc, const char *argv[]) {
     [c.window center];
     [c restoreSavedWindowLayout];
     if (getenv("DOCKLAUNCHER_TEST_STARTUP_COLS")) {
-      fprintf(stderr, "STARTUP user=%ld eff=%ld w=%.0f h=%.0f\n",
-              (long)c.userColumns, (long)[c effectiveColumns],
-              c.window.frame.size.width, c.window.frame.size.height);
+      NSRect f = c.window.frame;
+      fprintf(stderr, "STARTUP user=%ld eff=%ld icon=%d x=%.0f y=%.0f w=%.0f h=%.0f zoomed=%d\n",
+              (long)c.userColumns, (long)[c effectiveColumns], gIconMode ? 1 : 0,
+              f.origin.x, f.origin.y, f.size.width, f.size.height,
+              c.zoomLayoutActive ? 1 : 0);
+      exit(0);
+    }
+    if (getenv("DOCKLAUNCHER_TEST_SETFRAME")) {
+      NSRect f = NSRectFromString([NSString stringWithUTF8String:getenv("DOCKLAUNCHER_TEST_SETFRAME")]);
+      [c.window orderFrontRegardless];
+      [c.window setFrame:f display:NO];
+      NSRect got = c.window.frame;
+      fprintf(stderr, "FRAME_SET x=%.0f y=%.0f w=%.0f h=%.0f zoomed=%d saved=%ld\n",
+              got.origin.x, got.origin.y, got.size.width, got.size.height,
+              c.zoomLayoutActive ? 1 : 0,
+              (long)[[NSUserDefaults standardUserDefaults] integerForKey:@"layoutColumns"]);
       exit(0);
     }
     if (getenv("DOCKLAUNCHER_TEST_LAYOUT")) {
@@ -6069,7 +6144,8 @@ int main(int argc, const char *argv[]) {
         c.forceColumns = atoi(getenv("DOCKLAUNCHER_TEST_ZOOM"));
         [c.window zoom:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-          fprintf(stderr, "ZOOMED W=%.0f H=%.0f COLS=%ld\n", c.window.frame.size.width, c.window.frame.size.height, (long)[c effectiveColumns]);
+          fprintf(stderr, "ZOOMED W=%.0f H=%.0f COLS=%ld saved=%ld zoomed=%d\n", c.window.frame.size.width, c.window.frame.size.height, (long)[c effectiveColumns],
+                  (long)[[NSUserDefaults standardUserDefaults] integerForKey:@"layoutColumns"], c.zoomLayoutActive ? 1 : 0);
           exit(0);
         });
       });
