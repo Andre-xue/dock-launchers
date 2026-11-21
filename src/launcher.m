@@ -1363,6 +1363,7 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)buildWindow {
+  [[NSDistributedNotificationCenter defaultCenter] addObserver:self selector:@selector(externalGroupsChanged:) name:@"DockLaunchersGroupsChanged" object:nil];
   NSRect frame = NSMakeRect(0, 0, 480, 600);
   GroupDropWindow *dropWindow = [[GroupDropWindow alloc] initWithContentRect:frame
                                             styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable|NSWindowStyleMaskFullSizeContentView)
@@ -1887,6 +1888,10 @@ static NSString *ResolveAppPath(NSString *target) {
   if (![self dockContainsApp:path]) [self addAppToDock:path];
   [self removeAppFromList:path];
   [self reload];
+}
+
+- (void)externalGroupsChanged:(NSNotification *)note {
+  dispatch_async(dispatch_get_main_queue(), ^{ [self reload]; });
 }
 
 - (void)reload {

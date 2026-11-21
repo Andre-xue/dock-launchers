@@ -2126,6 +2126,20 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSButton *mediaModeCheck;
 @property (strong) NSTimer *activitySaveTimer;
 @property BOOL activityDirty;
+// 新应用安装后询问归组
+@property FSEventStreamRef appWatchStream;
+@property (strong) NSTimer *appWatchScanTimer;
+@property (strong) NSMutableSet<NSString *> *appWatchKnownPaths;
+@property (strong) NSMutableSet<NSString *> *appWatchIgnoredPaths;
+@property (strong) NSMutableSet<NSString *> *appWatchDeferredPaths;
+@property (strong) NSMutableArray<NSString *> *appWatchPendingPaths;
+@property (strong) NSMutableDictionary<NSString *, NSString *> *appWatchVersions;
+@property (strong) NSMutableSet<NSString *> *appWatchUpdateMutedPaths;
+@property (strong) NSMutableArray<NSDictionary *> *appWatchUpdatePending;
+@property (strong) NSButton *autoGroupNewAppsCheck;
+@property (strong) NSButton *appWatchUpdateCheck;
+@property BOOL appWatchPrompting;
+@property BOOL newAppScanRunning;
 @property BOOL dialogHighlightName;
 @property (strong) NSScrollView *groupsScroll;
 // uninstall
@@ -2194,6 +2208,18 @@ static void ActivityStreamCallback(ConstFSEventStreamRef streamRef, void *info, 
   for (size_t i = 0; i < numEvents; i++) if (paths[i]) [arr addObject:[NSString stringWithUTF8String:paths[i]]];
   Controller *c = (__bridge Controller *)info;
   [c handleActivityPaths:arr];
+}
+
+@interface Controller (AppWatchGrouping)
+- (void)handleAppWatchStreamPaths:(NSArray<NSString *> *)paths;
+@end
+
+static void AppWatchStreamCallback(ConstFSEventStreamRef streamRef, void *info, size_t numEvents, void *eventPaths, const FSEventStreamEventFlags eventFlags[], const FSEventStreamEventId eventIds[]) {
+  char **paths = (char **)eventPaths;
+  NSMutableArray *arr = [NSMutableArray array];
+  for (size_t i = 0; i < numEvents; i++) if (paths[i]) [arr addObject:[NSString stringWithUTF8String:paths[i]]];
+  Controller *c = (__bridge Controller *)info;
+  [c handleAppWatchStreamPaths:arr];
 }
 
 
@@ -3534,6 +3560,18 @@ static void HideDockHoverTip(void) {
   [self loadAppShortcuts];
   [self buildWindow];
   [self buildPopover];
+  if (getenv("DOCKLAUNCHERS_NEWAPP_SCAN")) {
+    [self loadNewAppWatchState];
+    for (NSString *p in [self scanInstalledAppBundles]) {
+      NSString *g = [self groupContainingAppPath:p] ?: @"";
+      fprintf(stderr, "NEWAPP_SCAN known=%d group=%s path=%s\n", [self.appWatchKnownPaths containsObject:p] ? 1 : 0, g.UTF8String, p.UTF8String);
+    }
+    exit(0);
+  }
+  if ([self appWatchFeatureEnabled]) {
+    [self refreshAppWatchActivation];
+    [self scheduleAppWatchScanAfter:5.0];
+  }
   [self installAllGlobalHotkeys];
   [self applyThemeFromDefaults];
   [self startGroupBadgeTimer];
@@ -5676,6 +5714,545 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 
 - (void)groupsChangedExternally:(NSNotification *)note {
   if (self.section == 1) [self refreshGroups];
+}
+
+#pragma mark - 新应用安装后询问归组
+
+- (NSString *)appWatchStatePath {
+  return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers/new_app_watch.json"];
+}
+
+- (void)loadNewAppWatchState {
+  if (self.appWatchKnownPaths) {
+    if (!self.appWatchVersions) self.appWatchVersions = [NSMutableDictionary dictionary];
+    if (!self.appWatchUpdateMutedPaths) self.appWatchUpdateMutedPaths = [NSMutableSet set];
+    return;
+  }
+  self.appWatchKnownPaths = [NSMutableSet set];
+  self.appWatchIgnoredPaths = [NSMutableSet set];
+  self.appWatchDeferredPaths = [NSMutableSet set];
+  self.appWatchVersions = [NSMutableDictionary dictionary];
+  self.appWatchUpdateMutedPaths = [NSMutableSet set];
+  NSData *data = [NSData dataWithContentsOfFile:[self appWatchStatePath]];
+  if (!data) return;
+  id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+  if (![obj isKindOfClass:[NSDictionary class]]) return;
+  NSDictionary *d = (NSDictionary *)obj;
+  for (id p in d[@"known"]) if ([p isKindOfClass:[NSString class]]) [self.appWatchKnownPaths addObject:p];
+  for (id p in d[@"ignored"]) if ([p isKindOfClass:[NSString class]]) [self.appWatchIgnoredPaths addObject:p];
+  id versions = d[@"versions"];
+  if ([versions isKindOfClass:[NSDictionary class]]) {
+    for (id key in versions) {
+      id value = versions[key];
+      if ([key isKindOfClass:[NSString class]] && [value isKindOfClass:[NSString class]]) self.appWatchVersions[key] = value;
+    }
+  }
+  for (id p in d[@"updateMuted"]) if ([p isKindOfClass:[NSString class]]) [self.appWatchUpdateMutedPaths addObject:p];
+}
+
+- (void)saveNewAppWatchState {
+  if (!self.appWatchKnownPaths) return;
+  NSString *path = [self appWatchStatePath];
+  [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSDictionary *d = @{@"known": [[self.appWatchKnownPaths allObjects] sortedArrayUsingSelector:@selector(compare:)] ?: @[],
+                      @"ignored": [[self.appWatchIgnoredPaths allObjects] sortedArrayUsingSelector:@selector(compare:)] ?: @[],
+                      @"versions": self.appWatchVersions ?: @{},
+                      @"updateMuted": [[self.appWatchUpdateMutedPaths allObjects] sortedArrayUsingSelector:@selector(compare:)] ?: @[],
+                      @"updated": @([[NSDate date] timeIntervalSince1970])};
+  NSData *data = [NSJSONSerialization dataWithJSONObject:d options:NSJSONWritingPrettyPrinted error:NULL];
+  [data writeToFile:path atomically:YES];
+}
+
+- (NSArray<NSString *> *)appWatchRoots {
+  return @[@"/Applications", [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"]];
+}
+
+- (BOOL)isValidAppBundleAtPath:(NSString *)path {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  BOOL isDir = NO;
+  if (![fm fileExistsAtPath:path isDirectory:&isDir] || !isDir) return NO;
+  NSString *plistPath = [path stringByAppendingPathComponent:@"Contents/Info.plist"];
+  NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:plistPath];
+  if (![info isKindOfClass:[NSDictionary class]]) return NO;
+  NSString *bid = info[@"CFBundleIdentifier"];
+  if (![bid isKindOfClass:[NSString class]] || !bid.length) return NO;
+  NSString *exe = info[@"CFBundleExecutable"];
+  if ([exe isKindOfClass:[NSString class]] && exe.length) {
+    NSString *exePath = [[path stringByAppendingPathComponent:@"Contents/MacOS"] stringByAppendingPathComponent:exe];
+    if (![fm fileExistsAtPath:exePath]) return NO;
+  }
+  return YES;
+}
+
+- (NSArray<NSString *> *)scanInstalledAppBundles {
+  NSMutableArray *out = [NSMutableArray array];
+  NSMutableSet *seen = [NSMutableSet set];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  for (NSString *root in [self appWatchRoots]) {
+    for (NSString *dir in @[root, [root stringByAppendingPathComponent:@"Utilities"]]) {
+      NSArray *names = [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+      for (NSString *name in names) {
+        if (![name.lowercaseString hasSuffix:@".app"] || [name hasPrefix:@"."]) continue;
+        NSString *p = [[dir stringByAppendingPathComponent:name] stringByStandardizingPath];
+        if ([seen containsObject:p]) continue;
+        if (![self isValidAppBundleAtPath:p]) continue;
+        [seen addObject:p];
+        [out addObject:p];
+      }
+    }
+  }
+  return out;
+}
+
+- (NSString *)displayNameForAppBundlePath:(NSString *)path {
+  NSBundle *bundle = [NSBundle bundleWithPath:path];
+  NSString *name = bundle.localizedInfoDictionary[@"CFBundleDisplayName"]
+      ?: bundle.infoDictionary[@"CFBundleDisplayName"]
+      ?: bundle.localizedInfoDictionary[@"CFBundleName"]
+      ?: bundle.infoDictionary[@"CFBundleName"];
+  return name.length ? name : path.lastPathComponent.stringByDeletingPathExtension;
+}
+
+- (NSString *)appVersionForBundlePath:(NSString *)path {
+  NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Info.plist"]];
+  if (![info isKindOfClass:[NSDictionary class]]) return nil;
+  id shortValue = info[@"CFBundleShortVersionString"];
+  id buildValue = info[@"CFBundleVersion"];
+  NSString *shortVersion = [shortValue isKindOfClass:[NSString class]] ? shortValue : nil;
+  NSString *buildVersion = [buildValue isKindOfClass:[NSString class]] ? buildValue : nil;
+  if (shortVersion.length && buildVersion.length && ![shortVersion isEqualToString:buildVersion]) {
+    return [NSString stringWithFormat:@"%@ (%@)", shortVersion, buildVersion];
+  }
+  if (shortVersion.length) return shortVersion;
+  if (buildVersion.length) return buildVersion;
+  return nil;
+}
+
+- (BOOL)appWatchFeatureEnabled {
+  NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+  return [defaults boolForKey:@"centerAutoGroupNewApps"] || [defaults boolForKey:@"centerNewAppUpdateAlerts"];
+}
+
+- (NSArray<NSDictionary *> *)appGroupChoices {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSString *name in [self installedGroupNames]) {
+    NSString *p = [GroupDir() stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+    NSString *display = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: name;
+    [out addObject:@{@"name": name, @"display": display}];
+  }
+  return out;
+}
+
+- (NSString *)groupContainingAppPath:(NSString *)path {
+  if (!path.length) return nil;
+  NSString *p = path.stringByStandardizingPath;
+  NSDictionary *map = [self groupByAppPath];
+  if (map[p]) return map[p];
+  NSString *resolved = p.stringByResolvingSymlinksInPath;
+  for (NSString *known in map) {
+    if ([[known stringByStandardizingPath] isEqualToString:p]) return map[known];
+    if ([[known stringByResolvingSymlinksInPath] isEqualToString:resolved]) return map[known];
+  }
+  return nil;
+}
+
+- (BOOL)appendAppPath:(NSString *)path toGroupName:(NSString *)groupName error:(NSString **)error {
+  if (!path.length || !groupName.length) {
+    if (error) *error = @"应用路径或分组名称为空";
+    return NO;
+  }
+  NSFileManager *fm = [NSFileManager defaultManager];
+  if (![[self installedGroupNames] containsObject:groupName]) {
+    if (error) *error = [NSString stringWithFormat:@"分组「%@」不存在", groupName];
+    return NO;
+  }
+  NSString *p = path.stringByStandardizingPath;
+  NSString *listsDir = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  NSString *listPath = [listsDir stringByAppendingPathComponent:[groupName stringByAppendingPathExtension:@"txt"]];
+  [fm createDirectoryAtPath:listsDir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *old = [NSString stringWithContentsOfFile:listPath encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+  NSMutableArray<NSString *> *lines = [[old componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
+  while (lines.count && [lines.lastObject stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].length == 0) [lines removeLastObject];
+  NSString *display = [self displayNameForAppBundlePath:p];
+  for (NSString *line in lines) {
+    NSString *t = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (!t.length || [t hasPrefix:@"#"]) continue;
+    NSRange r = [t rangeOfString:@"|"];
+    NSString *target = [(r.location == NSNotFound ? t : [t substringFromIndex:r.location + 1]) stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    NSString *resolved = [self resolveApplicationPathForName:target] ?: target;
+    if ([target isEqualToString:p] || [resolved isEqualToString:p]) {
+      if (error) *error = [NSString stringWithFormat:@"该应用已在「%@」分组中", groupName];
+      return NO;
+    }
+  }
+  for (NSString *f in [[fm contentsOfDirectoryAtPath:listsDir error:NULL] ?: @[] sortedArrayUsingSelector:@selector(compare:)]) {
+    if (![f.pathExtension.lowercaseString isEqualToString:@"txt"]) continue;
+    NSString *otherGroup = f.stringByDeletingPathExtension;
+    if ([otherGroup isEqualToString:groupName]) continue;
+    NSString *body = [NSString stringWithContentsOfFile:[listsDir stringByAppendingPathComponent:f] encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+    for (NSString *line in [body componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      NSString *t = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if (!t.length || [t hasPrefix:@"#"]) continue;
+      NSRange r = [t rangeOfString:@"|"];
+      NSString *target = [(r.location == NSNotFound ? t : [t substringFromIndex:r.location + 1]) stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      NSString *resolved = [self resolveApplicationPathForName:target] ?: target;
+      if ([target isEqualToString:p] || [resolved isEqualToString:p]) {
+        if (error) *error = [NSString stringWithFormat:@"该应用已在「%@」分组中", otherGroup];
+        return NO;
+      }
+    }
+  }
+  [lines addObject:[NSString stringWithFormat:@"%@|%@", display, p]];
+  NSError *writeError = nil;
+  BOOL ok = [[lines componentsJoinedByString:@"\n"] writeToFile:listPath atomically:YES encoding:NSUTF8StringEncoding error:&writeError];
+  if (!ok) {
+    if (error) *error = writeError.localizedDescription ?: @"无法写入分组列表";
+    return NO;
+  }
+  [self refreshGroups];
+  [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"DockLaunchersGroupsChanged" object:nil];
+  return YES;
+}
+
+- (void)startAppWatchStream {
+  if (self.appWatchStream) return;
+  NSMutableArray *dirs = [NSMutableArray array];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  for (NSString *root in [self appWatchRoots]) if ([fm fileExistsAtPath:root]) [dirs addObject:root];
+  if (!dirs.count) return;
+  FSEventStreamContext ctx = {0, (__bridge void *)self, NULL, NULL, NULL};
+  self.appWatchStream = FSEventStreamCreate(kCFAllocatorDefault, AppWatchStreamCallback, &ctx,
+      (__bridge CFArrayRef)dirs, kFSEventStreamEventIdSinceNow, 1.0,
+      kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer);
+  if (!self.appWatchStream) return;
+  FSEventStreamScheduleWithRunLoop(self.appWatchStream, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+  FSEventStreamStart(self.appWatchStream);
+}
+
+- (void)stopAppWatchStream {
+  if (self.appWatchStream) {
+    FSEventStreamStop(self.appWatchStream);
+    FSEventStreamInvalidate(self.appWatchStream);
+    FSEventStreamRelease(self.appWatchStream);
+    self.appWatchStream = NULL;
+  }
+  [self.appWatchScanTimer invalidate];
+  self.appWatchScanTimer = nil;
+}
+
+- (void)handleAppWatchStreamPaths:(NSArray<NSString *> *)paths {
+  BOOL relevant = NO;
+  for (NSString *p in paths) {
+    if ([p.pathExtension.lowercaseString isEqualToString:@"app"] || [p containsString:@"/Applications/"]) { relevant = YES; break; }
+  }
+  if (!relevant) return;
+  [self scheduleAppWatchScanAfter:2.0];
+}
+
+- (void)scheduleAppWatchScanAfter:(NSTimeInterval)delay {
+  [self.appWatchScanTimer invalidate];
+  self.appWatchScanTimer = [NSTimer scheduledTimerWithTimeInterval:delay target:self selector:@selector(appWatchScanTimerFired:) userInfo:nil repeats:NO];
+}
+
+- (void)appWatchScanTimerFired:(NSTimer *)t {
+  self.appWatchScanTimer = nil;
+  [self scanForNewlyInstalledApps];
+}
+
+- (void)scanForNewlyInstalledApps {
+  if (self.newAppScanRunning) return;
+  self.newAppScanRunning = YES;
+  [self loadNewAppWatchState];
+  if (!self.appWatchPendingPaths) self.appWatchPendingPaths = [NSMutableArray array];
+  if (!self.appWatchUpdatePending) self.appWatchUpdatePending = [NSMutableArray array];
+  NSArray<NSString *> *paths = [self scanInstalledAppBundles];
+  NSMutableSet<NSString *> *current = [NSMutableSet setWithArray:paths];
+  NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+  NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+  BOOL updatesOn = [defaults boolForKey:@"centerNewAppUpdateAlerts"];
+  BOOL newAppsOn = [defaults boolForKey:@"centerAutoGroupNewApps"];
+  for (NSString *p in paths) {
+    NSString *version = [self appVersionForBundlePath:p];
+    if ([self.appWatchKnownPaths containsObject:p]) {
+      NSString *oldVersion = self.appWatchVersions[p];
+      if (updatesOn && oldVersion.length && version.length && ![oldVersion isEqualToString:version]
+          && ![self.appWatchUpdateMutedPaths containsObject:p]
+          && ![self.appWatchIgnoredPaths containsObject:p]) {
+        NSString *group = [self groupContainingAppPath:p];
+        if (group.length) {
+          BOOL queued = NO;
+          for (NSDictionary *item in self.appWatchUpdatePending) {
+            if ([item[@"path"] isEqualToString:p]) { queued = YES; break; }
+          }
+          if (!queued) {
+            [self.appWatchUpdatePending addObject:@{@"path": p, @"old": oldVersion, @"new": version, @"group": group}];
+          }
+        }
+      }
+      if (version.length) self.appWatchVersions[p] = version;
+      continue;
+    }
+    if ([self.appWatchIgnoredPaths containsObject:p]) {
+      [self.appWatchKnownPaths addObject:p];
+      if (version.length) self.appWatchVersions[p] = version;
+      continue;
+    }
+    if ([self.appWatchDeferredPaths containsObject:p]) {
+      if (version.length) self.appWatchVersions[p] = version;
+      continue;
+    }
+    if ([p hasPrefix:GroupDir()]) {
+      [self.appWatchKnownPaths addObject:p];
+      if (version.length) self.appWatchVersions[p] = version;
+      continue;
+    }
+    NSString *bid = [[NSBundle bundleWithPath:p] objectForInfoDictionaryKey:@"CFBundleIdentifier"];
+    if ([bid hasPrefix:@"com.docklaunchers."]) {
+      [self.appWatchKnownPaths addObject:p];
+      if (version.length) self.appWatchVersions[p] = version;
+      continue;
+    }
+    if ([[self groupContainingAppPath:p] length]) {
+      [self.appWatchKnownPaths addObject:p];
+      if (version.length) self.appWatchVersions[p] = version;
+      continue;
+    }
+    if (version.length) self.appWatchVersions[p] = version;
+    if (!newAppsOn) {
+      [self.appWatchKnownPaths addObject:p];
+      continue;
+    }
+    [candidates addObject:p];
+  }
+  for (NSString *p in [self.appWatchPendingPaths copy]) {
+    if (![current containsObject:p] || [self.appWatchKnownPaths containsObject:p]) [self.appWatchPendingPaths removeObject:p];
+  }
+  for (NSDictionary *item in [self.appWatchUpdatePending copy]) {
+    if (![current containsObject:item[@"path"]]) [self.appWatchUpdatePending removeObject:item];
+  }
+  for (NSString *p in candidates) {
+    if (![self.appWatchPendingPaths containsObject:p]) [self.appWatchPendingPaths addObject:p];
+  }
+  [self saveNewAppWatchState];
+  self.newAppScanRunning = NO;
+  if ((self.appWatchPendingPaths.count || self.appWatchUpdatePending.count) && !self.appWatchPrompting) {
+    dispatch_async(dispatch_get_main_queue(), ^{ [self promptNextAppWatchItem]; });
+  }
+}
+
+- (void)promptNextAppWatchItem {
+  if (self.appWatchPrompting) return;
+  if (self.appWatchPendingPaths.count) {
+    [self promptNextNewlyInstalledApp];
+    return;
+  }
+  if (self.appWatchUpdatePending.count) [self promptNextAppUpdate];
+}
+
+- (void)promptNextNewlyInstalledApp {
+  if (self.appWatchPrompting) return;
+  [self loadNewAppWatchState];
+  if (!self.appWatchPendingPaths.count) return;
+  NSString *path = self.appWatchPendingPaths.firstObject;
+  if (![[NSFileManager defaultManager] fileExistsAtPath:path] || ![self isValidAppBundleAtPath:path]) {
+    [self.appWatchPendingPaths removeObject:path];
+    [self promptNextAppWatchItem];
+    return;
+  }
+  NSArray<NSDictionary *> *choices = [self appGroupChoices];
+  if (!choices.count) {
+    [self showToast:@"还没有可用的 Dock 分组，请先在控制台创建分组"];
+    [self.appWatchPendingPaths removeAllObjects];
+    dispatch_async(dispatch_get_main_queue(), ^{ [self promptNextAppWatchItem]; });
+    return;
+  }
+  NSString *display = [self displayNameForAppBundlePath:path];
+  NSString *version = [self appVersionForBundlePath:path];
+  NSString *autoJoin = getenv("DOCKLAUNCHERS_NEWAPP_AUTOJOIN") ? [NSString stringWithUTF8String:getenv("DOCKLAUNCHERS_NEWAPP_AUTOJOIN")] : nil;
+  if (autoJoin.length) {
+    self.appWatchPrompting = YES;
+    NSString *err = nil;
+    BOOL ok = [self appendAppPath:path toGroupName:autoJoin error:&err];
+    fprintf(stderr, "NEWAPP_AUTOJOIN ok=%d group=%s path=%s err=%s\n", ok, autoJoin.UTF8String, path.UTF8String, (err ?: @"").UTF8String);
+    if (ok) [self.appWatchKnownPaths addObject:path]; else [self.appWatchDeferredPaths addObject:path];
+    if (version.length) self.appWatchVersions[path] = version;
+    [self.appWatchPendingPaths removeObject:path];
+    [self saveNewAppWatchState];
+    self.appWatchPrompting = NO;
+    [self promptNextAppWatchItem];
+    return;
+  }
+  self.appWatchPrompting = YES;
+  [NSApp activateIgnoringOtherApps:YES];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.alertStyle = NSAlertStyleInformational;
+  a.icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
+  a.messageText = [NSString stringWithFormat:@"新应用「%@」要放入哪个 Dock 分组？", display];
+  a.informativeText = [NSString stringWithFormat:@"安装位置：%@\n\n控制台只把它加入分组列表，不会移动或复制应用文件。", path];
+  NSView *acc = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 360, 58)];
+  NSTextField *lab = [self label:@"放入分组" size:11 bold:NO color:[NSColor secondaryLabelColor]];
+  lab.frame = NSMakeRect(0, 30, 70, 18);
+  [acc addSubview:lab];
+  NSPopUpButton *pop = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(74, 26, 282, 26) pullsDown:NO];
+  for (NSDictionary *g in choices) {
+    [pop addItemWithTitle:g[@"display"] ?: g[@"name"]];
+    pop.lastItem.representedObject = g[@"name"];
+    if ([g[@"name"] isEqualToString:[[NSUserDefaults standardUserDefaults] stringForKey:@"centerNewAppLastGroup"]]) [pop selectItem:pop.lastItem];
+  }
+  [acc addSubview:pop];
+  NSTextField *hint = [self label:@"仅在控制台运行时检测；只监控「应用程序」文件夹" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+  hint.frame = NSMakeRect(0, 4, 360, 16);
+  [acc addSubview:hint];
+  a.accessoryView = acc;
+  [a addButtonWithTitle:@"加入分组"];
+  [a addButtonWithTitle:@"忽略此应用"];
+  [a addButtonWithTitle:@"暂不"];
+  NSModalResponse r = [a runModal];
+  self.appWatchPrompting = NO;
+  NSString *group = pop.selectedItem.representedObject ?: pop.titleOfSelectedItem;
+  if (r == NSAlertFirstButtonReturn && group.length) {
+    NSString *err = nil;
+    if ([self appendAppPath:path toGroupName:group error:&err]) {
+      [self.appWatchKnownPaths addObject:path];
+      if (version.length) self.appWatchVersions[path] = version;
+      [[NSUserDefaults standardUserDefaults] setObject:group forKey:@"centerNewAppLastGroup"];
+      [self showToast:[NSString stringWithFormat:@"「%@」已加入「%@」", display, group]];
+    } else {
+      NSAlert *e = [[NSAlert alloc] init];
+      e.messageText = @"未能加入分组";
+      e.informativeText = err ?: @"未知错误";
+      [e addButtonWithTitle:@"好"];
+      [e runModal];
+      [self.appWatchDeferredPaths addObject:path];
+    }
+  } else if (r == NSAlertSecondButtonReturn) {
+    [self.appWatchIgnoredPaths addObject:path];
+    [self.appWatchKnownPaths addObject:path];
+    if (version.length) self.appWatchVersions[path] = version;
+  } else {
+    [self.appWatchDeferredPaths addObject:path];
+  }
+  [self.appWatchPendingPaths removeObject:path];
+  [self saveNewAppWatchState];
+  [self promptNextAppWatchItem];
+}
+
+- (void)promptNextAppUpdate {
+  if (self.appWatchPrompting) return;
+  [self loadNewAppWatchState];
+  if (!self.appWatchUpdatePending.count) return;
+  NSDictionary *item = self.appWatchUpdatePending.firstObject;
+  NSString *path = item[@"path"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:path] || ![self isValidAppBundleAtPath:path]) {
+    [self.appWatchUpdatePending removeObject:item];
+    [self promptNextAppWatchItem];
+    return;
+  }
+  NSString *group = [self groupContainingAppPath:path] ?: item[@"group"];
+  if (!group.length) {
+    [self.appWatchUpdatePending removeObject:item];
+    [self promptNextAppWatchItem];
+    return;
+  }
+  self.appWatchPrompting = YES;
+  [NSApp activateIgnoringOtherApps:YES];
+  NSAlert *a = [[NSAlert alloc] init];
+  a.alertStyle = NSAlertStyleInformational;
+  a.icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
+  a.messageText = [NSString stringWithFormat:@"「%@」已更新", [self displayNameForAppBundlePath:path]];
+  a.informativeText = [NSString stringWithFormat:@"版本：%@ → %@\n当前分组：%@\n\n应用仍在原分组中，不需要重新加入。", item[@"old"], item[@"new"], group];
+  [a addButtonWithTitle:@"知道了"];
+  [a addButtonWithTitle:@"以后不再提醒此应用"];
+  NSModalResponse r = [a runModal];
+  if (r == NSAlertSecondButtonReturn) [self.appWatchUpdateMutedPaths addObject:path];
+  [self.appWatchUpdatePending removeObject:item];
+  [self saveNewAppWatchState];
+  self.appWatchPrompting = NO;
+  [self promptNextAppWatchItem];
+}
+
+- (void)toggleAppWatchGrouping:(id)sender {
+  BOOL on = (self.autoGroupNewAppsCheck.state == NSControlStateValueOn);
+  if (on) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"开启新应用自动归组？";
+    a.informativeText = @"开启后，控制台会监听「应用程序」文件夹，检测到新安装的 App 时弹窗询问加入哪个 Dock 分组。\n\n仅记录 App 路径和分组，不读取应用数据，也不会移动或删除应用。只在控制台运行时生效。";
+    [a addButtonWithTitle:@"开启"];
+    [a addButtonWithTitle:@"取消"];
+    if ([a runModal] != NSAlertFirstButtonReturn) {
+      self.autoGroupNewAppsCheck.state = NSControlStateValueOff;
+      return;
+    }
+  }
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerAutoGroupNewApps"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  [self refreshAppWatchActivation];
+  if (on) {
+    [self showToast:@"已开启：新应用安装后会询问加入哪个分组"];
+  } else if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerNewAppUpdateAlerts"]) {
+    [self showToast:@"已关闭新应用分组提醒；App 更新提醒仍开启"];
+  } else {
+    [self showToast:@"已关闭新应用分组提醒"];
+  }
+}
+
+- (void)toggleAppWatchUpdates:(id)sender {
+  BOOL on = (self.appWatchUpdateCheck.state == NSControlStateValueOn);
+  if (on) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"开启 App 更新提醒？";
+    a.informativeText = @"开启后，已加入 Dock 分组的 App 版本变化时会弹窗提醒，并显示当前分组。\n\n只比较版本号，不读取应用数据，也不会自动移动或重新加入 App。更新频繁的 App 可能多次提醒，可随时关闭。只在控制台运行时生效。";
+    [a addButtonWithTitle:@"开启"];
+    [a addButtonWithTitle:@"取消"];
+    if ([a runModal] != NSAlertFirstButtonReturn) {
+      self.appWatchUpdateCheck.state = NSControlStateValueOff;
+      return;
+    }
+  }
+  [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"centerNewAppUpdateAlerts"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  if (!on) [self.appWatchUpdatePending removeAllObjects];
+  [self refreshAppWatchActivation];
+  [self showToast:on ? @"已开启：分组内 App 更新时会提醒" : @"已关闭 App 更新提醒"];
+}
+
+- (void)refreshAppWatchActivation {
+  [self loadNewAppWatchState];
+  if (!self.appWatchPendingPaths) self.appWatchPendingPaths = [NSMutableArray array];
+  if (!self.appWatchUpdatePending) self.appWatchUpdatePending = [NSMutableArray array];
+  BOOL active = [self appWatchFeatureEnabled];
+  if (!active) {
+    [self stopAppWatchStream];
+    for (NSString *p in [self scanInstalledAppBundles]) {
+      [self.appWatchKnownPaths addObject:p];
+      NSString *version = [self appVersionForBundlePath:p];
+      if (version.length) self.appWatchVersions[p] = version;
+    }
+    [self.appWatchPendingPaths removeAllObjects];
+    [self.appWatchUpdatePending removeAllObjects];
+    [self saveNewAppWatchState];
+    return;
+  }
+  BOOL noState = ![[NSFileManager defaultManager] fileExistsAtPath:[self appWatchStatePath]] || self.appWatchKnownPaths.count == 0;
+  if (noState) {
+    for (NSString *p in [self scanInstalledAppBundles]) {
+      [self.appWatchKnownPaths addObject:p];
+      NSString *version = [self appVersionForBundlePath:p];
+      if (version.length) self.appWatchVersions[p] = version;
+    }
+    [self saveNewAppWatchState];
+  } else {
+    BOOL changed = NO;
+    for (NSString *p in self.appWatchKnownPaths) {
+      if (self.appWatchVersions[p].length) continue;
+      NSString *version = [self appVersionForBundlePath:p];
+      if (version.length) { self.appWatchVersions[p] = version; changed = YES; }
+    }
+    if (changed) [self saveNewAppWatchState];
+  }
+  [self startAppWatchStream];
+  [self scheduleAppWatchScanAfter:3.0];
 }
 
 - (void)groupsSearchChanged:(id)sender {
@@ -18213,22 +18790,38 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [tShortcut addSubview:globalShortcutBtn];
 
   // 第二列：同步与文件
-  NSView *tSync = tileAt(1, 500);
+  NSView *tSync = [self cardAt:NSMakeRect(264, 426, tileW, 104)];
+  tSync.layer.cornerRadius = 12;
+  [v addSubview:tSync];
+  NSTextField *syncLabel = [self label:@"分组与更新" size:10.5 bold:YES color:nil];
+  syncLabel.alignment = NSTextAlignmentCenter;
+  syncLabel.frame = NSMakeRect(10, 78, tileW - 20, 18);
+  [tSync addSubview:syncLabel];
   self.autoSyncCheck = [NSButton checkboxWithTitle:@"自动同步分组" target:self action:@selector(toggleAutoSync:)];
   id autoSyncVal = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerAutoSync"];
   self.autoSyncCheck.state = (autoSyncVal ? [autoSyncVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff;
-  self.autoSyncCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
+  self.autoSyncCheck.frame = NSMakeRect(12, 52, tileW - 24, 24);
   self.autoSyncCheck.toolTip = @"应用卸载后自动清理分组失效条目";
   [tSync addSubview:self.autoSyncCheck];
+  self.autoGroupNewAppsCheck = [NSButton checkboxWithTitle:@"新应用询问归组" target:self action:@selector(toggleAppWatchGrouping:)];
+  self.autoGroupNewAppsCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerAutoGroupNewApps"] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.autoGroupNewAppsCheck.frame = NSMakeRect(12, 28, tileW - 24, 24);
+  self.autoGroupNewAppsCheck.toolTip = @"开启后，安装到「应用程序」文件夹的新 App 会弹窗询问加入哪个分组；仅在控制台运行时生效";
+  [tSync addSubview:self.autoGroupNewAppsCheck];
+  self.appWatchUpdateCheck = [NSButton checkboxWithTitle:@"App 更新提醒" target:self action:@selector(toggleAppWatchUpdates:)];
+  self.appWatchUpdateCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerNewAppUpdateAlerts"] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.appWatchUpdateCheck.frame = NSMakeRect(12, 4, tileW - 24, 24);
+  self.appWatchUpdateCheck.toolTip = @"只提醒已加入分组的 App；版本变化时弹窗，不会自动移动应用";
+  [tSync addSubview:self.appWatchUpdateCheck];
 
-  NSView *tActivity = tileAt(1, 426);
+  NSView *tActivity = tileAt(1, 386);
   self.activityCheck = [NSButton checkboxWithTitle:@"记录保存的文件" target:self action:@selector(toggleActivityRecorder:)];
   self.activityCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerFileActivity"] ? NSControlStateValueOn : NSControlStateValueOff;
   self.activityCheck.frame = NSMakeRect(12, 20, tileW - 24, 24);
   self.activityCheck.toolTip = @"记录应用保存文件的位置，卸载时作为候选";
   [tActivity addSubview:self.activityCheck];
 
-  NSView *tPlayer = tileAt(1, 352); tileLabel(tPlayer, @"视频播放器");
+  NSView *tPlayer = tileAt(1, 312); tileLabel(tPlayer, @"视频播放器");
   self.videoPlayerPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26) pullsDown:NO];
   [self.videoPlayerPopup addItemWithTitle:@"每次询问"];
   self.videoPlayerPopup.lastItem.representedObject = @"";
@@ -18245,7 +18838,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.videoPlayerPopup.toolTip = @"空格预览视频时使用的播放器";
   [tPlayer addSubview:self.videoPlayerPopup];
 
-  NSView *tScene = tileAt(1, 278); tileLabel(tScene, @"场景模式");
+  NSView *tScene = tileAt(1, 238); tileLabel(tScene, @"场景模式");
   ColorHoverButton *sceneBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
   sceneBtn.title = @"场景设置…"; sceneBtn.hoverColor = [NSColor systemIndigoColor];
   sceneBtn.target = self; sceneBtn.action = @selector(showSceneSettings:);
@@ -18253,7 +18846,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   sceneBtn.toolTip = @"按工作/下班/会议切换 Dock 中显示的分组";
   [tScene addSubview:sceneBtn];
 
-  NSView *tUsage = tileAt(1, 204); tileLabel(tUsage, @"使用统计");
+  NSView *tUsage = tileAt(1, 164); tileLabel(tUsage, @"使用统计");
   ColorHoverButton *usageBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26)];
   usageBtn.title = @"查看统计…"; usageBtn.hoverColor = [NSColor systemTealColor];
   usageBtn.target = self; usageBtn.action = @selector(showUsageStats:);
@@ -18261,7 +18854,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   usageBtn.toolTip = @"查看应用启动次数、最近使用时间和未分组推荐";
   [tUsage addSubview:usageBtn];
 
-  NSView *tClipRetain = tileAt(1, 130); tileLabel(tClipRetain, @"剪贴板保留");
+  NSView *tClipRetain = tileAt(1, 90); tileLabel(tClipRetain, @"剪贴板保留");
   self.clipboardDaysPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 8, tileW - 24, 26) pullsDown:NO];
   [self.clipboardDaysPopup addItemWithTitle:@"永久"]; self.clipboardDaysPopup.lastItem.representedObject = @0;
   [self.clipboardDaysPopup addItemWithTitle:@"7 天"]; self.clipboardDaysPopup.lastItem.representedObject = @7;
@@ -21493,6 +22086,8 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
+  [self stopAppWatchStream];
+  [self saveNewAppWatchState];
   [self stopAllLocalAIServicesForExit];
   [self restoreMicBoost];
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudAutoSync"]) {
