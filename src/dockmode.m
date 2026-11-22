@@ -1,8 +1,9 @@
 // dockmode.m — DockLaunchers 启动器：Dock 单图标 ⇄ 分组图标切换
 // 用法: dockmode [--expand | --collapse]
-//   无参数（点击启动器图标）= 切换：已固定→收起分组只留自己；未固定→展开全部分组（自己保留，作为收起按钮）
-//   --collapse: 收起全部分组图标，把自己固定进 Dock（控制台「Dock 外观」开关调用）
-//   --expand:   展开全部分组图标，把自己从 Dock 移除（还原为全排列）
+//   无参数（点击启动器图标，仅收起态可见）= 展开全部分组，启动器自身隐藏
+//   --collapse: 收起全部分组图标，把自己固定进 Dock（收起态；分组 App 右键「收起分组图标」也走这里）
+//   --expand:   展开全部分组图标并隐藏自己（展开态）
+//   状态写入 com.docklaunchers.center 的 centerDockLauncherExpanded，控制台据此尊重当前排布
 #import <Foundation/Foundation.h>
 
 static NSString *GroupDir(void) { return [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers"]; }
@@ -91,21 +92,10 @@ static void AddGroupEntries(NSMutableArray *apps) {
   }
 }
 
-static BOOL LauncherModeOn(void) {
-  CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("centerDockLauncherMode"), CFSTR("com.docklaunchers.center"));
-  BOOL on = v ? CFBooleanGetValue((CFBooleanRef)v) : NO;
-  if (v) CFRelease(v);
-  return on;
-}
-
-// Dock 当前是否有分组图标（有=展开态，点击应收起）
-static BOOL DockHasGroupEntries(NSMutableArray *apps) {
-  for (NSDictionary *item in apps) {
-    NSDictionary *td = item[@"tile-data"] ?: @{};
-    NSString *b = td[@"bundle-identifier"] ?: @"";
-    if ([b hasPrefix:@"com.docklaunchers."] && ![b isEqualToString:@"com.docklaunchers.launcher"] && ![b isEqualToString:@"com.docklaunchers.center"]) return YES;
-  }
-  return NO;
+// 展开态标记：YES=分组全排列+启动器隐藏；NO=收起态只留启动器。控制台跨进程读取
+static void SetExpanded(BOOL on) {
+  CFPreferencesSetAppValue(CFSTR("centerDockLauncherExpanded"), (__bridge CFPropertyListRef)@(on), CFSTR("com.docklaunchers.center"));
+  CFPreferencesAppSynchronize(CFSTR("com.docklaunchers.center"));
 }
 
 int main(int argc, char **argv) {
@@ -119,18 +109,17 @@ int main(int argc, char **argv) {
       // 收起：移除全部分组，保留启动器
       RemoveGroupEntries(apps);
       AddEntry(apps, selfPath, label, bid);
+      SetExpanded(NO);
     } else if ([mode isEqualToString:@"--expand"]) {
-      // 全排列还原：展开分组并移除启动器
+      // 展开态：分组全排列，启动器隐藏
       AddGroupEntries(apps);
       if (selfPath.length) RemoveEntry(apps, selfPath);
+      SetExpanded(YES);
     } else {
-      // 点击启动器图标：Dock 里有分组图标→收起（保留启动器）；没有→展开分组并保留启动器（再点收起）
-      if (DockHasGroupEntries(apps)) {
-        RemoveGroupEntries(apps);
-      } else {
-        AddGroupEntries(apps);
-        AddEntry(apps, selfPath, label, bid);
-      }
+      // 点击启动器（仅收起态可见）：展开分组，启动器自身也隐藏
+      AddGroupEntries(apps);
+      if (selfPath.length) RemoveEntry(apps, selfPath);
+      SetExpanded(YES);
     }
     SaveDockApps(apps);
     return 0;

@@ -1304,10 +1304,42 @@ static NSString *ResolveAppPath(NSString *target) {
   it.target = self;
   it = [m addItemWithTitle:@"恢复默认图标" action:@selector(dockResetIcon:) keyEquivalent:@""];
   it.target = self;
+  // 启动器模式的展开态：右键任意分组图标即可收起为单图标
+  if ([self launcherModeOn] && [self launcherExpandedOn]) {
+    [m addItem:[NSMenuItem separatorItem]];
+    it = [m addItemWithTitle:@"收起分组图标" action:@selector(dockCollapseGroups:) keyEquivalent:@""];
+    it.target = self;
+  }
   [m addItem:[NSMenuItem separatorItem]];
   it = [m addItemWithTitle:@"显示分组窗口" action:@selector(dockOpen:) keyEquivalent:@""];
   it.target = self;
   return m;
+}
+
+// 启动器模式/展开态标记：与控制台同一 defaults 域，跨进程实时读取
+- (BOOL)launcherModeOn {
+  CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("centerDockLauncherMode"), CFSTR("com.docklaunchers.center"));
+  BOOL on = v ? CFBooleanGetValue((CFBooleanRef)v) : NO;
+  if (v) CFRelease(v);
+  return on;
+}
+
+- (BOOL)launcherExpandedOn {
+  CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("centerDockLauncherExpanded"), CFSTR("com.docklaunchers.center"));
+  BOOL on = v ? CFBooleanGetValue((CFBooleanRef)v) : NO;
+  if (v) CFRelease(v);
+  return on;
+}
+
+- (void)dockCollapseGroups:(id)sender {
+  NSString *bin = [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers.app/Contents/MacOS/dockmode"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:bin])
+    bin = @"/Applications/DockLaunchers.app/Contents/MacOS/dockmode";
+  if (![[NSFileManager defaultManager] fileExistsAtPath:bin]) return;
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = bin;
+  t.arguments = @[@"--collapse"];
+  @try { [t launch]; } @catch (NSException *e) {}
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {

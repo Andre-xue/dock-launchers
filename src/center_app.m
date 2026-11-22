@@ -7301,7 +7301,19 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   [[NSUserDefaults standardUserDefaults] setBool:wantOn forKey:@"centerDockLauncherMode"];
   if (!wantOn) [self ensureGroupDockEntries];
-  [self showToast:wantOn ? @"Dock 已收起为启动器图标，点击它展开/收起分组" : @"分组图标已展开还原"];
+  [self showToast:wantOn ? @"Dock 已收起为启动器图标，点击它展开分组" : @"分组图标已展开还原"];
+}
+
+// Dock 外观「展开分组」：分组全排列，启动器隐藏
+- (void)dockLauncherExpandPressed:(id)s {
+  if ([self runDockLauncherMode:@"--expand"]) [self showToast:@"分组图标已展开（右键分组图标可收起）"];
+  else [self showToast:@"展开失败：找不到或无法运行 DockLaunchers 启动器"];
+}
+
+// Dock 外观「收起分组」：只留启动器图标
+- (void)dockLauncherCollapsePressed:(id)s {
+  if ([self runDockLauncherMode:@"--collapse"]) [self showToast:@"Dock 已收起为启动器图标"];
+  else [self showToast:@"收起失败：找不到或无法运行 DockLaunchers 启动器"];
 }
 
 // 启动器图标当前是否固定在 Dock（固定=用户点开过或已收起，保留现有排布）
@@ -7319,18 +7331,31 @@ static BOOL ValidGroupName(NSString *raw) {
   return NO;
 }
 
+// 展开态标记（dockmode 二进制写入，跨进程读 CFPreferences 而非缓存的 NSUserDefaults）
+- (BOOL)dockLauncherExpandedOn {
+  CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("centerDockLauncherExpanded"), CFSTR("com.docklaunchers.center"));
+  BOOL on = v ? CFBooleanGetValue((CFBooleanRef)v) : NO;
+  if (v) CFRelease(v);
+  return on;
+}
+
 - (void)ensureGroupDockEntries {
-  // 启动器模式：Dock 只保留一个启动器图标，不固定分组图标；用户点开过（启动器+分组并存）则尊重现状
+  // 启动器模式三态：收起态=只留启动器图标；展开态=分组全排列、启动器隐藏（尊重现状，仅补缺失）
   if ([self dockLauncherModeOn]) {
     NSString *wrap = [self ensureDockLauncherWrapper];
     if (wrap.length) {
-      if ([self dockLauncherWrapperPinned]) return;
-      for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[]) {
-        if (![f hasSuffix:@".app"]) continue;
-        [self removeDockEntry:[GroupDir() stringByAppendingPathComponent:f]];
+      if ([self dockLauncherExpandedOn]) {
+        if ([self dockLauncherWrapperPinned]) [self removeDockEntry:wrap];
+        // 落穿到下方正常分组固定循环
+      } else {
+        if ([self dockLauncherWrapperPinned]) return;
+        for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[]) {
+          if (![f hasSuffix:@".app"]) continue;
+          [self removeDockEntry:[GroupDir() stringByAppendingPathComponent:f]];
+        }
+        [self addDockEntry:wrap label:@"DockLaunchers"];
+        return;
       }
-      [self addDockEntry:wrap label:@"DockLaunchers"];
-      return;
     }
   }
   NSString *dir = GroupDir();
@@ -15481,6 +15506,20 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)clearGroupDockEntries {
+  // 启动器模式：无绑定场景的桌面不清空 Dock——展开态保持分组全排列，收起态只留启动器
+  if ([self dockLauncherModeOn]) {
+    if ([self dockLauncherExpandedOn]) return;
+    NSString *wrap = [self ensureDockLauncherWrapper];
+    if (!wrap.length) return;
+    NSArray *installed = [self installedGroupNames];
+    for (NSString *group in installed) {
+      NSString *path = [[GroupDir() stringByAppendingPathComponent:group] stringByAppendingPathExtension:@"app"];
+      if ([[NSFileManager defaultManager] fileExistsAtPath:path]) [self removeDockEntry:path];
+    }
+    [self addDockEntry:wrap label:@"DockLaunchers"];
+    [self killDock];
+    return;
+  }
   NSArray *installed = [self installedGroupNames];
   BOOL changed = NO;
   NSSet *current = [NSSet setWithArray:[self dockGroupNames]];
@@ -15661,22 +15700,34 @@ static BOOL ValidGroupName(NSString *raw) {
   NSArray *sceneGroups = scene[@"groups"] ?: @[];
   BOOL all = [self sceneIsAll:scene];
   NSArray *installed = [self installedGroupNames];
+  // 启动器模式：场景不改动 Dock 图标（收起态只留启动器，展开态保持分组全排列）
+  if ([self dockLauncherModeOn]) {
+    NSString *wrap = nil;
+    if (![self dockLauncherExpandedOn]) {
+      wrap = [self ensureDockLauncherWrapper];
+      if (wrap.length) {
+        for (NSString *group in installed) {
+          NSString *path = [[GroupDir() stringByAppendingPathComponent:group] stringByAppendingPathExtension:@"app"];
+          if ([[NSFileManager defaultManager] fileExistsAtPath:path]) [self removeDockEntry:path];
+        }
+        [self addDockEntry:wrap label:@"DockLaunchers"];
+      }
+    }
+    [self killDock];
+    self.lastAppliedScene = name;
+    NSString *layoutName = scene[@"layout"] ?: @"";
+    if (layoutName.length) {
+      BOOL autoLaunch = !self.layoutAutoLaunchCheck || self.layoutAutoLaunchCheck.state == NSControlStateValueOn;
+      [self restoreWindowLayoutNamed:layoutName autoLaunch:autoLaunch];
+    }
+    if (!silent) [self showToast:[NSString stringWithFormat:@"已切换到「%@」场景", name]];
+    return;
+  }
   for (NSString *group in installed) {
     NSString *path = [[GroupDir() stringByAppendingPathComponent:group] stringByAppendingPathExtension:@"app"];
     if (![[NSFileManager defaultManager] fileExistsAtPath:path]) continue;
     if (all || [sceneGroups containsObject:group]) [self addDockEntry:path label:group];
     else [self removeDockEntry:path];
-  }
-  // 启动器模式优先：场景切换后若处于收起态，Dock 仍只保留启动器图标（用户已点开则不动）
-  if ([self dockLauncherModeOn] && ![self dockLauncherWrapperPinned]) {
-    NSString *wrap = [self ensureDockLauncherWrapper];
-    if (wrap.length) {
-      for (NSString *group in installed) {
-        NSString *path = [[GroupDir() stringByAppendingPathComponent:group] stringByAppendingPathExtension:@"app"];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) [self removeDockEntry:path];
-      }
-      [self addDockEntry:wrap label:@"DockLaunchers"];
-    }
   }
   [self killDock];
   self.lastAppliedScene = name;
@@ -17419,13 +17470,19 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
     NSTextField *lt = [self label:@"Dock 分组图标" size:11 bold:YES color:nil];
     lt.frame = NSMakeRect(24, 64, 200, 16); [cv addSubview:lt];
-    self.dockLauncherCheck = [NSButton checkboxWithTitle:@"只显示启动器图标（点击它展开/收起分组）" target:self action:@selector(dockLauncherToggled:)];
+    self.dockLauncherCheck = [NSButton checkboxWithTitle:@"只显示启动器图标" target:self action:@selector(dockLauncherToggled:)];
     self.dockLauncherCheck.state = [self dockLauncherModeOn] ? NSControlStateValueOn : NSControlStateValueOff;
     self.dockLauncherCheck.frame = NSMakeRect(24, 38, 340, 22);
-    self.dockLauncherCheck.toolTip = @"开启后 Dock 只留一个 DockLaunchers 图标；点击它展开全部分组，再点一次收起。关闭则恢复全排列。";
+    self.dockLauncherCheck.toolTip = @"开启后 Dock 只留一个 DockLaunchers 图标，点击它展开全部分组（启动器隐藏）；分组图标的右键菜单里有「收起分组图标」。关闭则恢复全排列。\n启动器随控制台安装；换新电脑时会自动重建。";
     [cv addSubview:self.dockLauncherCheck];
-    NSTextField *lnote = [self label:@"启动器随控制台安装；换新电脑时会自动重建" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
-    lnote.frame = NSMakeRect(24, 18, 430, 16); [cv addSubview:lnote];
+    ColorHoverButton *expBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 10, 110, 22)];
+    expBtn.title = @"展开分组"; expBtn.hoverColor = [NSColor systemBlueColor];
+    expBtn.target = self; expBtn.action = @selector(dockLauncherExpandPressed:);
+    [expBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:expBtn];
+    ColorHoverButton *colBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(144, 10, 110, 22)];
+    colBtn.title = @"收起分组"; colBtn.hoverColor = [NSColor systemBlueColor];
+    colBtn.target = self; colBtn.action = @selector(dockLauncherCollapsePressed:);
+    [colBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:colBtn];
     [self.dockAppearanceWindow center];
   }
   [NSApp activateIgnoringOtherApps:YES];
@@ -21886,7 +21943,11 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [fm removeItemAtPath:cloudLists error:NULL];
   if ([fm fileExistsAtPath:lists]) [fm copyItemAtPath:lists toPath:cloudLists error:NULL];
   NSDictionary *domain = [[NSUserDefaults standardUserDefaults] persistentDomainForName:@"com.docklaunchers.center"] ?: @{};
-  [domain writeToFile:[dir stringByAppendingPathComponent:@"settings.plist"] atomically:YES];
+  // 瞬态/水印键不进云快照：展开态是每台机器本地状态，centerLastCloudSync 是本机水位，导入会互相踩
+  NSMutableDictionary *snap = [domain mutableCopy];
+  [snap removeObjectForKey:@"centerDockLauncherExpanded"];
+  [snap removeObjectForKey:@"centerLastCloudSync"];
+  [snap writeToFile:[dir stringByAppendingPathComponent:@"settings.plist"] atomically:YES];
   NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
   for (NSString *name in @[@"app_shortcuts.json", @"scenes.json", @"window_layouts.json"]) {
     NSString *src = [support stringByAppendingPathComponent:name];
@@ -21923,8 +21984,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   [self resolveMigrationListFiles];
   NSString *settings = [dir stringByAppendingPathComponent:@"settings.plist"];
   if ([fm fileExistsAtPath:settings]) {
+    // defaults import 是整域替换：先记下本机的启动器模式/展开态，导入后回写（云快照里可能缺失这些键）
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    id savedMode = [ud objectForKey:@"centerDockLauncherMode"];
+    id savedExpanded = [ud objectForKey:@"centerDockLauncherExpanded"];
     NSTask *t = [[NSTask alloc] init]; t.launchPath = @"/usr/bin/defaults"; t.arguments = @[@"import", @"com.docklaunchers.center", settings];
     @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+    if (savedMode) [ud setObject:savedMode forKey:@"centerDockLauncherMode"];
+    if (savedExpanded) [ud setObject:savedExpanded forKey:@"centerDockLauncherExpanded"];
+    [ud synchronize];
   }
   NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
   for (NSString *name in @[@"app_shortcuts.json", @"scenes.json", @"window_layouts.json"]) {
@@ -21995,8 +22063,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if ([fm fileExistsAtPath:cloudLists]) { [fm removeItemAtPath:liveLists error:NULL]; [fm copyItemAtPath:cloudLists toPath:liveLists error:NULL]; }
   NSString *settings = [dir stringByAppendingPathComponent:@"settings.plist"];
   if ([fm fileExistsAtPath:settings]) {
+    // defaults import 是整域替换：先记下本机的启动器模式/展开态，导入后回写（云快照里可能缺失这些键）
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    id savedMode = [ud objectForKey:@"centerDockLauncherMode"];
+    id savedExpanded = [ud objectForKey:@"centerDockLauncherExpanded"];
     NSTask *t = [[NSTask alloc] init]; t.launchPath = @"/usr/bin/defaults"; t.arguments = @[@"import", @"com.docklaunchers.center", settings];
     @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+    if (savedMode) [ud setObject:savedMode forKey:@"centerDockLauncherMode"];
+    if (savedExpanded) [ud setObject:savedExpanded forKey:@"centerDockLauncherExpanded"];
+    [ud synchronize];
   }
   NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
   for (NSString *name in @[@"app_shortcuts.json", @"scenes.json", @"window_layouts.json"]) {
@@ -22540,7 +22615,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSString *path = [[GroupDir() stringByAppendingPathComponent:value] stringByAppendingPathExtension:@"app"];
     if (![[NSFileManager defaultManager] fileExistsAtPath:path]) { [self showToast:@"没有找到该分组"]; return; }
     if ([action isEqualToString:@"show_group"]) {
-      if ([self dockLauncherModeOn]) { [self showToast:@"启动器模式开启中，Dock 只显示启动器图标"]; return; }
+      if ([self dockLauncherModeOn]) { [self showToast:@"启动器模式开启中，可在「Dock 外观」中展开/收起分组"]; return; }
       [self addDockEntry:path label:value];
       [self reloadDockPreferences];
       [self showToast:[NSString stringWithFormat:@"已显示分组：%@", value]];
@@ -22625,7 +22700,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if ([[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudAutoSync"]) {
     NSString *dir = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerCloudSyncDirectory"];
     if (!dir.length) dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Mobile Documents/com~apple~CloudDocs/DockLaunchers"];
-    @try { [self writeCurrentConfigurationToDirectory:dir]; } @catch (NSException *e) {}
+    @try {
+      [self writeCurrentConfigurationToDirectory:dir];
+      // 记水位：否则下次启动会把刚上传的云端配置当成「更新」再恢复一遍
+      [[NSUserDefaults standardUserDefaults] setDouble:[[NSDate date] timeIntervalSince1970] forKey:@"centerLastCloudSync"];
+      [[NSUserDefaults standardUserDefaults] synchronize];
+    } @catch (NSException *e) {}
   }
 }
 
