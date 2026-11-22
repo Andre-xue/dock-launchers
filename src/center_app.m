@@ -1406,7 +1406,6 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSStatusItem *statusItem;
 @property (strong) NSImage *statusBaseImage;
 @property (strong) NSDictionary<NSString *, NSDictionary *> *groupBadgeCounts;
-@property (copy) NSString *lastGroupDockBadgeSignature;
 @property BOOL dockPersistentDirty;
 @property (strong) NSTimer *groupBadgeTimer;
 @property (strong) NSTimer *shelfInboxTimer;
@@ -7540,10 +7539,11 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (void)repairGroupDockIconsIfNeeded {
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-  NSInteger version = 2;
+  // v3：早期角标功能曾把运行数画进 icns 小尺寸层，形成「化石数字」；v3 用内嵌干净源整体替换
+  NSInteger version = 3;
   if ([ud integerForKey:@"centerGroupIconsRepairVersion"] >= version) return;
   NSDictionary *map = @{@"工具": @"工具组", @"工作": @"工作组", @"聊天": @"聊天组", @"外网": @"外网组", @"影音": @"影音组", @"Ai": @"Ai组", @"AI": @"Ai组", @"Docker": @"Docker组"};
-  NSString *dir = [GroupDir() stringByAppendingPathComponent:@"DockLaunchers"];
+  NSString *dir = GroupDir();
   NSFileManager *fm = [NSFileManager defaultManager];
   NSArray *files = [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
   BOOL changed = NO;
@@ -23776,50 +23776,6 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   }
   if (self.groupPanelWindow.isVisible) [self.groupPanelTable reloadData];
   [self updateConsoleGroupRunLabels];
-  if (enabled) [self applyGroupDockBadges];
-}
-
-- (void)applyGroupDockBadges {
-  NSArray *groups = [self installedGroupNames];
-  NSMutableString *sig = [NSMutableString string];
-  for (NSString *name in groups) {
-    NSDictionary *d = self.groupBadgeCounts[name] ?: @{};
-    [sig appendFormat:@"%@:%@;", name, d[@"running"] ?: @0];
-  }
-  if (sig.length && [self.lastGroupDockBadgeSignature isEqualToString:sig]) return;
-  self.lastGroupDockBadgeSignature = sig;
-  for (NSString *name in groups) {
-    NSString *path = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) continue;
-    NSInteger running = [self.groupBadgeCounts[name][@"running"] integerValue];
-    NSImage *base = [[NSImage alloc] initWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"]];
-    if (!base) base = [[NSWorkspace sharedWorkspace] iconForFile:path];
-    if (!base || base.size.width <= 0 || base.size.height <= 0) continue;
-    // 固定用 128x128 位图生成 ICNS，避免异常尺寸导致 NSWorkspace setIcon 崩溃
-    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:128 pixelsHigh:128 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
-    if (!rep) continue;
-    NSGraphicsContext *ctx = [NSGraphicsContext graphicsContextWithBitmapImageRep:rep];
-    [NSGraphicsContext saveGraphicsState];
-    [NSGraphicsContext setCurrentContext:ctx];
-    [base drawInRect:NSMakeRect(0,0,128,128) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
-    if (running > 0) {
-      NSString *num = running > 99 ? @"99+" : [NSString stringWithFormat:@"%ld", (long)running];
-      NSRect br = NSMakeRect(82, 82, 40, 40);
-      [[NSColor systemRedColor] setFill];
-      [[NSBezierPath bezierPathWithOvalInRect:br] fill];
-      [[NSColor whiteColor] setStroke];
-      NSBezierPath *border = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(br, 2, 2)];
-      border.lineWidth = 2.5; [border stroke];
-      NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init]; ps.alignment = NSTextAlignmentCenter;
-      NSDictionary *attrs = @{NSFontAttributeName: [NSFont systemFontOfSize:(running > 9 ? 16 : 21) weight:NSFontWeightBold], NSForegroundColorAttributeName: [NSColor whiteColor], NSParagraphStyleAttributeName: ps};
-      [num drawInRect:NSMakeRect(br.origin.x, br.origin.y + 10, br.size.width, 22) withAttributes:attrs];
-    }
-    [NSGraphicsContext restoreGraphicsState];
-    NSImage *icon = [[NSImage alloc] initWithSize:NSMakeSize(128,128)];
-    [icon addRepresentation:rep];
-    [[NSWorkspace sharedWorkspace] setIcon:icon forFile:path options:0];
-  }
-  [self reloadDockPreferences];
 }
 
 - (void)updateConsoleGroupRunLabels {
