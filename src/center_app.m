@@ -6255,6 +6255,353 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   [self scheduleAppWatchScanAfter:3.0];
 }
 
+#pragma mark - 迁移与同步（iCloud / 导出导入）
+
+- (NSString *)migrationMachineName {
+  NSString *host = [[NSProcessInfo processInfo] hostName] ?: @"";
+  host = [host stringByReplacingOccurrencesOfString:@".local" withString:@""];
+  return host.length ? host : @"Mac";
+}
+
+// 把分组方案里的目标路径解析到本机：原路径存在 → 换家目录 → 按应用名 → 按 bundle id
+- (NSString *)resolveMigrationTarget:(NSString *)rawTarget {
+  NSString *target = [rawTarget stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+  if (!target.length) return nil;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  if ([target hasPrefix:@"file://"]) {
+    NSString *p = [[NSURL URLWithString:target] path];
+    return (p.length && [fm fileExistsAtPath:p]) ? p : nil;
+  }
+  if ([target hasPrefix:@"/"]) {
+    if ([fm fileExistsAtPath:target]) return target;
+    if ([target hasPrefix:@"/Users/"]) {
+      NSArray *parts = [target pathComponents];
+      if (parts.count >= 4) {
+        NSMutableArray *rest = [NSMutableArray array];
+        for (NSUInteger i = 3; i < parts.count; i++) [rest addObject:parts[i]];
+        NSString *p = [NSHomeDirectory() stringByAppendingPathComponent:[rest componentsJoinedByString:@"/"]];
+        if ([fm fileExistsAtPath:p]) return p;
+      }
+    }
+    return nil;
+  }
+  // bundle id 形式（如 com.apple.Safari）
+  if ([target rangeOfString:@"."].location != NSNotFound && ![target hasSuffix:@".app"]) {
+    NSURL *u = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:target];
+    if (u.path.length && [fm fileExistsAtPath:u.path]) return u.path;
+  }
+  return ResolveAppPath(target);
+}
+
+- (NSString *)resolveMigrationEntry:(NSDictionary *)entry {
+  if (![entry isKindOfClass:[NSDictionary class]]) return nil;
+  NSString *p = [self resolveMigrationTarget:[entry objectForKey:@"path"]];
+  if (p.length) return p;
+  p = [self resolveMigrationTarget:[entry objectForKey:@"appName"]];
+  if (p.length) return p;
+  NSString *bid = [entry objectForKey:@"bundleId"];
+  if ([bid isKindOfClass:[NSString class]] && bid.length) {
+    NSURL *u = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bid];
+    if (u.path.length && [[NSFileManager defaultManager] fileExistsAtPath:u.path]) return u.path;
+  }
+  return nil;
+}
+
+// 确保名为 name 的分组 App 存在：有现成分组就复制为模板，否则用控制台内嵌的 GroupTemplate/ui 搭建
+- (NSString *)ensureGroupAppForName:(NSString *)rawName {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *name = [rawName stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if ([name hasSuffix:@".app"]) name = [name stringByDeletingPathExtension];
+  name = [name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (!ValidGroupName(name) || [name rangeOfString:@"/"].location != NSNotFound || [name isEqualToString:@".."]) return nil;
+  NSString *dst = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
+  if ([fm fileExistsAtPath:dst]) return dst;
+  NSString *tpl = nil;
+  for (NSString *f in ([fm contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[])) {
+    if (![f hasSuffix:@".app"]) continue;
+    NSString *p = [GroupDir() stringByAppendingPathComponent:f];
+    if ([p isEqualToString:dst]) continue;
+    tpl = p; break;
+  }
+  NSString *plist = [dst stringByAppendingPathComponent:@"Contents/Info.plist"];
+  if (tpl) {
+    if (![fm copyItemAtPath:tpl toPath:dst error:NULL]) return nil;
+    NSMutableDictionary *info = [[NSDictionary dictionaryWithContentsOfFile:plist] mutableCopy] ?: [NSMutableDictionary dictionary];
+    info[@"CFBundleName"] = name;
+    info[@"CFBundleDisplayName"] = name;
+    info[@"CFBundleIdentifier"] = [NSString stringWithFormat:@"com.docklaunchers.g%lu-%lu", (unsigned long)([[NSDate date] timeIntervalSince1970] * 1000), (unsigned long)name.hash];
+    [info writeToFile:plist atomically:YES];
+  } else {
+    NSString *bin = [[NSBundle mainBundle] pathForResource:@"ui" ofType:nil inDirectory:@"GroupTemplate"];
+    if (!bin.length) return nil;
+    [fm createDirectoryAtPath:[dst stringByAppendingPathComponent:@"Contents/MacOS"] withIntermediateDirectories:YES attributes:nil error:NULL];
+    [fm createDirectoryAtPath:[dst stringByAppendingPathComponent:@"Contents/Resources"] withIntermediateDirectories:YES attributes:nil error:NULL];
+    if (![fm copyItemAtPath:bin toPath:[dst stringByAppendingPathComponent:@"Contents/MacOS/ui"] error:NULL]) return nil;
+    NSMutableDictionary *info = [NSMutableDictionary dictionary];
+    info[@"CFBundleName"] = name;
+    info[@"CFBundleDisplayName"] = name;
+    info[@"CFBundleIdentifier"] = [NSString stringWithFormat:@"com.docklaunchers.g%lu-%lu", (unsigned long)([[NSDate date] timeIntervalSince1970] * 1000), (unsigned long)name.hash];
+    info[@"CFBundleExecutable"] = @"ui";
+    info[@"CFBundleIconFile"] = @"AppIcon";
+    info[@"CFBundlePackageType"] = @"APPL";
+    info[@"CFBundleShortVersionString"] = @"1.0.0";
+    info[@"CFBundleVersion"] = @"1";
+    info[@"LSMinimumSystemVersion"] = @"12.0";
+    info[@"NSHighResolutionCapable"] = @YES;
+    info[@"NSPrincipalClass"] = @"NSApplication";
+    info[@"LSApplicationCategoryType"] = @"public.app-category.utilities";
+    [info writeToFile:plist atomically:YES];
+  }
+  // 图标：优先同名的 GroupIcons/<名>组.icns，否则用第一张内置图标
+  NSString *iconsDir = [[NSBundle mainBundle] pathForResource:@"GroupIcons" ofType:nil];
+  NSString *iconSrc = nil;
+  if (iconsDir.length) {
+    NSString *named = [iconsDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@组.icns", name]];
+    if ([fm fileExistsAtPath:named]) iconSrc = named;
+    if (!iconSrc) {
+      for (NSString *f in ([fm contentsOfDirectoryAtPath:iconsDir error:NULL] ?: @[])) {
+        if ([f hasSuffix:@".icns"]) { iconSrc = [iconsDir stringByAppendingPathComponent:f]; break; }
+      }
+    }
+  }
+  if (iconSrc.length) {
+    [fm removeItemAtPath:[dst stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"] error:NULL];
+    [fm copyItemAtPath:iconSrc toPath:[dst stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"] error:NULL];
+  }
+  // 签名前必须清掉扩展属性（模板自带的自定义图标 FinderInfo 等），
+  // 否则 codesign 报 "resource fork, Finder information, or similar detritus not allowed" 静默失败，
+  // 留下旧 seal + 新 Info.plist → 验证报 invalid Info.plist
+  NSTask *clr = [[NSTask alloc] init];
+  clr.launchPath = @"/usr/bin/xattr";
+  clr.arguments = @[@"-cr", dst];
+  @try { [clr launch]; [clr waitUntilExit]; } @catch (NSException *e) {}
+  NSTask *sign = [[NSTask alloc] init];
+  sign.launchPath = @"/usr/bin/codesign";
+  sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", dst];
+  BOOL signOK = NO;
+  @try { [sign launch]; [sign waitUntilExit]; signOK = (sign.terminationStatus == 0); } @catch (NSException *e) {}
+  if (!signOK) {
+    NSTask *retry = [[NSTask alloc] init];
+    retry.launchPath = @"/usr/bin/xattr";
+    retry.arguments = @[@"-cr", dst];
+    @try { [retry launch]; [retry waitUntilExit]; } @catch (NSException *e) {}
+    NSTask *sign2 = [[NSTask alloc] init];
+    sign2.launchPath = @"/usr/bin/codesign";
+    sign2.arguments = @[@"--force", @"--deep", @"--sign", @"-", dst];
+    @try { [sign2 launch]; [sign2 waitUntilExit]; } @catch (NSException *e) {}
+  }
+  NSTask *reg = [[NSTask alloc] init];
+  reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+  reg.arguments = @[@"-f", dst];
+  @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
+  [self applySafeFileIconForApp:dst];
+  return dst;
+}
+
+// 云目录 lists 里指向旧电脑家目录的绝对路径：能换算就换算，换算不了标成注释缺失行（只动跨机器路径，不碰本机条目）
+- (void)resolveMigrationListFiles {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *lists = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  NSString *homePrefix = [NSHomeDirectory() stringByAppendingString:@"/"];
+  for (NSString *f in ([fm contentsOfDirectoryAtPath:lists error:NULL] ?: @[])) {
+    if (![f hasSuffix:@".txt"]) continue;
+    NSString *p = [lists stringByAppendingPathComponent:f];
+    NSString *content = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+    NSMutableString *out = [NSMutableString string];
+    BOOL changed = NO;
+    for (NSString *line in [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      if (!line.length || [line hasPrefix:@"#"]) { if (line.length) [out appendFormat:@"%@\n", line]; continue; }
+      NSArray *parts = [line componentsSeparatedByString:@"|"];
+      if (parts.count < 2) { [out appendFormat:@"%@\n", line]; continue; }
+      NSString *display = parts[0];
+      NSString *target = [parts.lastObject stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      NSString *rp = [self resolveMigrationTarget:target];
+      if (rp.length && ![rp isEqualToString:target]) {
+        [out appendFormat:@"%@|%@\n", display, rp];
+        changed = YES;
+      } else if (!rp.length && [target hasPrefix:@"/Users/"] && ![target hasPrefix:homePrefix]) {
+        [out appendFormat:@"# 缺失|%@|%@\n", display, target];
+        changed = YES;
+      } else {
+        [out appendFormat:@"%@\n", line];
+      }
+    }
+    if (changed) [out writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  }
+}
+
+// 应用一份迁移方案（手动导入 / 云端首次恢复共用）：建分组 App、写列表、解析路径、钉 Dock
+- (NSDictionary *)applyMigrationDictionary:(NSDictionary *)dict {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  [fm createDirectoryAtPath:[GroupDir() stringByAppendingPathComponent:@"lists"] withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSMutableArray *doneGroups = [NSMutableArray array];
+  NSInteger created = 0, resolved = 0;
+  NSMutableArray *missing = [NSMutableArray array];
+  NSArray *groups = [dict objectForKey:@"groups"];
+  if (![groups isKindOfClass:[NSArray class]]) groups = @[];
+  for (NSDictionary *g in groups) {
+    if (![g isKindOfClass:[NSDictionary class]]) continue;
+    NSString *name = [g[@"name"] isKindOfClass:[NSString class]] ? g[@"name"] : @"";
+    BOOL existed = [[self installedGroupNames] containsObject:name];
+    NSString *appPath = [self ensureGroupAppForName:name];
+    if (!appPath.length) continue;
+    if (!existed) created++;
+    NSString *listFile = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+    NSMutableString *out = [NSMutableString string];
+    NSArray *entries = [g objectForKey:@"entries"];
+    if (![entries isKindOfClass:[NSArray class]]) entries = @[];
+    for (NSDictionary *e in entries) {
+      if (![e isKindOfClass:[NSDictionary class]]) continue;
+      NSString *display = nil;
+      NSString *disp = [e objectForKey:@"display"];
+      NSString *aname = [e objectForKey:@"appName"];
+      if ([disp isKindOfClass:[NSString class]] && disp.length) display = disp;
+      else if ([aname isKindOfClass:[NSString class]] && aname.length) display = [aname stringByDeletingPathExtension];
+      if (!display.length) display = @"未知应用";
+      NSString *rawPath = [e[@"path"] isKindOfClass:[NSString class]] ? e[@"path"] : @"";
+      NSString *rp = [self resolveMigrationEntry:e];
+      if (rp.length) {
+        [out appendFormat:@"%@|%@\n", display, rp];
+        resolved++;
+      } else {
+        [out appendFormat:@"# 缺失|%@|%@\n", display, rawPath];
+        [missing addObject:[NSString stringWithFormat:@"%@（%@）", display, name]];
+      }
+    }
+    [out writeToFile:listFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    [doneGroups addObject:name];
+  }
+  NSDictionary *settings = [dict objectForKey:@"settings"];
+  if ([settings isKindOfClass:[NSDictionary class]]) {
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    for (NSString *k in settings) {
+      if (![k hasPrefix:@"center"]) continue;
+      if ([k hasPrefix:@"centerCloud"] || [k hasPrefix:@"centerLast"]) continue;
+      id v = settings[k];
+      if ([v isKindOfClass:[NSDictionary class]] || [v isKindOfClass:[NSArray class]]) continue;
+      [ud setObject:v forKey:k];
+    }
+    [ud synchronize];
+  }
+  [self refreshGroups];
+  [self ensureGroupDockEntries];
+  [self killDock];
+  [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"DockLaunchersGroupsChanged" object:nil];
+  return @{@"groups": doneGroups, @"created": @(created), @"resolved": @(resolved), @"missing": missing};
+}
+
+- (NSDictionary *)migrationSnapshotDictionary {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSMutableArray *groups = [NSMutableArray array];
+  for (NSString *name in [self installedGroupNames]) {
+    NSString *listFile = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+    NSString *content = [NSString stringWithContentsOfFile:listFile encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+    NSMutableArray *entries = [NSMutableArray array];
+    for (NSString *line in [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+      if (!line.length || [line hasPrefix:@"#"]) continue;
+      NSArray *parts = [line componentsSeparatedByString:@"|"];
+      if (parts.count < 2) continue;
+      NSString *display = [parts[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      NSString *target = [parts.lastObject stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      if (!target.length) continue;
+      NSString *appName = [target lastPathComponent];
+      if (![appName hasSuffix:@".app"]) appName = [appName stringByAppendingPathExtension:@"app"];
+      NSString *bundleId = @"";
+      NSString *rp = [self resolveMigrationTarget:target];
+      if (rp.length) {
+        NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[rp stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+        bundleId = [info[@"CFBundleIdentifier"] isKindOfClass:[NSString class]] ? info[@"CFBundleIdentifier"] : @"";
+      }
+      [entries addObject:@{@"display": display, @"appName": appName, @"path": target, @"bundleId": bundleId}];
+    }
+    [groups addObject:@{@"name": name, @"entries": entries}];
+  }
+  NSMutableDictionary *settings = [NSMutableDictionary dictionary];
+  NSDictionary *domain = [[NSUserDefaults standardUserDefaults] persistentDomainForName:[[NSBundle mainBundle] bundleIdentifier] ?: @"com.docklaunchers.center"] ?: @{};
+  for (NSString *k in domain) {
+    if (![k hasPrefix:@"center"]) continue;
+    if ([k hasPrefix:@"centerCloud"] || [k hasPrefix:@"centerLast"]) continue;
+    id v = domain[k];
+    if ([v isKindOfClass:[NSDictionary class]] || [v isKindOfClass:[NSArray class]]) continue;
+    settings[k] = v;
+  }
+  return @{@"format": @"docklaunchers-migration", @"version": @1,
+           @"exportedAt": [NSString stringWithFormat:@"%@", [NSDate date]],
+           @"machine": [self migrationMachineName],
+           @"groups": groups, @"settings": settings};
+}
+
+- (void)exportMigrationFile:(id)sender {
+  NSSavePanel *p = [NSSavePanel savePanel];
+  p.allowedFileTypes = @[@"json"];
+  NSDateFormatter *df = [[NSDateFormatter alloc] init];
+  df.dateFormat = @"yyyyMMdd-HHmm";
+  p.nameFieldStringValue = [NSString stringWithFormat:@"DockLaunchers迁移-%@", [df stringFromDate:[NSDate date]]];
+  p.message = @"导出的方案含分组、应用名和设置；文件可通过微信、邮件或 U 盘传到新电脑";
+  if ([p runModal] != NSModalResponseOK || !p.URL) return;
+  NSDictionary *snap = [self migrationSnapshotDictionary];
+  NSData *data = [NSJSONSerialization dataWithJSONObject:snap options:NSJSONWritingPrettyPrinted error:NULL];
+  if (!data || ![data writeToURL:p.URL atomically:YES]) {
+    [self showInfoAlert:@"导出失败" info:@"无法写入所选文件，请换一个位置重试。"];
+    return;
+  }
+  NSInteger total = 0;
+  for (NSDictionary *g in snap[@"groups"]) total += [(NSArray *)(g[@"entries"] ?: @[]) count];
+  [self showInfoAlert:@"导出成功" info:[NSString stringWithFormat:@"已保存「%@」。\n共 %lu 个分组、%ld 个应用条目。\n把文件传到新电脑后，点控制台设置里的「导入方案…」即可恢复。", p.URL.path.lastPathComponent, (unsigned long)((NSArray *)snap[@"groups"]).count, (long)total]];
+}
+
+- (void)importMigrationFile:(id)sender {
+  NSOpenPanel *p = [NSOpenPanel openPanel];
+  p.allowedFileTypes = @[@"json"];
+  p.message = @"选择控制台导出的 DockLaunchers 迁移方案（.json）";
+  if ([p runModal] != NSModalResponseOK || !p.URL) return;
+  NSData *data = [NSData dataWithContentsOfURL:p.URL];
+  id obj = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+  if (![obj isKindOfClass:[NSDictionary class]] || ![obj[@"groups"] isKindOfClass:[NSArray class]]) {
+    [self showInfoAlert:@"导入失败" info:@"文件格式不对，请选择控制台「导出方案…」生成的 json 文件。"];
+    return;
+  }
+  NSAlert *a = [[NSAlert alloc] init];
+  a.icon = [self characterImage:64];
+  a.messageText = @"导入分组方案？";
+  a.informativeText = [NSString stringWithFormat:@"来源：%@（%@）\n共 %lu 个分组。\n\n将创建缺失的分组 App，按应用名在本机解析路径，并覆盖同名分组的现有列表。", obj[@"machine"] ?: @"未知电脑", obj[@"exportedAt"] ?: @"", (unsigned long)((NSArray *)obj[@"groups"]).count];
+  [a addButtonWithTitle:@"导入"];
+  [a addButtonWithTitle:@"取消"];
+  if ([a runModal] != NSAlertFirstButtonReturn) return;
+  NSDictionary *report = [self applyMigrationDictionary:obj];
+  NSArray *missing = report[@"missing"] ?: @[];
+  NSMutableString *info = [NSMutableString stringWithFormat:@"已恢复 %lu 个分组、%ld 个应用条目。", (unsigned long)((NSArray *)(report[@"groups"] ?: @[])).count, (long)[report[@"resolved"] integerValue]];
+  if ([report[@"created"] integerValue] > 0) [info appendFormat:@"\n新建了 %ld 个分组 App。", (long)[report[@"created"] integerValue]];
+  if (missing.count) {
+    [info appendFormat:@"\n\n以下 %lu 个应用这台电脑还没装，已保留为注释行（装好后拖入分组即可）：", (unsigned long)missing.count];
+    for (NSString *m in [missing subarrayWithRange:NSMakeRange(0, MIN(missing.count, (NSUInteger)10))]) [info appendFormat:@"\n· %@", m];
+    if (missing.count > 10) [info appendFormat:@"\n…等 %ld 个", (long)missing.count];
+  }
+  [self showInfoAlert:@"导入完成" info:info];
+}
+
+- (void)toggleCloudMigration:(NSButton *)sender {
+  BOOL on = (sender.state == NSControlStateValueOn);
+  if (on && ![[NSFileManager defaultManager] fileExistsAtPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Mobile Documents/com~apple~CloudDocs"]]) {
+    sender.state = NSControlStateValueOff;
+    [self showToast:@"未检测到 iCloud Drive，请先在系统设置登录 Apple ID"];
+    return;
+  }
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  [ud setBool:on forKey:@"centerCloudSync"];
+  [ud setBool:on forKey:@"centerCloudAutoSync"];
+  [ud setBool:on forKey:@"centerCloudAutoRestore"];
+  [ud synchronize];
+  if (on) {
+    [self writeCurrentConfigurationToDirectory:[self cloudSyncDirectory]];
+    [ud setDouble:[[NSDate date] timeIntervalSince1970] forKey:@"centerLastCloudSync"];
+    [ud synchronize];
+    [self showToast:@"已开启：分组备份到 iCloud，新电脑登录后自动恢复"];
+  } else {
+    [self showToast:@"已关闭 iCloud 分组同步"];
+  }
+}
+
 - (void)groupsSearchChanged:(id)sender {
   NSString *q = [self.groupsSearch.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
   self.groupsFilter = q;
@@ -18918,13 +19265,40 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   processBtn.toolTip = @"查看 CPU / 内存占用并结束进程";
   [tProcess addSubview:processBtn];
 
+  // 迁移与同步（第一列底部）：iCloud 自动同步开关 + 手动导出/导入
+  NSView *tMigrate = [self cardAt:NSMakeRect(24, 48, tileW, 46)];
+  [v addSubview:tMigrate];
+  NSTextField *migTitle = [self label:@"迁移与同步" size:10.5 bold:YES color:nil];
+  migTitle.frame = NSMakeRect(10, 25, 90, 16);
+  [tMigrate addSubview:migTitle];
+  NSButton *cloudMigCheck = [NSButton checkboxWithTitle:@"iCloud 同步" target:self action:@selector(toggleCloudMigration:)];
+  cloudMigCheck.font = [NSFont systemFontOfSize:11];
+  cloudMigCheck.state = [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudSync"] ? NSControlStateValueOn : NSControlStateValueOff;
+  cloudMigCheck.frame = NSMakeRect(94, 24, 118, 18);
+  cloudMigCheck.toolTip = @"两台电脑登录同一 Apple ID 并开启 iCloud Drive 时，分组自动备份到 iCloud，换新电脑首次打开自动恢复；微信/QQ/其他邮箱账号可改用下方导出/导入文件，或在「配置云同步」里把目录指向 OneDrive、坚果云等同步文件夹";
+  [tMigrate addSubview:cloudMigCheck];
+  ColorHoverButton *migExport = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(10, 4, 96, 18)];
+  migExport.title = @"导出方案…"; migExport.hoverColor = [NSColor systemBlueColor];
+  migExport.font = [NSFont systemFontOfSize:10];
+  migExport.target = self; migExport.action = @selector(exportMigrationFile:);
+  migExport.toolTip = @"把分组方案导出为 json 文件，可经微信文件传输助手、邮件或 U 盘传到新电脑";
+  [migExport applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [tMigrate addSubview:migExport];
+  ColorHoverButton *migImport = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(114, 4, 96, 18)];
+  migImport.title = @"导入方案…"; migImport.hoverColor = [NSColor systemGreenColor];
+  migImport.font = [NSFont systemFontOfSize:10];
+  migImport.target = self; migImport.action = @selector(importMigrationFile:);
+  migImport.toolTip = @"导入之前导出的分组方案 json：自动创建分组、按应用名解析路径并钉入 Dock";
+  [migImport applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [tMigrate addSubview:migImport];
+
   // 底部操作
   NSArray *actions = @[@[@"关于", @"showAbout:", @(24), @(90), [NSColor systemGreenColor]],
                        @[@"打开分组文件夹", @"openGroupsFolder:", @(132), @(150), [NSColor systemBlueColor]],
                        @[@"管理已记住的保存目录…", @"showRememberedSaveDirs:", @(300), @(210), [NSColor systemYellowColor]],
                        @[@"退出控制台", @"quitApp:", @(528), @(110), [NSColor systemRedColor]]];
   for (NSArray *a in actions) {
-    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([a[2] doubleValue], 22, [a[3] doubleValue], 32)];
+    ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect([a[2] doubleValue], 14, [a[3] doubleValue], 32)];
     b.title = a[0]; b.hoverColor = a[4]; b.target = self; b.action = NSSelectorFromString(a[1]);
     [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [v addSubview:b];
@@ -21400,7 +21774,14 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (![fm fileExistsAtPath:[dir stringByAppendingPathComponent:@"settings.plist"]] && ![fm fileExistsAtPath:[dir stringByAppendingPathComponent:@"lists"]]) return NO;
   NSString *cloudLists = [dir stringByAppendingPathComponent:@"lists"];
   NSString *liveLists = [GroupDir() stringByAppendingPathComponent:@"lists"];
+  // 迁移补全：云端列表对应的分组 App 在本机不存在时先创建（否则 refreshGroups 扫不出来）
+  for (NSString *f in ([fm contentsOfDirectoryAtPath:cloudLists error:NULL] ?: @[])) {
+    if (![f hasSuffix:@".txt"]) continue;
+    [self ensureGroupAppForName:[f stringByDeletingPathExtension]];
+  }
   if ([fm fileExistsAtPath:cloudLists]) { [fm removeItemAtPath:liveLists error:NULL]; [fm copyItemAtPath:cloudLists toPath:liveLists error:NULL]; }
+  // 迁移补全：把指向旧电脑家目录的路径换算成本机路径，换算不了的标成注释缺失行
+  [self resolveMigrationListFiles];
   NSString *settings = [dir stringByAppendingPathComponent:@"settings.plist"];
   if ([fm fileExistsAtPath:settings]) {
     NSTask *t = [[NSTask alloc] init]; t.launchPath = @"/usr/bin/defaults"; t.arguments = @[@"import", @"com.docklaunchers.center", settings];
@@ -21422,6 +21803,9 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 }
 
 - (void)autoRestoreCloudConfigurationIfNewer {
+  // 迁移与同步总开关已显式关闭时，不再自动恢复（不影响从未用过迁移开关的老用户）
+  if ([[NSUserDefaults standardUserDefaults] objectForKey:@"centerCloudSync"] &&
+      ![[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudSync"]) return;
   if (![[NSUserDefaults standardUserDefaults] objectForKey:@"centerCloudAutoRestore"]) {
     [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"centerCloudAutoRestore"];
   }
@@ -21432,7 +21816,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   double cloudTime = [manifest[@"date"] doubleValue];
   if (!cloudTime) cloudTime = [[[NSFileManager defaultManager] attributesOfItemAtPath:manifestPath error:NULL][NSFileModificationDate] timeIntervalSince1970];
   if (![[NSUserDefaults standardUserDefaults] objectForKey:@"centerLastCloudSync"]) {
-    [[NSUserDefaults standardUserDefaults] setDouble:cloudTime forKey:@"centerLastCloudSync"];
+    // 新电脑首次运行：本地一个分组都没有、而 iCloud 里有上一台电脑的分组 → 自动迁移恢复
+    if (cloudTime > 0 && [[NSUserDefaults standardUserDefaults] boolForKey:@"centerCloudSync"] && [self installedGroupNames].count == 0) {
+      NSString *backup = [[self configBackupDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"cloud-first-%lld", (long long)[[NSDate date] timeIntervalSince1970]]];
+      [self writeCurrentConfigurationToDirectory:backup];
+      if ([self applyCloudConfigurationFromDirectory:dir]) {
+        [self showToast:@"已从 iCloud 恢复上一台电脑的分组方案"];
+      }
+    }
+    [[NSUserDefaults standardUserDefaults] setDouble:MAX(cloudTime, [[NSDate date] timeIntervalSince1970]) forKey:@"centerLastCloudSync"];
     [[NSUserDefaults standardUserDefaults] synchronize];
     return;
   }

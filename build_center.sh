@@ -6,6 +6,12 @@ xcrun clang -O2 -fobjc-arc -framework Cocoa -framework IOKit -framework QuartzCo
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp /tmp/docklaunchers_center_ui "$OUT/Contents/MacOS/DockLaunchers"
+# 通用分组启动器二进制：嵌入控制台，迁移时用它在新电脑上补建缺失的分组 App
+echo "==> 编译分组模板二进制"
+mkdir -p "$ROOT/build"
+xcrun clang -O2 -fobjc-arc -framework Cocoa -framework Security -arch arm64 -arch x86_64 -o "$ROOT/build/group_ui" "$ROOT/src/launcher.m"
+mkdir -p "$OUT/Contents/Resources/GroupTemplate"
+cp "$ROOT/build/group_ui" "$OUT/Contents/Resources/GroupTemplate/ui"
 cp "$ROOT/resources/icons/控制台.icns" "$OUT/Contents/Resources/AppIcon2.icns"
 mkdir -p "$OUT/Contents/Resources/Services"
 cp -R "$ROOT/resources/services/"*.workflow "$OUT/Contents/Resources/Services/" 2>/dev/null || true
