@@ -1976,6 +1976,10 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *dockSizeValue, *dockMagnifyValue;
 @property (strong) NSButton *dockMagnifyCheck, *dockAutohideCheck, *dockLivePreviewCheck;
 @property (strong) NSButton *dockLauncherCheck;
+@property (strong) NSButton *dockLauncherAutoCollapseCheck;
+@property (strong) ColorHoverButton *popoverDockToggleBtn, *launcherHotkeyBtn;
+@property (strong) id launcherHotkeyMonitor;
+@property EventHotKeyRef launcherHotKeyRef;
 @property (assign) BOOL coldLaunchByClick;
 @property (strong) NSPopUpButton *dockPositionPopup, *dockAutohideDelayPopup;
 @property (strong) NSTimer *dockLiveTimer;
@@ -4191,6 +4195,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   else if (hk.id == 7) { [c showWindow:nil]; [c showSection:0]; }
   else if (hk.id == 8) [c quickScreenshot:nil];
   else if (hk.id == 9) [c quickRecord:nil];
+  else if (hk.id == 10) [c toggleDockLauncherHotkey];
   else if (hk.id >= 3000) [c performAllGlobalActionID:hk.id];
   else if (hk.id >= 100) [c openGroupByHotkeyID:hk.id];
   return noErr;
@@ -4274,6 +4279,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   self.recordShortcutDisplay = [ud stringForKey:@"centerRecordKeyDisplay"];
   if (!self.recordShortcutDisplay.length) { self.recordKeyCode = kVK_ANSI_R; self.recordModifiers = controlKey | optionKey; self.recordShortcutDisplay = @"⌃⌥R"; }
   if(![self.recordShortcutDisplay isEqualToString:@"未设置"]) [self registerHotKeyForAction:8 code:self.recordKeyCode modifiers:self.recordModifiers display:self.recordShortcutDisplay];
+  [self installLauncherHotkey];
 }
 
 - (NSString *)shortcutDisplayForAction:(NSInteger)action {
@@ -7316,6 +7322,11 @@ static BOOL ValidGroupName(NSString *raw) {
   else [self showToast:@"收起失败：找不到或无法运行 DockLaunchers 启动器"];
 }
 
+// Dock 外观「启动分组后自动收回」开关（分组 App 内读取，默认开）
+- (void)dockLauncherAutoCollapseToggled:(NSButton *)s {
+  [[NSUserDefaults standardUserDefaults] setBool:(s.state == NSControlStateValueOn) forKey:@"centerDockLauncherAutoCollapse"];
+}
+
 // 启动器图标当前是否固定在 Dock（固定=用户点开过或已收起，保留现有排布）
 - (BOOL)dockLauncherWrapperPinned {
   NSString *wrap = [self existingDockLauncherWrapper];
@@ -7337,6 +7348,106 @@ static BOOL ValidGroupName(NSString *raw) {
   BOOL on = v ? CFBooleanGetValue((CFBooleanRef)v) : NO;
   if (v) CFRelease(v);
   return on;
+}
+
+// 展开/收起分组的全局快捷键（默认 ⌥⌘D，可在 Dock 外观中自定义）
+- (NSString *)launcherHotkeyDisplay {
+  NSString *d = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerLauncherHotKeyDisplay"];
+  return d.length ? d : @"⌥⌘D";
+}
+
+- (BOOL)installLauncherHotkey {
+  if (self.launcherHotKeyRef) { UnregisterEventHotKey(self.launcherHotKeyRef); self.launcherHotKeyRef = NULL; }
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  if (![ud objectForKey:@"centerLauncherHotKeyCode"]) { // 首次：默认 ⌥⌘D
+    [ud setInteger:kVK_ANSI_D forKey:@"centerLauncherHotKeyCode"];
+    [ud setInteger:(NSInteger)(optionKey | cmdKey) forKey:@"centerLauncherHotKeyModifiers"];
+    [ud setObject:@"⌥⌘D" forKey:@"centerLauncherHotKeyDisplay"];
+    [ud synchronize];
+  }
+  UInt32 code = (UInt32)[ud integerForKey:@"centerLauncherHotKeyCode"];
+  UInt32 mods = (UInt32)[ud integerForKey:@"centerLauncherHotKeyModifiers"];
+  if (!code) return NO;
+  EventHotKeyID hid = {'DLTR', 10};
+  EventHotKeyRef ref = NULL;
+  if (RegisterEventHotKey(code, mods, hid, GetApplicationEventTarget(), 0, &ref) != noErr) return NO;
+  self.launcherHotKeyRef = ref;
+  return YES;
+}
+
+- (void)toggleDockLauncherHotkey {
+  BOOL modeOn = [self dockLauncherModeOn];
+  BOOL expanded = [self dockLauncherExpandedOn];
+  NSString *arg = nil, *msg = nil;
+  if (!modeOn) { // 未开启启动器模式：快捷键=开启并收起
+    arg = @"--collapse"; msg = @"Dock 已收起为启动器图标（再按一次展开）";
+    if (self.dockLauncherCheck) self.dockLauncherCheck.state = NSControlStateValueOn;
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"centerDockLauncherMode"];
+  } else if (expanded) { arg = @"--collapse"; msg = @"Dock 已收起为启动器图标"; }
+  else { arg = @"--expand"; msg = @"分组图标已展开"; }
+  BOOL ok = [self runDockLauncherMode:arg];
+  [self showToast:ok ? msg : @"切换失败：找不到或无法运行 DockLaunchers 启动器"];
+}
+
+// 菜单栏弹窗快捷按钮：一键展开/收起，按钮文案随状态变化
+- (void)dockLauncherQuickToggle:(id)sender {
+  [self toggleDockLauncherHotkey];
+  if (self.popoverDockToggleBtn) self.popoverDockToggleBtn.title = [self dockLauncherExpandedOn] ? @"收起分组" : @"展开分组";
+}
+
+// 快捷键录制（本地监听，Dock 外观窗口为 key window 时生效）
+- (void)recordLauncherHotkey:(id)sender {
+  if (self.launcherHotkeyMonitor) { [NSEvent removeMonitor:self.launcherHotkeyMonitor]; self.launcherHotkeyMonitor = nil; }
+  self.launcherHotkeyBtn.title = @"请按组合键…";
+  __weak typeof(self) weakSelf = self;
+  self.launcherHotkeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
+    if (!weakSelf.launcherHotkeyMonitor) return e;
+    if (e.keyCode == 53) { // Esc 取消
+      [NSEvent removeMonitor:weakSelf.launcherHotkeyMonitor]; weakSelf.launcherHotkeyMonitor = nil;
+      NSButton *b = weakSelf.launcherHotkeyBtn; b.title = [NSString stringWithFormat:@"快捷键 %@", [weakSelf launcherHotkeyDisplay]];
+      return nil;
+    }
+    NSEventModifierFlags f = e.modifierFlags & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagShift);
+    if (!(f & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption))) return nil;
+    UInt32 mods = 0;
+    if (f & NSEventModifierFlagControl) mods |= controlKey;
+    if (f & NSEventModifierFlagOption) mods |= optionKey;
+    if (f & NSEventModifierFlagShift) mods |= shiftKey;
+    if (f & NSEventModifierFlagCommand) mods |= cmdKey;
+    NSString *key = e.charactersIgnoringModifiers.uppercaseString;
+    if (!key.length) key = [NSString stringWithFormat:@"Key%u", (unsigned)e.keyCode];
+    if (e.keyCode == kVK_Return) key = @"↩";
+    else if (e.keyCode == kVK_Space) key = @"Space";
+    else if (e.keyCode == kVK_Tab) key = @"⇥";
+    NSMutableString *disp = [NSMutableString string];
+    if (mods & controlKey) [disp appendString:@"⌃"];
+    if (mods & optionKey) [disp appendString:@"⌥"];
+    if (mods & shiftKey) [disp appendString:@"⇧"];
+    if (mods & cmdKey) [disp appendString:@"⌘"];
+    [disp appendString:key];
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    UInt32 oldCode = (UInt32)[ud integerForKey:@"centerLauncherHotKeyCode"];
+    UInt32 oldMods = (UInt32)[ud integerForKey:@"centerLauncherHotKeyModifiers"];
+    NSString *oldDisp = [weakSelf launcherHotkeyDisplay];
+    [NSEvent removeMonitor:weakSelf.launcherHotkeyMonitor]; weakSelf.launcherHotkeyMonitor = nil;
+    [ud setInteger:(NSInteger)e.keyCode forKey:@"centerLauncherHotKeyCode"];
+    [ud setInteger:(NSInteger)mods forKey:@"centerLauncherHotKeyModifiers"];
+    [ud setObject:disp forKey:@"centerLauncherHotKeyDisplay"];
+    [ud synchronize];
+    if (![weakSelf installLauncherHotkey]) {
+      [ud setInteger:(NSInteger)oldCode forKey:@"centerLauncherHotKeyCode"];
+      [ud setInteger:(NSInteger)oldMods forKey:@"centerLauncherHotKeyModifiers"];
+      [ud setObject:oldDisp forKey:@"centerLauncherHotKeyDisplay"];
+      [ud synchronize];
+      [weakSelf installLauncherHotkey];
+      NSButton *b = weakSelf.launcherHotkeyBtn; b.title = [NSString stringWithFormat:@"快捷键 %@", oldDisp];
+      [weakSelf showToast:@"该快捷键被占用，请换一个"];
+      return nil;
+    }
+    NSButton *b = weakSelf.launcherHotkeyBtn; b.title = [NSString stringWithFormat:@"快捷键 %@", [weakSelf launcherHotkeyDisplay]];
+    [weakSelf showToast:[NSString stringWithFormat:@"快捷键已保存：%@", [weakSelf launcherHotkeyDisplay]]];
+    return nil;
+  }];
 }
 
 - (void)ensureGroupDockEntries {
@@ -17472,9 +17583,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     lt.frame = NSMakeRect(24, 64, 200, 16); [cv addSubview:lt];
     self.dockLauncherCheck = [NSButton checkboxWithTitle:@"只显示启动器图标" target:self action:@selector(dockLauncherToggled:)];
     self.dockLauncherCheck.state = [self dockLauncherModeOn] ? NSControlStateValueOn : NSControlStateValueOff;
-    self.dockLauncherCheck.frame = NSMakeRect(24, 38, 340, 22);
+    self.dockLauncherCheck.frame = NSMakeRect(24, 38, 200, 22);
     self.dockLauncherCheck.toolTip = @"开启后 Dock 只留一个 DockLaunchers 图标，点击它展开全部分组（启动器隐藏）；分组图标的右键菜单里有「收起分组图标」。关闭则恢复全排列。\n启动器随控制台安装；换新电脑时会自动重建。";
     [cv addSubview:self.dockLauncherCheck];
+    self.dockLauncherAutoCollapseCheck = [NSButton checkboxWithTitle:@"启动分组后自动收回" target:self action:@selector(dockLauncherAutoCollapseToggled:)];
+    NSUserDefaults *dlUD = [NSUserDefaults standardUserDefaults];
+    self.dockLauncherAutoCollapseCheck.state = [dlUD objectForKey:@"centerDockLauncherAutoCollapse"] ? ([dlUD boolForKey:@"centerDockLauncherAutoCollapse"] ? NSControlStateValueOn : NSControlStateValueOff) : NSControlStateValueOn;
+    self.dockLauncherAutoCollapseCheck.frame = NSMakeRect(232, 38, 224, 22);
+    self.dockLauncherAutoCollapseCheck.toolTip = @"展开态下点某个分组图标打开分组后，Dock 自动收回成单个启动器图标。";
+    [cv addSubview:self.dockLauncherAutoCollapseCheck];
     ColorHoverButton *expBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 10, 110, 22)];
     expBtn.title = @"展开分组"; expBtn.hoverColor = [NSColor systemBlueColor];
     expBtn.target = self; expBtn.action = @selector(dockLauncherExpandPressed:);
@@ -17483,6 +17600,12 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     colBtn.title = @"收起分组"; colBtn.hoverColor = [NSColor systemBlueColor];
     colBtn.target = self; colBtn.action = @selector(dockLauncherCollapsePressed:);
     [colBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:colBtn];
+    self.launcherHotkeyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(264, 10, 192, 22)];
+    self.launcherHotkeyBtn.title = [NSString stringWithFormat:@"快捷键 %@", [self launcherHotkeyDisplay]];
+    self.launcherHotkeyBtn.hoverColor = [NSColor systemPurpleColor];
+    self.launcherHotkeyBtn.target = self; self.launcherHotkeyBtn.action = @selector(recordLauncherHotkey:);
+    self.launcherHotkeyBtn.toolTip = @"一键展开/收起分组，全局生效。点击后按下新的组合键即可修改（Esc 取消，至少含 ⌘/⌃/⌥）。";
+    [self.launcherHotkeyBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.launcherHotkeyBtn];
     [self.dockAppearanceWindow center];
   }
   [NSApp activateIgnoringOtherApps:YES];
@@ -20411,13 +20534,15 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   self.quickDetailExtra.maximumNumberOfLines = 5;
   self.quickDetailExtra.frame = NSMakeRect(24, 30, 372, 88); [detail addSubview:self.quickDetailExtra];
 
+  BOOL dlExpandedNow = [self dockLauncherExpandedOn];
   NSArray *footerDefs = @[
     @[@"退出", @"closePopover:", @"关闭菜单栏面板，不退出应用", [NSColor systemGreenColor]],
     @[@"打开控制台", @"openConsoleFromPopover:", @"打开控制台主窗口", [NSColor systemGreenColor]],
     @[@"刷新", @"refreshPopover:", @"刷新菜单栏数据", [NSColor systemGreenColor]],
-    @[@"Dock 外观", @"showDockAppearance:", @"调整 Dock 图标大小、放大、自动隐藏和位置", [NSColor systemBlueColor]]
+    @[@"Dock 外观", @"showDockAppearance:", @"调整 Dock 图标大小、放大、自动隐藏和位置", [NSColor systemBlueColor]],
+    @[dlExpandedNow ? @"收起分组" : @"展开分组", @"dockLauncherQuickToggle:", @"一键展开/收起 Dock 分组图标", [NSColor systemPurpleColor]]
   ];
-  CGFloat fw = 84, fgap = 20, fx = 12;
+  CGFloat fw = 70, fgap = 12, fx = 10;
   for (NSArray *d in footerDefs) {
     ColorHoverButton *b = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(fx, 6, fw, 28)];
     b.title = d[0]; b.hoverColor = d[3];
@@ -20425,6 +20550,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     b.toolTip = d[2];
     [b applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
     [root addSubview:b];
+    if ([d[1] isEqualToString:@"dockLauncherQuickToggle:"]) self.popoverDockToggleBtn = b;
     fx += fw + fgap;
   }
 
@@ -21050,6 +21176,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)togglePopover:(id)sender {
   if (self.popover.isShown) { [self.quickProcessTimer invalidate]; self.quickProcessTimer = nil; [self.popover performClose:nil]; return; }
   [self rebuildQuickGroups];
+  if (self.popoverDockToggleBtn) self.popoverDockToggleBtn.title = [self dockLauncherExpandedOn] ? @"收起分组" : @"展开分组";
   if (self.quickTabs.selectedSegment == 1) [self rebuildQuickSceneTab];
   else if (self.quickTabs.selectedSegment == 4) [self refreshQuickProcess:nil];
   [NSApp activateIgnoringOtherApps:YES];

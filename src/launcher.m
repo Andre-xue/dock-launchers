@@ -1342,6 +1342,16 @@ static NSString *ResolveAppPath(NSString *target) {
   @try { [t launch]; } @catch (NSException *e) {}
 }
 
+// 启动器模式展开态：点 Dock 上的分组图标打开分组后，Dock 自动收回（Dock 外观可关，默认开）
+- (void)autoCollapseIfEnabled {
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  if ([ud objectForKey:@"centerDockLauncherAutoCollapse"] && ![ud boolForKey:@"centerDockLauncherAutoCollapse"]) return;
+  if (![self launcherModeOn] || ![self launcherExpandedOn]) return;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    [self dockCollapseGroups:nil];
+  });
+}
+
 - (void)applicationWillTerminate:(NSNotification *)notification {
   [self.controller saveWindowFrame];
 }
@@ -5704,6 +5714,7 @@ int main(int argc, const char *argv[]) {
     [c.window makeKeyWindow];
     if (getenv("DOCKLAUNCHER_BENCH")) fprintf(stderr, "MAKEKEY_DONE\n");
     [NSApp activateIgnoringOtherApps:YES];
+    [delegate autoCollapseIfEnabled];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       c.window.level = NSNormalWindowLevel;
     });
