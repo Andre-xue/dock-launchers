@@ -1977,6 +1977,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSButton *dockMagnifyCheck, *dockAutohideCheck, *dockLivePreviewCheck;
 @property (strong) NSButton *dockLauncherCheck;
 @property (strong) NSButton *dockLauncherAutoCollapseCheck;
+@property (strong) NSPopUpButton *dockLauncherDelayPopup;
 @property (strong) ColorHoverButton *popoverDockToggleBtn, *launcherHotkeyBtn;
 @property (strong) id launcherHotkeyMonitor;
 @property EventHotKeyRef launcherHotKeyRef;
@@ -7325,6 +7326,13 @@ static BOOL ValidGroupName(NSString *raw) {
 // Dock 外观「启动分组后自动收回」开关（分组 App 内读取，默认开）
 - (void)dockLauncherAutoCollapseToggled:(NSButton *)s {
   [[NSUserDefaults standardUserDefaults] setBool:(s.state == NSControlStateValueOn) forKey:@"centerDockLauncherAutoCollapse"];
+}
+
+// 自动收回延迟档位（0=立即 / 0.5 / 1 / 2 / 3 秒，默认 1 秒）
+- (void)dockLauncherDelayChanged:(NSPopUpButton *)s {
+  double d = [s.selectedItem.representedObject doubleValue];
+  [[NSUserDefaults standardUserDefaults] setDouble:d forKey:@"centerDockLauncherAutoCollapseDelay"];
+  [self showToast:d == 0 ? @"已设为启动分组后立即收回" : [NSString stringWithFormat:@"已设为启动分组后 %.1f 秒收回", d]];
 }
 
 // 启动器图标当前是否固定在 Dock（固定=用户点开过或已收起，保留现有排布）
@@ -17592,20 +17600,39 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.dockLauncherAutoCollapseCheck.frame = NSMakeRect(232, 38, 224, 22);
     self.dockLauncherAutoCollapseCheck.toolTip = @"展开态下点某个分组图标打开分组后，Dock 自动收回成单个启动器图标。";
     [cv addSubview:self.dockLauncherAutoCollapseCheck];
-    ColorHoverButton *expBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 10, 110, 22)];
-    expBtn.title = @"展开分组"; expBtn.hoverColor = [NSColor systemBlueColor];
+    ColorHoverButton *expBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 10, 88, 22)];
+    expBtn.title = @"展开"; expBtn.hoverColor = [NSColor systemBlueColor];
     expBtn.target = self; expBtn.action = @selector(dockLauncherExpandPressed:);
+    expBtn.toolTip = @"展开全部分组图标（启动器隐藏）";
     [expBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:expBtn];
-    ColorHoverButton *colBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(144, 10, 110, 22)];
-    colBtn.title = @"收起分组"; colBtn.hoverColor = [NSColor systemBlueColor];
+    ColorHoverButton *colBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(118, 10, 88, 22)];
+    colBtn.title = @"收起"; colBtn.hoverColor = [NSColor systemBlueColor];
     colBtn.target = self; colBtn.action = @selector(dockLauncherCollapsePressed:);
+    colBtn.toolTip = @"收起为单个启动器图标";
     [colBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:colBtn];
-    self.launcherHotkeyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(264, 10, 192, 22)];
+    self.launcherHotkeyBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(212, 10, 112, 22)];
     self.launcherHotkeyBtn.title = [NSString stringWithFormat:@"快捷键 %@", [self launcherHotkeyDisplay]];
     self.launcherHotkeyBtn.hoverColor = [NSColor systemPurpleColor];
     self.launcherHotkeyBtn.target = self; self.launcherHotkeyBtn.action = @selector(recordLauncherHotkey:);
     self.launcherHotkeyBtn.toolTip = @"一键展开/收起分组，全局生效。点击后按下新的组合键即可修改（Esc 取消，至少含 ⌘/⌃/⌥）。";
     [self.launcherHotkeyBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.launcherHotkeyBtn];
+    self.dockLauncherDelayPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(330, 6, 126, 26) pullsDown:NO];
+    NSArray *dlDelays = @[@0, @0.5, @1.0, @2.0, @3.0];
+    for (NSNumber *d in dlDelays) {
+      NSString *t = [d doubleValue] == 0 ? @"立即收回" : [NSString stringWithFormat:@"%.1f 秒后收回", [d doubleValue]];
+      [self.dockLauncherDelayPopup addItemWithTitle:t];
+      self.dockLauncherDelayPopup.lastItem.representedObject = d;
+    }
+    {
+      double curDelay = [dlUD objectForKey:@"centerDockLauncherAutoCollapseDelay"] ? [dlUD doubleForKey:@"centerDockLauncherAutoCollapseDelay"] : 1.0;
+      NSInteger bestD = 1;
+      for (NSInteger i = 0; i < (NSInteger)dlDelays.count; i++) if (fabs([dlDelays[i] doubleValue] - curDelay) < fabs([dlDelays[bestD] doubleValue] - curDelay)) bestD = i;
+      [self.dockLauncherDelayPopup selectItemAtIndex:bestD];
+    }
+    self.dockLauncherDelayPopup.target = self;
+    self.dockLauncherDelayPopup.action = @selector(dockLauncherDelayChanged:);
+    self.dockLauncherDelayPopup.toolTip = @"开启「启动分组后自动收回」后，点开分组多久自动收回 Dock（默认 1 秒）";
+    [cv addSubview:self.dockLauncherDelayPopup];
     [self.dockAppearanceWindow center];
   }
   [NSApp activateIgnoringOtherApps:YES];
