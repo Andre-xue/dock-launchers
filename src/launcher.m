@@ -1347,9 +1347,9 @@ static NSString *ResolveAppPath(NSString *target) {
   NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
   if ([ud objectForKey:@"centerDockLauncherAutoCollapse"] && ![ud boolForKey:@"centerDockLauncherAutoCollapse"]) return;
   if (![self launcherModeOn] || ![self launcherExpandedOn]) return;
-  double delay = [ud objectForKey:@"centerDockLauncherAutoCollapseDelay"] ? [ud doubleForKey:@"centerDockLauncherAutoCollapseDelay"] : 1.0;
+  double delay = [ud objectForKey:@"centerDockLauncherAutoCollapseDelay"] ? [ud doubleForKey:@"centerDockLauncherAutoCollapseDelay"] : 10.0;
   if (delay < 0) delay = 0;
-  if (delay > 10) delay = 10;
+  if (delay > 180) delay = 180;
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     [self dockCollapseGroups:nil];
   });

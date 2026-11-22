@@ -7328,11 +7328,14 @@ static BOOL ValidGroupName(NSString *raw) {
   [[NSUserDefaults standardUserDefaults] setBool:(s.state == NSControlStateValueOn) forKey:@"centerDockLauncherAutoCollapse"];
 }
 
-// 自动收回延迟档位（0=立即 / 0.5 / 1 / 2 / 3 秒，默认 1 秒）
+// 自动收回延迟档位（10/30/50/…/180 秒，默认 10 秒）
+- (NSString *)launcherDelayLabel:(double)d {
+  return d >= 60 ? [NSString stringWithFormat:@"%.0f 分钟后收回", d / 60.0] : [NSString stringWithFormat:@"%.0f 秒后收回", d];
+}
 - (void)dockLauncherDelayChanged:(NSPopUpButton *)s {
   double d = [s.selectedItem.representedObject doubleValue];
   [[NSUserDefaults standardUserDefaults] setDouble:d forKey:@"centerDockLauncherAutoCollapseDelay"];
-  [self showToast:d == 0 ? @"已设为启动分组后立即收回" : [NSString stringWithFormat:@"已设为启动分组后 %.1f 秒收回", d]];
+  [self showToast:[NSString stringWithFormat:@"已设为启动分组后 %@，可在下拉框随时修改", [self launcherDelayLabel:d]]];
 }
 
 // 启动器图标当前是否固定在 Dock（固定=用户点开过或已收起，保留现有排布）
@@ -17617,21 +17620,20 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     self.launcherHotkeyBtn.toolTip = @"一键展开/收起分组，全局生效。点击后按下新的组合键即可修改（Esc 取消，至少含 ⌘/⌃/⌥）。";
     [self.launcherHotkeyBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:self.launcherHotkeyBtn];
     self.dockLauncherDelayPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(330, 6, 126, 26) pullsDown:NO];
-    NSArray *dlDelays = @[@0, @0.5, @1.0, @2.0, @3.0];
+    NSArray *dlDelays = @[@10, @30, @50, @70, @90, @110, @130, @150, @170, @180];
     for (NSNumber *d in dlDelays) {
-      NSString *t = [d doubleValue] == 0 ? @"立即收回" : [NSString stringWithFormat:@"%.1f 秒后收回", [d doubleValue]];
-      [self.dockLauncherDelayPopup addItemWithTitle:t];
+      [self.dockLauncherDelayPopup addItemWithTitle:[self launcherDelayLabel:[d doubleValue]]];
       self.dockLauncherDelayPopup.lastItem.representedObject = d;
     }
     {
-      double curDelay = [dlUD objectForKey:@"centerDockLauncherAutoCollapseDelay"] ? [dlUD doubleForKey:@"centerDockLauncherAutoCollapseDelay"] : 1.0;
-      NSInteger bestD = 1;
+      double curDelay = [dlUD objectForKey:@"centerDockLauncherAutoCollapseDelay"] ? [dlUD doubleForKey:@"centerDockLauncherAutoCollapseDelay"] : 10.0;
+      NSInteger bestD = 0;
       for (NSInteger i = 0; i < (NSInteger)dlDelays.count; i++) if (fabs([dlDelays[i] doubleValue] - curDelay) < fabs([dlDelays[bestD] doubleValue] - curDelay)) bestD = i;
       [self.dockLauncherDelayPopup selectItemAtIndex:bestD];
     }
     self.dockLauncherDelayPopup.target = self;
     self.dockLauncherDelayPopup.action = @selector(dockLauncherDelayChanged:);
-    self.dockLauncherDelayPopup.toolTip = @"开启「启动分组后自动收回」后，点开分组多久自动收回 Dock（默认 1 秒）";
+    self.dockLauncherDelayPopup.toolTip = @"开启「启动分组后自动收回」后，点开分组多久自动收回 Dock（默认 10 秒，最高 3 分钟）";
     [cv addSubview:self.dockLauncherDelayPopup];
     [self.dockAppearanceWindow center];
   }
