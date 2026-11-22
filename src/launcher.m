@@ -511,7 +511,7 @@ static NSString *SignatureForEvent(NSEvent *e);
 - (void)resetAllAppIcons:(id)sender;
 - (void)resetAllDefaults:(id)sender;
 - (void)resetListMode:(id)sender;
-- (void)resetSingleLayout:(id)sender;
+- (void)resetDefaultLayout:(id)sender;
 - (void)backupGroupsNow:(id)sender;
 - (void)fullBackupGroupsNow:(id)sender;
 - (BOOL)writeLocalBackup;
@@ -1344,10 +1344,22 @@ static NSString *ResolveAppPath(NSString *target) {
 
 // 启动器模式展开态：点 Dock 上的分组图标打开分组后，Dock 自动收回（Dock 外观可关，默认开）
 - (void)autoCollapseIfEnabled {
-  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-  if ([ud objectForKey:@"centerDockLauncherAutoCollapse"] && ![ud boolForKey:@"centerDockLauncherAutoCollapse"]) return;
+  // 注意：分组 App 的 standardUserDefaults 是自己的 bundle id 域，读不到控制台 com.docklaunchers.center 域——
+  // 开关与延迟必须用 CFPreferences 指定 center 域读取
+  CFPropertyListRef sw = CFPreferencesCopyAppValue(CFSTR("centerDockLauncherAutoCollapse"), CFSTR("com.docklaunchers.center"));
+  if (sw) {
+    BOOL off = !CFBooleanGetValue((CFBooleanRef)sw);
+    CFRelease(sw);
+    if (off) return;
+  }
   if (![self launcherModeOn] || ![self launcherExpandedOn]) return;
-  double delay = [ud objectForKey:@"centerDockLauncherAutoCollapseDelay"] ? [ud doubleForKey:@"centerDockLauncherAutoCollapseDelay"] : 10.0;
+  double delay = 10.0;
+  CFPropertyListRef dv = CFPreferencesCopyAppValue(CFSTR("centerDockLauncherAutoCollapseDelay"), CFSTR("com.docklaunchers.center"));
+  if (dv) {
+    double v = 0;
+    if (CFNumberGetValue((CFNumberRef)dv, kCFNumberDoubleType, &v) && v >= 0) delay = v;
+    CFRelease(dv);
+  }
   if (delay < 0) delay = 0;
   if (delay > 180) delay = 180;
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -1364,6 +1376,7 @@ static NSString *ResolveAppPath(NSString *target) {
 - (void)dockOpen:(id)sender {
   if (self.mainWindow) { if (self.mainWindow.isMiniaturized) [self.mainWindow deminiaturize:nil]; [self.mainWindow makeKeyAndOrderFront:nil]; }
   [NSApp activateIgnoringOtherApps:YES];
+  [self autoCollapseIfEnabled];
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
@@ -1380,6 +1393,8 @@ static NSString *ResolveAppPath(NSString *target) {
     [self.mainWindow makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
   }
+  // App 已在运行时再点 Dock 图标走 reopen 路径——同样触发自动收回（与首次启动一致）
+  [self autoCollapseIfEnabled];
   return YES;
 }
 @end
@@ -2635,7 +2650,12 @@ static NSString *ResolveAppPath(NSString *target) {
   gIconMode = [d boolForKey:@"iconMode"];
   {
     NSInteger savedCols = [d integerForKey:@"layoutColumns"];
-    self.userColumns = (savedCols == 3 || savedCols == 4) ? savedCols : 1;
+    if ([d objectForKey:@"layoutColumns"]) {
+      // 显式设置过列数：按设置（1/3/4，其他值按单列）
+      self.userColumns = (savedCols == 3 || savedCols == 4) ? savedCols : 1;
+    } else {
+      self.userColumns = 3; // 从未设置：默认三列
+    }
   }
   gAppIconSettings = [[[d dictionaryForKey:@"appIconSettings"] mutableCopy] mutableCopy] ?: [NSMutableDictionary dictionary];
   gOriginalNames = [[[d dictionaryForKey:@"originalAppNames"] mutableCopy] mutableCopy] ?: [NSMutableDictionary dictionary];
@@ -2804,10 +2824,10 @@ static NSString *ResolveAppPath(NSString *target) {
       @{@"title":@"图标显示", @"sel":@"setDisplayIconMode:"},
       @{@"title":@"一键恢复（列表）", @"sel":@"resetListMode:"}]},
     @{@"title":@"应用布局", @"children":@[
-      @{@"title":@"单列布局（默认）", @"sel":@"layoutSingle:"},
-      @{@"title":@"三列布局", @"sel":@"layoutThree:"},
+      @{@"title":@"单列布局", @"sel":@"layoutSingle:"},
+      @{@"title":@"三列布局（默认）", @"sel":@"layoutThree:"},
       @{@"title":@"四列布局", @"sel":@"layoutFour:"},
-      @{@"title":@"一键恢复（单列）", @"sel":@"resetSingleLayout:"}]},
+      @{@"title":@"一键恢复（三列）", @"sel":@"resetDefaultLayout:"}]},
     @{@"title":@"图标风格", @"children":@[
       @{@"title":@"图标自定义", @"children":@[@{@"title":@"图标大小 / 形状 / 重命名…", @"sel":@"showAppIconPanel:"}]},
       @{@"title":@"一键恢复默认", @"sel":@"resetAllAppIcons:"}]},
@@ -3723,19 +3743,18 @@ static NSString *ResolveAppPath(NSString *target) {
   exit(0);
 }
 
-- (void)resetSingleLayout:(id)sender {
-  // 一键恢复单列：同时恢复列表模式，确保一定是单列列表
+- (void)resetDefaultLayout:(id)sender {
+  // 一键恢复默认（三列）：恢复列表模式 + 三列布局 + 标准放大窗口
   gIconMode = NO;
-  BOOL big = (self.window.contentView.bounds.size.width >= 560);
-  if (big || self.zoomLayoutActive) {
-    NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
-    NSRect vf = screen.visibleFrame;
-    NSRect normal = NSMakeRect(vf.origin.x + (vf.size.width - 480)/2.0,
-                               vf.origin.y + (vf.size.height - 600)/2.0, 480, 600);
-    [self.window setFrame:normal display:YES animate:NO];
-  }
+  NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
+  NSRect vf = screen.visibleFrame;
+  CGFloat w = MIN(vf.size.width * 0.78, 980.0);
+  CGFloat h = MIN(vf.size.height * 0.86, 900.0);
+  NSRect frame = NSMakeRect(vf.origin.x + (vf.size.width - w)/2.0,
+                            vf.origin.y + (vf.size.height - h)/2.0, w, h);
+  [self.window setFrame:frame display:YES animate:NO];
   self.forceColumns = 0;
-  self.userColumns = 1;
+  self.userColumns = 3;
   [self saveLayoutColumns];
   [self saveTheme];
   [self reload];
@@ -3752,7 +3771,7 @@ static NSString *ResolveAppPath(NSString *target) {
   gImgPath = nil;
   gCornerRatio = 0;
   gIconMode = NO;
-  self.userColumns = 1;
+  self.userColumns = 3;
   self.forceColumns = 0;
   [gAppIconSettings removeAllObjects];
   [gOriginalNames removeAllObjects];
@@ -3773,11 +3792,13 @@ static NSString *ResolveAppPath(NSString *target) {
   [self resetCustomIcon:nil];
   [self applyTheme];
   [self reload];
-  // 窗口尺寸恢复默认 480x600 居中
+  // 窗口尺寸恢复默认（三列标准）980x900 居中
   NSScreen *screen = self.window.screen ?: [NSScreen mainScreen];
   NSRect vf = screen.visibleFrame;
-  NSRect normal = NSMakeRect(vf.origin.x + (vf.size.width - 480)/2.0,
-                             vf.origin.y + (vf.size.height - 600)/2.0, 480, 600);
+  CGFloat dw = MIN(vf.size.width * 0.78, 980.0);
+  CGFloat dh = MIN(vf.size.height * 0.86, 900.0);
+  NSRect normal = NSMakeRect(vf.origin.x + (vf.size.width - dw)/2.0,
+                             vf.origin.y + (vf.size.height - dh)/2.0, dw, dh);
   [self.window setFrame:normal display:YES];
   [self layoutContent];
   [self resetIdleTimer];
@@ -5768,7 +5789,7 @@ int main(int argc, const char *argv[]) {
         gIconMode = YES; c.userColumns = 4;
         [c reload];
         fprintf(stderr, "RS before icon=%d cols=%ld\n", gIconMode, (long)[c effectiveColumns]);
-        [c resetSingleLayout:nil];
+        [c resetDefaultLayout:nil];
         fprintf(stderr, "RS after icon=%d cols=%ld width=%.0f user=%ld force=%ld\n", gIconMode, (long)[c effectiveColumns], c.window.contentView.bounds.size.width, (long)c.userColumns, (long)c.forceColumns);
         exit(0);
       });
