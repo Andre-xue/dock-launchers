@@ -59,6 +59,35 @@ cat > "$OUT/Contents/Info.plist" <<'PL'
 </dict></plist>
 PL
 sed -i '' "s|<string>0.1</string>|<string>${PLVER}</string>|" "$OUT/Contents/Info.plist"
+# Dock 启动器：单图标模式，点击展开全部分组图标（src/dockmode.m），同时拷入控制台 Resources 供迁移补建
+echo "==> 编译 Dock 启动器"
+xcrun clang -O2 -fobjc-arc -framework Cocoa -arch arm64 -arch x86_64 -o "$ROOT/build/dockmode" "$ROOT/src/dockmode.m"
+WRAP="$ROOT/build/DockLaunchers.app"
+rm -rf "$WRAP"
+mkdir -p "$WRAP/Contents/MacOS" "$WRAP/Contents/Resources"
+cp "$ROOT/build/dockmode" "$WRAP/Contents/MacOS/dockmode"
+cp "$ROOT/resources/icons/控制台.icns" "$WRAP/Contents/Resources/AppIcon.icns"
+cat > "$WRAP/Contents/Info.plist" <<'WL'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>DockLaunchers</string>
+<key>CFBundleDisplayName</key><string>DockLaunchers</string>
+<key>CFBundleIdentifier</key><string>com.docklaunchers.launcher</string>
+<key>CFBundleExecutable</key><string>dockmode</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>VER</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>LSMinimumSystemVersion</key><string>12.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>LSUIElement</key><true/>
+</dict></plist>
+WL
+sed -i '' "s|<string>VER</string>|<string>${PLVER}</string>|" "$WRAP/Contents/Info.plist"
+codesign --force --deep --sign - "$WRAP" >/dev/null 2>&1 || true
+mkdir -p "$OUT/Contents/Resources/WrapperTemplate"
+cp -R "$WRAP" "$OUT/Contents/Resources/WrapperTemplate/DockLaunchers.app"
 SIGN_ID="DockLaunchers Local Code Signing"
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
   codesign --force --deep --sign "$SIGN_ID" "$OUT" >/dev/null 2>&1 || codesign --force --deep --sign - "$OUT" >/dev/null 2>&1

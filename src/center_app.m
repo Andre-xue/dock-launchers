@@ -1975,6 +1975,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSSlider *dockSizeSlider, *dockMagnifySlider;
 @property (strong) NSTextField *dockSizeValue, *dockMagnifyValue;
 @property (strong) NSButton *dockMagnifyCheck, *dockAutohideCheck, *dockLivePreviewCheck;
+@property (strong) NSButton *dockLauncherCheck;
 @property (strong) NSPopUpButton *dockPositionPopup, *dockAutohideDelayPopup;
 @property (strong) NSTimer *dockLiveTimer;
 @property (copy) NSString *dockLastSignature;
@@ -3723,6 +3724,11 @@ static void HideDockHoverTip(void) {
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_POPOVER")) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       [self togglePopover:nil];
+    });
+  }
+  if (getenv("DOCKLAUNCHERS_CENTER_TEST_APPEARANCE")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self showDockAppearance:nil];
     });
   }
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_APP_SEARCH")) {
@@ -7214,7 +7220,83 @@ static BOOL ValidGroupName(NSString *raw) {
   [self showToast:@"已重新写入分组 Dock 图标"];
 }
 
+// ---------------- Dock 启动器模式（单图标 ⇄ 分组图标） ----------------
+// 启动器 App（build/DockLaunchers.app，bid com.docklaunchers.launcher）：已装则返回路径
+- (NSString *)existingDockLauncherWrapper {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *p = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerWrapperPath"];
+  if (p.length && [fm fileExistsAtPath:p]) return p;
+  for (NSString *d in (@[[NSHomeDirectory() stringByAppendingPathComponent:@"Applications"], @"/Applications"])) {
+    NSString *cand = [d stringByAppendingPathComponent:@"DockLaunchers.app"];
+    NSString *bid = [NSDictionary dictionaryWithContentsOfFile:[cand stringByAppendingPathComponent:@"Contents/Info.plist"]][@"CFBundleIdentifier"] ?: @"";
+    if ([bid isEqualToString:@"com.docklaunchers.launcher"]) return cand;
+  }
+  return nil;
+}
+
+// 没装就控制台内嵌模板补建（迁移到新电脑时走这条路）
+- (NSString *)ensureDockLauncherWrapper {
+  NSString *ex = [self existingDockLauncherWrapper];
+  if (ex) return ex;
+  NSString *tpl = [[NSBundle mainBundle] pathForResource:@"DockLaunchers" ofType:@"app" inDirectory:@"WrapperTemplate"];
+  if (!tpl.length) return nil;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *dst = [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers.app"];
+  [fm removeItemAtPath:dst error:NULL];
+  if (![fm copyItemAtPath:tpl toPath:dst error:NULL]) return nil;
+  NSTask *clr = [[NSTask alloc] init]; clr.launchPath = @"/usr/bin/xattr"; clr.arguments = @[@"-cr", dst];
+  @try { [clr launch]; [clr waitUntilExit]; } @catch (NSException *e) {}
+  NSTask *sign = [[NSTask alloc] init]; sign.launchPath = @"/usr/bin/codesign";
+  sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", dst];
+  @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
+  NSTask *reg = [[NSTask alloc] init]; reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+  reg.arguments = @[@"-f", dst];
+  @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
+  return dst;
+}
+
+- (BOOL)dockLauncherModeOn {
+  id v = [[NSUserDefaults standardUserDefaults] objectForKey:@"centerDockLauncherMode"];
+  return v ? [v boolValue] : NO;
+}
+
+// 调启动器二进制执行展开/收起（二进制内部会写 Dock 偏好并硬重启 Dock）
+- (BOOL)runDockLauncherMode:(NSString *)mode {
+  NSString *wrap = [self ensureDockLauncherWrapper];
+  if (!wrap.length) return NO;
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = [wrap stringByAppendingPathComponent:@"Contents/MacOS/dockmode"];
+  t.arguments = @[mode];
+  @try { [t launch]; [t waitUntilExit]; return t.terminationStatus == 0; } @catch (NSException *e) { return NO; }
+}
+
+- (void)dockLauncherToggled:(NSButton *)s {
+  BOOL wantOn = (s.state == NSControlStateValueOn);
+  if (wantOn == [self dockLauncherModeOn]) return;
+  BOOL ok = [self runDockLauncherMode:wantOn ? @"--collapse" : @"--expand"];
+  if (!ok) {
+    s.state = wantOn ? NSControlStateValueOff : NSControlStateValueOn;
+    [self showToast:@"切换失败：找不到或无法运行 DockLaunchers 启动器"];
+    return;
+  }
+  [[NSUserDefaults standardUserDefaults] setBool:wantOn forKey:@"centerDockLauncherMode"];
+  if (!wantOn) [self ensureGroupDockEntries];
+  [self showToast:wantOn ? @"Dock 已收起为启动器图标，点击它展开全部分组" : @"分组图标已展开还原"];
+}
+
 - (void)ensureGroupDockEntries {
+  // 启动器模式：Dock 只保留一个启动器图标，不固定分组图标
+  if ([self dockLauncherModeOn]) {
+    NSString *wrap = [self ensureDockLauncherWrapper];
+    if (wrap.length) {
+      for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[]) {
+        if (![f hasSuffix:@".app"]) continue;
+        [self removeDockEntry:[GroupDir() stringByAppendingPathComponent:f]];
+      }
+      [self addDockEntry:wrap label:@"DockLaunchers"];
+      return;
+    }
+  }
   NSString *dir = GroupDir();
   NSFileManager *fm = [NSFileManager defaultManager];
   NSArray *files = [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
@@ -15549,6 +15631,17 @@ static BOOL ValidGroupName(NSString *raw) {
     if (all || [sceneGroups containsObject:group]) [self addDockEntry:path label:group];
     else [self removeDockEntry:path];
   }
+  // 启动器模式优先：场景切换后 Dock 仍只保留启动器图标
+  if ([self dockLauncherModeOn]) {
+    NSString *wrap = [self ensureDockLauncherWrapper];
+    if (wrap.length) {
+      for (NSString *group in installed) {
+        NSString *path = [[GroupDir() stringByAppendingPathComponent:group] stringByAppendingPathExtension:@"app"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) [self removeDockEntry:path];
+      }
+      [self addDockEntry:wrap label:@"DockLaunchers"];
+    }
+  }
   [self killDock];
   self.lastAppliedScene = name;
   NSString *layoutName = scene[@"layout"] ?: @"";
@@ -17287,6 +17380,16 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     [close applyColor:DLButtonBackground() textColor:[NSColor labelColor]]; [cv addSubview:close];
     NSTextField *note = [self label:@"拖动或应用时会重启 Dock，分组图标会自动恢复" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
     note.frame = NSMakeRect(24, 100, 430, 16); [cv addSubview:note];
+
+    NSTextField *lt = [self label:@"Dock 分组图标" size:11 bold:YES color:nil];
+    lt.frame = NSMakeRect(24, 64, 200, 16); [cv addSubview:lt];
+    self.dockLauncherCheck = [NSButton checkboxWithTitle:@"只显示启动器图标（点击它展开全部分组）" target:self action:@selector(dockLauncherToggled:)];
+    self.dockLauncherCheck.state = [self dockLauncherModeOn] ? NSControlStateValueOn : NSControlStateValueOff;
+    self.dockLauncherCheck.frame = NSMakeRect(24, 38, 340, 22);
+    self.dockLauncherCheck.toolTip = @"开启后 Dock 只留一个 DockLaunchers 图标，点击它展开全部分组图标；关闭还原。手机号/邮箱登录的 iCloud 同步不受影响。";
+    [cv addSubview:self.dockLauncherCheck];
+    NSTextField *lnote = [self label:@"启动器随控制台安装；换新电脑时会自动重建" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
+    lnote.frame = NSMakeRect(24, 18, 430, 16); [cv addSubview:lnote];
     [self.dockAppearanceWindow center];
   }
   [NSApp activateIgnoringOtherApps:YES];
@@ -22401,6 +22504,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSString *path = [[GroupDir() stringByAppendingPathComponent:value] stringByAppendingPathExtension:@"app"];
     if (![[NSFileManager defaultManager] fileExistsAtPath:path]) { [self showToast:@"没有找到该分组"]; return; }
     if ([action isEqualToString:@"show_group"]) {
+      if ([self dockLauncherModeOn]) { [self showToast:@"启动器模式开启中，Dock 只显示启动器图标"]; return; }
       [self addDockEntry:path label:value];
       [self reloadDockPreferences];
       [self showToast:[NSString stringWithFormat:@"已显示分组：%@", value]];
