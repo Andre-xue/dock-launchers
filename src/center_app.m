@@ -339,6 +339,18 @@ static NSString *GroupDir(void) { return [NSHomeDirectory() stringByAppendingPat
 static NSString *LauncherWrapperDir(void) { return [GroupDir() stringByAppendingPathComponent:@".launcher"]; }
 static NSString *LauncherWrapperPath(void) { return [LauncherWrapperDir() stringByAppendingPathComponent:@"DockLaunchers.app"]; }
 
+// 分组 App / 启动器只从 Dock 启动，不留在 LaunchServices 里，否则 macOS 26 的「应用程序」窗口会把它们列出来。
+// lsregister -u 只注销记录，不影响 Dock 图标的路径启动。
+static void UnregisterAppPath(NSString *path) {
+  if (!path.length) return;
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+  t.arguments = @[@"-u", path];
+  t.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+  t.standardError = [NSFileHandle fileHandleWithNullDevice];
+  @try { [t launch]; } @catch (NSException *e) {}
+}
+
 static NSString *ResolveAppPath(NSString *target) {
   if (!target.length) return nil;
   NSFileManager *fm = [NSFileManager defaultManager];
@@ -3415,6 +3427,15 @@ static void HideDockHoverTip(void) {
 
 @implementation Controller
 
+- (void)unregisterHiddenAppsFromLaunchServices {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSArray *items = [fm contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[];
+  for (NSString *f in items) {
+    if ([f hasSuffix:@".app"]) UnregisterAppPath([GroupDir() stringByAppendingPathComponent:f]);
+  }
+  if ([fm fileExistsAtPath:LauncherWrapperPath()]) UnregisterAppPath(LauncherWrapperPath());
+}
+
 - (NSImage *)characterImage:(CGFloat)size {
   NSString *p = [[NSBundle mainBundle] pathForResource:@"AppIcon2" ofType:@"icns"];
   NSImage *img = p ? [[NSImage alloc] initWithContentsOfFile:p] : nil;
@@ -3592,6 +3613,12 @@ static void HideDockHoverTip(void) {
     [self scheduleAppWatchScanAfter:5.0];
   }
   [self migrateLegacyPathsIfNeeded];
+  [self unregisterHiddenAppsFromLaunchServices];
+  // Dock/Apps 会周期性把 Dock 里的分组 App 重新登记进 LaunchServices；
+  // 维持一个低频清理，保证「应用程序」窗口里不长期出现这些图标。
+  [NSTimer scheduledTimerWithTimeInterval:20.0 repeats:YES block:^(NSTimer *timer) {
+    [self unregisterHiddenAppsFromLaunchServices];
+  }];
   [self startGroupBadgeTimer];
   [self installShelfServiceWorkflowIfNeeded];
   [self startShelfInboxTimer];
@@ -5267,7 +5294,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
     @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
     NSTask *reg = [[NSTask alloc] init];
     reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-    reg.arguments = @[@"-f", installed];
+    reg.arguments = @[@"-u", installed];
     @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
     // 用当前分组的可执行文件升级恢复的旧分组，保证新逻辑生效
     for (NSString *tf in [fm contentsOfDirectoryAtPath:GroupDir() error:NULL]) {
@@ -5457,7 +5484,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
     icons++;
     NSTask *ls = [[NSTask alloc] init];
     ls.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-    ls.arguments = @[@"-f", p];
+    ls.arguments = @[@"-u", p];
     @try { [ls launch]; } @catch (NSException *e) {}
   }
   // 3) 清理分组应用缓存与保存状态
@@ -6426,7 +6453,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   }
   NSTask *reg = [[NSTask alloc] init];
   reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-  reg.arguments = @[@"-f", dst];
+  reg.arguments = @[@"-u", dst];
   @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
   [self applySafeFileIconForApp:dst];
   return dst;
@@ -6932,7 +6959,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
   NSTask *reg = [[NSTask alloc] init];
   reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-  reg.arguments = @[@"-f", newApp];
+  reg.arguments = @[@"-u", newApp];
   @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
   return YES;
 }
@@ -7097,7 +7124,7 @@ static BOOL ValidGroupName(NSString *raw) {
   [self applySafeFileIconForApp:dst];
   NSTask *reg = [[NSTask alloc] init];
   reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-  reg.arguments = @[@"-f", dst];
+  reg.arguments = @[@"-u", dst];
   @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
   [self addDockEntry:dst label:name];
   [self ensureGroupDockEntries];
@@ -7204,7 +7231,7 @@ static BOOL ValidGroupName(NSString *raw) {
     [self applySafeFileIconForApp:targetApp];
     NSTask *reg = [[NSTask alloc] init];
     reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-    reg.arguments = @[@"-f", targetApp];
+    reg.arguments = @[@"-u", targetApp];
     @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
   }
   [self removeDockEntry:targetApp];
@@ -7389,7 +7416,7 @@ static BOOL ValidGroupName(NSString *raw) {
   sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", dst];
   @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
   NSTask *reg = [[NSTask alloc] init]; reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-  reg.arguments = @[@"-f", dst];
+  reg.arguments = @[@"-u", dst];
   @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
   return dst;
 }
@@ -7646,7 +7673,7 @@ static BOOL ValidGroupName(NSString *raw) {
     @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
     NSTask *reg = [[NSTask alloc] init];
     reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-    reg.arguments = @[@"-f", app];
+    reg.arguments = @[@"-u", app];
     @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
     changed = YES;
   }

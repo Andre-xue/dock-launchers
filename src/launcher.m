@@ -3,6 +3,19 @@
 #import <mach/mach.h>
 #import <sys/xattr.h>
 
+// 分组 App 只需从 Dock 图标启动；启动后把自己从 LaunchServices 注销，
+// 避免 macOS 26 的「应用程序」窗口列出分组 App。
+static void UnregisterSelfFromLaunchServices(void) {
+  NSString *bundle = [[NSBundle mainBundle] bundlePath];
+  if (!bundle.length) return;
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+  t.arguments = @[@"-u", bundle];
+  t.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+  t.standardError = [NSFileHandle fileHandleWithNullDevice];
+  @try { [t launch]; } @catch (NSException *e) {}
+}
+
 static NSString *gGroup = @"";
 static NSString *gListKey = @"";
 static NSString *ResolveAppPath(NSString *target);
@@ -5673,6 +5686,9 @@ int main(int argc, const char *argv[]) {
     NSTimeInterval t0 = [NSDate timeIntervalSinceReferenceDate];
     if (getenv("DOCKLAUNCHER_BENCH")) fprintf(stderr, "PREBUILD_MS=%.0f\n", (t0 - t_start)*1000.0);
     [c buildWindow];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      UnregisterSelfFromLaunchServices();
+    });
     if (getenv("DOCKLAUNCHER_BENCH")) {
       fprintf(stderr, "BUILD_MS=%.1f\n", ([NSDate timeIntervalSinceReferenceDate] - t0)*1000.0);
     }

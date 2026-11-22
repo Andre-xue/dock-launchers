@@ -8,6 +8,17 @@
 
 static NSString *GroupDir(void) { return [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers.noindex"]; }
 
+// 启动器只在 Dock 里，dockmode 跑完就退出；把自己的 LS 记录注销，避免出现在「应用程序」窗口。
+static void UnregisterPathFromLaunchServices(NSString *path) {
+  if (!path.length) return;
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+  t.arguments = @[@"-u", path];
+  t.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+  t.standardError = [NSFileHandle fileHandleWithNullDevice];
+  @try { [t launch]; } @catch (NSException *e) {}
+}
+
 static NSString *DockURLForPath(NSString *path) {
   NSString *enc = [[path stringByAppendingString:@"/"] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
   return [NSString stringWithFormat:@"file://%@", enc];
@@ -102,6 +113,7 @@ int main(int argc, char **argv) {
   @autoreleasepool {
     NSString *mode = argc > 1 ? [NSString stringWithUTF8String:argv[1]] : @"--click";
     NSString *selfPath = [[NSBundle mainBundle] bundlePath] ?: @"";
+    UnregisterPathFromLaunchServices(selfPath);
     NSString *label = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleDisplayName"] ?: @"DockLaunchers";
     NSString *bid = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleIdentifier"] ?: @"com.docklaunchers.launcher";
     NSMutableArray *apps = DockApps();
@@ -122,6 +134,9 @@ int main(int argc, char **argv) {
       SetExpanded(YES);
     }
     SaveDockApps(apps);
+    // Dock 重启后会重新登记 wrapper；等 Dock 起来再注销，避免「应用程序」窗口出现启动器图标
+    sleep(3);
+    UnregisterPathFromLaunchServices(selfPath);
     return 0;
   }
 }
