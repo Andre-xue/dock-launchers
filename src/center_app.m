@@ -6626,10 +6626,52 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   [ud setBool:on forKey:@"centerCloudAutoRestore"];
   [ud synchronize];
   if (on) {
-    [self writeCurrentConfigurationToDirectory:[self cloudSyncDirectory]];
-    [ud setDouble:[[NSDate date] timeIntervalSince1970] forKey:@"centerLastCloudSync"];
-    [ud synchronize];
-    [self showToast:@"已开启：分组备份到 iCloud，新电脑登录后自动恢复"];
+    // 开启时先看云端是否有更新的分组方案：本地为空而云端有数据 → 询问恢复，避免空数据覆盖云端
+    NSString *cdir = [self cloudSyncDirectory];
+    NSString *mf = [cdir stringByAppendingPathComponent:@"manifest.plist"];
+    NSDictionary *mfInfo = [[NSFileManager defaultManager] attributesOfItemAtPath:mf error:nil];
+    BOOL cloudHas = [mfInfo isKindOfClass:NSDictionary.class] && [mfInfo fileSize] > 0 && [[NSFileManager defaultManager] fileExistsAtPath:[cdir stringByAppendingPathComponent:@"lists"]];
+    NSArray *localGroups = [self installedGroupNames];
+    if (cloudHas && localGroups.count == 0) {
+      NSString *host = @"";
+      NSDictionary *md = [NSDictionary dictionaryWithContentsOfFile:mf];
+      if (md[@"host"]) host = [(NSString *)md[@"host"] stringByReplacingOccurrencesOfString:@".local" withString:@""];
+      NSAlert *a = [[NSAlert alloc] init];
+      a.messageText = @"检测到 iCloud 上有分组方案";
+      if (host.length) a.informativeText = [NSString stringWithFormat:@"iCloud 上存有来自「%@」的分组方案。恢复到本机，还是用本机（当前为空）覆盖云端？", host];
+      else a.informativeText = @"iCloud 上存有分组方案。恢复到本机，还是用本机（当前为空）覆盖云端？";
+      [a addButtonWithTitle:@"恢复到本机"];
+      [a addButtonWithTitle:@"覆盖云端"];
+      [a addButtonWithTitle:@"取消"];
+      a.alertStyle = NSAlertStyleInformational;
+      NSInteger r = [a runModal];
+      if (r == NSAlertSecondButtonReturn) {
+        [self writeCurrentConfigurationToDirectory:cdir];
+        [ud setDouble:[[NSDate date] timeIntervalSince1970] forKey:@"centerLastCloudSync"];
+        [ud synchronize];
+        [self showToast:@"已开启：本机（空）配置已覆盖 iCloud"];
+      } else if (r == NSAlertThirdButtonReturn) {
+        sender.state = NSControlStateValueOff;
+        [ud setBool:NO forKey:@"centerCloudSync"];
+        [ud setBool:NO forKey:@"centerCloudAutoSync"];
+        [ud setBool:NO forKey:@"centerCloudAutoRestore"];
+        [ud synchronize];
+        [self showToast:@"已取消，云端数据保持不变"];
+      } else {
+        [self applyCloudConfigurationFromDirectory:cdir];
+        [ud setBool:YES forKey:@"centerCloudSync"];
+        [ud setBool:YES forKey:@"centerCloudAutoSync"];
+        [ud setBool:YES forKey:@"centerCloudAutoRestore"];
+        [ud setDouble:[[NSDate date] timeIntervalSince1970] forKey:@"centerLastCloudSync"];
+        [ud synchronize];
+        [self showToast:[NSString stringWithFormat:@"已从 iCloud 恢复分组方案（%@）", host.length ? host : @"iCloud"]];
+      }
+    } else {
+      [self writeCurrentConfigurationToDirectory:cdir];
+      [ud setDouble:[[NSDate date] timeIntervalSince1970] forKey:@"centerLastCloudSync"];
+      [ud synchronize];
+      [self showToast:@"已开启：分组备份到 iCloud，新电脑登录后自动恢复"];
+    }
   } else {
     [self showToast:@"已关闭 iCloud 分组同步"];
   }
