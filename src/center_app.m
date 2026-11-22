@@ -1976,6 +1976,7 @@ typedef NS_ENUM(NSInteger, DLRecordScene) { DLRecordSceneFull = 0, DLRecordScene
 @property (strong) NSTextField *dockSizeValue, *dockMagnifyValue;
 @property (strong) NSButton *dockMagnifyCheck, *dockAutohideCheck, *dockLivePreviewCheck;
 @property (strong) NSButton *dockLauncherCheck;
+@property (assign) BOOL coldLaunchByClick;
 @property (strong) NSPopUpButton *dockPositionPopup, *dockAutohideDelayPopup;
 @property (strong) NSTimer *dockLiveTimer;
 @property (copy) NSString *dockLastSignature;
@@ -3502,9 +3503,19 @@ static void HideDockHoverTip(void) {
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)note {
+  // 双击图标冷启动（Finder/Launchpad/Spotlight 会发 oapp 事件）→ 打开主窗口；开机自启不发该事件，保持静默
+  [[NSAppleEventManager sharedAppleEventManager] setEventHandler:self
+                                                     andSelector:@selector(coldLaunchOpenAppEvent:replyEvent:)
+                                                   forEventClass:kCoreEventClass
+                                                      andEventID:kAEOpenApplication];
   if (!getenv("DOCKLAUNCHERS_CENTER_SELFTEST")) {
     [NSApp setActivationPolicy:[self silentStartupEnabled] ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular];
   }
+}
+
+// oapp AppleEvent：本次冷启动来自用户点击图标
+- (void)coldLaunchOpenAppEvent:(NSAppleEventDescriptor *)event replyEvent:(NSAppleEventDescriptor *)reply {
+  self.coldLaunchByClick = YES;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
@@ -3605,6 +3616,15 @@ static void HideDockHoverTip(void) {
     [self ensureGroupDockEntries];
     [self repairGroupDockIconsIfNeeded];
     [self killDock];
+  }
+  // 双击图标冷启动（oapp 事件到达即置位）：静默流程结束后打开主窗口
+  if (!getenv("DOCKLAUNCHERS_CENTER_SELFTEST")) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      if (self.coldLaunchByClick) {
+        [NSApp activateIgnoringOtherApps:YES];
+        [self showWindow:nil];
+      }
+    });
   }
   [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
   if (getenv("DOCKLAUNCHERS_CENTER_TEST_DELETE_MULTI")) {
@@ -7281,14 +7301,30 @@ static BOOL ValidGroupName(NSString *raw) {
   }
   [[NSUserDefaults standardUserDefaults] setBool:wantOn forKey:@"centerDockLauncherMode"];
   if (!wantOn) [self ensureGroupDockEntries];
-  [self showToast:wantOn ? @"Dock 已收起为启动器图标，点击它展开全部分组" : @"分组图标已展开还原"];
+  [self showToast:wantOn ? @"Dock 已收起为启动器图标，点击它展开/收起分组" : @"分组图标已展开还原"];
+}
+
+// 启动器图标当前是否固定在 Dock（固定=用户点开过或已收起，保留现有排布）
+- (BOOL)dockLauncherWrapperPinned {
+  NSString *wrap = [self existingDockLauncherWrapper];
+  if (!wrap.length) return NO;
+  NSString *std = [wrap stringByStandardizingPath];
+  CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+  NSArray *apps = raw ? CFBridgingRelease(raw) : @[];
+  for (NSDictionary *item in apps) {
+    NSString *u = nil;
+    @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
+    if (u && [[DockEntryPath(u) stringByStandardizingPath] isEqualToString:std]) return YES;
+  }
+  return NO;
 }
 
 - (void)ensureGroupDockEntries {
-  // 启动器模式：Dock 只保留一个启动器图标，不固定分组图标
+  // 启动器模式：Dock 只保留一个启动器图标，不固定分组图标；用户点开过（启动器+分组并存）则尊重现状
   if ([self dockLauncherModeOn]) {
     NSString *wrap = [self ensureDockLauncherWrapper];
     if (wrap.length) {
+      if ([self dockLauncherWrapperPinned]) return;
       for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[]) {
         if (![f hasSuffix:@".app"]) continue;
         [self removeDockEntry:[GroupDir() stringByAppendingPathComponent:f]];
@@ -15631,8 +15667,8 @@ static BOOL ValidGroupName(NSString *raw) {
     if (all || [sceneGroups containsObject:group]) [self addDockEntry:path label:group];
     else [self removeDockEntry:path];
   }
-  // 启动器模式优先：场景切换后 Dock 仍只保留启动器图标
-  if ([self dockLauncherModeOn]) {
+  // 启动器模式优先：场景切换后若处于收起态，Dock 仍只保留启动器图标（用户已点开则不动）
+  if ([self dockLauncherModeOn] && ![self dockLauncherWrapperPinned]) {
     NSString *wrap = [self ensureDockLauncherWrapper];
     if (wrap.length) {
       for (NSString *group in installed) {
@@ -17383,10 +17419,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
     NSTextField *lt = [self label:@"Dock 分组图标" size:11 bold:YES color:nil];
     lt.frame = NSMakeRect(24, 64, 200, 16); [cv addSubview:lt];
-    self.dockLauncherCheck = [NSButton checkboxWithTitle:@"只显示启动器图标（点击它展开全部分组）" target:self action:@selector(dockLauncherToggled:)];
+    self.dockLauncherCheck = [NSButton checkboxWithTitle:@"只显示启动器图标（点击它展开/收起分组）" target:self action:@selector(dockLauncherToggled:)];
     self.dockLauncherCheck.state = [self dockLauncherModeOn] ? NSControlStateValueOn : NSControlStateValueOff;
     self.dockLauncherCheck.frame = NSMakeRect(24, 38, 340, 22);
-    self.dockLauncherCheck.toolTip = @"开启后 Dock 只留一个 DockLaunchers 图标，点击它展开全部分组图标；关闭还原。手机号/邮箱登录的 iCloud 同步不受影响。";
+    self.dockLauncherCheck.toolTip = @"开启后 Dock 只留一个 DockLaunchers 图标；点击它展开全部分组，再点一次收起。关闭则恢复全排列。";
     [cv addSubview:self.dockLauncherCheck];
     NSTextField *lnote = [self label:@"启动器随控制台安装；换新电脑时会自动重建" size:9.5 bold:NO color:[NSColor tertiaryLabelColor]];
     lnote.frame = NSMakeRect(24, 18, 430, 16); [cv addSubview:lnote];
