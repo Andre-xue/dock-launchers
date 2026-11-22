@@ -1,17 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-OUT="$ROOT/build/DockLaunchers控制台.app"
+OUT="$ROOT/build.noindex/DockLaunchers控制台.app"
 xcrun clang -O2 -fobjc-arc -framework Cocoa -framework IOKit -framework QuartzCore -framework Quartz -framework CoreServices -framework QuickLookThumbnailing -framework Photos -framework Vision -framework PDFKit -framework NaturalLanguage -framework Carbon -framework LocalAuthentication -framework Security -framework Speech -framework AVFoundation -framework CoreMedia -framework AudioToolbox -framework ScreenCaptureKit -framework WebKit -arch arm64 -arch x86_64 -o /tmp/docklaunchers_center_ui "$ROOT/src/center_app.m"
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp /tmp/docklaunchers_center_ui "$OUT/Contents/MacOS/DockLaunchers"
 # 通用分组启动器二进制：嵌入控制台，迁移时用它在新电脑上补建缺失的分组 App
 echo "==> 编译分组模板二进制"
-mkdir -p "$ROOT/build"
-xcrun clang -O2 -fobjc-arc -framework Cocoa -framework Security -arch arm64 -arch x86_64 -o "$ROOT/build/group_ui" "$ROOT/src/launcher.m"
+mkdir -p "$ROOT/build.noindex"
+xcrun clang -O2 -fobjc-arc -framework Cocoa -framework Security -arch arm64 -arch x86_64 -o "$ROOT/build.noindex/group_ui" "$ROOT/src/launcher.m"
 mkdir -p "$OUT/Contents/Resources/GroupTemplate"
-cp "$ROOT/build/group_ui" "$OUT/Contents/Resources/GroupTemplate/ui"
+cp "$ROOT/build.noindex/group_ui" "$OUT/Contents/Resources/GroupTemplate/ui"
 cp "$ROOT/resources/icons/控制台.icns" "$OUT/Contents/Resources/AppIcon2.icns"
 mkdir -p "$OUT/Contents/Resources/Services"
 cp -R "$ROOT/resources/services/"*.workflow "$OUT/Contents/Resources/Services/" 2>/dev/null || true
@@ -61,11 +61,11 @@ PL
 sed -i '' "s|<string>0.1</string>|<string>${PLVER}</string>|" "$OUT/Contents/Info.plist"
 # Dock 启动器：单图标模式，点击展开全部分组图标（src/dockmode.m），同时拷入控制台 Resources 供迁移补建
 echo "==> 编译 Dock 启动器"
-xcrun clang -O2 -fobjc-arc -framework Cocoa -arch arm64 -arch x86_64 -o "$ROOT/build/dockmode" "$ROOT/src/dockmode.m"
-WRAP="$ROOT/build/DockLaunchers.app"
+xcrun clang -O2 -fobjc-arc -framework Cocoa -arch arm64 -arch x86_64 -o "$ROOT/build.noindex/dockmode" "$ROOT/src/dockmode.m"
+WRAP="$ROOT/build.noindex/DockLaunchers.app"
 rm -rf "$WRAP"
 mkdir -p "$WRAP/Contents/MacOS" "$WRAP/Contents/Resources"
-cp "$ROOT/build/dockmode" "$WRAP/Contents/MacOS/dockmode"
+cp "$ROOT/build.noindex/dockmode" "$WRAP/Contents/MacOS/dockmode"
 cp "$ROOT/resources/icons/控制台.icns" "$WRAP/Contents/Resources/AppIcon.icns"
 cat > "$WRAP/Contents/Info.plist" <<'WL'
 <?xml version="1.0" encoding="UTF-8"?>

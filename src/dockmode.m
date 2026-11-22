@@ -6,7 +6,7 @@
 //   状态写入 com.docklaunchers.center 的 centerDockLauncherExpanded，控制台据此尊重当前排布
 #import <Foundation/Foundation.h>
 
-static NSString *GroupDir(void) { return [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers"]; }
+static NSString *GroupDir(void) { return [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers.noindex"]; }
 
 static NSString *DockURLForPath(NSString *path) {
   NSString *enc = [[path stringByAppendingString:@"/"] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
@@ -44,7 +44,7 @@ static NSArray *GroupAppPaths(void) {
     NSString *p = [GroupDir() stringByAppendingPathComponent:f];
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
     NSString *bid = info[@"CFBundleIdentifier"] ?: @"";
-    if (![bid hasPrefix:@"com.docklaunchers."] || [bid isEqualToString:@"com.docklaunchers.center"]) continue;
+    if (![bid hasPrefix:@"com.docklaunchers."] || [bid isEqualToString:@"com.docklaunchers.center"] || [bid isEqualToString:@"com.docklaunchers.launcher"]) continue;
     [out addObject:p];
   }
   return [out sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) { return [a compare:b]; }];

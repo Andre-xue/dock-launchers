@@ -1,10 +1,10 @@
 #!/bin/bash
-# 安装到 ~/Applications/DockLaunchers，加入程序坞，并建立本机备份与一键恢复脚本
+# 安装到 ~/Applications/DockLaunchers.noindex，加入程序坞，并建立本机备份与一键恢复脚本
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-SRC="$ROOT/build/DockLaunchers"
+SRC="$ROOT/build/DockLaunchers.noindex"
 [ -d "$SRC" ] || { echo "未找到构建产物，先执行 build.sh"; exit 1; }
-DEST="$HOME/Applications/DockLaunchers"
+DEST="$HOME/Applications/DockLaunchers.noindex"
 BACKUP="$HOME/Library/Application Support/DockLaunchers/backup/DockLaunchers"
 SIGN_ID="DockLaunchers Local Code Signing"
 sign_app() {
@@ -58,7 +58,7 @@ cat > "$RECOVER" <<'EOS'
 #!/bin/bash
 set -u
 SRC="$HOME/Library/Application Support/DockLaunchers/backup/DockLaunchers"
-DST="$HOME/Applications/DockLaunchers"
+DST="$HOME/Applications/DockLaunchers.noindex"
 if [ ! -d "$SRC" ]; then
   echo "找不到本机备份：$SRC"
   echo "（备份可能也被删除；如有 GitHub 网络可重新下载安装包）"
@@ -110,7 +110,7 @@ PL
 cat > "$RECOVER_APP/Contents/MacOS/run" <<'EOR'
 #!/bin/bash
 SRC="$HOME/Library/Application Support/DockLaunchers/backup/DockLaunchers"
-DST="$HOME/Applications/DockLaunchers"
+DST="$HOME/Applications/DockLaunchers.noindex"
 if [ ! -d "$SRC" ]; then
   osascript -e 'display dialog "找不到本机备份。如有网络可从 GitHub 重新下载安装包。" with title "恢复Dock分组" buttons {"好"} default button 1'
   exit 1
@@ -138,11 +138,11 @@ chmod +x "$RECOVER_APP/Contents/MacOS/run"
 sign_app "$RECOVER_APP"
 
 # 安装菜单栏控制台（若已构建）
-if [ -d "$ROOT/build/DockLaunchers控制台.app" ]; then
+if [ -d "$ROOT/build.noindex/DockLaunchers控制台.app" ]; then
   pkill -f "$HOME/Applications/DockLaunchers控制台.app/Contents/MacOS/DockLaunchers" 2>/dev/null || true
   sleep 1
   rm -rf "$HOME/Applications/DockLaunchers控制台.app"
-  cp -R "$ROOT/build/DockLaunchers控制台.app" "$HOME/Applications/"
+  cp -R "$ROOT/build.noindex/DockLaunchers控制台.app" "$HOME/Applications/"
   sign_app "$HOME/Applications/DockLaunchers控制台.app"
   # 开机自动启动控制台（写入 LaunchAgent）
   AGENT="$HOME/Library/LaunchAgents/com.docklaunchers.center.plist"

@@ -1,8 +1,8 @@
 #!/bin/bash
-# 从源码构建全部 7 个分组 App，输出到 build/DockLaunchers
+# 从源码构建全部 7 个分组 App，输出到 build/DockLaunchers.noindex
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-OUT="$ROOT/build/DockLaunchers"
+OUT="$ROOT/build/DockLaunchers.noindex"
 UI="$ROOT/build/ui"
 
 echo "==> 编译通用二进制（arm64 + x86_64）"

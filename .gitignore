@@ -7,3 +7,4 @@ docs/*.png.tmp
 *.dmg
 resources/icons/控制台-backup.icns
 resources/icons/AppIcon2.icns
+build.noindex/

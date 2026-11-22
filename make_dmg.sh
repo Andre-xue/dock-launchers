@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-APP="$ROOT/build/DockLaunchers控制台.app"
+APP="$ROOT/build.noindex/DockLaunchers控制台.app"
 [ -d "$APP" ] || { echo "先执行 ./build_center.sh"; exit 1; }
 VER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo "1.0")
 STAGE="/tmp/dmg-stage-docklaunchers"

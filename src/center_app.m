@@ -334,7 +334,10 @@ static double gPrevCPUBusy = 0, gPrevCPUTotal = 0;
 static unsigned long long gPrevNetIn = 0, gPrevNetOut = 0;
 static double gLastNetTime = 0;
 
-static NSString *GroupDir(void) { return [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers"]; }
+static NSString *GroupDir(void) { return [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers.noindex"]; }
+
+static NSString *LauncherWrapperDir(void) { return [GroupDir() stringByAppendingPathComponent:@".launcher"]; }
+static NSString *LauncherWrapperPath(void) { return [LauncherWrapperDir() stringByAppendingPathComponent:@"DockLaunchers.app"]; }
 
 static NSString *ResolveAppPath(NSString *target) {
   if (!target.length) return nil;
@@ -3588,8 +3591,7 @@ static void HideDockHoverTip(void) {
     [self refreshAppWatchActivation];
     [self scheduleAppWatchScanAfter:5.0];
   }
-  [self installAllGlobalHotkeys];
-  [self applyThemeFromDefaults];
+  [self migrateLegacyPathsIfNeeded];
   [self startGroupBadgeTimer];
   [self installShelfServiceWorkflowIfNeeded];
   [self startShelfInboxTimer];
@@ -7289,13 +7291,61 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 // ---------------- Dock 启动器模式（单图标 ⇄ 分组图标） ----------------
+// 旧版分组目录/wrapper 不带 .noindex（会被 macOS 26「应用程序」窗口列出）——启动时搬移到 .noindex 位置
+- (void)migrateLegacyPathsIfNeeded {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *legacyDir = [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers"];
+  NSString *newDir = GroupDir();
+  BOOL changed = NO;
+  BOOL legacyIsDir = NO;
+  if ([fm fileExistsAtPath:legacyDir isDirectory:&legacyIsDir] && legacyIsDir) {
+    BOOL newIsDir = NO;
+    if ([fm fileExistsAtPath:newDir isDirectory:&newIsDir] && newIsDir) {
+      for (NSString *item in [fm contentsOfDirectoryAtPath:legacyDir error:NULL]) {
+        NSString *from = [legacyDir stringByAppendingPathComponent:item];
+        NSString *to = [newDir stringByAppendingPathComponent:item];
+        if (![fm fileExistsAtPath:to]) [fm moveItemAtPath:from toPath:to error:NULL];
+      }
+      [fm removeItemAtPath:legacyDir error:NULL];
+    } else {
+      [fm moveItemAtPath:legacyDir toPath:newDir error:NULL];
+    }
+    changed = YES;
+  }
+  // 启动器 App 不能留在分组目录根下（否则会被当成一个分组，Dock 多出第 7 个图标）
+  NSString *dstWrap = LauncherWrapperPath();
+  [fm createDirectoryAtPath:LauncherWrapperDir() withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *rootWrap = [newDir stringByAppendingPathComponent:@"DockLaunchers.app"];
+  if ([fm fileExistsAtPath:rootWrap]) {
+    if (![fm fileExistsAtPath:dstWrap]) [fm moveItemAtPath:rootWrap toPath:dstWrap error:NULL];
+    else [fm removeItemAtPath:rootWrap error:NULL];
+    changed = YES;
+  }
+  NSString *legacyWrap = [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers.app"];
+  if ([fm fileExistsAtPath:legacyWrap]) {
+    if (![fm fileExistsAtPath:dstWrap]) [fm moveItemAtPath:legacyWrap toPath:dstWrap error:NULL];
+    else [fm removeItemAtPath:legacyWrap error:NULL];
+    changed = YES;
+  }
+  if (changed) {
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"centerWrapperPath"];
+    [self pruneStaleDockEntries];
+    [self killDock];
+  }
+}
+
 // 启动器 App（build/DockLaunchers.app，bid com.docklaunchers.launcher）：已装则返回路径
 - (NSString *)existingDockLauncherWrapper {
   NSFileManager *fm = [NSFileManager defaultManager];
   NSString *p = [[NSUserDefaults standardUserDefaults] stringForKey:@"centerWrapperPath"];
   if (p.length && [fm fileExistsAtPath:p]) return p;
-  for (NSString *d in (@[[NSHomeDirectory() stringByAppendingPathComponent:@"Applications"], @"/Applications"])) {
-    NSString *cand = [d stringByAppendingPathComponent:@"DockLaunchers.app"];
+  NSString *home = NSHomeDirectory();
+  NSArray *cands = @[LauncherWrapperPath(),
+                     [home stringByAppendingPathComponent:@"Applications/DockLaunchers.noindex/DockLaunchers.app"],
+                     [home stringByAppendingPathComponent:@"Applications/DockLaunchers.app"],
+                     @"/Applications/DockLaunchers.noindex/DockLaunchers.app",
+                     @"/Applications/DockLaunchers.app"];
+  for (NSString *cand in cands) {
     NSString *bid = [NSDictionary dictionaryWithContentsOfFile:[cand stringByAppendingPathComponent:@"Contents/Info.plist"]][@"CFBundleIdentifier"] ?: @"";
     if ([bid isEqualToString:@"com.docklaunchers.launcher"]) return cand;
   }
@@ -7303,13 +7353,34 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 // 没装就控制台内嵌模板补建（迁移到新电脑时走这条路）
+// 已装 wrapper 的 dockmode 二进制随控制台升级更新（否则旧二进制仍按老目录找分组 App）
+- (void)refreshDockLauncherWrapperIfNeeded:(NSString *)wrap {
+  NSString *tpl = [[NSBundle mainBundle] pathForResource:@"DockLaunchers" ofType:@"app" inDirectory:@"WrapperTemplate"];
+  if (!tpl.length || !wrap.length) return;
+  NSString *srcBin = [tpl stringByAppendingPathComponent:@"Contents/MacOS/dockmode"];
+  NSString *dstBin = [wrap stringByAppendingPathComponent:@"Contents/MacOS/dockmode"];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  if (![fm fileExistsAtPath:srcBin] || ![fm fileExistsAtPath:dstBin]) return;
+  NSDate *srcDate = [fm attributesOfItemAtPath:srcBin error:NULL][NSFileModificationDate];
+  NSDate *dstDate = [fm attributesOfItemAtPath:dstBin error:NULL][NSFileModificationDate];
+  if (srcDate && dstDate && [srcDate compare:dstDate] != NSOrderedDescending) return;
+  [fm removeItemAtPath:dstBin error:NULL];
+  if (![fm copyItemAtPath:srcBin toPath:dstBin error:NULL]) return;
+  NSTask *clr = [[NSTask alloc] init]; clr.launchPath = @"/usr/bin/xattr"; clr.arguments = @[@"-cr", wrap];
+  @try { [clr launch]; [clr waitUntilExit]; } @catch (NSException *e) {}
+  NSTask *sign = [[NSTask alloc] init]; sign.launchPath = @"/usr/bin/codesign";
+  sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", wrap];
+  @try { [sign launch]; [sign waitUntilExit]; } @catch (NSException *e) {}
+}
+
 - (NSString *)ensureDockLauncherWrapper {
   NSString *ex = [self existingDockLauncherWrapper];
-  if (ex) return ex;
+  if (ex) { [self refreshDockLauncherWrapperIfNeeded:ex]; return ex; }
   NSString *tpl = [[NSBundle mainBundle] pathForResource:@"DockLaunchers" ofType:@"app" inDirectory:@"WrapperTemplate"];
   if (!tpl.length) return nil;
   NSFileManager *fm = [NSFileManager defaultManager];
-  NSString *dst = [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers.app"];
+  NSString *dst = LauncherWrapperPath();
+  [[NSFileManager defaultManager] createDirectoryAtPath:[dst stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:NULL];
   [fm removeItemAtPath:dst error:NULL];
   if (![fm copyItemAtPath:tpl toPath:dst error:NULL]) return nil;
   NSTask *clr = [[NSTask alloc] init]; clr.launchPath = @"/usr/bin/xattr"; clr.arguments = @[@"-cr", dst];
@@ -7508,7 +7579,8 @@ static BOOL ValidGroupName(NSString *raw) {
     NSString *wrap = [self ensureDockLauncherWrapper];
     if (wrap.length) {
       if ([self dockLauncherExpandedOn]) {
-        if ([self dockLauncherWrapperPinned]) [self removeDockEntry:wrap];
+        // 展开态：无条件移除启动器图标（不能依赖 pinned 判断，Dock 重启瞬间可能读不到）
+        [self removeDockEntry:wrap];
         // 落穿到下方正常分组固定循环
       } else {
         if ([self dockLauncherWrapperPinned]) return;
@@ -7531,7 +7603,7 @@ static BOOL ValidGroupName(NSString *raw) {
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
     NSString *bid = info[@"CFBundleIdentifier"] ?: @"";
     if (![bid hasPrefix:@"com.docklaunchers."]) continue;
-    if ([bid isEqualToString:@"com.docklaunchers.center"]) continue;
+    if ([bid isEqualToString:@"com.docklaunchers.center"] || [bid isEqualToString:@"com.docklaunchers.launcher"]) continue;
     NSString *label = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [[f stringByDeletingPathExtension] stringByReplacingOccurrencesOfString:@"DockLaunchers" withString:@""];
     [self addDockEntry:path label:label];
   }

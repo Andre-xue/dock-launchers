@@ -1332,7 +1332,9 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)dockCollapseGroups:(id)sender {
-  NSString *bin = [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers.app/Contents/MacOS/dockmode"];
+  NSString *bin = [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/DockLaunchers.noindex/.launcher/DockLaunchers.app/Contents/MacOS/dockmode"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:bin])
+    bin = @"/Applications/DockLaunchers.noindex/.launcher/DockLaunchers.app/Contents/MacOS/dockmode";
   if (![[NSFileManager defaultManager] fileExistsAtPath:bin])
     bin = @"/Applications/DockLaunchers.app/Contents/MacOS/dockmode";
   if (![[NSFileManager defaultManager] fileExistsAtPath:bin]) return;
