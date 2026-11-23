@@ -435,6 +435,8 @@ static NSString *DockEntryPath(NSString *u) {
   while ([p hasSuffix:@"/"] && p.length > 1) p = [p substringToIndex:p.length-1];
   return [p stringByStandardizingPath];
 }
+static BOOL gSuppressConsoleReopenForGroup = NO;
+
 static BOOL IsOurDockEntry(NSDictionary *item) {
   NSString *bid = nil; NSString *label = nil; NSString *url = nil;
   @try { bid = item[@"tile-data"][@"bundle-identifier"]; label = item[@"tile-data"][@"file-label"]; url = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
@@ -4671,6 +4673,10 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 
 - (void)openGroupPanelNamed:(NSString *)name {
   if (!name.length) return;
+  gSuppressConsoleReopenForGroup = YES;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    gSuppressConsoleReopenForGroup = NO;
+  });
   NSFileManager *fm = [NSFileManager defaultManager];
   NSString *file = GroupFilePath(name);
   if (![fm fileExistsAtPath:file]) {
@@ -4696,7 +4702,6 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   pid_t oldPid = (pid_t)pidText.integerValue;
   if (oldPid > 0 && kill(oldPid, 0) == 0) {
     kill(oldPid, SIGUSR1);
-    [NSApp activateIgnoringOtherApps:YES];
     return;
   }
   NSString *icon = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:[NSString stringWithFormat:@"GroupIcons/%@组.icns", name]];
@@ -4711,7 +4716,6 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
   t.standardOutput = [NSFileHandle fileHandleWithNullDevice];
   t.standardError = [NSFileHandle fileHandleWithNullDevice];
   @try { [t launch]; } @catch (NSException *e) {}
-  [NSApp activateIgnoringOtherApps:YES];
 }
 
 - (void)openGroupPath:(NSString *)path {
@@ -4729,6 +4733,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
+  if (gSuppressConsoleReopenForGroup) return YES;
   if (flag) return YES;
   [self showWindow:nil];
   return YES;
@@ -7779,6 +7784,36 @@ static BOOL ValidGroupName(NSString *raw) {
   }];
 }
 
+- (void)normalizeGroupDockLabels {
+  @try {
+    CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
+    if (!raw) return;
+    NSMutableArray *apps = [CFBridgingRelease(raw) mutableCopy];
+    BOOL changed = NO;
+    for (NSUInteger i = 0; i < apps.count; i++) {
+      id item = apps[i];
+      NSString *u = nil; @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
+      NSString *p = u.length ? DockEntryPath(u) : nil;
+      if (!IsGroupFilePath(p)) continue;
+      NSString *name = [p.lastPathComponent stringByDeletingPathExtension];
+      NSString *want = GroupDisplayNameForName(name);
+      NSString *old = nil; @try { old = item[@"tile-data"][@"file-label"]; } @catch (NSException *e) {}
+      if (!want.length || [old isEqualToString:want]) continue;
+      NSMutableDictionary *copy = [item mutableCopy];
+      NSMutableDictionary *td = [copy[@"tile-data"] mutableCopy];
+      td[@"file-label"] = want;
+      copy[@"tile-data"] = td;
+      apps[i] = copy;
+      changed = YES;
+    }
+    if (changed) {
+      CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)apps, CFSTR("com.apple.dock"));
+      CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+      self.dockPersistentDirty = YES;
+    }
+  } @catch (NSException *e) {}
+}
+
 - (void)ensureGroupDockEntries {
   // 启动器模式三态：收起态=只留启动器图标；展开态=分组全排列、启动器隐藏（尊重现状，仅补缺失）
   if ([self dockLauncherModeOn]) {
@@ -7830,6 +7865,8 @@ static BOOL ValidGroupName(NSString *raw) {
     NSString *label = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [[f stringByDeletingPathExtension] stringByReplacingOccurrencesOfString:@"DockLaunchers" withString:@""];
     [self addDockEntry:path label:label];
   }
+  [self normalizeGroupDockLabels];
+  if (self.dockPersistentDirty) [self killDock];
 }
 
 - (void)repairGroupDockIconsIfNeeded {
