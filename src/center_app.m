@@ -19980,20 +19980,27 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   cloudMigCheck.frame = NSMakeRect(94, 24, 118, 18);
   cloudMigCheck.toolTip = @"两台电脑登录同一 Apple ID 并开启 iCloud Drive 时，分组自动备份到 iCloud，换新电脑首次打开自动恢复；微信/QQ/其他邮箱账号可改用下方导出/导入文件，或在「配置云同步」里把目录指向 OneDrive、坚果云等同步文件夹";
   [tMigrate addSubview:cloudMigCheck];
-  ColorHoverButton *migExport = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(10, 4, 96, 18)];
-  migExport.title = @"导出方案…"; migExport.hoverColor = [NSColor systemBlueColor];
-  migExport.font = [NSFont systemFontOfSize:10];
+  ColorHoverButton *migExport = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(10, 4, 62, 18)];
+  migExport.title = @"导出方案"; migExport.hoverColor = [NSColor systemBlueColor];
+  migExport.font = [NSFont systemFontOfSize:9.5];
   migExport.target = self; migExport.action = @selector(exportMigrationFile:);
   migExport.toolTip = @"把分组方案导出为 json 文件，可经微信文件传输助手、邮件或 U 盘传到新电脑";
   [migExport applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [tMigrate addSubview:migExport];
-  ColorHoverButton *migImport = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(114, 4, 96, 18)];
-  migImport.title = @"导入方案…"; migImport.hoverColor = [NSColor systemGreenColor];
-  migImport.font = [NSFont systemFontOfSize:10];
+  ColorHoverButton *migImport = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(76, 4, 62, 18)];
+  migImport.title = @"导入方案"; migImport.hoverColor = [NSColor systemGreenColor];
+  migImport.font = [NSFont systemFontOfSize:9.5];
   migImport.target = self; migImport.action = @selector(importMigrationFile:);
   migImport.toolTip = @"导入之前导出的分组方案 json：自动创建分组、按应用名解析路径并钉入 Dock";
   [migImport applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [tMigrate addSubview:migImport];
+  ColorHoverButton *migUpload = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(142, 4, 70, 18)];
+  migUpload.title = @"立即上传"; migUpload.hoverColor = [NSColor systemTealColor];
+  migUpload.font = [NSFont systemFontOfSize:9.5];
+  migUpload.target = self; migUpload.action = @selector(uploadConfigurationToCloud:);
+  migUpload.toolTip = @"立即把当前分组、设置和 AI 管理数据（含 API Key）上传到 iCloud 云目录";
+  [migUpload applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [tMigrate addSubview:migUpload];
 
   // 底部操作
   NSArray *actions = @[@[@"关于", @"showAbout:", @(24), @(90), [NSColor systemGreenColor]],
