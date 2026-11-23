@@ -22446,6 +22446,41 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   return dir;
 }
 
+// AI 管理数据（服务条目 + API Key）随配置一起同步；ai_keys.json 单独 0600 保存
+- (void)copyAIManagementDataToDirectory:(NSString *)dir {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  for (NSString *name in @[@"ai_entries.json", @"ai_keys.json"]) {
+    NSString *src = [support stringByAppendingPathComponent:name];
+    NSString *dst = [dir stringByAppendingPathComponent:name];
+    [fm removeItemAtPath:dst error:NULL];
+    if (![fm fileExistsAtPath:src]) continue;
+    [fm copyItemAtPath:src toPath:dst error:NULL];
+    if ([name isEqualToString:@"ai_keys.json"]) [fm setAttributes:@{NSFilePosixPermissions: @0600} ofItemAtPath:dst error:NULL];
+  }
+}
+
+- (void)restoreAIManagementDataFromDirectory:(NSString *)dir {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *support = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/DockLaunchers"];
+  BOOL changed = NO;
+  for (NSString *name in @[@"ai_entries.json", @"ai_keys.json"]) {
+    NSString *src = [dir stringByAppendingPathComponent:name];
+    if (![fm fileExistsAtPath:src]) continue;
+    NSString *dst = [support stringByAppendingPathComponent:name];
+    [fm removeItemAtPath:dst error:NULL];
+    if ([fm copyItemAtPath:src toPath:dst error:NULL]) {
+      changed = YES;
+      if ([name isEqualToString:@"ai_keys.json"]) [fm setAttributes:@{NSFilePosixPermissions: @0600} ofItemAtPath:dst error:NULL];
+    }
+  }
+  if (!changed) return;
+  self.aiEntries = nil;
+  [self loadAIEntries];
+  if (self.aiTable) [self rebuildAIDisplay];
+  [self reloadAIAssistantServices];
+}
+
 - (void)writeCurrentConfigurationToDirectory:(NSString *)dir {
   NSFileManager *fm = [NSFileManager defaultManager];
   [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
@@ -22464,6 +22499,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSString *src = [support stringByAppendingPathComponent:name];
     if ([fm fileExistsAtPath:src]) { [fm removeItemAtPath:[dir stringByAppendingPathComponent:name] error:NULL]; [fm copyItemAtPath:src toPath:[dir stringByAppendingPathComponent:name] error:NULL]; }
   }
+  [self copyAIManagementDataToDirectory:dir];
   NSDictionary *manifest = @{@"version": [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.0", @"date": @([[NSDate date] timeIntervalSince1970]), @"host": [[NSProcessInfo processInfo] hostName] ?: @""};
   [manifest writeToFile:[dir stringByAppendingPathComponent:@"manifest.plist"] atomically:YES];
 }
@@ -22510,6 +22546,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSString *src = [dir stringByAppendingPathComponent:name];
     if ([fm fileExistsAtPath:src]) { [fm removeItemAtPath:[support stringByAppendingPathComponent:name] error:NULL]; [fm copyItemAtPath:src toPath:[support stringByAppendingPathComponent:name] error:NULL]; }
   }
+  [self restoreAIManagementDataFromDirectory:dir];
   [self refreshGroups];
   [self ensureGroupDockEntries];
   [self killDock];
@@ -22563,7 +22600,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
   if (![fm fileExistsAtPath:[dir stringByAppendingPathComponent:@"settings.plist"]] && ![fm fileExistsAtPath:[dir stringByAppendingPathComponent:@"lists"]]) { [self showToast:@"云目录里没有配置"]; return; }
   NSAlert *a = [[NSAlert alloc] init];
   a.messageText = @"从云端恢复配置？";
-  a.informativeText = @"会覆盖当前分组列表、设置、快捷键、场景和窗口布局；恢复前会先本地备份。";
+  a.informativeText = @"会覆盖当前分组列表、设置、快捷键、场景、窗口布局和 AI 管理数据（含 API Key）；恢复前会先本地备份。";
   [a addButtonWithTitle:@"恢复"];
   [a addButtonWithTitle:@"取消"];
   if ([a runModal] != NSAlertFirstButtonReturn) return;
@@ -22589,6 +22626,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSString *src = [dir stringByAppendingPathComponent:name];
     if ([fm fileExistsAtPath:src]) { [fm removeItemAtPath:[support stringByAppendingPathComponent:name] error:NULL]; [fm copyItemAtPath:src toPath:[support stringByAppendingPathComponent:name] error:NULL]; }
   }
+  [self restoreAIManagementDataFromDirectory:dir];
   [self refreshGroups];
   [self ensureGroupDockEntries];
   [self killDock];
@@ -23161,7 +23199,7 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
     NSView *cv = self.cloudSyncWindow.contentView;
     NSTextField *t = [self label:@"配置云同步" size:18 bold:YES color:nil];
     t.frame=NSMakeRect(24,316,300,24); [cv addSubview:t];
-    NSTextField *h = [self label:@"上传分组、设置、快捷键、场景和窗口布局到 iCloud 或自定义目录" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
+    NSTextField *h = [self label:@"上传分组、设置、快捷键、场景、窗口布局和 AI 管理数据（含 API Key）到 iCloud 或自定义目录" size:10.5 bold:NO color:[NSColor secondaryLabelColor]];
     h.frame=NSMakeRect(24,294,510,18); [cv addSubview:h];
     self.cloudSyncPathLabel = [self label:@"" size:10 bold:NO color:[NSColor labelColor]];
     self.cloudSyncPathLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;
