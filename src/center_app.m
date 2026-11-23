@@ -5245,6 +5245,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   NSFileManager *fm = [NSFileManager defaultManager];
   NSString *app = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
   NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+  [self removeDockEntry:GroupFilePath(name)];
   [self removeDockEntry:app];
   NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
   [fm createDirectoryAtPath:trash withIntermediateDirectories:YES attributes:nil error:NULL];
@@ -5354,7 +5355,13 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 
 - (void)restoreGroupsClicked:(id)sender {
   NSDictionary *batch = [self lastDeleteBatch];
-  NSArray *names = batch[@"names"] ?: @[];
+  NSArray *rawNames = batch[@"names"] ?: @[];
+  NSMutableArray *names = [NSMutableArray array];
+  for (NSString *raw in rawNames) {
+    NSString *n = raw;
+    if ([n hasSuffix:@".dockgroup"] || [n hasSuffix:@".app"]) n = [n stringByDeletingPathExtension];
+    if (n.length) [names addObject:n];
+  }
   if (!names.count) {
     NSAlert *a = [[NSAlert alloc] init];
     a.icon = [self characterImage:64];
@@ -5440,6 +5447,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   }
   if (restored.count) [self saveLastDeleteBatch:@[]];
   [self ensureGroupDockEntries];
+  [self repairGroupFileAppearance];
   [self killDock];
   [self refreshGroups];
   if (self.popover.isShown) [self rebuildQuickGroups];
@@ -7776,12 +7784,12 @@ static BOOL ValidGroupName(NSString *raw) {
         [self removeDockEntry:wrap];
         // 落穿到下方正常分组固定循环
       } else {
-        if ([self dockLauncherWrapperPinned]) return;
         for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[]) {
           NSString *ext = f.pathExtension.lowercaseString;
           if (![ext isEqualToString:@"app"] && ![ext isEqualToString:@"dockgroup"]) continue;
           [self removeDockEntry:[GroupDir() stringByAppendingPathComponent:f]];
         }
+        if ([self dockLauncherWrapperPinned]) return;
         [self addDockEntry:wrap label:@"DockLaunchers"];
         return;
       }
