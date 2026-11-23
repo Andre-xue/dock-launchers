@@ -20,8 +20,24 @@ static void UnregisterPathFromLaunchServices(NSString *path) {
 }
 
 static NSString *DockURLForPath(NSString *path) {
-  NSString *enc = [[path stringByAppendingString:@"/"] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
+  BOOL isDir = NO;
+  [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir];
+  NSString *raw = isDir ? [path stringByAppendingString:@"/"] : path;
+  NSString *enc = [raw stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
   return [NSString stringWithFormat:@"file://%@", enc];
+}
+
+static NSString *GroupSuiteName(NSString *name) {
+  const char *s = name.UTF8String ?: "";
+  uint64_t h = 1469598103934665603ULL;
+  while (*s) { h ^= (unsigned char)*s++; h *= 1099511628211ULL; }
+  return [NSString stringWithFormat:@"com.docklaunchers.group.%016llx", (unsigned long long)h];
+}
+
+static NSString *GroupLabel(NSString *name) {
+  NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:GroupSuiteName(name)];
+  NSString *v = [d stringForKey:@"displayNameOverride"];
+  return v.length ? v : name;
 }
 
 static NSString *EntryPath(NSString *u) {
@@ -46,12 +62,22 @@ static void SaveDockApps(NSArray *apps) {
   @try { [k launch]; [k waitUntilExit]; } @catch (NSException *e) {}
 }
 
-// GroupDir 下全部有效分组 App（bundle id 前缀 com.docklaunchers.，排除控制台本体），按路径排序保证顺序稳定
+// GroupDir 下分组入口：优先 .dockgroup 文件，旧 .app 仅在没有同名文件时兼容
 static NSArray *GroupAppPaths(void) {
   NSFileManager *fm = [NSFileManager defaultManager];
   NSMutableArray *out = [NSMutableArray array];
-  for (NSString *f in ([fm contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[])) {
-    if (![f hasSuffix:@".app"]) continue;
+  NSMutableSet *seen = [NSMutableSet set];
+  NSArray *files = [fm contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[];
+  for (NSString *f in files) {
+    if (![f.pathExtension.lowercaseString isEqualToString:@"dockgroup"]) continue;
+    NSString *key = f.stringByDeletingPathExtension;
+    [seen addObject:key];
+    [out addObject:[GroupDir() stringByAppendingPathComponent:f]];
+  }
+  for (NSString *f in files) {
+    if (![f.pathExtension.lowercaseString isEqualToString:@"app"]) continue;
+    NSString *key = f.stringByDeletingPathExtension;
+    if ([seen containsObject:key]) continue;
     NSString *p = [GroupDir() stringByAppendingPathComponent:f];
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
     NSString *bid = info[@"CFBundleIdentifier"] ?: @"";
@@ -73,10 +99,12 @@ static BOOL DockHasEntry(NSArray *apps, NSString *path) {
 
 static void AddEntry(NSMutableArray *apps, NSString *path, NSString *label, NSString *bid) {
   if (!path.length || DockHasEntry(apps, path)) return;
-  [apps addObject:@{@"tile-data": @{@"file-data": @{@"_CFURLString": DockURLForPath(path), @"_CFURLStringType": @15},
-                                                    @"file-label": label ?: @"", @"file-type": @41,
-                                                    @"bundle-identifier": bid ?: @"", @"dock-extra": @NO},
-                    @"tile-type": @"file-tile"}];
+  BOOL isDir = NO;
+  [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir];
+  NSMutableDictionary *td = [@{@"file-data": @{@"_CFURLString": DockURLForPath(path), @"_CFURLStringType": @15},
+                               @"file-label": label ?: @"", @"file-type": @41, @"dock-extra": @NO} mutableCopy];
+  if (isDir) td[@"bundle-identifier"] = bid ?: @"";
+  [apps addObject:@{@"tile-data": td, @"tile-type": @"file-tile"}];
 }
 
 static void RemoveEntry(NSMutableArray *apps, NSString *path) {
@@ -97,8 +125,13 @@ static void RemoveGroupEntries(NSMutableArray *apps) {
 
 static void AddGroupEntries(NSMutableArray *apps) {
   for (NSString *p in GroupAppPaths()) {
+    NSString *key = [[p lastPathComponent] stringByDeletingPathExtension];
+    if ([p.pathExtension.lowercaseString isEqualToString:@"dockgroup"]) {
+      AddEntry(apps, p, GroupLabel(key), @"");
+      continue;
+    }
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
-    NSString *l = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [[p lastPathComponent] stringByDeletingPathExtension];
+    NSString *l = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: key;
     AddEntry(apps, p, l, info[@"CFBundleIdentifier"] ?: l);
   }
 }

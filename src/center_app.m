@@ -339,6 +339,26 @@ static NSString *GroupDir(void) { return [NSHomeDirectory() stringByAppendingPat
 static NSString *LauncherWrapperDir(void) { return [GroupDir() stringByAppendingPathComponent:@".launcher"]; }
 static NSString *LauncherWrapperPath(void) { return [LauncherWrapperDir() stringByAppendingPathComponent:@"DockLaunchers.app"]; }
 
+static NSString *GroupFilePath(NSString *name) { return [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"dockgroup"]; }
+static BOOL IsGroupFilePath(NSString *path) { return [path.pathExtension.lowercaseString isEqualToString:@"dockgroup"]; }
+static NSString *GroupSuiteNameForName(NSString *name) {
+  const char *s = name.UTF8String ?: "";
+  uint64_t h = 1469598103934665603ULL;
+  while (*s) { h ^= (unsigned char)*s++; h *= 1099511628211ULL; }
+  return [NSString stringWithFormat:@"com.docklaunchers.group.%016llx", (unsigned long long)h];
+}
+static NSString *GroupDisplayNameForName(NSString *name) {
+  NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:GroupSuiteNameForName(name)];
+  NSString *v = [d stringForKey:@"displayNameOverride"];
+  return v.length ? v : name;
+}
+
+static void HideGroupFileExtension(NSString *path) {
+  if (!path.length) return;
+  NSURL *u = [NSURL fileURLWithPath:path];
+  [u setResourceValue:@YES forKey:NSURLHasHiddenExtensionKey error:NULL];
+}
+
 // 分组 App / 启动器只从 Dock 启动，不留在 LaunchServices 里，否则 macOS 26 的「应用程序」窗口会把它们列出来。
 // lsregister -u 只注销记录，不影响 Dock 图标的路径启动。
 static void UnregisterAppPath(NSString *path) {
@@ -410,8 +430,11 @@ static NSString *DockEntryPath(NSString *u) {
   return [p stringByStandardizingPath];
 }
 static BOOL IsOurDockEntry(NSDictionary *item) {
-  NSString *bid = nil; NSString *label = nil;
-  @try { bid = item[@"tile-data"][@"bundle-identifier"]; label = item[@"tile-data"][@"file-label"]; } @catch (NSException *e) {}
+  NSString *bid = nil; NSString *label = nil; NSString *url = nil;
+  @try { bid = item[@"tile-data"][@"bundle-identifier"]; label = item[@"tile-data"][@"file-label"]; url = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
+  NSString *path = DockEntryPath(url);
+  if (IsGroupFilePath(path)) return YES;
+  if (path.length && [path hasPrefix:[GroupDir() stringByAppendingString:@"/"]]) return YES;
   return [bid hasPrefix:@"com.docklaunchers."] || [label hasPrefix:@"DockLaunchers"];
 }
 
@@ -3613,6 +3636,7 @@ static void HideDockHoverTip(void) {
     [self scheduleAppWatchScanAfter:5.0];
   }
   [self migrateLegacyPathsIfNeeded];
+  [self convertGroupAppsToFilesIfNeeded];
   [self unregisterHiddenAppsFromLaunchServices];
   // Dock/Apps 会周期性把 Dock 里的分组 App 重新登记进 LaunchServices；
   // 维持一个低频清理，保证「应用程序」窗口里不长期出现这些图标。
@@ -4606,6 +4630,10 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 
 - (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)urls {
   for (NSURL *u in urls) {
+    if (u.isFileURL && [u.pathExtension.lowercaseString isEqualToString:@"dockgroup"]) {
+      [self openGroupPanelNamed:[[u.path lastPathComponent] stringByDeletingPathExtension]];
+      continue;
+    }
     if (![u.scheme.lowercaseString isEqualToString:@"docklaunchers"]) continue;
     NSString *action = u.host.length ? u.host.lowercaseString : u.path.lowercaseString;
     NSURLComponents *comp = [NSURLComponents componentsWithURL:u resolvingAgainstBaseURL:NO];
@@ -4622,8 +4650,7 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
       if (name.length) { [self loadScenes]; [self applySceneNamed:name silent:NO]; }
     } else if ([action isEqualToString:@"group"]) {
       NSString *name = q[@"name"] ?: @"";
-      NSString *path = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
-      if (name.length && [[NSFileManager defaultManager] fileExistsAtPath:path]) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+      if (name.length) [self openGroupPanelNamed:name];
       else [self showToast:@"没有找到该分组"];
     } else if ([action isEqualToString:@"ai"]) [self openAIAssistant:nil];
     else if ([action isEqualToString:@"transcribe"]) [self openVoiceTextWindow:nil];
@@ -4633,6 +4660,65 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
       if (target.length) [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:target] ?: [NSURL fileURLWithPath:target]];
     }
   }
+}
+
+- (void)openGroupPanelNamed:(NSString *)name {
+  if (!name.length) return;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *file = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"dockgroup"];
+  if (![fm fileExistsAtPath:file]) {
+    [@"" writeToFile:file atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    HideGroupFileExtension(file);
+  }
+  NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+  NSString *ui = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"groupui"];
+  if (![fm isExecutableFileAtPath:ui]) {
+    ui = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"GroupTemplate/ui"];
+  }
+  if (![fm isExecutableFileAtPath:ui]) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"分组组件缺失";
+    a.informativeText = @"控制台里找不到 groupui，请重新安装 DockLaunchers。";
+    [a runModal];
+    return;
+  }
+  NSString *runDir = [GroupDir() stringByAppendingPathComponent:@".run"];
+  [fm createDirectoryAtPath:runDir withIntermediateDirectories:YES attributes:nil error:NULL];
+  NSString *pidfile = [runDir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"pid"]];
+  NSString *pidText = [NSString stringWithContentsOfFile:pidfile encoding:NSUTF8StringEncoding error:NULL];
+  pid_t oldPid = (pid_t)pidText.integerValue;
+  if (oldPid > 0 && kill(oldPid, 0) == 0) {
+    kill(oldPid, SIGUSR1);
+    [NSApp activateIgnoringOtherApps:YES];
+    return;
+  }
+  NSString *icon = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:[NSString stringWithFormat:@"GroupIcons/%@组.icns", name]];
+  if (![fm fileExistsAtPath:icon]) {
+    NSString *oldApp = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
+    icon = [oldApp stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"];
+    if (![fm fileExistsAtPath:icon]) icon = @"";
+  }
+  NSTask *t = [[NSTask alloc] init];
+  t.launchPath = ui;
+  t.arguments = @[@"--group", name, @"--list", list, @"--file", file, @"--icon", icon, @"--pidfile", pidfile];
+  t.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+  t.standardError = [NSFileHandle fileHandleWithNullDevice];
+  @try { [t launch]; } @catch (NSException *e) {}
+  [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (void)openGroupPath:(NSString *)path {
+  if (!path.length) return;
+  if (IsGroupFilePath(path)) [self openGroupPanelNamed:path.lastPathComponent.stringByDeletingPathExtension];
+  else [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+}
+
+- (BOOL)application:(NSApplication *)sender openFile:(NSString *)filename {
+  if ([filename.pathExtension isEqualToString:@"dockgroup"]) {
+    [self openGroupPanelNamed:[[filename lastPathComponent] stringByDeletingPathExtension]];
+    return YES;
+  }
+  return NO;
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
@@ -5020,21 +5106,28 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 
 - (BOOL)isGroupBackedUp:(NSString *)name {
   NSString *dir = [[self groupBackupRoot] stringByAppendingPathComponent:name];
-  return [[NSFileManager defaultManager] fileExistsAtPath:[dir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]]];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  return [fm fileExistsAtPath:[dir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"dockgroup"]]] ||
+         [fm fileExistsAtPath:[dir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]]];
 }
 
 - (BOOL)backupGroupNamed:(NSString *)name {
   NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *file = GroupFilePath(name);
   NSString *app = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
-  if (![fm fileExistsAtPath:app]) return NO;
+  BOOL isFile = [fm fileExistsAtPath:file];
+  if (!isFile && ![fm fileExistsAtPath:app]) return NO;
   NSString *dst = [[self groupBackupRoot] stringByAppendingPathComponent:name];
   [fm removeItemAtPath:dst error:NULL];
   [fm createDirectoryAtPath:dst withIntermediateDirectories:YES attributes:nil error:NULL];
-  if (![fm copyItemAtPath:app toPath:[dst stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]] error:NULL]) return NO;
+  if (isFile) {
+    if (![fm copyItemAtPath:file toPath:[dst stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"dockgroup"]] error:NULL]) return NO;
+  } else {
+    if (![fm copyItemAtPath:app toPath:[dst stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]] error:NULL]) return NO;
+  }
   NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
   if ([fm fileExistsAtPath:list]) [fm copyItemAtPath:list toPath:[dst stringByAppendingPathComponent:@"list.txt"] error:NULL];
-  NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[app stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
-  NSString *bid = info[@"CFBundleIdentifier"];
+  NSString *bid = isFile ? GroupSuiteNameForName(name) : ([NSDictionary dictionaryWithContentsOfFile:[app stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{})[@"CFBundleIdentifier"];
   if (bid.length) {
     NSTask *t = [[NSTask alloc] init];
     t.launchPath = @"/usr/bin/defaults";
@@ -5219,10 +5312,13 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   NSMutableArray *trashPaths = [NSMutableArray array];
   NSFileManager *fm = [NSFileManager defaultManager];
   for (NSString *n in names) {
+    NSString *file = GroupFilePath(n);
     NSString *app = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
     NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"txt"]];
+    if ([fm fileExistsAtPath:file]) [trashPaths addObject:file];
     if ([fm fileExistsAtPath:app]) [trashPaths addObject:app];
     if ([fm fileExistsAtPath:list]) [trashPaths addObject:list];
+    [self removeDockEntry:file];
     [self removeDockEntry:app];
   }
   if (testMode) {
@@ -5233,8 +5329,9 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   NSMutableArray *deleted = [NSMutableArray array];
   NSMutableArray *failed = [NSMutableArray array];
   for (NSString *n in names) {
+    NSString *file = GroupFilePath(n);
     NSString *app = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
-    if ([fm fileExistsAtPath:app]) { [failed addObject:n]; continue; }
+    if ([fm fileExistsAtPath:file] || [fm fileExistsAtPath:app]) { [failed addObject:n]; continue; }
     [deleted addObject:n];
   }
   NSMutableArray *restorable = [NSMutableArray array];
@@ -5269,6 +5366,28 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   NSMutableArray *restored = [NSMutableArray array];
   NSMutableArray *missing = [NSMutableArray array];
   for (NSString *n in names) {
+    NSString *fileBackup = [[root stringByAppendingPathComponent:n] stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"dockgroup"]];
+    if ([fm fileExistsAtPath:fileBackup]) {
+      NSString *installed = GroupFilePath(n);
+      if (![fm fileExistsAtPath:installed]) {
+        [fm createDirectoryAtPath:GroupDir() withIntermediateDirectories:YES attributes:nil error:NULL];
+        if (![fm copyItemAtPath:fileBackup toPath:installed error:NULL]) { [missing addObject:n]; continue; }
+        NSString *listBackup = [[root stringByAppendingPathComponent:n] stringByAppendingPathComponent:@"list.txt"];
+        NSString *listsDir = [GroupDir() stringByAppendingPathComponent:@"lists"];
+        [fm createDirectoryAtPath:listsDir withIntermediateDirectories:YES attributes:nil error:NULL];
+        NSString *listDst = [listsDir stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"txt"]];
+        if ([fm fileExistsAtPath:listBackup] && ![fm fileExistsAtPath:listDst]) [fm copyItemAtPath:listBackup toPath:listDst error:NULL];
+        NSString *prefs = [[root stringByAppendingPathComponent:n] stringByAppendingPathComponent:@"prefs.plist"];
+        if ([fm fileExistsAtPath:prefs]) {
+          NSTask *t = [[NSTask alloc] init]; t.launchPath = @"/usr/bin/defaults";
+          t.arguments = @[@"import", GroupSuiteNameForName(n), prefs];
+          @try { [t launch]; [t waitUntilExit]; } @catch (NSException *e) {}
+        }
+        [self addDockEntry:installed label:n];
+      }
+      [restored addObject:n];
+      continue;
+    }
     NSString *appBackup = [[root stringByAppendingPathComponent:n] stringByAppendingPathComponent:[n stringByAppendingPathExtension:@"app"]];
     NSString *installed = [[GroupDir() stringByAppendingPathComponent:n] stringByAppendingPathExtension:@"app"];
     if (![fm fileExistsAtPath:appBackup]) { [missing addObject:n]; continue; }
@@ -5516,12 +5635,29 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
   NSFileManager *fm = [NSFileManager defaultManager];
   NSArray *items = [[fm contentsOfDirectoryAtPath:GroupDir() error:NULL] sortedArrayUsingSelector:@selector(localizedCompare:)];
   NSMutableArray *gs = [NSMutableArray array];
+  NSMutableSet *seenNames = [NSMutableSet set];
+  items = [items sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+    BOOL da = [a.pathExtension.lowercaseString isEqualToString:@"dockgroup"];
+    BOOL db = [b.pathExtension.lowercaseString isEqualToString:@"dockgroup"];
+    if (da != db) return da ? NSOrderedAscending : NSOrderedDescending;
+    return [a compare:b];
+  }];
   for (NSString *f in items) {
-    if (![f hasSuffix:@".app"]) continue;
+    NSString *ext = f.pathExtension.lowercaseString;
+    if (![ext isEqualToString:@"app"] && ![ext isEqualToString:@"dockgroup"]) continue;
+    if ([f hasPrefix:@"."]) continue;
     NSString *p = [GroupDir() stringByAppendingPathComponent:f];
-    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
-    NSString *name = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: [f stringByDeletingPathExtension];
-    [gs addObject:@{@"name": [f stringByDeletingPathExtension], @"display": name, @"path": p}];
+    NSString *key = [f stringByDeletingPathExtension];
+    if ([seenNames containsObject:key]) continue;
+    [seenNames addObject:key];
+    NSString *name = nil;
+    if ([ext isEqualToString:@"dockgroup"]) {
+      name = GroupDisplayNameForName(key);
+    } else {
+      NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[p stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+      name = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: GroupDisplayNameForName(key);
+    }
+    [gs addObject:@{@"name": key, @"display": name ?: key, @"path": p}];
   }
   self.groups = gs;
   if (self.groupsSelectedName.length) {
@@ -6372,90 +6508,28 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 - (NSString *)ensureGroupAppForName:(NSString *)rawName {
   NSFileManager *fm = [NSFileManager defaultManager];
   NSString *name = [rawName stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-  if ([name hasSuffix:@".app"]) name = [name stringByDeletingPathExtension];
+  if ([name hasSuffix:@".app"] || [name hasSuffix:@".dockgroup"]) name = [name stringByDeletingPathExtension];
   name = [name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
   if (!ValidGroupName(name) || [name rangeOfString:@"/"].location != NSNotFound || [name isEqualToString:@".."]) return nil;
-  NSString *dst = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
+  NSString *dst = GroupFilePath(name);
   if ([fm fileExistsAtPath:dst]) return dst;
-  NSString *tpl = nil;
-  for (NSString *f in ([fm contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[])) {
-    if (![f hasSuffix:@".app"]) continue;
-    NSString *p = [GroupDir() stringByAppendingPathComponent:f];
-    if ([p isEqualToString:dst]) continue;
-    tpl = p; break;
-  }
-  NSString *plist = [dst stringByAppendingPathComponent:@"Contents/Info.plist"];
-  if (tpl) {
-    if (![fm copyItemAtPath:tpl toPath:dst error:NULL]) return nil;
-    NSMutableDictionary *info = [[NSDictionary dictionaryWithContentsOfFile:plist] mutableCopy] ?: [NSMutableDictionary dictionary];
-    info[@"CFBundleName"] = name;
-    info[@"CFBundleDisplayName"] = name;
-    info[@"CFBundleIdentifier"] = [NSString stringWithFormat:@"com.docklaunchers.g%lu-%lu", (unsigned long)([[NSDate date] timeIntervalSince1970] * 1000), (unsigned long)name.hash];
-    [info writeToFile:plist atomically:YES];
-  } else {
-    NSString *bin = [[NSBundle mainBundle] pathForResource:@"ui" ofType:nil inDirectory:@"GroupTemplate"];
-    if (!bin.length) return nil;
-    [fm createDirectoryAtPath:[dst stringByAppendingPathComponent:@"Contents/MacOS"] withIntermediateDirectories:YES attributes:nil error:NULL];
-    [fm createDirectoryAtPath:[dst stringByAppendingPathComponent:@"Contents/Resources"] withIntermediateDirectories:YES attributes:nil error:NULL];
-    if (![fm copyItemAtPath:bin toPath:[dst stringByAppendingPathComponent:@"Contents/MacOS/ui"] error:NULL]) return nil;
-    NSMutableDictionary *info = [NSMutableDictionary dictionary];
-    info[@"CFBundleName"] = name;
-    info[@"CFBundleDisplayName"] = name;
-    info[@"CFBundleIdentifier"] = [NSString stringWithFormat:@"com.docklaunchers.g%lu-%lu", (unsigned long)([[NSDate date] timeIntervalSince1970] * 1000), (unsigned long)name.hash];
-    info[@"CFBundleExecutable"] = @"ui";
-    info[@"CFBundleIconFile"] = @"AppIcon";
-    info[@"CFBundlePackageType"] = @"APPL";
-    info[@"CFBundleShortVersionString"] = @"1.0.0";
-    info[@"CFBundleVersion"] = @"1";
-    info[@"LSMinimumSystemVersion"] = @"12.0";
-    info[@"NSHighResolutionCapable"] = @YES;
-    info[@"NSPrincipalClass"] = @"NSApplication";
-    info[@"LSApplicationCategoryType"] = @"public.app-category.utilities";
-    [info writeToFile:plist atomically:YES];
-  }
-  // 图标：优先同名的 GroupIcons/<名>组.icns，否则用第一张内置图标
+  [fm createDirectoryAtPath:GroupDir() withIntermediateDirectories:YES attributes:nil error:NULL];
+  if (![@"" writeToFile:dst atomically:YES encoding:NSUTF8StringEncoding error:NULL]) return nil;
+  HideGroupFileExtension(dst);
+  NSUserDefaults *gd = [[NSUserDefaults alloc] initWithSuiteName:GroupSuiteNameForName(name)];
+  if (![gd stringForKey:@"displayNameOverride"]) [gd setObject:name forKey:@"displayNameOverride"];
+  [gd synchronize];
   NSString *iconsDir = [[NSBundle mainBundle] pathForResource:@"GroupIcons" ofType:nil];
-  NSString *iconSrc = nil;
+  NSString *src = nil;
   if (iconsDir.length) {
     NSString *named = [iconsDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@组.icns", name]];
-    if ([fm fileExistsAtPath:named]) iconSrc = named;
-    if (!iconSrc) {
-      for (NSString *f in ([fm contentsOfDirectoryAtPath:iconsDir error:NULL] ?: @[])) {
-        if ([f hasSuffix:@".icns"]) { iconSrc = [iconsDir stringByAppendingPathComponent:f]; break; }
-      }
-    }
+    if ([fm fileExistsAtPath:named]) src = named;
+    if (!src) for (NSString *f in ([fm contentsOfDirectoryAtPath:iconsDir error:NULL] ?: @[])) if ([f hasSuffix:@".icns"]) { src = [iconsDir stringByAppendingPathComponent:f]; break; }
   }
-  if (iconSrc.length) {
-    [fm removeItemAtPath:[dst stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"] error:NULL];
-    [fm copyItemAtPath:iconSrc toPath:[dst stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"] error:NULL];
+  if (src.length) {
+    NSImage *img = [[NSImage alloc] initWithContentsOfFile:src];
+    if (img) [[NSWorkspace sharedWorkspace] setIcon:img forFile:dst options:0];
   }
-  // 签名前必须清掉扩展属性（模板自带的自定义图标 FinderInfo 等），
-  // 否则 codesign 报 "resource fork, Finder information, or similar detritus not allowed" 静默失败，
-  // 留下旧 seal + 新 Info.plist → 验证报 invalid Info.plist
-  NSTask *clr = [[NSTask alloc] init];
-  clr.launchPath = @"/usr/bin/xattr";
-  clr.arguments = @[@"-cr", dst];
-  @try { [clr launch]; [clr waitUntilExit]; } @catch (NSException *e) {}
-  NSTask *sign = [[NSTask alloc] init];
-  sign.launchPath = @"/usr/bin/codesign";
-  sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", dst];
-  BOOL signOK = NO;
-  @try { [sign launch]; [sign waitUntilExit]; signOK = (sign.terminationStatus == 0); } @catch (NSException *e) {}
-  if (!signOK) {
-    NSTask *retry = [[NSTask alloc] init];
-    retry.launchPath = @"/usr/bin/xattr";
-    retry.arguments = @[@"-cr", dst];
-    @try { [retry launch]; [retry waitUntilExit]; } @catch (NSException *e) {}
-    NSTask *sign2 = [[NSTask alloc] init];
-    sign2.launchPath = @"/usr/bin/codesign";
-    sign2.arguments = @[@"--force", @"--deep", @"--sign", @"-", dst];
-    @try { [sign2 launch]; [sign2 waitUntilExit]; } @catch (NSException *e) {}
-  }
-  NSTask *reg = [[NSTask alloc] init];
-  reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-  reg.arguments = @[@"-u", dst];
-  @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
-  [self applySafeFileIconForApp:dst];
   return dst;
 }
 
@@ -6781,7 +6855,7 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 - (void)openGroupRow:(NSButton *)b {
   NSInteger i = b.tag;
   if (i < 0 || i >= (NSInteger)self.groups.count) return;
-  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:self.groups[i][@"path"]]];
+  [self openGroupPath:self.groups[i][@"path"]];
 }
 
 - (void)toggleGroupSelection:(NSButton *)b {
@@ -6897,6 +6971,21 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 }
 
 - (BOOL)applyIconToApp:(NSString *)app {
+  if (IsGroupFilePath(app)) {
+    NSString *src = nil;
+    if (self.dialogSelectedBuiltin >= 0 && self.dialogSelectedBuiltin < (NSInteger)self.dialogIconButtons.count) {
+      NSButton *b = self.dialogIconButtons[self.dialogSelectedBuiltin];
+      src = [[NSBundle mainBundle] pathForResource:b.toolTip ofType:@"icns" inDirectory:@"GroupIcons"];
+    } else if (self.dialogCustomIcon.length) {
+      if ([[self.dialogCustomIcon pathExtension].lowercaseString isEqualToString:@"icns"]) src = self.dialogCustomIcon;
+      else src = [self createICNSFromImagePath:self.dialogCustomIcon];
+    }
+    if (!src.length) return NO;
+    NSImage *img = [[NSImage alloc] initWithContentsOfFile:src];
+    if (!img) return NO;
+    [[NSWorkspace sharedWorkspace] setIcon:img forFile:app options:0];
+    return YES;
+  }
   NSString *resDir = [app stringByAppendingPathComponent:@"Contents/Resources"];
   [[NSFileManager defaultManager] createDirectoryAtPath:resDir withIntermediateDirectories:YES attributes:nil error:NULL];
   NSString *dst = [resDir stringByAppendingPathComponent:@"AppIcon.icns"];
@@ -6927,6 +7016,24 @@ static NSColor *CardBorderForAppearance(NSAppearance *ap) {
 
 - (BOOL)renameGroupFrom:(NSString *)oldName to:(NSString *)newName error:(NSString **)err {
   NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *oldFile = GroupFilePath(oldName);
+  NSString *newFile = GroupFilePath(newName);
+  if ([fm fileExistsAtPath:oldFile]) {
+    if ([fm fileExistsAtPath:newFile]) { if (err) *err = @"同名分组已存在"; return NO; }
+    [self removeDockEntry:oldFile];
+    if (![fm moveItemAtPath:oldFile toPath:newFile error:NULL]) { if (err) *err = @"重命名分组文件失败"; [self addDockEntry:oldFile label:oldName]; return NO; }
+    NSString *oldList = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[oldName stringByAppendingPathExtension:@"txt"]];
+    NSString *newList = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[newName stringByAppendingPathExtension:@"txt"]];
+    if ([fm fileExistsAtPath:oldList]) [fm moveItemAtPath:oldList toPath:newList error:NULL];
+    NSUserDefaults *oldD = [[NSUserDefaults alloc] initWithSuiteName:GroupSuiteNameForName(oldName)];
+    NSUserDefaults *newD = [[NSUserDefaults alloc] initWithSuiteName:GroupSuiteNameForName(newName)];
+    for (NSString *k in [oldD dictionaryRepresentation].allKeys) { id v = [[oldD dictionaryRepresentation] objectForKey:k]; if (v) [newD setObject:v forKey:k]; }
+    [newD setObject:newName forKey:@"displayNameOverride"];
+    [newD synchronize];
+    [self addDockEntry:newFile label:newName];
+    [self killDock];
+    return YES;
+  }
   NSString *oldApp = [[GroupDir() stringByAppendingPathComponent:oldName] stringByAppendingPathExtension:@"app"];
   NSString *newApp = [[GroupDir() stringByAppendingPathComponent:newName] stringByAppendingPathExtension:@"app"];
   if (![fm fileExistsAtPath:oldApp]) { if (err) *err = @"原分组不存在"; return NO; }
@@ -7089,25 +7196,11 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *name = raw;
   while ([name hasSuffix:@"组"] && name.length > 1) name = [name substringToIndex:name.length-1];
   NSFileManager *fm = [NSFileManager defaultManager];
-  NSArray *items = [fm contentsOfDirectoryAtPath:GroupDir() error:NULL];
-  NSString *tpl = nil;
-  for (NSString *f in items) if ([f hasSuffix:@".app"]) { tpl = [GroupDir() stringByAppendingPathComponent:f]; break; }
-  if (!tpl) { [self showSheetMessage:@"创建失败" info:@"没有可用于模板的分组。" parent:[NSApp modalWindow]]; return; }
-  NSString *dst = [GroupDir() stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]];
-  if ([fm fileExistsAtPath:dst]) {
-    [self showSheetMessage:@"同名分组已存在" info:@"请换一个名称。" parent:[NSApp modalWindow]];
+  NSString *dst = [self ensureGroupAppForName:name];
+  if (!dst.length) {
+    [self showSheetMessage:@"创建失败" info:@"无法创建分组文件。" parent:[NSApp modalWindow]];
     return;
   }
-  if (![fm copyItemAtPath:tpl toPath:dst error:NULL]) {
-    [self showSheetMessage:@"创建失败" info:@"复制模板分组失败。" parent:[NSApp modalWindow]];
-    return;
-  }
-  NSString *plist = [dst stringByAppendingPathComponent:@"Contents/Info.plist"];
-  NSMutableDictionary *info = [[NSDictionary dictionaryWithContentsOfFile:plist] mutableCopy];
-  info[@"CFBundleName"] = name;
-  info[@"CFBundleDisplayName"] = name;
-  info[@"CFBundleIdentifier"] = [NSString stringWithFormat:@"com.docklaunchers.g%lu", (unsigned long)([[NSDate date] timeIntervalSince1970]*1000)];
-  [info writeToFile:plist atomically:YES];
   if (![self applyIconToApp:dst]) {
     [fm removeItemAtPath:dst error:NULL];
     [self showSheetMessage:@"图标应用失败" info:@"无法把自定义图片转换为 icns，请换一张图片或使用内置图标。" parent:[NSApp modalWindow]];
@@ -7117,15 +7210,6 @@ static BOOL ValidGroupName(NSString *raw) {
   [fm createDirectoryAtPath:lists withIntermediateDirectories:YES attributes:nil error:NULL];
   NSString *listFile = [lists stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
   if (![fm fileExistsAtPath:listFile]) [@"" writeToFile:listFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-  NSTask *sign = [[NSTask alloc] init];
-  sign.launchPath = @"/usr/bin/codesign";
-  sign.arguments = @[@"--force", @"--deep", @"--sign", @"-", dst];
-  @try { [sign launch]; [sign waitUntilExit]; } @catch(NSException *e) {}
-  [self applySafeFileIconForApp:dst];
-  NSTask *reg = [[NSTask alloc] init];
-  reg.launchPath = @"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-  reg.arguments = @[@"-u", dst];
-  @try { [reg launch]; [reg waitUntilExit]; } @catch (NSException *e) {}
   [self addDockEntry:dst label:name];
   [self ensureGroupDockEntries];
   [self killDock];
@@ -7183,7 +7267,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (r == NSModalResponseOK && self.dialogPendingOpen.length) {
     NSString *p = self.dialogPendingOpen;
     self.dialogPendingOpen = nil;
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:p]];
+    [self openGroupPath:p];
     [self showInfoAlert:@"创建成功" info:@"已打开新分组，控制台 / Dock / 菜单栏已同步。"];
   }
 }
@@ -7357,6 +7441,54 @@ static BOOL ValidGroupName(NSString *raw) {
   if (changed) {
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"centerWrapperPath"];
     [self pruneStaleDockEntries];
+    [self killDock];
+  }
+}
+
+// 一次性把旧分组 App 转成 .dockgroup 文件：迁移图标、设置，并把 .app 移到临时备份目录
+- (void)convertGroupAppsToFilesIfNeeded {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *backup = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"DockLaunchers-converted-apps-%ld", (long)[[NSDate date] timeIntervalSince1970]]];
+  BOOL any = NO;
+  for (NSString *f in ([fm contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[])) {
+    if (![f.pathExtension.lowercaseString isEqualToString:@"app"]) continue;
+    NSString *appPath = [GroupDir() stringByAppendingPathComponent:f];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[appPath stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
+    NSString *bid = info[@"CFBundleIdentifier"] ?: @"";
+    if (![bid hasPrefix:@"com.docklaunchers."]) continue;
+    if ([bid isEqualToString:@"com.docklaunchers.center"] || [bid isEqualToString:@"com.docklaunchers.launcher"]) continue;
+    NSString *name = f.stringByDeletingPathExtension;
+    NSString *file = GroupFilePath(name);
+    if (![fm fileExistsAtPath:file]) {
+      [@"" writeToFile:file atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+      HideGroupFileExtension(file);
+    }
+    NSString *iconPath = [appPath stringByAppendingPathComponent:@"Contents/Resources/AppIcon.icns"];
+    NSImage *icon = [[NSImage alloc] initWithContentsOfFile:iconPath];
+    if (icon) [[NSWorkspace sharedWorkspace] setIcon:icon forFile:file options:0];
+    NSUserDefaults *old = [[NSUserDefaults alloc] initWithSuiteName:bid];
+    NSUserDefaults *neu = [[NSUserDefaults alloc] initWithSuiteName:GroupSuiteNameForName(name)];
+    for (NSString *key in [old dictionaryRepresentation].allKeys) {
+      id v = [[old dictionaryRepresentation] objectForKey:key];
+      if (v) [neu setObject:v forKey:key];
+    }
+    NSString *disp = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"];
+    if (disp.length && ![disp isEqualToString:name]) [neu setObject:disp forKey:@"displayNameOverride"];
+    [neu synchronize];
+    [fm createDirectoryAtPath:backup withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSString *dest = [backup stringByAppendingPathComponent:f];
+    NSError *err = nil;
+    if (![fm moveItemAtPath:appPath toPath:dest error:&err]) {
+      // 运行中的进程可能占用包，退化到复制后删源
+      if ([fm copyItemAtPath:appPath toPath:dest error:NULL]) [fm removeItemAtPath:appPath error:NULL];
+    }
+    any = YES;
+  }
+  if (any) {
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"centerWrapperPath"];
+    [self pruneStaleDockEntries];
+    [self refreshGroups];
+    [self ensureGroupDockEntries];
     [self killDock];
   }
 }
@@ -7612,7 +7744,8 @@ static BOOL ValidGroupName(NSString *raw) {
       } else {
         if ([self dockLauncherWrapperPinned]) return;
         for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[]) {
-          if (![f hasSuffix:@".app"]) continue;
+          NSString *ext = f.pathExtension.lowercaseString;
+          if (![ext isEqualToString:@"app"] && ![ext isEqualToString:@"dockgroup"]) continue;
           [self removeDockEntry:[GroupDir() stringByAppendingPathComponent:f]];
         }
         [self addDockEntry:wrap label:@"DockLaunchers"];
@@ -7623,9 +7756,25 @@ static BOOL ValidGroupName(NSString *raw) {
   NSString *dir = GroupDir();
   NSFileManager *fm = [NSFileManager defaultManager];
   NSArray *files = [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[];
+  files = [files sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+    BOOL da = [a.pathExtension.lowercaseString isEqualToString:@"dockgroup"];
+    BOOL db = [b.pathExtension.lowercaseString isEqualToString:@"dockgroup"];
+    if (da != db) return da ? NSOrderedAscending : NSOrderedDescending;
+    return [a compare:b];
+  }];
+  NSMutableSet *seenGroups = [NSMutableSet set];
   for (NSString *f in files) {
-    if (![f hasSuffix:@".app"]) continue;
+    NSString *ext = f.pathExtension.lowercaseString;
+    if (![ext isEqualToString:@"app"] && ![ext isEqualToString:@"dockgroup"]) continue;
+    if ([f hasPrefix:@"."]) continue;
+    NSString *key = [f stringByDeletingPathExtension];
+    if ([seenGroups containsObject:key]) continue;
+    [seenGroups addObject:key];
     NSString *path = [dir stringByAppendingPathComponent:f];
+    if ([ext isEqualToString:@"dockgroup"]) {
+      [self addDockEntry:path label:GroupDisplayNameForName(key)];
+      continue;
+    }
     if (![fm fileExistsAtPath:[path stringByAppendingPathComponent:@"Contents/Info.plist"]]) continue;
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Info.plist"]] ?: @{};
     NSString *bid = info[@"CFBundleIdentifier"] ?: @"";
@@ -7697,7 +7846,9 @@ static BOOL ValidGroupName(NSString *raw) {
   @try {
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Contents/Info.plist"]];
     NSString *bid = info[@"CFBundleIdentifier"] ?: label;
-    NSString *enc = [[path stringByAppendingString:@"/"] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
+    BOOL isDir = NO;
+    [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir];
+    NSString *enc = [(isDir ? [path stringByAppendingString:@"/"] : path) stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
     NSString *url = [NSString stringWithFormat:@"file://%@", enc];
     CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
     NSMutableArray *apps = raw ? [CFBridgingRelease(raw) mutableCopy] : [NSMutableArray array];
@@ -7705,10 +7856,10 @@ static BOOL ValidGroupName(NSString *raw) {
       NSString *u = nil; @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
       if (u && [DockEntryPath(u) isEqualToString:[path stringByStandardizingPath]]) return;
     }
-    [apps addObject:@{@"tile-data": @{@"file-data": @{@"_CFURLString": url, @"_CFURLStringType": @15},
-                                      @"file-label": label, @"file-type": @41,
-                                      @"bundle-identifier": bid, @"dock-extra": @NO},
-                      @"tile-type": @"file-tile"}];
+    NSMutableDictionary *td = [@{@"file-data": @{@"_CFURLString": url, @"_CFURLStringType": @15},
+                                 @"file-label": label, @"file-type": @41, @"dock-extra": @NO} mutableCopy];
+    if (isDir) td[@"bundle-identifier"] = bid;
+    [apps addObject:@{@"tile-data": td, @"tile-type": @"file-tile"}];
     CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)apps, CFSTR("com.apple.dock"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
     self.dockPersistentDirty=YES;
@@ -15508,8 +15659,13 @@ static BOOL ValidGroupName(NSString *raw) {
 
 - (NSArray<NSString *> *)installedGroupNames {
   NSMutableArray *names = [NSMutableArray array];
+  NSMutableSet *seen = [NSMutableSet set];
   for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[]) {
-    if ([f.pathExtension.lowercaseString isEqualToString:@"app"]) [names addObject:f.stringByDeletingPathExtension];
+    NSString *ext = f.pathExtension.lowercaseString;
+    if (![ext isEqualToString:@"app"] && ![ext isEqualToString:@"dockgroup"]) continue;
+    if ([f hasPrefix:@"."]) continue;
+    NSString *key = f.stringByDeletingPathExtension;
+    if (![seen containsObject:key]) { [seen addObject:key]; [names addObject:key]; }
   }
   [names sortUsingSelector:@selector(localizedCompare:)];
   return names;
@@ -21303,13 +21459,13 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 
 - (void)openGroupFromMenuBarGesture:(NSClickGestureRecognizer *)g {
   NSString *path = g.view.toolTip;
-  if (path) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+  if (path) [self openGroupPath:path];
   [self.popover performClose:nil];
 }
 
 - (void)openGroupFromMenuBar:(NSButton *)sender {
   NSString *path = sender.toolTip;
-  if (path) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+  if (path) [self openGroupPath:path];
   [self.popover performClose:nil];
 }
 
@@ -24072,9 +24228,10 @@ static NSArray<NSString *> *ParseCSVLine(NSString *line) {
 - (void)openGroupByHotkeyID:(UInt32)hotID {
   NSString *name = self.groupHotKeyNames[@(hotID)];
   if (!name.length) return;
-  NSString *path = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
+  NSString *file = GroupFilePath(name);
+  NSString *path = [[NSFileManager defaultManager] fileExistsAtPath:file] ? file : [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"app"];
   if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]];
+    [self openGroupPath:path];
     [self.popover performClose:nil];
   }
 }

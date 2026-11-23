@@ -2,6 +2,9 @@
 #import <Security/Security.h>
 #import <mach/mach.h>
 #import <sys/xattr.h>
+#import <signal.h>
+#import <stdint.h>
+#import <unistd.h>
 
 // 分组 App 只需从 Dock 图标启动；启动后把自己从 LaunchServices 注销，
 // 避免 macOS 26 的「应用程序」窗口列出分组 App。
@@ -18,6 +21,45 @@ static void UnregisterSelfFromLaunchServices(void) {
 
 static NSString *gGroup = @"";
 static NSString *gListKey = @"";
+static NSString *gGroupFile = @"";
+static NSString *gGroupIconPath = @"";
+static NSString *gPidFile = @"";
+static NSString *gDefaultsSuite = @"com.docklaunchers.group.default";
+static BOOL gStandalone = NO;
+static NSUserDefaults *gGroupDefaults = nil;
+static void ShowGroupWindowSignal(int sig);
+@class Controller;
+static id gMainController = nil;
+
+static NSString *GroupSuiteForName(NSString *name) {
+  const char *s = name.UTF8String ?: "";
+  uint64_t h = 1469598103934665603ULL;
+  while (*s) { h ^= (unsigned char)*s++; h *= 1099511628211ULL; }
+  return [NSString stringWithFormat:@"com.docklaunchers.group.%016llx", (unsigned long long)h];
+}
+
+static NSUserDefaults *GroupDefaults(void) {
+  if (!gGroupDefaults) gGroupDefaults = [[NSUserDefaults alloc] initWithSuiteName:gDefaultsSuite];
+  return gGroupDefaults ?: [NSUserDefaults standardUserDefaults];
+}
+
+static void RemovePidFile(void) {
+  if (gPidFile.length) unlink(gPidFile.fileSystemRepresentation);
+}
+
+static void WritePidFile(void) {
+  if (!gPidFile.length) return;
+  [[NSString stringWithFormat:@"%d\n", getpid()] writeToFile:gPidFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+  atexit(RemovePidFile);
+}
+
+static void ShowGroupWindowSignal(int sig) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (!gMainController) return;
+    [NSApp activateIgnoringOtherApps:YES];
+    [[gMainController window] makeKeyAndOrderFront:nil];
+  });
+}
 static NSString *ResolveAppPath(NSString *target);
 static void CollectDockDragURLs(id obj, NSMutableArray *out) {
   if (!obj) return;
@@ -1528,7 +1570,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.pinBtn.focusRingType = NSFocusRingTypeNone;
   self.pinBtn.toolTip = @"钉住：禁止自动退出与关闭窗口（再点取消）";
   [cv addSubview:self.pinBtn];
-  self.pinned = [[NSUserDefaults standardUserDefaults] boolForKey:@"pinned"];
+  self.pinned = [GroupDefaults() boolForKey:@"pinned"];
 
   self.cLightRed = [[PillButton alloc] initWithFrame:NSMakeRect(0,0,14,14)];
   self.cLightRed.fillColor = [NSColor colorWithCalibratedRed:1.0 green:0.37 blue:0.34 alpha:1.0];
@@ -2653,7 +2695,7 @@ static NSString *ResolveAppPath(NSString *target) {
 #pragma mark - 皮肤
 
 - (void)loadTheme {
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   gTheme = [d integerForKey:@"skinTheme"];
   if (gTheme < 0 || gTheme > 3) gTheme = 0;
   if ([d objectForKey:@"skinGlassAlpha"]) gGlassAlpha = [d doubleForKey:@"skinGlassAlpha"];
@@ -2681,7 +2723,7 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)saveTheme {
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   [d setInteger:gTheme forKey:@"skinTheme"];
   [d setDouble:gGlassAlpha forKey:@"skinGlassAlpha"];
   [d setDouble:gImgScale forKey:@"skinImgScale"];
@@ -2696,14 +2738,14 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)saveLayoutColumns {
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   [d setInteger:self.userColumns forKey:@"layoutColumns"];
   [d synchronize];
 }
 
 - (void)saveWindowFrame {
   if (!self.window) return;
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   [d setObject:NSStringFromRect(self.window.frame) forKey:@"windowFrame"];
   [d setBool:self.zoomLayoutActive forKey:@"windowZoomed"];
   [d synchronize];
@@ -2719,7 +2761,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)restoreSavedWindowLayout {
   // 恢复上次的列数 + 窗口位置/大小；多列且上次是标准缩放时继续走缩放，绿灯仍可切回单列
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   NSString *s = [d stringForKey:@"windowFrame"];
   BOOL wasZoomed = [d boolForKey:@"windowZoomed"];
   NSRect saved = NSZeroRect;
@@ -3012,7 +3054,14 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (NSImage *)currentGroupDockIcon {
-  NSImage *img = [[NSWorkspace sharedWorkspace] iconForFile:[[NSBundle mainBundle] bundlePath]];
+  NSString *p = nil;
+  if (gStandalone) {
+    if (gGroupIconPath.length && [[NSFileManager defaultManager] fileExistsAtPath:gGroupIconPath]) p = gGroupIconPath;
+    else p = gGroupFile;
+  } else {
+    p = [[NSBundle mainBundle] bundlePath];
+  }
+  NSImage *img = p.length ? [[NSWorkspace sharedWorkspace] iconForFile:p] : nil;
   if (!img) img = [NSApp applicationIconImage];
   return img ?: [[NSImage alloc] initWithSize:NSMakeSize(64, 64)];
 }
@@ -3790,7 +3839,7 @@ static NSString *ResolveAppPath(NSString *target) {
   self.forceColumns = 0;
   [gAppIconSettings removeAllObjects];
   [gOriginalNames removeAllObjects];
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   [d removeObjectForKey:@"idleExitEnabled"];
   [d removeObjectForKey:@"skinImgPath"];
   [d removeObjectForKey:@"layoutColumns"];
@@ -3950,6 +3999,7 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (NSString *)currentBundlePathByID {
+  if (gStandalone) return gGroupFile.length ? gGroupFile : @"";
   NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
   NSString *parent = [[[NSBundle mainBundle] bundlePath] stringByDeletingLastPathComponent];
   NSString *bundlePath = [NSBundle mainBundle].bundlePath;
@@ -4096,6 +4146,25 @@ static NSString *ResolveAppPath(NSString *target) {
   display = [display stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
   if (display.length == 0) return;
 
+  if (gStandalone) {
+    gGroup = display;
+    self.windowTitleLabel.title = display;
+    self.window.title = display;
+    NSUserDefaults *d = GroupDefaults();
+    [d setObject:display forKey:@"displayNameOverride"];
+    [d synchronize];
+    if (gGroupFile.length) [self updateDockLabelForPath:gGroupFile label:display];
+    [self layoutContent];
+    if (getenv("DOCKLAUNCHER_TEST_RENAME") || getenv("DOCKLAUNCHER_TEST_RENAME2")) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      NSTask *task = [[NSTask alloc] init];
+      task.launchPath = @"/usr/bin/killall";
+      task.arguments = @[@"-KILL", @"Dock"];
+      @try { [task launch]; } @catch (NSException *e) {}
+    });
+    return;
+  }
+
   // 只改显示名，不动 App 包和列表文件名 —— 避免 Dock 路径变化导致图标变文件夹
   NSString *curPath = [self currentBundlePathByID];
   [self writeInfoNamesInBundle:curPath base:display display:display];
@@ -4103,7 +4172,7 @@ static NSString *ResolveAppPath(NSString *target) {
   gGroup = display;
   self.windowTitleLabel.title = display;
   self.window.title = display;
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   [d setObject:display forKey:@"displayNameOverride"];
   [d synchronize];
   [self updateDockLabelForPath:curPath label:display];
@@ -4165,6 +4234,13 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)batchStripGroupSuffix:(id)sender {
+  if (gStandalone) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"通用分组模式不支持批量改名";
+    a.informativeText = @"分组现在是 .dockgroup 文件，请在控制台的分组列表里逐个改名。";
+    [a runModal];
+    return;
+  }
   NSAlert *confirm = [[NSAlert alloc] init];
   confirm.messageText = @"批量去掉分组名里的「组」？";
   confirm.informativeText = @"会把所有以「组」结尾的分组 App 包和列表文件一起改名（如 影音组.app → 影音.app），并更新程序坞图标。";
@@ -4202,7 +4278,7 @@ static NSString *ResolveAppPath(NSString *target) {
   }
 
   if (renamed > 0) {
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    NSUserDefaults *d = GroupDefaults();
     [d setObject:gGroup forKey:@"displayNameOverride"];
     [d synchronize];
     [self layoutContent];
@@ -4267,7 +4343,17 @@ static NSString *ResolveAppPath(NSString *target) {
   while ([name hasSuffix:@"组"] && name.length > 1) name = [name substringToIndex:name.length-1];
   if (name.length == 0) return NO;
   NSFileManager *fm = [NSFileManager defaultManager];
-  NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
+  NSString *parent = gStandalone ? [gGroupFile stringByDeletingLastPathComponent] : [[self currentBundlePathByID] stringByDeletingLastPathComponent];
+  if (gStandalone) {
+    NSString *file = [parent stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"dockgroup"]];
+    if ([fm fileExistsAtPath:file]) return NO;
+    if (![@"" writeToFile:file atomically:YES encoding:NSUTF8StringEncoding error:NULL]) return NO;
+    NSString *listsDir = [parent stringByAppendingPathComponent:@"lists"];
+    [fm createDirectoryAtPath:listsDir withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSString *listFile = [listsDir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
+    if (![fm fileExistsAtPath:listFile]) [@"" writeToFile:listFile atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    return YES;
+  }
   NSString *newPath = [parent stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]];
   if ([fm fileExistsAtPath:newPath]) return NO;
   NSError *err = nil;
@@ -4364,6 +4450,22 @@ static NSString *ResolveAppPath(NSString *target) {
     return;
   }
 
+  if (gStandalone) {
+    NSString *newPath = [[gGroupFile stringByDeletingLastPathComponent] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"dockgroup"]];
+    [self addDockEntryForPath:newPath label:name];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      NSTask *task = [[NSTask alloc] init];
+      task.launchPath = @"/usr/bin/killall";
+      task.arguments = @[@"-KILL", @"Dock"];
+      @try { [task launch]; } @catch (NSException *e) {}
+    });
+    NSAlert *ok = [[NSAlert alloc] init];
+    ok.messageText = @"已创建";
+    ok.informativeText = [NSString stringWithFormat:@"%@.dockgroup 已创建并加入程序坞。", name];
+    [ok runModal];
+    return;
+  }
+
   NSString *parent = [[self currentBundlePathByID] stringByDeletingLastPathComponent];
   NSString *newPath = [parent stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]];
   // 先让 LaunchServices 认识新 App，再写入 Dock，避免出现问号
@@ -4439,8 +4541,8 @@ static NSString *ResolveAppPath(NSString *target) {
   [gOriginalNames removeAllObjects];
   NSString *listFile = [[parent stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[base stringByAppendingPathExtension:@"txt"]];
   NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-  if (bid.length) [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:bid];
-  [[NSUserDefaults standardUserDefaults] synchronize];
+  if (gStandalone || bid.length) [GroupDefaults() removePersistentDomainForName:gDefaultsSuite];
+  [GroupDefaults() synchronize];
   (void)curPath; (void)listFile;
 }
 
@@ -4952,7 +5054,7 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)togglePin:(id)sender {
   self.pinned = !self.pinned;
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   [d setBool:self.pinned forKey:@"pinned"];
   [d synchronize];
   [self updatePinAppearance];
@@ -5012,7 +5114,7 @@ static NSString *ResolveAppPath(NSString *target) {
     [cv addSubview:save];
     [p center];
   }
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   double ts = [d doubleForKey:@"autoCloseDate"];
   NSDate *when;
   if (ts > [[NSDate date] timeIntervalSince1970]) when = [NSDate dateWithTimeIntervalSince1970:ts];
@@ -5028,8 +5130,8 @@ static NSString *ResolveAppPath(NSString *target) {
 
 - (void)saveIdlePanel:(id)sender {
   if (self.idleCheck.state != NSControlStateValueOn) {
-    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"autoCloseDate"];
-    [[NSUserDefaults standardUserDefaults] synchronize];
+    [GroupDefaults() removeObjectForKey:@"autoCloseDate"];
+    [GroupDefaults() synchronize];
     [self.idleExitTimer invalidate]; self.idleExitTimer = nil;
     [self hideCountdown];
     [self.idlePanel orderOut:nil];
@@ -5044,8 +5146,8 @@ static NSString *ResolveAppPath(NSString *target) {
     when = [when dateByAddingTimeInterval:86400];
     rolled = YES;
   }
-  [[NSUserDefaults standardUserDefaults] setDouble:[when timeIntervalSince1970] forKey:@"autoCloseDate"];
-  [[NSUserDefaults standardUserDefaults] synchronize];
+  [GroupDefaults() setDouble:[when timeIntervalSince1970] forKey:@"autoCloseDate"];
+  [GroupDefaults() synchronize];
   [self resetIdleTimer];
   [self.idlePanel orderOut:nil];
   if (rolled) {
@@ -5092,7 +5194,7 @@ static NSString *ResolveAppPath(NSString *target) {
   [self.idleExitTimer invalidate];
   self.idleExitTimer = nil;
   if (self.pinned) { [self hideCountdown]; return; }
-  if (![[NSUserDefaults standardUserDefaults] boolForKey:@"idleExitEnabled"]) { [self hideCountdown]; return; }
+  if (![GroupDefaults() boolForKey:@"idleExitEnabled"]) { [self hideCountdown]; return; }
   self.idleExitTimer = [NSTimer timerWithTimeInterval:180.0 target:self selector:@selector(idleExitFired:) userInfo:nil repeats:NO];
   [[NSRunLoop mainRunLoop] addTimer:self.idleExitTimer forMode:NSRunLoopCommonModes];
   if (!self.countdownTimer) {
@@ -5110,7 +5212,7 @@ static NSString *ResolveAppPath(NSString *target) {
 }
 
 - (void)toggleIdleExit:(id)sender {
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   BOOL on = ![d boolForKey:@"idleExitEnabled"];
   [d setBool:on forKey:@"idleExitEnabled"];
   [d synchronize];
@@ -5137,7 +5239,7 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
   NSDictionary *d = [shared dictionaryForKey:@"customShortcuts"];
   if (!d) {
     // 迁移旧的“按分组保存”的快捷键
-    d = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"customShortcuts"];
+    d = [GroupDefaults() dictionaryForKey:@"customShortcuts"];
     if (d) { [shared setObject:d forKey:@"customShortcuts"]; [shared synchronize]; }
   }
   self.customShortcuts = d ? [d mutableCopy] : [NSMutableDictionary dictionary];
@@ -5429,8 +5531,11 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
   NSImage *icon = [self composeIconWithImage:img];
   // 只替换运行中的 Dock / 程序切换器图标，避免写入 App 包触发 macOS App Management 拦截
   [NSApp setApplicationIconImage:icon];
+  if (gStandalone && gGroupFile.length) {
+    [[NSWorkspace sharedWorkspace] setIcon:icon forFile:gGroupFile options:0];
+  }
   self.customIconPath = path;
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   [d setObject:path forKey:@"customIconPath"];
   [d setObject:path forKey:@"customIconApplied"];
   [d synchronize];
@@ -5448,8 +5553,11 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
 
 - (void)resetCustomIcon:(id)sender {
   [NSApp setApplicationIconImage:nil];
+  if (gStandalone && gGroupFile.length) {
+    [[NSWorkspace sharedWorkspace] setIcon:nil forFile:gGroupFile options:0];
+  }
   self.customIconPath = nil;
-  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  NSUserDefaults *d = GroupDefaults();
   [d removeObjectForKey:@"customIconPath"];
   [d removeObjectForKey:@"customIconApplied"];
   [d synchronize];
@@ -5614,35 +5722,6 @@ static NSString *const kSharedShortcutSuite = @"com.docklaunchers.shared";
 
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
-    NSTimeInterval t_start = [NSDate timeIntervalSinceReferenceDate];
-    NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
-    NSString *bundleKey = [[bundlePath lastPathComponent] stringByDeletingPathExtension];
-    if (argc >= 3) {
-      gListKey = [NSString stringWithUTF8String:argv[1]];
-      gListFile = [NSString stringWithUTF8String:argv[2]];
-    } else if (bundleKey.length > 0 && bundlePath.length > 0) {
-      gListKey = bundleKey;
-      NSString *lists = [[bundlePath stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"lists"];
-      gListFile = [lists stringByAppendingPathComponent:[bundleKey stringByAppendingPathExtension:@"txt"]];
-    } else {
-      fprintf(stderr, "usage: ui <group> <listfile>\n");
-      return 2;
-    }
-    NSString *display = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleDisplayName"];
-    if (display.length == 0) {
-      display = gListKey;
-      if ([display hasSuffix:@"组"]) display = [display substringToIndex:display.length-1];
-    }
-    gGroup = display;
-    NSString *nameOverride = [[NSUserDefaults standardUserDefaults] stringForKey:@"displayNameOverride"];
-    if (nameOverride.length > 0) gGroup = nameOverride;
-
-    if (getenv("DOCKLAUNCHER_TEST_UNINSTALL")) {
-      [NSApplication sharedApplication];
-      Controller *uc = [[Controller alloc] init];
-      [uc uninstallAll:nil];
-      return 0;
-    }
     if (argc >= 2 && strcmp(argv[1], "--restore-dock") == 0) {
       [NSApplication sharedApplication];
       Controller *c = [[Controller alloc] init];
@@ -5654,29 +5733,86 @@ int main(int argc, const char *argv[]) {
       fprintf(stderr, "DOCK_RESTORED\n");
       return 0;
     }
+    NSTimeInterval t_start = [NSDate timeIntervalSinceReferenceDate];
+    NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+    NSString *bundleKey = [[bundlePath lastPathComponent] stringByDeletingPathExtension];
+    BOOL bundleIsApp = [bundlePath hasSuffix:@".app"];
+    BOOL oldArgs = (argc >= 3 && argv[1][0] != '-');
+    if (argc >= 2 && strcmp(argv[1], "--group") == 0) {
+      for (int i = 1; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "--group") == 0) gListKey = [NSString stringWithUTF8String:argv[i+1]];
+        else if (strcmp(argv[i], "--list") == 0) gListFile = [NSString stringWithUTF8String:argv[i+1]];
+        else if (strcmp(argv[i], "--file") == 0) gGroupFile = [NSString stringWithUTF8String:argv[i+1]];
+        else if (strcmp(argv[i], "--icon") == 0) gGroupIconPath = [NSString stringWithUTF8String:argv[i+1]];
+        else if (strcmp(argv[i], "--pidfile") == 0) gPidFile = [NSString stringWithUTF8String:argv[i+1]];
+      }
+      gStandalone = YES;
+      if (!gListKey.length) { fprintf(stderr, "missing --group\n"); return 2; }
+      gDefaultsSuite = GroupSuiteForName(gListKey);
+    } else if (oldArgs) {
+      gListKey = [NSString stringWithUTF8String:argv[1]];
+      gListFile = [NSString stringWithUTF8String:argv[2]];
+      gStandalone = !bundleIsApp;
+      gDefaultsSuite = gStandalone ? GroupSuiteForName(gListKey) : ([[NSBundle mainBundle] bundleIdentifier] ?: GroupSuiteForName(gListKey));
+    } else if (bundleKey.length > 0 && bundleIsApp) {
+      gListKey = bundleKey;
+      NSString *lists = [[bundlePath stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"lists"];
+      gListFile = [lists stringByAppendingPathComponent:[bundleKey stringByAppendingPathExtension:@"txt"]];
+      gStandalone = NO;
+      gDefaultsSuite = [[NSBundle mainBundle] bundleIdentifier] ?: GroupSuiteForName(bundleKey);
+    } else {
+      fprintf(stderr, "usage: ui <group> <listfile>  |  ui --group <name> --list <path> --file <path> --icon <path> --pidfile <path>\n");
+      return 2;
+    }
+    NSString *display = nil;
+    if (gStandalone) {
+      display = gListKey;
+    } else {
+      display = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleDisplayName"];
+    }
+    if (display.length == 0) {
+      display = gListKey;
+      if ([display hasSuffix:@"组"]) display = [display substringToIndex:display.length-1];
+    }
+    gGroup = display;
+    NSString *nameOverride = [GroupDefaults() stringForKey:@"displayNameOverride"];
+    if (nameOverride.length > 0) gGroup = nameOverride;
 
+    if (getenv("DOCKLAUNCHER_TEST_UNINSTALL")) {
+      [NSApplication sharedApplication];
+      Controller *uc = [[Controller alloc] init];
+      [uc uninstallAll:nil];
+      return 0;
+    }
     NSTimeInterval tA = [NSDate timeIntervalSinceReferenceDate];
     [NSApplication sharedApplication];
     NSTimeInterval tB = [NSDate timeIntervalSinceReferenceDate];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    [NSApp setActivationPolicy:gStandalone ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular];
     NSTimeInterval tC = [NSDate timeIntervalSinceReferenceDate];
     if (getenv("DOCKLAUNCHER_BENCH")) fprintf(stderr, "INIT app=%.0f policy=%.0f\n", (tB-tA)*1000.0, (tC-tB)*1000.0);
-    // 单实例清理放到窗口显示之后异步做，不占用启动关键路径
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      for (NSRunningApplication *ra in [[NSWorkspace sharedWorkspace] runningApplications]) {
-        if (ra.processIdentifier != getpid() && [ra.localizedName isEqualToString:@"ui"]) {
-          [ra terminate];
+    // 旧分组 App 的单实例清理；standalone 由控制台按 pidfile 管，不能互杀
+    if (!gStandalone) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        for (NSRunningApplication *ra in [[NSWorkspace sharedWorkspace] runningApplications]) {
+          if (ra.processIdentifier != getpid() && [ra.localizedName isEqualToString:@"ui"]) {
+            [ra terminate];
+          }
         }
-      }
-    });
+      });
+    }
     AppDelegate *delegate = [[AppDelegate alloc] init];
     [NSApplication sharedApplication].delegate = delegate;
 
+    if (gStandalone) {
+      signal(SIGUSR1, ShowGroupWindowSignal);
+      WritePidFile();
+    }
     Controller *c = [[Controller alloc] init];
+    gMainController = c;
     [c loadTheme];
-    NSString *savedIcon = [[NSUserDefaults standardUserDefaults] stringForKey:@"customIconPath"];
-    NSString *appliedIcon = [[NSUserDefaults standardUserDefaults] stringForKey:@"customIconApplied"];
-    BOOL bundleHasCustomIcon = (getxattr([bundlePath fileSystemRepresentation], "com.apple.FinderInfo", NULL, 0, 0, 0) > 0);
+    NSString *savedIcon = [GroupDefaults() stringForKey:@"customIconPath"];
+    NSString *appliedIcon = [GroupDefaults() stringForKey:@"customIconApplied"];
+    BOOL bundleHasCustomIcon = gStandalone ? (gGroupIconPath.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:gGroupIconPath]) : (getxattr([bundlePath fileSystemRepresentation], "com.apple.FinderInfo", NULL, 0, 0, 0) > 0);
     if (savedIcon.length > 0 && (![savedIcon isEqualToString:(appliedIcon ?: @"")] || !bundleHasCustomIcon)) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [c applyCustomIconAtPath:savedIcon];
@@ -5686,9 +5822,11 @@ int main(int argc, const char *argv[]) {
     NSTimeInterval t0 = [NSDate timeIntervalSinceReferenceDate];
     if (getenv("DOCKLAUNCHER_BENCH")) fprintf(stderr, "PREBUILD_MS=%.0f\n", (t0 - t_start)*1000.0);
     [c buildWindow];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      UnregisterSelfFromLaunchServices();
-    });
+    if (!gStandalone) {
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UnregisterSelfFromLaunchServices();
+      });
+    }
     if (getenv("DOCKLAUNCHER_BENCH")) {
       fprintf(stderr, "BUILD_MS=%.1f\n", ([NSDate timeIntervalSinceReferenceDate] - t0)*1000.0);
     }
@@ -5730,13 +5868,13 @@ int main(int argc, const char *argv[]) {
       fprintf(stderr, "FRAME_SET x=%.0f y=%.0f w=%.0f h=%.0f zoomed=%d saved=%ld\n",
               got.origin.x, got.origin.y, got.size.width, got.size.height,
               c.zoomLayoutActive ? 1 : 0,
-              (long)[[NSUserDefaults standardUserDefaults] integerForKey:@"layoutColumns"]);
+              (long)[GroupDefaults() integerForKey:@"layoutColumns"]);
       exit(0);
     }
     if (getenv("DOCKLAUNCHER_TEST_LAYOUT")) {
       NSInteger k = atoi(getenv("DOCKLAUNCHER_TEST_LAYOUT"));
       [c applyLayoutColumns:k];
-      NSInteger savedCols = (NSInteger)[[NSUserDefaults standardUserDefaults] integerForKey:@"layoutColumns"];
+      NSInteger savedCols = (NSInteger)[GroupDefaults() integerForKey:@"layoutColumns"];
       fprintf(stderr, "LAYOUT_SET user=%ld eff=%ld saved=%ld w=%.0f\n",
               (long)c.userColumns, (long)[c effectiveColumns], (long)savedCols,
               c.window.frame.size.width);
@@ -5795,8 +5933,8 @@ int main(int argc, const char *argv[]) {
     }
     if (getenv("DOCKLAUNCHER_TEST_COUNTDOWN_SHOW")) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [[NSUserDefaults standardUserDefaults] setDouble:([[NSDate date] timeIntervalSince1970] + 3725) forKey:@"autoCloseDate"];
-        [[NSUserDefaults standardUserDefaults] synchronize];
+        [GroupDefaults() setDouble:([[NSDate date] timeIntervalSince1970] + 3725) forKey:@"autoCloseDate"];
+        [GroupDefaults() synchronize];
         [c resetIdleTimer];
         fprintf(stderr, "CD hidden=%d frame=%.0f,%.0f,%.0fx%.0f text='%s'\n", c.countdownLabel.hidden, c.countdownLabel.frame.origin.x, c.countdownLabel.frame.origin.y, c.countdownLabel.frame.size.width, c.countdownLabel.frame.size.height, [c.countdownLabel.stringValue UTF8String]);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ exit(0); });
@@ -5909,8 +6047,8 @@ int main(int argc, const char *argv[]) {
     }
     if (getenv("DOCKLAUNCHER_TEST_IDLE_IDLE")) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"idleExitEnabled"];
-        [[NSUserDefaults standardUserDefaults] synchronize];
+        [GroupDefaults() setBool:YES forKey:@"idleExitEnabled"];
+        [GroupDefaults() synchronize];
         [c resetIdleTimer];
         fprintf(stderr, "IDLEIDLE fireIn=%.0f cdHidden=%d text='%s'\n", c.idleExitTimer ? [c.idleExitTimer.fireDate timeIntervalSinceNow] : -1, c.countdownLabel.hidden, [c.countdownLabel.stringValue UTF8String]);
         [c togglePin:nil];
@@ -5927,11 +6065,11 @@ int main(int argc, const char *argv[]) {
     }
     if (getenv("DOCKLAUNCHER_TEST_IDLE_CALC")) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [[NSUserDefaults standardUserDefaults] setDouble:([[NSDate date] timeIntervalSince1970] + 60) forKey:@"autoCloseDate"];
-        [[NSUserDefaults standardUserDefaults] synchronize];
+        [GroupDefaults() setDouble:([[NSDate date] timeIntervalSince1970] + 60) forKey:@"autoCloseDate"];
+        [GroupDefaults() synchronize];
         [c resetIdleTimer];
-        fprintf(stderr, "IDLECALC ts=%.0f fireIn=%.1f valid=%d\n", [[NSUserDefaults standardUserDefaults] doubleForKey:@"autoCloseDate"], c.idleExitTimer ? [c.idleExitTimer.fireDate timeIntervalSinceNow] : -1, c.idleExitTimer != nil);
-        [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"autoCloseDate"];
+        fprintf(stderr, "IDLECALC ts=%.0f fireIn=%.1f valid=%d\n", [GroupDefaults() doubleForKey:@"autoCloseDate"], c.idleExitTimer ? [c.idleExitTimer.fireDate timeIntervalSinceNow] : -1, c.idleExitTimer != nil);
+        [GroupDefaults() removeObjectForKey:@"autoCloseDate"];
         [c resetIdleTimer];
         fprintf(stderr, "IDLECALC off=%d\n", c.idleExitTimer != nil);
         exit(0);
@@ -6235,7 +6373,7 @@ int main(int argc, const char *argv[]) {
         [c.window zoom:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
           fprintf(stderr, "ZOOMED W=%.0f H=%.0f COLS=%ld saved=%ld zoomed=%d\n", c.window.frame.size.width, c.window.frame.size.height, (long)[c effectiveColumns],
-                  (long)[[NSUserDefaults standardUserDefaults] integerForKey:@"layoutColumns"], c.zoomLayoutActive ? 1 : 0);
+                  (long)[GroupDefaults() integerForKey:@"layoutColumns"], c.zoomLayoutActive ? 1 : 0);
           exit(0);
         });
       });

@@ -12,6 +12,7 @@ mkdir -p "$ROOT/build.noindex"
 xcrun clang -O2 -fobjc-arc -framework Cocoa -framework Security -arch arm64 -arch x86_64 -o "$ROOT/build.noindex/group_ui" "$ROOT/src/launcher.m"
 mkdir -p "$OUT/Contents/Resources/GroupTemplate"
 cp "$ROOT/build.noindex/group_ui" "$OUT/Contents/Resources/GroupTemplate/ui"
+cp "$ROOT/build.noindex/group_ui" "$OUT/Contents/Resources/groupui"
 cp "$ROOT/resources/icons/控制台.icns" "$OUT/Contents/Resources/AppIcon2.icns"
 mkdir -p "$OUT/Contents/Resources/Services"
 cp -R "$ROOT/resources/services/"*.workflow "$OUT/Contents/Resources/Services/" 2>/dev/null || true
@@ -39,6 +40,19 @@ cat > "$OUT/Contents/Info.plist" <<'PL'
 <key>NSHighResolutionCapable</key><true/>
 <key>LSUIElement</key><true/>
   <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>com.docklaunchers.center</string><key>CFBundleURLSchemes</key><array><string>docklaunchers</string></array></dict></array>
+<key>UTExportedTypeDeclarations</key><array><dict>
+  <key>UTTypeIdentifier</key><string>com.docklaunchers.group</string>
+  <key>UTTypeDescription</key><string>DockLaunchers 分组</string>
+  <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+  <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>dockgroup</string></array></dict>
+</dict></array>
+<key>CFBundleDocumentTypes</key><array><dict>
+  <key>CFBundleTypeName</key><string>DockLaunchers 分组</string>
+  <key>CFBundleTypeRole</key><string>Viewer</string>
+  <key>LSHandlerRank</key><string>Owner</string>
+  <key>LSItemContentTypes</key><array><string>com.docklaunchers.group</string></array>
+  <key>CFBundleTypeExtensions</key><array><string>dockgroup</string></array>
+</dict></array>
 <key>NSAccessibilityUsageDescription</key><string>用于保存和恢复窗口布局。</string>
 <key>NSCameraUsageDescription</key>
   <string>录屏时显示前置摄像头画面。</string>
