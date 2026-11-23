@@ -132,6 +132,11 @@ static NSString *DLUnescapeXML(NSString *s) {
   r = [r stringByReplacingOccurrencesOfString:@"&quot;" withString:@"\""];
   r = [r stringByReplacingOccurrencesOfString:@"&apos;" withString:@"'"];
   r = [r stringByReplacingOccurrencesOfString:@"&amp;" withString:@"&"];
+  r = [r stringByReplacingOccurrencesOfString:@"&quot" withString:@"\""];
+  r = [r stringByReplacingOccurrencesOfString:@"&apos" withString:@"'"];
+  r = [r stringByReplacingOccurrencesOfString:@"&lt" withString:@"<"];
+  r = [r stringByReplacingOccurrencesOfString:@"&gt" withString:@">"];
+  r = [r stringByReplacingOccurrencesOfString:@"&amp" withString:@"&"];
   return r;
 }
 
@@ -10853,40 +10858,46 @@ static BOOL ValidGroupName(NSString *raw) {
   NSScrollView *aiScroll = sv;
   aiScroll.frame = NSMakeRect(8, 8, 684, 390);
 
-  ColorHoverButton *decrypt = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 26, 110, 30)];
+  ColorHoverButton *decrypt = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(24, 26, 86, 30)];
   decrypt.title = @"解密备份…"; decrypt.hoverColor = [NSColor systemTealColor];
   decrypt.target = self; decrypt.action = @selector(aiDecryptBackup:);
   [decrypt applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:decrypt];
-  ColorHoverButton *importBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(142, 26, 100, 30)];
+  ColorHoverButton *importBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(114, 26, 86, 30)];
   importBtn.title = @"导入数据…"; importBtn.hoverColor = [NSColor systemBlueColor];
   importBtn.target = self; importBtn.action = @selector(aiImportData:);
   [importBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:importBtn];
-  ColorHoverButton *exportBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(250, 26, 100, 30)];
+  ColorHoverButton *notesBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(204, 26, 86, 30)];
+  notesBtn.title = @"从备忘录…"; notesBtn.hoverColor = [NSColor systemOrangeColor];
+  notesBtn.target = self; notesBtn.action = @selector(aiImportFromNotes:);
+  notesBtn.toolTip = @"读取备忘录里按「名称 / 链接地址 / API Key / 备注」保存的 AI 数据";
+  [notesBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
+  [v addSubview:notesBtn];
+  ColorHoverButton *exportBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(294, 26, 86, 30)];
   exportBtn.title = @"导出数据…"; exportBtn.hoverColor = [NSColor systemPurpleColor];
   exportBtn.target = self; exportBtn.action = @selector(aiExportData:);
   [exportBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:exportBtn];
-  ColorHoverButton *quotaBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(358, 26, 100, 30)];
+  ColorHoverButton *quotaBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(384, 26, 86, 30)];
   quotaBtn.title = @"刷新余量"; quotaBtn.hoverColor = [NSColor systemGreenColor];
   quotaBtn.target = self; quotaBtn.action = @selector(refreshAIQuotas:);
   [quotaBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:quotaBtn];
-  ColorHoverButton *promptBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(466, 26, 110, 30)];
+  ColorHoverButton *promptBtn = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(474, 26, 86, 30)];
   promptBtn.title = @"提示词库…"; promptBtn.hoverColor = [NSColor systemPurpleColor];
   promptBtn.target = self; promptBtn.action = @selector(showPromptLibrary:);
   [promptBtn applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:promptBtn];
-  self.aiPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(582, 26, 40, 30)];
+  self.aiPrevButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(564, 26, 34, 30)];
   self.aiPrevButton.title = @"‹"; self.aiPrevButton.hoverColor = [NSColor systemBlueColor];
   self.aiPrevButton.target = self; self.aiPrevButton.action = @selector(aiPrevPage:);
   [self.aiPrevButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
   [v addSubview:self.aiPrevButton];
   self.aiPageLabel = [self label:@"第 1/1 页" size:11 bold:NO color:[NSColor secondaryLabelColor]];
   self.aiPageLabel.alignment = NSTextAlignmentCenter;
-  self.aiPageLabel.frame = NSMakeRect(626, 32, 62, 18); [v addSubview:self.aiPageLabel];
-  self.aiNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(692, 26, 40, 30)];
+  self.aiPageLabel.frame = NSMakeRect(600, 32, 62, 18); [v addSubview:self.aiPageLabel];
+  self.aiNextButton = [[ColorHoverButton alloc] initWithFrame:NSMakeRect(666, 26, 34, 30)];
   self.aiNextButton.title = @"›"; self.aiNextButton.hoverColor = [NSColor systemBlueColor];
   self.aiNextButton.target = self; self.aiNextButton.action = @selector(aiNextPage:);
   [self.aiNextButton applyColor:DLButtonBackground() textColor:[NSColor labelColor]];
@@ -11850,6 +11861,7 @@ static BOOL ValidGroupName(NSString *raw) {
   if (choice==NSAlertThirdButtonReturn) return;
   BOOL includeKeys = choice==NSAlertSecondButtonReturn;
   if (includeKeys && ![self requestAdminAuthentication]) return;
+  [NSApp activateIgnoringOtherApps:YES];
   NSSavePanel *sp = [NSSavePanel savePanel];
   sp.nameFieldStringValue = includeKeys ? @"ai-services-with-keys.json" : @"ai-services.json";
   sp.allowedFileTypes = @[@"json", @"csv"];
@@ -11908,6 +11920,7 @@ static BOOL ValidGroupName(NSString *raw) {
 }
 
 - (void)aiImportData:(id)sender {
+  [NSApp activateIgnoringOtherApps:YES];
   NSOpenPanel *op = [NSOpenPanel openPanel];
   op.canChooseFiles = YES; op.canChooseDirectories = NO; op.allowsMultipleSelection = NO;
   op.allowedFileTypes = @[@"json", @"csv", @"txt"];
@@ -11962,6 +11975,233 @@ static BOOL ValidGroupName(NSString *raw) {
     }
   }
   if (!incoming.count) { [self showToast:@"没有识别到可导入的数据"]; return; }
+  [self mergeAIDataEntries:incoming];
+}
+
+- (NSString *)aiPlainTextFromNotesHTML:(NSString *)html {
+  if (!html.length) return @"";
+  NSMutableString *s = [html mutableCopy];
+  for (NSString *tag in @[@"<br>", @"<br/>", @"<br />", @"</div>", @"</p>", @"</li>"]) {
+    [s replaceOccurrencesOfString:tag withString:@"\n" options:NSCaseInsensitiveSearch range:NSMakeRange(0, s.length)];
+  }
+  NSRegularExpression *tagRx = [NSRegularExpression regularExpressionWithPattern:@"<[^>]+>" options:0 error:NULL];
+  s = [[tagRx stringByReplacingMatchesInString:s options:0 range:NSMakeRange(0, s.length) withTemplate:@""] mutableCopy];
+  return [DLUnescapeXML(s) stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+}
+
+- (NSArray<NSDictionary *> *)aiJSONObjectsFromText:(NSString *)text {
+  NSMutableArray *objects = [NSMutableArray array];
+  NSInteger depth = 0;
+  NSUInteger start = NSNotFound;
+  BOOL inString = NO, escaped = NO;
+  for (NSUInteger i = 0; i < text.length; i++) {
+    unichar c = [text characterAtIndex:i];
+    if (inString) {
+      if (escaped) escaped = NO;
+      else if (c == '\\') escaped = YES;
+      else if (c == '"') inString = NO;
+    } else if (c == '"') {
+      inString = YES;
+    } else if (c == '{') {
+      if (depth == 0) start = i;
+      depth++;
+    } else if (c == '}') {
+      if (depth > 0) {
+        depth--;
+        if (depth == 0 && start != NSNotFound) {
+          NSString *json = [text substringWithRange:NSMakeRange(start, i - start + 1)];
+          NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
+          id obj = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+          if ([obj isKindOfClass:[NSDictionary class]]) [objects addObject:obj];
+          start = NSNotFound;
+        }
+      }
+    }
+  }
+  return objects;
+}
+
+- (NSArray<NSDictionary *> *)aiEntriesFromJSONObjects:(NSArray<NSDictionary *> *)objects {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *root in objects) {
+    id accounts = root[@"accounts"];
+    if (![accounts isKindOfClass:[NSArray class]]) continue;
+    for (id wrapper in accounts) {
+      if (![wrapper isKindOfClass:[NSDictionary class]]) continue;
+      NSDictionary *acc = wrapper[@"account"];
+      if (![acc isKindOfClass:[NSDictionary class]]) acc = wrapper;
+      NSString *name = acc[@"label"] ?: acc[@"name"];
+      NSString *endpoint = acc[@"apiUrl"] ?: acc[@"endpoint"];
+      NSString *api = wrapper[@"apiKey"] ?: acc[@"apiKey"] ?: acc[@"key"];
+      NSString *note = acc[@"note"] ?: wrapper[@"note"];
+      NSString *quota = acc[@"quota"] ?: wrapper[@"quota"];
+      if (![name isKindOfClass:[NSString class]] || !name.length) continue;
+      if (![api isKindOfClass:[NSString class]]) api = @"";
+      if (![endpoint isKindOfClass:[NSString class]]) endpoint = @"";
+      api = [api stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+      endpoint = [endpoint stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+      if (!api.length && !endpoint.length) continue;
+      NSMutableDictionary *e = [NSMutableDictionary dictionary];
+      e[@"name"] = name;
+      if (api.length) e[@"api"] = api;
+      if (endpoint.length) e[@"endpoint"] = endpoint;
+      if ([note isKindOfClass:[NSString class]] && note.length) e[@"note"] = note;
+      if ([quota isKindOfClass:[NSString class]] && quota.length) e[@"quota"] = quota;
+      [out addObject:e];
+    }
+  }
+  return out;
+}
+
+- (NSArray<NSDictionary *> *)aiEntriesFromPlainText:(NSString *)text title:(NSString *)title {
+  NSMutableArray *out = [NSMutableArray array];
+  NSMutableDictionary *cur = nil;
+  NSArray *lines = [text componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+  NSCharacterSet *ws = [NSCharacterSet whitespaceCharacterSet];
+  for (NSUInteger i = 0; i < lines.count; i++) {
+    NSString *line = [lines[i] stringByTrimmingCharactersInSet:ws];
+    if (!line.length) continue;
+    if ([line hasPrefix:@"{"] || [line hasPrefix:@"}"]) continue;
+    NSRange colon = [line rangeOfString:@"："];
+    if (colon.location == NSNotFound) colon = [line rangeOfString:@":"];
+    if (colon.location == NSNotFound) continue;
+    NSString *key = [[line substringToIndex:colon.location] stringByTrimmingCharactersInSet:ws];
+    NSString *val = [[line substringFromIndex:NSMaxRange(colon)] stringByTrimmingCharactersInSet:ws];
+    NSString *lk = key.lowercaseString;
+    if ([key containsString:@"名称"] || [key containsString:@"服务"] || [lk isEqualToString:@"name"]) {
+      if (cur && ([cur[@"name"] length] || [cur[@"api"] length] || [cur[@"endpoint"] length])) [out addObject:cur];
+      cur = [NSMutableDictionary dictionary];
+      if (val.length) cur[@"name"] = val;
+      continue;
+    }
+    if (!cur) continue;
+    BOOL isLink = ([key containsString:@"链接"] || [key containsString:@"地址"] || [lk containsString:@"endpoint"]);
+    BOOL isKey = ([lk containsString:@"key"] || [key containsString:@"密钥"]);
+    if (isLink && !val.length && i + 1 < lines.count) {
+      NSString *next = [lines[i + 1] stringByTrimmingCharactersInSet:ws];
+      if (next.length && ![next containsString:@"："]) { val = next; i++; }
+    }
+    if (isKey && !val.length && i + 1 < lines.count) {
+      NSString *next = [lines[i + 1] stringByTrimmingCharactersInSet:ws];
+      if (next.length && ![next containsString:@"："]) { val = next; i++; }
+    }
+    if ([key containsString:@"余量"] || [key containsString:@"额度"] || [key containsString:@"余额"] || [lk isEqualToString:@"quota"]) cur[@"quota"] = val;
+    else if (isLink) cur[@"endpoint"] = val;
+    else if (isKey) cur[@"api"] = val;
+    else if ([key containsString:@"备注"] || [key containsString:@"用途"] || [lk isEqualToString:@"note"]) cur[@"note"] = val;
+  }
+  if (cur && ([cur[@"name"] length] || [cur[@"api"] length] || [cur[@"endpoint"] length])) [out addObject:cur];
+  NSCharacterSet *nonDigits = [[NSCharacterSet decimalDigitCharacterSet] invertedSet];
+  NSMutableArray *valid = [NSMutableArray array];
+  for (NSMutableDictionary *e in out) {
+    NSString *name = [e[@"name"] stringByTrimmingCharactersInSet:ws];
+    if (!name.length) name = [title stringByTrimmingCharactersInSet:ws];
+    if (!name.length) continue;
+    if ([name rangeOfCharacterFromSet:nonDigits].location == NSNotFound) continue;
+    NSString *endpoint = [e[@"endpoint"] stringByTrimmingCharactersInSet:ws] ?: @"";
+    endpoint = [endpoint stringByReplacingOccurrencesOfString:@"https: //" withString:@"https://"];
+    endpoint = [endpoint stringByReplacingOccurrencesOfString:@"http: //" withString:@"http://"];
+    endpoint = [endpoint stringByReplacingOccurrencesOfString:@" " withString:@""];
+    NSString *api = [e[@"api"] stringByTrimmingCharactersInSet:ws] ?: @"";
+    BOOL validEndpoint = ([endpoint.lowercaseString hasPrefix:@"http://"] || [endpoint.lowercaseString hasPrefix:@"https://"] || ([endpoint containsString:@"."] && endpoint.length > 3));
+    BOOL keyish = api.length >= 8 && [api rangeOfCharacterFromSet:nonDigits].location != NSNotFound;
+    if (!validEndpoint && !keyish) continue;
+    e[@"name"] = name;
+    if (endpoint.length) e[@"endpoint"] = endpoint;
+    [valid addObject:e];
+  }
+  return valid;
+}
+
+- (NSArray<NSDictionary *> *)aiEntriesFromNotesBody:(NSString *)body title:(NSString *)title {
+  NSString *text = [self aiPlainTextFromNotesHTML:body];
+  if (!text.length) return @[];
+  NSArray *objects = [self aiJSONObjectsFromText:text];
+  if (objects.count) {
+    NSArray *jsonEntries = [self aiEntriesFromJSONObjects:objects];
+    if (jsonEntries.count) return jsonEntries;
+  }
+  return [self aiEntriesFromPlainText:text title:title];
+}
+
+- (NSArray<NSDictionary *> *)aiDeduplicatedEntries:(NSArray<NSDictionary *> *)entries {
+  NSMutableArray *order = [NSMutableArray array];
+  NSMutableDictionary *byKey = [NSMutableDictionary dictionary];
+  NSCharacterSet *ws = [NSCharacterSet whitespaceAndNewlineCharacterSet];
+  for (NSDictionary *e in entries) {
+    NSString *name = [e[@"name"] stringByTrimmingCharactersInSet:ws] ?: @"";
+    if (!name.length) continue;
+    NSString *api = [e[@"api"] stringByTrimmingCharactersInSet:ws] ?: @"";
+    NSString *key = api.length >= 8 ? [@"key:" stringByAppendingString:api] : [@"name:" stringByAppendingString:name.lowercaseString];
+    NSMutableDictionary *existing = byKey[key];
+    if (!existing) {
+      existing = [e mutableCopy];
+      existing[@"name"] = name;
+      byKey[key] = existing;
+      [order addObject:existing];
+      continue;
+    }
+    NSString *oldEndpoint = existing[@"endpoint"] ?: @"";
+    NSString *newEndpoint = e[@"endpoint"] ?: @"";
+    BOOL oldLooksAPI = ([oldEndpoint containsString:@"/api/"] || [oldEndpoint containsString:@"/v1"] || [oldEndpoint hasPrefix:@"https://api."]);
+    BOOL newLooksAPI = ([newEndpoint containsString:@"/api/"] || [newEndpoint containsString:@"/v1"] || [newEndpoint hasPrefix:@"https://api."]);
+    if ((!oldEndpoint.length || (newLooksAPI && !oldLooksAPI)) && newEndpoint.length) existing[@"endpoint"] = newEndpoint;
+    for (NSString *field in @[@"api", @"quota", @"note"]) {
+      NSString *old = existing[field];
+      NSString *new = e[field];
+      if ((![old isKindOfClass:[NSString class]] || !old.length) && [new isKindOfClass:[NSString class]] && new.length) existing[field] = new;
+    }
+  }
+  return order;
+}
+
+- (void)aiImportFromNotes:(id)sender {
+  if (![self ensureNotesPermission]) return;
+  NSString *source = @"tell application \"Notes\"\nset out to \"\"\nrepeat with n in every note\nset out to out & \"@@NOTE@@\" & (name of n) & \"@@TITLE@@\" & (body of n)\nend repeat\nreturn out\nend tell";
+  NSAppleScript *script = [[NSAppleScript alloc] initWithSource:source];
+  NSDictionary *error = nil;
+  NSAppleEventDescriptor *result = [script executeAndReturnError:&error];
+  NSString *out = result ? [result stringValue] : @"";
+  if (!out.length) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"无法读取备忘录";
+    a.informativeText = error[NSAppleScriptErrorMessage] ?: @"请在系统设置 → 隐私与安全性 → 自动化中允许控制台控制「备忘录」。";
+    [a addButtonWithTitle:@"好"];
+    [a runModal];
+    return;
+  }
+  NSMutableArray *entries = [NSMutableArray array];
+  NSMutableArray *titles = [NSMutableArray array];
+  for (NSString *part in [out componentsSeparatedByString:@"@@NOTE@@"]) {
+    if (![part containsString:@"@@TITLE@@"]) continue;
+    NSArray *pair = [part componentsSeparatedByString:@"@@TITLE@@"];
+    NSString *title = [[pair.firstObject stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] copy];
+    NSString *body = pair.count > 1 ? pair[1] : @"";
+    NSArray *found = [self aiEntriesFromNotesBody:body title:title ?: @""];
+    if (found.count) {
+      [entries addObjectsFromArray:found];
+      [titles addObject:[NSString stringWithFormat:@"%@（%ld 条）", title ?: @"未命名", (long)found.count]];
+    }
+  }
+  entries = [[self aiDeduplicatedEntries:entries] mutableCopy];
+  if (!entries.count) {
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText = @"没有找到可导入的 AI 数据";
+    a.informativeText = @"请确认备忘录里有类似格式的内容：\n\n名称：DeepSeek\n余量：¥10\n链接地址：https://api.deepseek.com\nAPI Key：sk-...\n备注：常用";
+    [a addButtonWithTitle:@"好"];
+    [a runModal];
+    return;
+  }
+  NSAlert *ask = [[NSAlert alloc] init];
+  ask.messageText = [NSString stringWithFormat:@"找到 %ld 条 AI 服务数据", (long)entries.count];
+  ask.informativeText = [NSString stringWithFormat:@"来自备忘录：\n%@\n\n导入后会按名称合并，已有的同名服务会更新。", [[titles subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)5, titles.count))] componentsJoinedByString:@"\n"]];
+  [ask addButtonWithTitle:@"导入"];
+  [ask addButtonWithTitle:@"取消"];
+  if ([ask runModal] != NSAlertFirstButtonReturn) return;
+  [self mergeAIDataEntries:entries];
+}
+
+- (void)mergeAIDataEntries:(NSArray<NSDictionary *> *)incoming {
   NSInteger added = 0, updated = 0;
   for (NSDictionary *e in incoming) {
     NSInteger idx = NSNotFound;
