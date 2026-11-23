@@ -6,6 +6,7 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #import <IOKit/ps/IOPowerSources.h>
 #import <IOKit/ps/IOPSKeys.h>
 #import <Quartz/Quartz.h>
@@ -3637,6 +3638,7 @@ static void HideDockHoverTip(void) {
   }
   [self migrateLegacyPathsIfNeeded];
   [self convertGroupAppsToFilesIfNeeded];
+  [self repairGroupFileAppearance];
   [self unregisterHiddenAppsFromLaunchServices];
   // Dock/Apps 会周期性把 Dock 里的分组 App 重新登记进 LaunchServices；
   // 维持一个低频清理，保证「应用程序」窗口里不长期出现这些图标。
@@ -4665,10 +4667,10 @@ static OSStatus TranslationHotKeyHandler(EventHandlerCallRef nextHandler, EventR
 - (void)openGroupPanelNamed:(NSString *)name {
   if (!name.length) return;
   NSFileManager *fm = [NSFileManager defaultManager];
-  NSString *file = [[GroupDir() stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"dockgroup"];
+  NSString *file = GroupFilePath(name);
   if (![fm fileExistsAtPath:file]) {
-    [@"" writeToFile:file atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-    HideGroupFileExtension(file);
+    file = [self ensureGroupAppForName:name];
+    if (!file.length) return;
   }
   NSString *list = [[GroupDir() stringByAppendingPathComponent:@"lists"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"txt"]];
   NSString *ui = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"groupui"];
@@ -7493,6 +7495,38 @@ static BOOL ValidGroupName(NSString *raw) {
   }
 }
 
+// 分组文件自愈：补自定义图标、隐藏 .dockgroup 扩展名（Dock 标签不再带后缀）
+- (void)repairGroupFileAppearance {
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *iconsDir = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"GroupIcons"];
+  BOOL changed = NO;
+  for (NSString *f in ([fm contentsOfDirectoryAtPath:GroupDir() error:NULL] ?: @[])) {
+    if (![f.pathExtension.lowercaseString isEqualToString:@"dockgroup"]) continue;
+    NSString *path = [GroupDir() stringByAppendingPathComponent:f];
+    NSString *name = f.stringByDeletingPathExtension;
+    BOOL hidden = NO;
+    NSNumber *hv = nil;
+    [[NSURL fileURLWithPath:path] getResourceValue:&hv forKey:NSURLHasHiddenExtensionKey error:NULL];
+    hidden = hv.boolValue;
+    if (!hidden) { HideGroupFileExtension(path); changed = YES; }
+    unsigned char fi[32] = {0};
+    ssize_t fin = getxattr(path.fileSystemRepresentation, "com.apple.FinderInfo", fi, sizeof(fi), 0, 0);
+    BOOL hasCustomIcon = (fin >= 16 && (fi[8] & 0x04));
+    if (!hasCustomIcon) {
+      NSString *src = [iconsDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@组.icns", name]];
+      if (![fm fileExistsAtPath:src]) {
+        for (NSString *cand in ([fm contentsOfDirectoryAtPath:iconsDir error:NULL] ?: @[])) {
+          if ([cand.pathExtension.lowercaseString isEqualToString:@"icns"]) { src = [iconsDir stringByAppendingPathComponent:cand]; break; }
+        }
+      }
+      NSImage *img = [[NSImage alloc] initWithContentsOfFile:src];
+      if (img) { [[NSWorkspace sharedWorkspace] setIcon:img forFile:path options:0]; changed = YES; }
+    }
+  }
+  [self ensureGroupDockEntries];
+  if (changed) [self killDock];
+}
+
 // 启动器 App（build/DockLaunchers.app，bid com.docklaunchers.launcher）：已装则返回路径
 - (NSString *)existingDockLauncherWrapper {
   NSFileManager *fm = [NSFileManager defaultManager];
@@ -7852,9 +7886,25 @@ static BOOL ValidGroupName(NSString *raw) {
     NSString *url = [NSString stringWithFormat:@"file://%@", enc];
     CFArrayRef raw = CFPreferencesCopyAppValue(CFSTR("persistent-apps"), CFSTR("com.apple.dock"));
     NSMutableArray *apps = raw ? [CFBridgingRelease(raw) mutableCopy] : [NSMutableArray array];
-    for (id item in apps) {
+    NSUInteger matchIndex = NSNotFound;
+    for (NSUInteger i = 0; i < apps.count; i++) {
+      id item = apps[i];
       NSString *u = nil; @try { u = item[@"tile-data"][@"file-data"][@"_CFURLString"]; } @catch (NSException *e) {}
-      if (u && [DockEntryPath(u) isEqualToString:[path stringByStandardizingPath]]) return;
+      if (u && [DockEntryPath(u) isEqualToString:[path stringByStandardizingPath]]) { matchIndex = i; break; }
+    }
+    if (matchIndex != NSNotFound) {
+      id item = apps[matchIndex];
+      NSString *oldLabel = nil; @try { oldLabel = item[@"tile-data"][@"file-label"]; } @catch (NSException *e) {}
+      if (!label.length || [oldLabel isEqualToString:label]) return;
+      NSMutableDictionary *copy = [item mutableCopy];
+      NSMutableDictionary *td = [copy[@"tile-data"] mutableCopy];
+      td[@"file-label"] = label;
+      copy[@"tile-data"] = td;
+      apps[matchIndex] = copy;
+      CFPreferencesSetAppValue(CFSTR("persistent-apps"), (__bridge CFPropertyListRef)apps, CFSTR("com.apple.dock"));
+      CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
+      self.dockPersistentDirty=YES;
+      return;
     }
     NSMutableDictionary *td = [@{@"file-data": @{@"_CFURLString": url, @"_CFURLStringType": @15},
                                  @"file-label": label, @"file-type": @41, @"dock-extra": @NO} mutableCopy];
